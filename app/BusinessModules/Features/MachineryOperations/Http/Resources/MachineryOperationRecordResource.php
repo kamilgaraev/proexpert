@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\MachineryOperations\Http\Resources;
 
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryDefect;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryDowntime;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryFuelIssue;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenanceOrder;
@@ -24,6 +25,7 @@ final class MachineryOperationRecordResource extends JsonResource
             $this->resource instanceof MachineryFuelIssue => $this->fuelIssue($this->resource),
             $this->resource instanceof MachineryProductionRecord => $this->productionRecord($this->resource),
             $this->resource instanceof MachineryMaintenanceOrder => $this->maintenanceOrder($request, $this->resource),
+            $this->resource instanceof MachineryDefect => $this->defect($this->resource),
             default => [],
         };
     }
@@ -63,6 +65,9 @@ final class MachineryOperationRecordResource extends JsonResource
             'project_id' => $downtime->project_id,
             'shift_report_id' => $downtime->shift_report_id,
             'reason' => $downtime->reason,
+            'reason_code' => $downtime->reason_code ?? $downtime->reason,
+            'reason_label' => trans_message('machinery_operations.downtime_reasons.'.($downtime->reason_code ?? $downtime->reason)),
+            'reason_original' => $downtime->reason_original,
             'started_at' => $downtime->started_at?->toIso8601String(),
             'ended_at' => $downtime->ended_at?->toIso8601String(),
             'duration_minutes' => $downtime->duration_minutes,
@@ -80,8 +85,12 @@ final class MachineryOperationRecordResource extends JsonResource
             'issued_by_user_id' => $fuelIssue->issued_by_user_id,
             'issued_at' => $fuelIssue->issued_at?->toIso8601String(),
             'fuel_type' => $fuelIssue->fuel_type,
+            'fuel_type_code' => $fuelIssue->fuel_type_code ?? $fuelIssue->fuel_type,
+            'fuel_type_label' => trans_message('machinery_operations.fuel_types.'.($fuelIssue->fuel_type_code ?? $fuelIssue->fuel_type)),
             'quantity' => $fuelIssue->quantity,
             'unit' => $fuelIssue->unit,
+            'unit_code' => $fuelIssue->unit_code ?? $fuelIssue->unit,
+            'unit_label' => trans_message('machinery_operations.fuel_units.'.($fuelIssue->unit_code ?? $fuelIssue->unit)),
             'cost' => $fuelIssue->cost,
             'comment' => $fuelIssue->comment,
         ];
@@ -134,6 +143,12 @@ final class MachineryOperationRecordResource extends JsonResource
             'completed_at' => $order->completed_at?->toIso8601String(),
             'cost' => $order->cost,
             'completion_comment' => $order->completion_comment,
+            'inspection' => $order->relationLoaded('inspection') && $order->inspection ? [
+                'id' => $order->inspection->id,
+                'result' => $order->inspection->result,
+                'notes' => $order->inspection->notes,
+                'inspected_at' => $order->inspection->inspected_at?->toIso8601String(),
+            ] : null,
             'workflow_summary' => [
                 'stage' => $order->status,
                 'status' => $order->status,
@@ -151,6 +166,23 @@ final class MachineryOperationRecordResource extends JsonResource
                 'organization_asset_id' => $order->organization_asset_id,
                 'project_id' => $order->project_id,
             ],
+        ];
+    }
+
+    private function defect(MachineryDefect $defect): array
+    {
+        return [
+            'id' => $defect->id,
+            'asset_id' => $defect->asset_id,
+            'organization_asset_id' => $defect->organization_asset_id,
+            'project_id' => $defect->project_id,
+            'defect_code' => $defect->defect_code,
+            'severity' => $defect->severity,
+            'status' => $defect->status,
+            'description' => $defect->description,
+            'reported_at' => $defect->reported_at?->toIso8601String(),
+            'resolved_at' => $defect->resolved_at?->toIso8601String(),
+            'available_actions' => [],
         ];
     }
 }

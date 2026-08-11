@@ -13,11 +13,13 @@ use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Core\AssetManagement\Services\OrganizationAssetService;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryDefect;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryDowntime;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryFuelIssue;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenanceOrder;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryProductionRecord;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryShiftReport;
+use App\BusinessModules\Features\MachineryOperations\Models\MaintenanceInspection;
 use App\Models\Machinery;
 use App\Models\Project;
 use App\Models\ScheduleTask;
@@ -29,12 +31,17 @@ final class MachineryOperationsService
 {
     private const ASSET_RELATIONS = ['machinery:id,name,code,category', 'currentProject:id,name', 'currentScheduleTask:id,name'];
 
-    private const SHIFT_RELATIONS = ['asset:id,name,asset_code,status', 'project:id,name', 'assignment:id,status'];
+    private const SHIFT_RELATIONS = [
+        'asset:id,name,asset_code,status,operating_cost_per_hour,ownership_type,metadata',
+        'project:id,name',
+        'assignment:id,status',
+    ];
 
     public function __construct(
         private readonly MachineryAssetReadRepository $assets,
         private readonly OrganizationAssetService $organizationAssets,
         private readonly MachineryWorkflowPolicy $workflow,
+        private readonly MachineryCostService $costs,
     ) {}
 
     public function paginateAssets(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
@@ -57,7 +64,7 @@ final class MachineryOperationsService
     public function paginateMaintenanceOrders(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
     {
         return MachineryMaintenanceOrder::forOrganization($organizationId)
-            ->with(['asset:id,name,asset_code,status', 'project:id,name'])
+            ->with(['asset:id,name,asset_code,status', 'project:id,name', 'inspection'])
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(! empty($filters['asset_id']), fn ($query) => $query->where('asset_id', (int) $filters['asset_id']))
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
@@ -350,10 +357,19 @@ final class MachineryOperationsService
         }
 
         return DB::transaction(function () use ($shift, $userId): MachineryShiftReport {
+            $hourlyRate = (float) ($shift->asset?->operating_cost_per_hour ?? 0);
             $shift->update([
                 'status' => 'approved',
                 'approved_by_user_id' => $userId,
                 'approved_at' => now(),
+                'hourly_rate_snapshot' => $hourlyRate,
+                'cost_evidence' => [
+                    'version' => 1,
+                    'source' => 'asset_operating_cost_per_hour',
+                    'asset_id' => (int) $shift->asset_id,
+                    'hourly_rate' => $hourlyRate,
+                    'captured_at' => now()->toIso8601String(),
+                ],
             ]);
 
             if ($shift->meter_end !== null) {
@@ -409,6 +425,8 @@ final class MachineryOperationsService
                 'project_id' => $projectId,
                 'shift_report_id' => $data['shift_report_id'] ?? null,
                 'reason' => $data['reason'],
+                'reason_code' => $this->dictionaryCode((string) $data['reason'], self::DOWNTIME_CODES),
+                'reason_original' => $this->dictionaryOriginal((string) $data['reason'], self::DOWNTIME_CODES),
                 'started_at' => $data['started_at'],
                 'ended_at' => $data['ended_at'] ?? null,
                 'duration_minutes' => $data['duration_minutes'],
@@ -461,8 +479,12 @@ final class MachineryOperationsService
                 'issued_by_user_id' => $userId,
                 'issued_at' => $data['issued_at'],
                 'fuel_type' => $data['fuel_type'],
+                'fuel_type_code' => $this->dictionaryCode((string) $data['fuel_type'], self::FUEL_CODES),
+                'fuel_type_original' => $this->dictionaryOriginal((string) $data['fuel_type'], self::FUEL_CODES),
                 'quantity' => $data['quantity'],
                 'unit' => $data['unit'],
+                'unit_code' => $this->dictionaryCode((string) $data['unit'], self::FUEL_UNIT_CODES),
+                'unit_original' => $this->dictionaryOriginal((string) $data['unit'], self::FUEL_UNIT_CODES),
                 'cost' => $data['cost'] ?? 0,
                 'comment' => $data['comment'] ?? null,
             ])->fresh(['asset:id,name,asset_code', 'project:id,name']);
@@ -494,17 +516,26 @@ final class MachineryOperationsService
             $asset->update(['status' => 'maintenance']);
             $this->updateCanonicalState($asset, technicalStatus: AssetTechnicalStatus::Maintenance);
 
-            return $order->fresh(['asset:id,name,asset_code,status', 'project:id,name']);
+            return $order->fresh(['asset:id,name,asset_code,status', 'project:id,name', 'inspection']);
         });
     }
 
-    public function completeMaintenanceOrder(MachineryMaintenanceOrder $order, int $userId, ?string $comment): MachineryMaintenanceOrder
-    {
+    public function completeMaintenanceOrder(
+        MachineryMaintenanceOrder $order,
+        int $userId,
+        ?string $comment,
+        string $inspectionResult = 'serviceable',
+        array $inspectionEvidence = [],
+    ): MachineryMaintenanceOrder {
         if (! in_array($order->status, ['open', 'in_progress'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.maintenance_complete_invalid_status'));
         }
 
-        return DB::transaction(function () use ($order, $userId, $comment): MachineryMaintenanceOrder {
+        if (! in_array($inspectionResult, ['serviceable', 'restricted', 'unavailable'], true)) {
+            throw new DomainException(trans_message('machinery_operations.errors.inspection_result_invalid'));
+        }
+
+        return DB::transaction(function () use ($order, $userId, $comment, $inspectionResult, $inspectionEvidence): MachineryMaintenanceOrder {
             $order->update([
                 'status' => 'completed',
                 'completed_by_user_id' => $userId,
@@ -512,20 +543,77 @@ final class MachineryOperationsService
                 'completion_comment' => $comment,
             ]);
 
-            $order->asset()->update(['status' => 'available']);
+            MaintenanceInspection::query()->create([
+                'organization_id' => $order->organization_id,
+                'maintenance_order_id' => $order->id,
+                'organization_asset_id' => $order->organization_asset_id,
+                'asset_id' => $order->asset_id,
+                'inspected_by_user_id' => $userId,
+                'result' => $inspectionResult,
+                'notes' => $comment,
+                'evidence' => $inspectionEvidence,
+                'inspected_at' => now(),
+            ]);
+
+            $legacyStatus = $inspectionResult === 'serviceable' ? 'available' : 'unavailable';
+            $order->asset()->update(['status' => $legacyStatus]);
             $asset = $order->asset()->first();
             if ($asset !== null) {
-                $this->completeCanonicalMaintenance($asset, $order, $userId, $comment);
+                $this->completeCanonicalMaintenance($asset, $order, $userId, $comment, $inspectionResult);
             }
 
-            return $order->fresh(['asset:id,name,asset_code,status', 'project:id,name']);
+            return $order->fresh(['asset:id,name,asset_code,status', 'project:id,name', 'inspection']);
         });
+    }
+
+    public function reportDefect(int $organizationId, int $userId, array $data): MachineryDefect
+    {
+        return DB::transaction(function () use ($organizationId, $userId, $data): MachineryDefect {
+            $asset = $this->requireLockedAsset((int) $data['asset_id'], $organizationId);
+            $this->assertOptionalProjectBelongsToOrganization($data['project_id'] ?? null, $organizationId);
+            $severity = (string) $data['severity'];
+            if (! in_array($severity, ['low', 'medium', 'high', 'critical'], true)) {
+                throw new DomainException(trans_message('machinery_operations.errors.defect_severity_invalid'));
+            }
+            $defect = MachineryDefect::query()->create([
+                'organization_id' => $organizationId,
+                'organization_asset_id' => $asset->organization_asset_id,
+                'asset_id' => $asset->id,
+                'project_id' => $data['project_id'] ?? $asset->current_project_id,
+                'reported_by_user_id' => $userId,
+                'defect_code' => (string) $data['defect_code'],
+                'severity' => $severity,
+                'status' => 'open',
+                'description' => (string) $data['description'],
+                'reported_at' => $data['reported_at'] ?? now(),
+            ]);
+            if ($severity === 'critical') {
+                $asset->update(['status' => 'unavailable']);
+                $this->updateCanonicalState($asset, technicalStatus: AssetTechnicalStatus::Unavailable);
+            }
+
+            return $defect->fresh(['asset:id,name,asset_code,status', 'project:id,name']);
+        });
+    }
+
+    public function costReport(int $organizationId, string $dateFrom, string $dateTo, ?int $projectId = null): array
+    {
+        if ($projectId !== null) {
+            $this->assertProjectBelongsToOrganization($projectId, $organizationId);
+        }
+
+        return $this->costs->calculate(
+            $organizationId,
+            \Carbon\CarbonImmutable::parse($dateFrom),
+            \Carbon\CarbonImmutable::parse($dateTo),
+            $projectId,
+        );
     }
 
     public function findMaintenanceOrder(int $organizationId, int $id): ?MachineryMaintenanceOrder
     {
         return MachineryMaintenanceOrder::forOrganization($organizationId)
-            ->with(['asset:id,name,asset_code,status', 'project:id,name'])
+            ->with(['asset:id,name,asset_code,status', 'project:id,name', 'inspection'])
             ->find($id);
     }
 
@@ -543,24 +631,28 @@ final class MachineryOperationsService
         return [
             'utilization_by_project' => MachineryShiftReport::forOrganization($organizationId)
                 ->selectRaw('project_id, sum(actual_hours) as actual_hours, sum(planned_hours) as planned_hours')
+                ->where('status', 'approved')
+                ->where('report_date', '<=', now()->toDateString())
                 ->when($projectId !== null, fn ($query) => $query->where('project_id', $projectId))
                 ->groupBy('project_id')
                 ->get()
                 ->all(),
             'downtime_by_reason' => $downtimes
-                ->selectRaw('reason, sum(duration_minutes) as duration_minutes, count(*) as count')
-                ->groupBy('reason')
+                ->selectRaw('coalesce(reason_code, reason) as reason, sum(duration_minutes) as duration_minutes, count(*) as count')
+                ->groupByRaw('coalesce(reason_code, reason)')
                 ->get()
                 ->all(),
             'fuel_consumption' => $fuel
-                ->selectRaw('fuel_type, sum(quantity) as quantity, sum(cost) as cost')
-                ->groupBy('fuel_type')
+                ->selectRaw('coalesce(fuel_type_code, fuel_type) as fuel_type, sum(quantity) as quantity, sum(cost) as cost')
+                ->groupByRaw('coalesce(fuel_type_code, fuel_type)')
                 ->get()
                 ->all(),
             'operating_cost_by_project' => MachineryShiftReport::query()
                 ->join('machinery_assets', 'machinery_shift_reports.asset_id', '=', 'machinery_assets.id')
                 ->selectRaw('machinery_shift_reports.project_id, sum(machinery_shift_reports.actual_hours * machinery_assets.operating_cost_per_hour) as cost')
                 ->where('machinery_shift_reports.organization_id', $organizationId)
+                ->where('machinery_shift_reports.status', 'approved')
+                ->where('machinery_shift_reports.report_date', '<=', now()->toDateString())
                 ->when($projectId !== null, fn ($query) => $query->where('machinery_shift_reports.project_id', $projectId))
                 ->whereNull('machinery_shift_reports.deleted_at')
                 ->groupBy('machinery_shift_reports.project_id')
@@ -568,6 +660,8 @@ final class MachineryOperationsService
                 ->all(),
             'plan_fact_variance' => MachineryShiftReport::forOrganization($organizationId)
                 ->selectRaw('project_id, sum(planned_hours) as planned_hours, sum(actual_hours) as actual_hours, sum(actual_hours - planned_hours) as variance_hours')
+                ->where('status', 'approved')
+                ->where('report_date', '<=', now()->toDateString())
                 ->when($projectId !== null, fn ($query) => $query->where('project_id', $projectId))
                 ->groupBy('project_id')
                 ->get()
@@ -796,6 +890,7 @@ final class MachineryOperationsService
         MachineryMaintenanceOrder $order,
         int $userId,
         ?string $comment,
+        string $inspectionResult,
     ): void {
         $canonical = $this->canonicalAsset($asset, true);
         if ($canonical === null) {
@@ -803,18 +898,44 @@ final class MachineryOperationsService
         }
 
         $metadata = is_array($canonical->metadata) ? $canonical->metadata : [];
-        $metadata['machinery_operation_status'] = $canonical->current_project_id === null ? 'available' : 'assigned';
+        $metadata['machinery_operation_status'] = $inspectionResult === 'serviceable'
+            ? ($canonical->current_project_id === null ? 'available' : 'assigned')
+            : 'unavailable';
         $metadata['last_control_inspection'] = [
-            'result' => 'serviceable',
+            'result' => $inspectionResult,
             'maintenance_order_id' => (int) $order->id,
             'inspected_by_user_id' => $userId,
             'comment' => $comment,
             'occurred_at' => now()->toIso8601String(),
         ];
         $canonical->update([
-            'technical_status' => AssetTechnicalStatus::Serviceable,
+            'technical_status' => match ($inspectionResult) {
+                'serviceable' => AssetTechnicalStatus::Serviceable,
+                'restricted' => AssetTechnicalStatus::Restricted,
+                default => AssetTechnicalStatus::Unavailable,
+            },
             'metadata' => $metadata,
         ]);
+    }
+
+    private const DOWNTIME_CODES = ['waiting_material', 'weather', 'breakdown', 'organizational', 'other'];
+
+    private const FUEL_CODES = ['diesel', 'gasoline', 'electricity', 'gas', 'other'];
+
+    private const FUEL_UNIT_CODES = ['l', 'kg', 'kwh', 'm3', 'other'];
+
+    private function dictionaryCode(string $value, array $codes): string
+    {
+        $normalized = mb_strtolower(trim($value));
+
+        return in_array($normalized, $codes, true) ? $normalized : 'other';
+    }
+
+    private function dictionaryOriginal(string $value, array $codes): ?string
+    {
+        return $this->dictionaryCode($value, $codes) === 'other' && mb_strtolower(trim($value)) !== 'other'
+            ? trim($value)
+            : null;
     }
 
     private function canonicalAsset(MachineryAsset $asset, bool $lock = false): ?OrganizationAsset
