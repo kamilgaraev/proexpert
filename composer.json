@@ -91,7 +91,8 @@
         "analyse:quick": "phpstan analyse app/Http app/Services app/BusinessModules routes --memory-limit=1G --no-progress",
         "test:unit": "php artisan test tests/Unit --stop-on-failure",
         "test:feature": "php artisan test tests/Feature --stop-on-failure",
-        "test:quick": "php artisan test --stop-on-failure --exclude-group=slow"
+        "test:quick": "php artisan test --stop-on-failure --exclude-group=slow",
+        "test:postgres": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/Runtime/run-postgres-tests.ps1"
     },
     "extra": {
         "laravel": {

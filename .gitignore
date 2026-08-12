@@ -19,6 +19,7 @@ __pycache__/
 .env
 .env.backup
 .env.production
+/.env.testing.local
 .phpactor.json
 .phpunit.result.cache
 Homestead.json
@@ -66,6 +67,7 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 .cursor
 *.txt
 *.xml
+!phpunit.postgres.xml
 rr
 rr.exe
 .rr

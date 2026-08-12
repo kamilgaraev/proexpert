@@ -1,0 +1,19 @@
+services:
+  postgres-testing:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: most_backend_testing
+      POSTGRES_USER: most_testing
+      POSTGRES_PASSWORD: most_testing_password
+    ports:
+      - "127.0.0.1:55433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U most_testing -d most_backend_testing"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - postgres_testing_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_testing_data:
