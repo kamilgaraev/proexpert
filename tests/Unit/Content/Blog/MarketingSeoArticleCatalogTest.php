@@ -9,16 +9,19 @@ use PHPUnit\Framework\TestCase;
 
 final class MarketingSeoArticleCatalogTest extends TestCase
 {
-    public function testCatalogContainsThreeDistinctAudienceArticles(): void
+    public function testCatalogContainsSixDistinctAudienceArticles(): void
     {
         $articles = $this->articles();
 
-        self::assertCount(3, $articles);
+        self::assertCount(6, $articles);
         self::assertSame(
             [
                 'sistema-upravleniya-stroitelstvom',
                 'grafik-proizvodstva-rabot-v-stroitelstve',
                 'ispolnitelnaya-dokumentaciya-v-stroitelstve',
+                'zayavka-na-materialy-v-stroitelstve',
+                'plan-fakt-v-stroitelstve',
+                'obshchiy-zhurnal-rabot-v-stroitelstve',
             ],
             array_column($articles, 'slug')
         );
@@ -43,6 +46,9 @@ final class MarketingSeoArticleCatalogTest extends TestCase
             'sistema-upravleniya-stroitelstvom' => '/construction-erp',
             'grafik-proizvodstva-rabot-v-stroitelstve' => '/construction-erp',
             'ispolnitelnaya-dokumentaciya-v-stroitelstve' => '/construction-documents',
+            'zayavka-na-materialy-v-stroitelstve' => '/site-requests',
+            'plan-fakt-v-stroitelstve' => '/construction-budget-control',
+            'obshchiy-zhurnal-rabot-v-stroitelstve' => '/construction-documents',
         ];
 
         foreach ($this->articles() as $article) {
