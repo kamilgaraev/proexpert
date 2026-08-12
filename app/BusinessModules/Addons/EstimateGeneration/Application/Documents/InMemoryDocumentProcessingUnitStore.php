@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use DateTimeImmutable;
 use Illuminate\Support\Str;
 
@@ -99,6 +100,7 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         $record->leaseExpiresAt = $leaseExpiresAt;
         $record->failureCode = null;
         $record->failureFingerprint = null;
+        $record->failureCategory = null;
 
         return new DocumentProcessingUnitClaim(
             $unitId,
@@ -147,8 +149,14 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         return true;
     }
 
-    public function fail(DocumentProcessingUnitClaim $claim, string $code, string $fingerprint, DateTimeImmutable $now): bool
-    {
+    public function fail(
+        DocumentProcessingUnitClaim $claim,
+        string $code,
+        string $fingerprint,
+        DateTimeImmutable $now,
+        FailureCategory $category = FailureCategory::Recoverable,
+        bool $circuitBreaking = false,
+    ): bool {
         $record = $this->find($claim->unitId);
 
         if (! $this->owns($record, $claim, $now)) {
@@ -158,10 +166,47 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         $record->status = DocumentProcessingUnitStatus::Failed;
         $record->failureCode = $code;
         $record->failureFingerprint = $fingerprint;
+        $record->failureCategory = $category;
         $record->claimToken = null;
         $record->leaseExpiresAt = null;
+        if ($category !== FailureCategory::Recoverable) {
+            $record->attemptCount = ProcessDocumentUnit::MAX_ATTEMPTS;
+        }
+
+        if ($circuitBreaking && $this->matchingTerminalFailures($record, $fingerprint) >= 3) {
+            foreach ($this->records as $candidate) {
+                if ($candidate->organizationId !== $record->organizationId
+                    || $candidate->projectId !== $record->projectId
+                    || $candidate->sessionId !== $record->sessionId
+                    || $candidate->documentId !== $record->documentId
+                    || $candidate->unit->sourceVersion !== $record->unit->sourceVersion
+                    || $candidate->status !== DocumentProcessingUnitStatus::Pending) {
+                    continue;
+                }
+
+                $candidate->status = DocumentProcessingUnitStatus::Failed;
+                $candidate->attemptCount = ProcessDocumentUnit::MAX_ATTEMPTS;
+                $candidate->failureCode = 'document_systemic_failure';
+                $candidate->failureFingerprint = $fingerprint;
+                $candidate->failureCategory = FailureCategory::Terminal;
+            }
+        }
 
         return true;
+    }
+
+    private function matchingTerminalFailures(DocumentProcessingUnitRecord $failed, string $fingerprint): int
+    {
+        return count(array_filter(
+            $this->records,
+            static fn (DocumentProcessingUnitRecord $candidate): bool => $candidate->organizationId === $failed->organizationId
+                && $candidate->projectId === $failed->projectId
+                && $candidate->sessionId === $failed->sessionId
+                && $candidate->documentId === $failed->documentId
+                && $candidate->unit->sourceVersion === $failed->unit->sourceVersion
+                && $candidate->status === DocumentProcessingUnitStatus::Failed
+                && $candidate->failureFingerprint === $fingerprint,
+        ));
     }
 
     public function supersedeDocumentSource(int $documentId, string $currentSourceVersion): void

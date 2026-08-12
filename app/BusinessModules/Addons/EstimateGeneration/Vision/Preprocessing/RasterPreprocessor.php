@@ -93,7 +93,11 @@ final readonly class RasterPreprocessor
         }
 
         $normalized = $this->flattenToOpaqueWhite($normalized);
-        $output = $manager->read($normalized)->greyscale()->contrast(12)->scaleDown($input->maxDimension, $input->maxDimension);
+        $output = $manager->read($normalized);
+        if (! $input->preserveColor) {
+            $output->greyscale()->contrast(12);
+        }
+        $output->scaleDown($input->maxDimension, $input->maxDimension);
         $outputBytes = (string) $output->toPng(indexed: false, interlaced: false);
         $hash = hash('sha256', $outputBytes);
         $key = OrganizationStoragePath::forActor(

@@ -23,21 +23,30 @@ final readonly class DocumentRepresentationCapabilities
     public static function fromArray(string $format, array $statuses): self
     {
         $required = self::REQUIRED[$format] ?? null;
-        if ($required === null || array_keys($statuses) !== $required) {
+        $provided = array_keys($statuses);
+        if ($required === null
+            || count($provided) !== count($required)
+            || array_diff($required, $provided) !== []
+            || array_diff($provided, $required) !== []) {
             throw new InvalidArgumentException('Document capability contract is not canonical.');
         }
 
-        foreach ($statuses as $capability => $status) {
+        $canonical = [];
+        foreach ($required as $capability) {
+            $status = $statuses[$capability];
             if ($status === 'available') {
+                $canonical[$capability] = $status;
+
                 continue;
             }
             if (! is_string($status)
                 || preg_match('/^unavailable:[a-z][a-z0-9_]{2,80}$/D', $status) !== 1) {
                 throw new InvalidArgumentException('Document capability status is invalid.');
             }
+            $canonical[$capability] = $status;
         }
 
-        return new self($format, $statuses);
+        return new self($format, $canonical);
     }
 
     public function toArray(): array

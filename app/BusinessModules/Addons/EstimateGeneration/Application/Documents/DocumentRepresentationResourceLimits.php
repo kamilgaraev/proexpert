@@ -18,15 +18,7 @@ final readonly class DocumentRepresentationResourceLimits
 
     public function assertWithin(array $usage): void
     {
-        $required = ['pages', 'objects', 'bytes', 'peak_memory_bytes', 'duration_ms'];
-        if (array_keys($usage) !== $required) {
-            throw new InvalidArgumentException('Document representation resource usage is invalid.');
-        }
-        foreach ($usage as $value) {
-            if (! is_int($value) || $value < 0) {
-                throw new InvalidArgumentException('Document representation resource usage is invalid.');
-            }
-        }
+        $usage = $this->canonicalize($usage);
 
         $limits = [
             'pages' => [$this->maxPages, 'document_representation_page_limit_exceeded'],
@@ -44,5 +36,28 @@ final readonly class DocumentRepresentationResourceLimits
                 ]);
             }
         }
+    }
+
+    /** @return array{pages: int, objects: int, bytes: int, peak_memory_bytes: int, duration_ms: int} */
+    public function canonicalize(array $usage): array
+    {
+        $required = ['pages', 'objects', 'bytes', 'peak_memory_bytes', 'duration_ms'];
+        $provided = array_keys($usage);
+        if (count($provided) !== count($required)
+            || array_diff($required, $provided) !== []
+            || array_diff($provided, $required) !== []) {
+            throw new InvalidArgumentException('Document representation resource usage is invalid.');
+        }
+
+        $canonical = [];
+        foreach ($required as $metric) {
+            $value = $usage[$metric];
+            if (! is_int($value) || $value < 0) {
+                throw new InvalidArgumentException('Document representation resource usage is invalid.');
+            }
+            $canonical[$metric] = $value;
+        }
+
+        return $canonical;
     }
 }

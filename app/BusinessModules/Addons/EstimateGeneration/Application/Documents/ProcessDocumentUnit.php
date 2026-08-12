@@ -47,6 +47,16 @@ final readonly class ProcessDocumentUnit
         }
 
         if ($claim->status === DocumentProcessingUnitClaimStatus::Exhausted) {
+            $record = $this->store->find($unitId);
+            if ($record?->failureCategory !== null && $record->failureCategory !== FailureCategory::Recoverable) {
+                $this->reconciler->reconcile($record->documentId, $sourceVersion);
+
+                return new DocumentUnitProcessOutcome(match ($record->failureCategory) {
+                    FailureCategory::Terminal => DocumentProcessingUnitClaimStatus::Terminal,
+                    FailureCategory::UserActionRequired => DocumentProcessingUnitClaimStatus::UserActionRequired,
+                    FailureCategory::Recoverable => DocumentProcessingUnitClaimStatus::Exhausted,
+                });
+            }
             $this->exhaustion?->handle($unitId);
 
             return new DocumentUnitProcessOutcome($claim->status);
@@ -80,16 +90,52 @@ final readonly class ProcessDocumentUnit
             } catch (Throwable) {
             }
         } catch (Throwable $error) {
-            $code = $error instanceof DocumentUnitProcessingException ? $error->safeCode : 'unit_processing_failed';
-            $this->store->fail($claim, $code, hash('sha256', $error::class.'|'.$code), now()->toDateTimeImmutable());
-            $this->failureRecorder->capture($error, $this->failureContext($context));
+            $failure = $this->failureRecorder->capture($error, $this->failureContext($context));
+            $fingerprint = $this->failureFingerprint($error, $failure->code);
+            $persisted = $this->store->fail(
+                $claim,
+                $failure->code,
+                $fingerprint,
+                now()->toDateTimeImmutable(),
+                $failure->category,
+                $failure->category === FailureCategory::Terminal
+                    && in_array($failure->code, [
+                        'document_representation_contract_invalid',
+                        'document_representation_source_mismatch',
+                    ], true),
+            );
 
-            throw $error;
+            if (! $persisted) {
+                throw new TypedFailureException(FailureCategory::Recoverable, 'unit_claim_lost', previous: $error);
+            }
+
+            if ($failure->category === FailureCategory::Recoverable) {
+                throw $error;
+            }
+
+            $this->reconciler->reconcile($context->documentId, $sourceVersion);
+
+            return new DocumentUnitProcessOutcome(match ($failure->category) {
+                FailureCategory::Terminal => DocumentProcessingUnitClaimStatus::Terminal,
+                FailureCategory::UserActionRequired => DocumentProcessingUnitClaimStatus::UserActionRequired,
+                FailureCategory::Recoverable => DocumentProcessingUnitClaimStatus::Acquired,
+            });
         }
 
         $this->reconciler->reconcile($context->documentId, $sourceVersion);
 
         return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::Acquired);
+    }
+
+    private function failureFingerprint(Throwable $error, string $code): string
+    {
+        $classes = [];
+        do {
+            $classes[] = $error::class;
+            $error = $error->getPrevious();
+        } while ($error instanceof Throwable);
+
+        return hash('sha256', implode('|', [...$classes, $code]));
     }
 
     private function failureContext(DocumentUnitExecutionContext $context): FailureContext
