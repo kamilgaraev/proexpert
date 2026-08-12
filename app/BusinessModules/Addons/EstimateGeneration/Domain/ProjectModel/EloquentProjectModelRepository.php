@@ -226,17 +226,29 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 ->whereIn('id', $numericIds)->orderBy('id')->get() as $row) {
                 $locator = $this->decode($row->locator);
                 $page = $locator['page'] ?? $locator['unit_index'] ?? null;
+                $region = is_array($locator['region'] ?? null) ? $locator['region'] : null;
+                if ($region === null && is_array($locator['bbox'] ?? null) && count($locator['bbox']) === 4) {
+                    $region = [
+                        'x' => $locator['bbox'][0],
+                        'y' => $locator['bbox'][1],
+                        'width' => $locator['bbox'][2] - $locator['bbox'][0],
+                        'height' => $locator['bbox'][3] - $locator['bbox'][1],
+                    ];
+                }
+                $nativeReference = $locator['native_reference'] ?? $locator['handle']
+                    ?? $locator['element_key'] ?? $locator['source_key'] ?? null;
+                $sourceArtifactId = $locator['source_artifact_id'] ?? $row->source_ref;
                 $evidence[] = new Evidence(
                     'evidence:'.$row->id,
                     (int) $row->organization_id,
                     (int) $row->project_id,
                     (int) $row->session_id,
                     (string) $row->source_version,
-                    (string) $row->source_ref,
+                    (string) $sourceArtifactId,
                     (string) $row->source_type,
                     is_int($page) && $page > 0 ? $page : null,
-                    null,
-                    'evidence-node:'.$row->id,
+                    $region,
+                    is_string($nativeReference) && trim($nativeReference) !== '' ? $nativeReference : null,
                 );
             }
         }
@@ -551,7 +563,8 @@ SQL, [
                         }
                     }
                     if ($quantity->exactIdentity === null
-                        || ! hash_equals($quantity->exactIdentity, DerivedQuantityIdentity::for($quantity))) {
+                        || ! hash_equals($quantity->exactIdentity, DerivedQuantityIdentity::for($quantity))
+                        || ! hash_equals($quantity->id, 'quantityv:'.$quantity->exactIdentity)) {
                         throw new InvalidArgumentException('Derived quantity exact identity does not match its content.');
                     }
                     $this->lockUnderstandingScope(
@@ -567,6 +580,7 @@ SQL, [
                     $existing = (clone $scopeQuery)->where('stable_key', $quantity->id)->first();
                     if ($existing !== null) {
                         $this->assertDerivedQuantityReplay($quantity, $existing);
+                        $this->switchDerivedQuantityProjection($quantity, (int) $existing->id);
 
                         continue;
                     }
@@ -576,12 +590,21 @@ SQL, [
                         'session_id' => $quantity->sessionId,
                         'source_version' => $quantity->sourceVersion,
                         'stable_key' => $quantity->id,
+                        'logical_key' => $quantity->logicalId,
+                        'exact_identity' => $quantity->exactIdentity,
                         'entity_stable_key' => $quantity->entityId,
                         'formula' => $quantity->formula,
+                        'formula_identity' => $quantity->formulaIdentity,
+                        'formula_version' => $quantity->formulaVersion,
                         'value' => $quantity->value,
                         'unit' => $quantity->unit,
                         'rounding_mode' => $quantity->roundingMode,
                         'rounding_scale' => $quantity->roundingScale,
+                        'rounding_boundary' => $quantity->roundingBoundary,
+                        'unit_compatibility' => $quantity->unitCompatibility,
+                        'snapshot_identity' => $this->json($quantity->snapshotIdentity),
+                        'technology_decision_id' => $quantity->technologyDecisionId,
+                        'identity_status' => 'exact',
                         'status' => $quantity->status,
                         'evidence_lineage' => $this->json($quantity->evidenceIds),
                         'unresolved_inputs' => $this->json($quantity->unresolvedInputs),
@@ -599,9 +622,166 @@ SQL, [
                             'operand_snapshot' => $this->json($operand),
                         ]);
                     }
+                    $this->switchDerivedQuantityProjection($quantity, (int) $quantityId);
                 }
             }, 3);
         }
+    }
+
+    public function replaceDerivedQuantityProjection(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        array $quantities,
+        array $inactiveLogicalIds,
+    ): void {
+        $this->database->connection()->transaction(function () use (
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+            $quantities,
+            $inactiveLogicalIds,
+        ): void {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $inactive = array_values(array_unique(array_filter($inactiveLogicalIds, 'is_string')));
+            if ($inactive !== []) {
+                $this->database->table('estimate_generation_project_model_derived_quantity_projections')
+                    ->where('organization_id', $organizationId)
+                    ->where('project_id', $projectId)
+                    ->where('session_id', $sessionId)
+                    ->where('source_version', $sourceVersion)
+                    ->whereIn('logical_key', $inactive)
+                    ->delete();
+            }
+            $this->appendDerivedQuantities($quantities, 200);
+            foreach ($quantities as $quantity) {
+                if (! $quantity instanceof DerivedQuantity
+                    || [$quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->sourceVersion]
+                        !== [$organizationId, $projectId, $sessionId, $sourceVersion]) {
+                    throw new InvalidArgumentException('Derived quantity projection scope is invalid.');
+                }
+            }
+        }, 3);
+    }
+
+    public function currentDerivedQuantities(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        int $limit = 200,
+    ): array {
+        $this->assertChunkSize($limit);
+        $rows = $this->database->table('estimate_generation_project_model_derived_quantity_projections as projection')
+            ->join('estimate_generation_project_model_derived_quantities as quantity', 'quantity.id', '=', 'projection.derived_quantity_id')
+            ->where('projection.organization_id', $organizationId)
+            ->where('projection.project_id', $projectId)
+            ->where('projection.session_id', $sessionId)
+            ->where('projection.source_version', $sourceVersion)
+            ->orderBy('projection.logical_key')
+            ->limit($limit)
+            ->get('quantity.*');
+
+        return $rows->map(fn (object $row): DerivedQuantity => $this->derivedQuantityFromRow($row))->all();
+    }
+
+    public function deactivateDerivedQuantityProjectionScope(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        ?string $sourceVersion = null,
+    ): void {
+        $this->database->connection()->transaction(function () use (
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+        ): void {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $query = $this->database->table('estimate_generation_project_model_derived_quantity_projections')
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('session_id', $sessionId);
+            if ($sourceVersion !== null) {
+                $query->where('source_version', $sourceVersion);
+            }
+            $query->delete();
+        }, 3);
+    }
+
+    public function derivedQuantityHistory(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $logicalId,
+        int $limit = 200,
+    ): array {
+        $this->assertChunkSize($limit);
+        $rows = $this->database->table('estimate_generation_project_model_derived_quantities')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('source_version', $sourceVersion)
+            ->where('logical_key', $logicalId)
+            ->where('identity_status', 'exact')
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
+
+        return $rows->map(fn (object $row): DerivedQuantity => $this->derivedQuantityFromRow($row))->all();
+    }
+
+    private function switchDerivedQuantityProjection(DerivedQuantity $quantity, int $quantityId): void
+    {
+        $this->database->table('estimate_generation_project_model_derived_quantity_projections')->updateOrInsert([
+            'organization_id' => $quantity->organizationId,
+            'project_id' => $quantity->projectId,
+            'session_id' => $quantity->sessionId,
+            'source_version' => $quantity->sourceVersion,
+            'logical_key' => $quantity->logicalId,
+        ], [
+            'derived_quantity_id' => $quantityId,
+            'exact_identity' => $quantity->exactIdentity,
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function derivedQuantityFromRow(object $row): DerivedQuantity
+    {
+        $operands = $this->database->table('estimate_generation_project_model_derived_operands')
+            ->where('derived_quantity_id', (int) $row->id)
+            ->orderBy('operand_ordinal')
+            ->pluck('operand_snapshot')
+            ->map(fn (mixed $operand): mixed => $this->decodedJson($operand))
+            ->all();
+
+        return new DerivedQuantity(
+            id: (string) $row->stable_key,
+            organizationId: (int) $row->organization_id,
+            projectId: (int) $row->project_id,
+            sessionId: (int) $row->session_id,
+            sourceVersion: (string) $row->source_version,
+            entityId: (string) $row->entity_stable_key,
+            formula: (string) $row->formula,
+            operands: $operands,
+            value: $row->value === null ? null : DecimalValue::canonical((string) $row->value),
+            unit: (string) $row->unit,
+            roundingMode: (string) $row->rounding_mode,
+            roundingScale: (int) $row->rounding_scale,
+            evidenceIds: $this->decodedJson($row->evidence_lineage),
+            status: (string) $row->status,
+            formulaIdentity: (string) $row->formula_identity,
+            formulaVersion: (string) $row->formula_version,
+            roundingBoundary: (string) $row->rounding_boundary,
+            unitCompatibility: (string) $row->unit_compatibility,
+            snapshotIdentity: $this->decodedJson($row->snapshot_identity),
+            technologyDecisionId: $row->technology_decision_id === null ? null : (string) $row->technology_decision_id,
+            logicalId: (string) $row->logical_key,
+            exactIdentity: (string) $row->exact_identity,
+        );
     }
 
     private function assertDerivedQuantityReplay(DerivedQuantity $quantity, object $existing): void
@@ -613,22 +793,40 @@ SQL, [
             ->map(fn (mixed $operand): mixed => is_string($operand) ? json_decode($operand, true, 512, JSON_THROW_ON_ERROR) : $operand)
             ->all();
         $stored = [
+            'logical_id' => (string) $existing->logical_key,
+            'exact_identity' => (string) $existing->exact_identity,
+            'entity_id' => (string) $existing->entity_stable_key,
             'formula' => (string) $existing->formula,
+            'formula_identity' => (string) $existing->formula_identity,
+            'formula_version' => (string) $existing->formula_version,
             'value' => $existing->value === null ? null : DecimalValue::canonical((string) $existing->value),
             'unit' => (string) $existing->unit,
             'rounding_mode' => (string) $existing->rounding_mode,
             'rounding_scale' => (int) $existing->rounding_scale,
+            'rounding_boundary' => (string) $existing->rounding_boundary,
+            'unit_compatibility' => (string) $existing->unit_compatibility,
+            'snapshot_identity' => $this->decodedJson($existing->snapshot_identity),
+            'technology_decision_id' => $existing->technology_decision_id,
             'status' => (string) $existing->status,
             'evidence_ids' => $this->decodedJson($existing->evidence_lineage),
             'unresolved_inputs' => $this->decodedJson($existing->unresolved_inputs),
             'operands' => $storedOperands,
         ];
         $expected = [
+            'logical_id' => $quantity->logicalId,
+            'exact_identity' => $quantity->exactIdentity,
+            'entity_id' => $quantity->entityId,
             'formula' => $quantity->formula,
+            'formula_identity' => $quantity->formulaIdentity,
+            'formula_version' => $quantity->formulaVersion,
             'value' => $quantity->value,
             'unit' => $quantity->unit,
             'rounding_mode' => $quantity->roundingMode,
             'rounding_scale' => $quantity->roundingScale,
+            'rounding_boundary' => $quantity->roundingBoundary,
+            'unit_compatibility' => $quantity->unitCompatibility,
+            'snapshot_identity' => $quantity->snapshotIdentity,
+            'technology_decision_id' => $quantity->technologyDecisionId,
             'status' => $quantity->status,
             'evidence_ids' => $quantity->evidenceIds,
             'unresolved_inputs' => $quantity->unresolvedInputs,
@@ -1848,6 +2046,12 @@ SQL, [
                 'is_current' => false,
                 'invalidated_at' => now(),
             ]);
+            $this->database->table('estimate_generation_project_model_derived_quantity_projections')
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('session_id', $sessionId)
+                ->where('source_version', $sourceVersion)
+                ->delete();
         }, 3);
     }
 

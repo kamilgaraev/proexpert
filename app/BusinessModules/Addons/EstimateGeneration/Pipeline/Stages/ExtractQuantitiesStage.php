@@ -113,14 +113,46 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
                 $quantities[$key] = $quantity;
             }
             foreach ($canonical['warnings'] as $warning) {
+                $formula = (string) ($warning['formula'] ?? '');
+                $alias = match ($formula) {
+                    'wall_net_area' => 'net_wall_area',
+                    'sloped_roof_area' => 'roof_area',
+                    'floor_area' => 'floor_area',
+                    'earthwork_volume' => 'earthwork_volume',
+                    default => null,
+                };
+                if ($alias !== null) {
+                    unset($quantities[$alias]);
+                }
+                if (is_string($warning['logical_id'] ?? null)) {
+                    unset($quantities[$warning['logical_id']]);
+                }
                 $diagnostics[] = [
                     'code' => (string) ($warning['code'] ?? 'canonical_quantity_unresolved'),
-                    'severity' => 'warning',
+                    'severity' => 'error',
                     'path' => 'quantities.stage6',
                     'details' => $warning,
                 ];
             }
-            $data['stage6_generation_context'] = $canonical['context'];
+            $reviewItems = [];
+            foreach (array_slice($canonical['warnings'], 0, 1000) as $warning) {
+                $question = is_array($warning['questions'][0] ?? null) ? $warning['questions'][0] : [];
+                $sourceRefs = [];
+                foreach (array_slice(is_array($warning['inputs'] ?? null) ? $warning['inputs'] : [], 0, 16) as $input) {
+                    if (is_array($input) && is_array($input['source_locator'] ?? null)) {
+                        $sourceRefs[] = $input['source_locator'];
+                    }
+                }
+                $reviewItems[] = [
+                    'type' => 'quantity_blocking',
+                    'code' => (string) ($question['code'] ?? 'canonical_quantity_unresolved'),
+                    'work_item_key' => null,
+                    'message_key' => (string) ($question['message_key'] ?? 'estimate_generation.geometry_coverage_review'),
+                    'entity_id' => $warning['entity_id'] ?? null,
+                    'source_refs' => $sourceRefs,
+                ];
+            }
+            $data['stage6_generation_context'] = [...$canonical['context'], 'review_items' => $reviewItems];
             $metrics['canonical_derived_quantity_count'] = count($canonical['quantities']);
         }
         if ($quantities !== [] || is_array($normalized)) {

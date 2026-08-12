@@ -230,6 +230,48 @@ final class DerivedQuantityFactoryTest extends TestCase
     }
 
     #[Test]
+    public function physical_reference_registry_has_an_explicit_count_boundary(): void
+    {
+        $entities = [$this->entity('wall:1', 'wall')];
+        $facts = [
+            $this->fact('wall-length', 'wall:1', 'length', '5', 'm', ['evidence:wall-length']),
+            $this->fact('wall-height', 'wall:1', 'height', '3', 'm', ['evidence:wall-height']),
+        ];
+        $evidence = [
+            $this->evidence('evidence:wall-length', 'native:wall:length'),
+            $this->evidence('evidence:wall-height', 'native:wall:height'),
+        ];
+        $widths = $heights = [];
+        foreach (range(1, 3) as $index) {
+            $entities[] = $this->entity('opening:'.$index, 'opening', ['wall_id' => 'wall:1']);
+            $widths[] = 'opening-width:'.$index;
+            $heights[] = 'opening-height:'.$index;
+            $facts[] = $this->fact('opening-width:'.$index, 'opening:'.$index, 'width', '0.5', 'm', ['evidence:opening:'.$index]);
+            $facts[] = $this->fact('opening-height:'.$index, 'opening:'.$index, 'height', '2', 'm', ['evidence:opening:'.$index]);
+            $evidence[] = $this->evidence('evidence:opening:'.$index, 'native:opening:'.$index);
+        }
+        $request = $this->request('wall_net_area', 'wall:1', [
+            'wall_length' => 'wall-length', 'wall_height' => 'wall-height',
+            'opening_widths' => array_slice($widths, 0, 2),
+            'opening_heights' => array_slice($heights, 0, 2),
+        ]);
+        $request['limits'] += [
+            'max_geometry_entities' => 10,
+            'max_physical_references' => 2,
+            'max_physical_reference_bytes' => 65536,
+        ];
+        $snapshot = $this->snapshot($entities, $facts, $evidence);
+
+        $boundary = (new DerivedQuantityFactory)->derive($snapshot, [], $request);
+        self::assertTrue($boundary->isReady());
+
+        $request['operands']['opening_widths'][] = $widths[2];
+        $request['operands']['opening_heights'][] = $heights[2];
+        $overflow = (new DerivedQuantityFactory)->derive($snapshot, [], $request);
+        self::assertSame('physical_reference_budget_exceeded', $overflow->unresolvedInputs[0]['code'] ?? null);
+    }
+
+    #[Test]
     public function sloped_roof_keeps_facets_inside_one_roof_and_uses_no_float(): void
     {
         $entities = [
@@ -481,6 +523,73 @@ final class DerivedQuantityFactoryTest extends TestCase
             $request,
         );
         self::assertSame('duplicate_geometry', $duplicate->unresolvedInputs[0]['code'] ?? null);
+    }
+
+    #[Test]
+    public function overlapping_strong_locator_sets_identify_one_physical_opening(): void
+    {
+        $entities = [
+            $this->entity('wall:1', 'wall'),
+            $this->entity('opening:1', 'opening', ['wall_id' => 'wall:1']),
+            $this->entity('opening:2', 'opening', ['wall_id' => 'wall:1']),
+        ];
+        $facts = [
+            $this->fact('wall-length', 'wall:1', 'length', '5', 'm', ['evidence:wall-length']),
+            $this->fact('wall-height', 'wall:1', 'height', '3', 'm', ['evidence:wall-height']),
+            $this->fact('opening-1-width', 'opening:1', 'width', '1', 'm', ['evidence:native-1']),
+            $this->fact('opening-1-height', 'opening:1', 'height', '2', 'm', ['evidence:native-1']),
+            $this->fact('opening-2-width', 'opening:2', 'width', '1', 'm', ['evidence:native-2', 'evidence:annotation']),
+            $this->fact('opening-2-height', 'opening:2', 'height', '2', 'm', ['evidence:native-2', 'evidence:annotation']),
+        ];
+        $evidence = [
+            $this->evidence('evidence:wall-length', 'native:wall:length'),
+            $this->evidence('evidence:wall-height', 'native:wall:height'),
+            $this->evidence('evidence:native-1', 'native:block:42'),
+            $this->evidence('evidence:native-2', 'native:block:42'),
+            $this->evidence('evidence:annotation', 'annotation:42'),
+        ];
+        $request = $this->request('wall_net_area', 'wall:1', [
+            'wall_length' => 'wall-length',
+            'wall_height' => 'wall-height',
+            'opening_widths' => ['opening-1-width', 'opening-2-width'],
+            'opening_heights' => ['opening-1-height', 'opening-2-height'],
+        ]);
+
+        $result = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [], $request);
+
+        self::assertSame('duplicate_geometry', $result->unresolvedInputs[0]['code'] ?? null);
+
+        $permuted = (new DerivedQuantityFactory)->derive(
+            $this->snapshot(array_reverse($entities), array_reverse($facts), array_reverse($evidence)),
+            [],
+            $request,
+        );
+        self::assertSame($result->unresolvedInputs, $permuted->unresolvedInputs);
+
+        $conflictingFacts = $facts;
+        $conflictingFacts[5] = $this->fact(
+            'opening-2-height', 'opening:2', 'height', '2.5', 'm', ['evidence:native-2', 'evidence:annotation'],
+        );
+        $conflict = (new DerivedQuantityFactory)->derive(
+            $this->snapshot($entities, $conflictingFacts, $evidence),
+            [],
+            $request,
+        );
+        self::assertSame('geometry_conflict', $conflict->unresolvedInputs[0]['code'] ?? null);
+
+        $weakOnlyRequest = $this->request('wall_net_area', 'wall:1', [
+            'wall_length' => 'wall-length',
+            'wall_height' => 'wall-height',
+            'opening_widths' => ['opening-1-width'],
+            'opening_heights' => ['opening-1-height'],
+        ]);
+        $weakOnlyFacts = $facts;
+        $weakOnlyFacts[2] = $this->fact('opening-1-width', 'opening:1', 'width', '1', 'm', ['evidence:annotation']);
+        $weakOnlyFacts[3] = $this->fact('opening-1-height', 'opening:1', 'height', '2', 'm', ['evidence:annotation']);
+        $weakOnly = (new DerivedQuantityFactory)->derive(
+            $this->snapshot($entities, $weakOnlyFacts, $evidence), [], $weakOnlyRequest,
+        );
+        self::assertSame('geometry_identity_unresolved', $weakOnly->unresolvedInputs[0]['code'] ?? null);
     }
 
     #[Test]

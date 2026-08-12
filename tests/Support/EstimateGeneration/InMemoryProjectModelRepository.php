@@ -229,7 +229,8 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 }
             }
             if ($quantity->exactIdentity === null
-                || ! hash_equals($quantity->exactIdentity, DerivedQuantityIdentity::for($quantity))) {
+                || ! hash_equals($quantity->exactIdentity, DerivedQuantityIdentity::for($quantity))
+                || ! hash_equals($quantity->id, 'quantityv:'.$quantity->exactIdentity)) {
                 throw new InvalidArgumentException('Derived quantity exact identity does not match its content.');
             }
             $recordKey = $this->recordKey($quantity);
@@ -251,6 +252,71 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             ]);
             $this->currentQuantities[$logicalKey] = $quantity;
         }
+    }
+
+    public function replaceDerivedQuantityProjection(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        array $quantities,
+        array $inactiveLogicalIds,
+    ): void {
+        $inactive = array_fill_keys(array_values(array_unique(array_filter($inactiveLogicalIds, 'is_string'))), true);
+        foreach ($inactive as $logicalId => $_) {
+            unset($this->currentQuantities[implode(':', [
+                $organizationId, $projectId, $sessionId, $sourceVersion, $logicalId,
+            ])]);
+        }
+        $this->appendDerivedQuantities($quantities);
+    }
+
+    public function currentDerivedQuantities(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        int $limit = 200,
+    ): array {
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId, $sourceVersion]).':';
+        $items = array_values(array_filter(
+            $this->currentQuantities,
+            static fn (DerivedQuantity $quantity, string $key): bool => str_starts_with($key, $prefix),
+            ARRAY_FILTER_USE_BOTH,
+        ));
+        usort($items, static fn (DerivedQuantity $left, DerivedQuantity $right): int => $left->logicalId <=> $right->logicalId);
+
+        return array_slice($items, 0, $limit);
+    }
+
+    public function deactivateDerivedQuantityProjectionScope(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        ?string $sourceVersion = null,
+    ): void {
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
+        foreach ($this->currentQuantities as $key => $quantity) {
+            if (str_starts_with($key, $prefix)
+                && ($sourceVersion === null || $quantity->sourceVersion === $sourceVersion)) {
+                unset($this->currentQuantities[$key]);
+            }
+        }
+    }
+
+    public function derivedQuantityHistory(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $logicalId,
+        int $limit = 200,
+    ): array {
+        $items = array_values(array_filter($this->quantities, static fn (DerivedQuantity $quantity): bool => [$quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->sourceVersion, $quantity->logicalId]
+                === [$organizationId, $projectId, $sessionId, $sourceVersion, $logicalId]
+        ));
+
+        return array_slice($items, -$limit);
     }
 
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot
@@ -744,6 +810,12 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         foreach (array_keys($this->completenessHistory) as $key) {
             if (str_starts_with($key, implode(':', [$organizationId, $projectId, $sessionId]).':')) {
                 $this->completenessHistory[$key]['is_current'] = false;
+            }
+        }
+        $prefix = implode(':', [$organizationId, $projectId, $sessionId, $sourceVersion]).':';
+        foreach (array_keys($this->currentQuantities) as $key) {
+            if (str_starts_with($key, $prefix)) {
+                unset($this->currentQuantities[$key]);
             }
         }
     }

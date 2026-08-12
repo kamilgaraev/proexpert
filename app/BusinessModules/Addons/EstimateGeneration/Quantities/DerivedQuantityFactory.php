@@ -35,6 +35,10 @@ final class DerivedQuantityFactory
     /** @param list<Decision> $decisions @param array<string, mixed> $request */
     public function derive(ProjectModelSnapshot $snapshot, array $decisions, array $request): QuantityReadiness
     {
+        $preflightIssues = is_array($request['preflight_issues'] ?? null) ? $request['preflight_issues'] : [];
+        if ($preflightIssues !== []) {
+            return $this->issues($preflightIssues);
+        }
         $formula = is_string($request['formula_identity'] ?? null) ? $request['formula_identity'] : '';
         $roles = self::FORMULAS[$formula] ?? null;
         if ($roles === null) {
@@ -63,6 +67,8 @@ final class DerivedQuantityFactory
         $limits = is_array($request['limits'] ?? null) ? $request['limits'] : [];
         $maxOperands = $this->boundedLimit($limits['max_operands'] ?? null, 128, 1, 1000);
         $maxGeometryEntities = $this->boundedLimit($limits['max_geometry_entities'] ?? null, 128, 1, 1000);
+        $maxPhysicalReferences = $this->boundedLimit($limits['max_physical_references'] ?? null, 256, 1, 2000);
+        $maxPhysicalReferenceBytes = $this->boundedLimit($limits['max_physical_reference_bytes'] ?? null, 65536, 1024, 1048576);
         $maxEvidence = $this->boundedLimit($limits['max_evidence'] ?? null, 256, 1, 2000);
         $maxMetadataBytes = $this->boundedLimit($limits['max_metadata_bytes'] ?? null, 65536, 1024, 1048576);
         $requestedOperands = is_array($request['operands'] ?? null) ? $request['operands'] : [];
@@ -165,7 +171,14 @@ final class DerivedQuantityFactory
             return $this->issues($issues);
         }
 
-        $scopeIssue = $this->validateGeometryScope($formula, $target, $resolved, $entities);
+        $scopeIssue = $this->validateGeometryScope(
+            $formula,
+            $target,
+            $resolved,
+            $entities,
+            $maxPhysicalReferences,
+            $maxPhysicalReferenceBytes,
+        );
         if ($scopeIssue !== null) {
             return $this->issues([$scopeIssue]);
         }
@@ -204,6 +217,15 @@ final class DerivedQuantityFactory
         $evidenceIds = [];
         foreach ($flatOperands as $operand) {
             $evidenceIds = [...$evidenceIds, ...$operand['evidence_ids']];
+        }
+        $evidenceIds = array_values(array_unique($evidenceIds));
+        $coverages = is_array($request['geometry_coverages'] ?? null) ? $request['geometry_coverages'] : [];
+        foreach ($coverages as $coverage) {
+            foreach (is_array($coverage) ? ($coverage['evidence_ids'] ?? []) : [] as $coverageEvidenceId) {
+                if (is_string($coverageEvidenceId)) {
+                    $evidenceIds[] = $coverageEvidenceId;
+                }
+            }
         }
         $evidenceIds = array_values(array_unique($evidenceIds));
         sort($evidenceIds, SORT_STRING);
@@ -606,15 +628,21 @@ final class DerivedQuantityFactory
         ];
     }
 
-    private function validateGeometryScope(string $formula, Entity $target, array $resolved, array $entities): ?array
-    {
+    private function validateGeometryScope(
+        string $formula,
+        Entity $target,
+        array $resolved,
+        array $entities,
+        int $maxPhysicalReferences,
+        int $maxPhysicalReferenceBytes,
+    ): ?array {
         if ($formula === 'wall_net_area') {
             $widths = $resolved['opening_widths'] ?? [];
             $heights = $resolved['opening_heights'] ?? [];
             if (count($widths) !== count($heights)) {
                 return $this->issue('opening_operand_mismatch', 'openings');
             }
-            $registry = [];
+            $registry = ['references' => [], 'count' => 0, 'bytes' => 0];
             foreach ($widths as $index => $width) {
                 $height = $heights[$index];
                 if ($width['entity_id'] !== $height['entity_id']) {
@@ -624,15 +652,12 @@ final class DerivedQuantityFactory
                 if (! $opening instanceof Entity || ($opening->attributes['wall_id'] ?? null) !== $target->id) {
                     return $this->issue('entity_scope_mismatch', 'openings', $width['fact_id']);
                 }
-                $identity = $this->physicalGeometryIdentity($target, 'wall_opening', $opening, $width, $height);
-                if ($identity === '' && count($widths) > 1) {
-                    return $this->issue('geometry_identity_unresolved', 'openings', $width['fact_id']);
-                }
-                if ($identity !== '' && isset($registry[$identity])) {
-                    return $this->issue('duplicate_geometry', 'openings', $width['fact_id']);
-                }
-                if ($identity !== '') {
-                    $registry[$identity] = true;
+                $registryIssue = $this->registerPhysicalGeometry(
+                    $registry, $target, 'wall_opening', $opening, 'openings', $width['fact_id'],
+                    $maxPhysicalReferences, $maxPhysicalReferenceBytes, $width, $height,
+                );
+                if ($registryIssue !== null) {
+                    return $registryIssue;
                 }
             }
         }
@@ -641,7 +666,7 @@ final class DerivedQuantityFactory
             if ($count !== count($resolved['slope_rises']) || $count !== count($resolved['slope_runs'])) {
                 return $this->issue('roof_operand_mismatch', 'roof_facets');
             }
-            $facetRegistry = [];
+            $roofRegistry = ['references' => [], 'count' => 0, 'bytes' => 0];
             for ($index = 0; $index < $count; $index++) {
                 $entityId = $resolved['plan_areas'][$index]['entity_id'];
                 $facet = $entities[$entityId] ?? null;
@@ -650,40 +675,28 @@ final class DerivedQuantityFactory
                     || ! $facet instanceof Entity || ($facet->attributes['roof_id'] ?? null) !== $target->id) {
                     return $this->issue('entity_scope_mismatch', 'roof_facets', $resolved['plan_areas'][$index]['fact_id']);
                 }
-                $identity = $this->physicalGeometryIdentity(
-                    $target,
-                    'roof_facet',
-                    $facet,
-                    $resolved['plan_areas'][$index],
-                    $resolved['slope_rises'][$index],
-                    $resolved['slope_runs'][$index],
+                $registryIssue = $this->registerPhysicalGeometry(
+                    $roofRegistry, $target, 'roof_facet', $facet, 'roof_facets',
+                    $resolved['plan_areas'][$index]['fact_id'], $maxPhysicalReferences,
+                    $maxPhysicalReferenceBytes, $resolved['plan_areas'][$index],
+                    $resolved['slope_rises'][$index], $resolved['slope_runs'][$index],
                 );
-                if ($identity === '' && $count > 1) {
-                    return $this->issue('geometry_identity_unresolved', 'roof_facets', $resolved['plan_areas'][$index]['fact_id']);
-                }
-                if ($identity !== '' && isset($facetRegistry[$identity])) {
-                    return $this->issue('duplicate_geometry', 'roof_facets', $resolved['plan_areas'][$index]['fact_id']);
-                }
-                if ($identity !== '') {
-                    $facetRegistry[$identity] = true;
+                if ($registryIssue !== null) {
+                    return $registryIssue;
                 }
             }
             $openingAreas = $resolved['roof_opening_areas'] ?? [];
-            $openingRegistry = [];
             foreach ($openingAreas as $openingArea) {
                 $opening = $entities[$openingArea['entity_id']] ?? null;
                 if (! $opening instanceof Entity || ($opening->attributes['roof_id'] ?? null) !== $target->id) {
                     return $this->issue('entity_scope_mismatch', 'roof_openings', $openingArea['fact_id']);
                 }
-                $identity = $this->physicalGeometryIdentity($target, 'roof_opening', $opening, $openingArea);
-                if ($identity === '' && count($openingAreas) > 1) {
-                    return $this->issue('geometry_identity_unresolved', 'roof_openings', $openingArea['fact_id']);
-                }
-                if ($identity !== '' && isset($openingRegistry[$identity])) {
-                    return $this->issue('duplicate_geometry', 'roof_openings', $openingArea['fact_id']);
-                }
-                if ($identity !== '') {
-                    $openingRegistry[$identity] = true;
+                $registryIssue = $this->registerPhysicalGeometry(
+                    $roofRegistry, $target, 'roof_opening', $opening, 'roof_openings',
+                    $openingArea['fact_id'], $maxPhysicalReferences, $maxPhysicalReferenceBytes, $openingArea,
+                );
+                if ($registryIssue !== null) {
+                    return $registryIssue;
                 }
             }
         }
@@ -691,12 +704,56 @@ final class DerivedQuantityFactory
         return null;
     }
 
-    private function physicalGeometryIdentity(
+    private function registerPhysicalGeometry(
+        array &$registry,
+        Entity $target,
+        string $relation,
+        Entity $geometry,
+        string $operand,
+        string $factId,
+        int $maxReferences,
+        int $maxBytes,
+        array ...$operands,
+    ): ?array {
+        $references = $this->strongPhysicalReferences($target, $relation, $geometry, ...$operands);
+        if ($references === []) {
+            return $this->issue('geometry_identity_unresolved', $operand, $factId);
+        }
+        $signature = $this->canonicalIdentityJson([
+            'relation' => $relation,
+            'target' => $target->id,
+            'geometry' => array_diff_key($geometry->attributes, ['geometry_identity' => true]),
+            'operands' => array_map(static fn (array $item): array => array_intersect_key($item, array_flip([
+                'role', 'value', 'unit', 'source_value',
+            ])), $operands),
+        ]);
+        foreach ($references as $reference) {
+            $registry['count']++;
+            $registry['bytes'] += strlen($reference);
+            if ($registry['count'] > $maxReferences || $registry['bytes'] > $maxBytes) {
+                return $this->issue('physical_reference_budget_exceeded', $operand, $factId);
+            }
+            if (isset($registry['references'][$reference])) {
+                return $this->issue(
+                    hash_equals($registry['references'][$reference], $signature)
+                        ? 'duplicate_geometry' : 'geometry_conflict',
+                    $operand,
+                    $factId,
+                );
+            }
+            $registry['references'][$reference] = $signature;
+        }
+
+        return null;
+    }
+
+    /** @return list<string> */
+    private function strongPhysicalReferences(
         Entity $target,
         string $relation,
         Entity $geometry,
         array ...$operands,
-    ): string {
+    ): array {
         $declared = $geometry->attributes['geometry_identity'] ?? null;
         if (is_string($declared) && trim($declared) !== '') {
             $sourceVersions = [];
@@ -708,20 +765,24 @@ final class DerivedQuantityFactory
                 }
             }
             ksort($sourceVersions, SORT_STRING);
+            if ($sourceVersions === []) {
+                return [];
+            }
 
-            return hash('sha256', $this->canonicalIdentityJson([
+            return [$this->canonicalIdentityJson([
                 'scope' => [$target->organizationId, $target->projectId, $target->sessionId, $target->sourceVersion],
                 'target' => $target->id,
                 'relation' => $relation,
                 'geometry_identity' => $declared,
                 'source_versions' => array_keys($sourceVersions),
-            ]));
+            ])];
         }
-        $locators = [];
+        $references = [];
         foreach ($operands as $operand) {
             foreach ($operand['evidence'] ?? [] as $item) {
-                if (! is_array($item)
-                    || (! is_string($item['native_reference'] ?? null) && ! is_array($item['region'] ?? null))) {
+                $native = is_array($item) ? ($item['native_reference'] ?? null) : null;
+                if (! is_string($native) || trim($native) === ''
+                    || preg_match('/^(annotation|label|text):/i', $native) === 1) {
                     continue;
                 }
                 $locator = array_intersect_key($item, array_flip([
@@ -732,21 +793,19 @@ final class DerivedQuantityFactory
                     'region',
                     'native_reference',
                 ]));
-                $locators[$this->canonicalIdentityJson($locator)] = $locator;
+                $reference = $this->canonicalIdentityJson([
+                    'scope' => [$target->organizationId, $target->projectId, $target->sessionId],
+                    'target' => $target->id,
+                    'relation' => $relation,
+                    'coordinate_transform' => $geometry->attributes['coordinate_transform'] ?? null,
+                    'locator' => $locator,
+                ]);
+                $references[$reference] = true;
             }
         }
-        if ($locators === []) {
-            return '';
-        }
-        ksort($locators, SORT_STRING);
+        ksort($references, SORT_STRING);
 
-        return hash('sha256', $this->canonicalIdentityJson([
-            'scope' => [$target->organizationId, $target->projectId, $target->sessionId, $target->sourceVersion],
-            'target' => $target->id,
-            'relation' => $relation,
-            'coordinate_transform' => $geometry->attributes['coordinate_transform'] ?? null,
-            'locators' => array_values($locators),
-        ]));
+        return array_keys($references);
     }
 
     /** @return array<string, mixed> */

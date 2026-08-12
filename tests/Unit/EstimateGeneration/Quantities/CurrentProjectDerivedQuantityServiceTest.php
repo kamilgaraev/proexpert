@@ -22,7 +22,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     private const SOURCE = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     #[Test]
-    public function production_projection_treats_no_openings_as_empty_but_keeps_partial_opening_unresolved(): void
+    public function production_projection_requires_proven_empty_opening_coverage_and_keeps_partial_opening_unresolved(): void
     {
         $repository = new InMemoryProjectModelRepository;
         $wall = new Entity('wall:1', 10, 20, 30, self::SOURCE, 'wall', 'wall:1');
@@ -37,12 +37,37 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         $withoutOpenings = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))
             ->derive(10, 20, 30);
 
-        self::assertSame(
-            '15',
-            $withoutOpenings['quantities']['net_wall_area']->amount ?? null,
-            json_encode(['keys' => array_keys($withoutOpenings['quantities']), 'warnings' => $withoutOpenings['warnings']], JSON_THROW_ON_ERROR),
+        self::assertArrayNotHasKey('net_wall_area', $withoutOpenings['quantities']);
+        self::assertSame('geometry_coverage_unknown', $withoutOpenings['warnings'][0]['inputs'][0]['code'] ?? null);
+
+        $coverageEvidence = new Evidence(
+            'evidence:wall-openings-coverage', 10, 20, 30, self::SOURCE,
+            'artifact:plan', 'cad', 1, null, 'wall:1:openings',
         );
-        self::assertSame([], $withoutOpenings['warnings']);
+        $repository->saveSourceModel([], [
+            new Fact(
+                'fact:wall-openings-coverage', 10, 20, 30, self::SOURCE, $wall->id, 'geometry_coverage',
+                [
+                    'relation' => 'wall_openings',
+                    'status' => 'covered_empty',
+                    'entity_count' => 0,
+                    'representation' => [
+                        'type' => 'cad_geometry',
+                        'id' => 'representation:wall:1',
+                        'source_artifact_id' => 'artifact:plan',
+                        'source_version' => self::SOURCE,
+                    ],
+                ],
+                null, 1.0, 'document', 'confirmed', [$coverageEvidence->id],
+            ),
+        ], [$coverageEvidence]);
+        $this->makeStageFiveCurrent($repository);
+
+        $coveredEmpty = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))
+            ->derive(10, 20, 30);
+
+        self::assertSame('15', $coveredEmpty['quantities']['net_wall_area']->amount ?? null);
+        self::assertSame([], $coveredEmpty['warnings']);
 
         $partial = new Entity('opening:partial', 10, 20, 30, self::SOURCE, 'opening', 'opening:partial', [
             'wall_id' => $wall->id,
@@ -50,6 +75,22 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         $widthEvidence = new Evidence('evidence:opening-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'opening:partial');
         $repository->saveSourceModel([$partial], [
             new Fact('fact:opening-width', 10, 20, 30, self::SOURCE, $partial->id, 'width', '2', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
+            new Fact(
+                'fact:wall-openings-coverage:v2', 10, 20, 30, self::SOURCE, $wall->id, 'geometry_coverage',
+                [
+                    'relation' => 'wall_openings',
+                    'status' => 'covered_with_entities',
+                    'entity_count' => 1,
+                    'representation' => [
+                        'type' => 'cad_geometry',
+                        'id' => 'representation:wall:1:v2',
+                        'source_artifact_id' => 'artifact:plan',
+                        'source_version' => self::SOURCE,
+                    ],
+                ],
+                null, 1.0, 'document', 'confirmed', [$coverageEvidence->id], 2,
+                'fact:wall-openings-coverage',
+            ),
         ], [$widthEvidence]);
         $this->makeStageFiveCurrent($repository);
 
@@ -62,6 +103,22 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         self::assertSame('opening:partial', $withPartialOpening['warnings'][0]['inputs'][0]['entity_id'] ?? null);
         self::assertSame('height', $withPartialOpening['warnings'][0]['inputs'][0]['missing_operand'] ?? null);
         self::assertSame('opening:partial', $withPartialOpening['warnings'][0]['inputs'][0]['source_locator']['native_reference'] ?? null);
+        self::assertSame([], $repository->currentQuantities);
+
+        $heightEvidence = new Evidence('evidence:opening-height', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'opening:partial');
+        $repository->saveSourceModel([], [
+            new Fact('fact:opening-height', 10, 20, 30, self::SOURCE, $partial->id, 'height', '2', 'm', 1.0, 'document', 'confirmed', [$heightEvidence->id]),
+        ], [$heightEvidence]);
+        $this->makeStageFiveCurrent($repository);
+
+        $recovered = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))
+            ->derive(10, 20, 30);
+
+        self::assertSame('11', $recovered['quantities']['net_wall_area']->amount ?? null);
+        self::assertCount(1, $repository->currentQuantities);
+        $historyCount = count($repository->quantities);
+        (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->derive(10, 20, 30);
+        self::assertCount($historyCount, $repository->quantities);
     }
 
     #[Test]
@@ -111,6 +168,40 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         $service->derive(10, 20, 30);
         self::assertCount(3, $repository->quantities);
         self::assertCount(1, $repository->currentQuantities);
+    }
+
+    #[Test]
+    public function stale_stage_five_projection_deactivates_current_quantities_without_removing_history(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $room = new Entity('room:stale-stage-five', 10, 20, 30, self::SOURCE, 'room', 'room:stale-stage-five');
+        $lengthEvidence = new Evidence('evidence:stale-length:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:stale:length:v1');
+        $widthEvidence = new Evidence('evidence:stale-width:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:stale:width:v1');
+        $repository->saveSourceModel([$room], [
+            new Fact('fact:stale-length:v1', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
+            new Fact('fact:stale-width:v1', 10, 20, 30, self::SOURCE, $room->id, 'width', '3', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
+        ], [$lengthEvidence, $widthEvidence]);
+        $this->makeStageFiveCurrent($repository);
+
+        $service = new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory);
+        $service->derive(10, 20, 30);
+
+        self::assertCount(1, $repository->currentQuantities);
+        self::assertCount(1, $repository->quantities);
+
+        $replacementEvidence = new Evidence('evidence:stale-length:v2', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:stale:length:v2');
+        $repository->saveSourceModel([], [
+            new Fact(
+                'fact:stale-length:v2', 10, 20, 30, self::SOURCE, $room->id, 'length', '6', 'm', 1.0,
+                'document', 'confirmed', [$replacementEvidence->id], 2, 'fact:stale-length:v1',
+            ),
+        ], [$replacementEvidence]);
+
+        $blocked = $service->derive(10, 20, 30);
+
+        self::assertSame('stage5_projection_not_current', $blocked['warnings'][0]['code'] ?? null);
+        self::assertSame([], $repository->currentQuantities);
+        self::assertCount(1, $repository->quantities);
     }
 
     #[Test]
@@ -172,6 +263,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         $facetRiseEvidence = new Evidence('evidence:facet-rise', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'facet:rise');
         $facetRunEvidence = new Evidence('evidence:facet-run', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'facet:run');
         $openingAreaEvidence = new Evidence('evidence:opening-area', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'opening:area');
+        $roofCoverageEvidence = new Evidence('evidence:roof-coverage', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'roof:geometry:coverage');
         $area = new Fact('fact:roof-area', 10, 20, 30, self::SOURCE, 'roof:1', 'roof_area', '88.125', 'm2', 1.0, 'document', 'confirmed', [$evidence->id]);
         $length = new Fact('fact:room-length', 10, 20, 30, self::SOURCE, 'room:1', 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]);
         $width = new Fact('fact:room-width', 10, 20, 30, self::SOURCE, 'room:1', 'width', '4', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]);
@@ -179,10 +271,40 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         $facetRise = new Fact('fact:facet-rise', 10, 20, 30, self::SOURCE, 'facet:1', 'slope_rise', '3', 'm', 1.0, 'document', 'confirmed', [$facetRiseEvidence->id]);
         $facetRun = new Fact('fact:facet-run', 10, 20, 30, self::SOURCE, 'facet:1', 'slope_run', '4', 'm', 1.0, 'document', 'confirmed', [$facetRunEvidence->id]);
         $openingArea = new Fact('fact:opening-area', 10, 20, 30, self::SOURCE, 'roof-opening:1', 'area', '1.25', 'm2', 1.0, 'document', 'confirmed', [$openingAreaEvidence->id]);
+        $roofFacetCoverage = new Fact(
+            'fact:roof-facet-coverage', 10, 20, 30, self::SOURCE, 'roof:geometry', 'geometry_coverage_roof_facets',
+            [
+                'relation' => 'roof_facets',
+                'status' => 'covered_with_entities',
+                'entity_count' => 1,
+                'representation' => [
+                    'type' => 'cad_geometry',
+                    'id' => 'representation:roof:geometry',
+                    'source_artifact_id' => 'artifact:roof',
+                    'source_version' => self::SOURCE,
+                ],
+            ],
+            null, 1.0, 'document', 'confirmed', [$roofCoverageEvidence->id],
+        );
+        $roofOpeningCoverage = new Fact(
+            'fact:roof-opening-coverage', 10, 20, 30, self::SOURCE, 'roof:geometry', 'geometry_coverage_roof_openings',
+            [
+                'relation' => 'roof_openings',
+                'status' => 'covered_with_entities',
+                'entity_count' => 1,
+                'representation' => [
+                    'type' => 'cad_geometry',
+                    'id' => 'representation:roof:openings',
+                    'source_artifact_id' => 'artifact:roof',
+                    'source_version' => self::SOURCE,
+                ],
+            ],
+            null, 1.0, 'document', 'confirmed', [$roofCoverageEvidence->id],
+        );
         $repository->saveSourceModel(
             [$entity, $room, $roof, $facet, $opening],
-            [$area, $length, $width, $facetArea, $facetRise, $facetRun, $openingArea],
-            [$evidence, $lengthEvidence, $widthEvidence, $facetAreaEvidence, $facetRiseEvidence, $facetRunEvidence, $openingAreaEvidence],
+            [$area, $length, $width, $facetArea, $facetRise, $facetRun, $openingArea, $roofFacetCoverage, $roofOpeningCoverage],
+            [$evidence, $lengthEvidence, $widthEvidence, $facetAreaEvidence, $facetRiseEvidence, $facetRunEvidence, $openingAreaEvidence, $roofCoverageEvidence],
         );
 
         $catalogHash = str_repeat('c', 64);

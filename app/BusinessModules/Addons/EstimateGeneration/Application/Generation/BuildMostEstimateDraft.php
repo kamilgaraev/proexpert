@@ -31,6 +31,22 @@ final class BuildMostEstimateDraft
     {
         $limits = $this->limits($draft['stage6_limits'] ?? null);
         $reviewItems = [];
+        foreach (array_slice(is_array($draft['stage6_review_items'] ?? null) ? $draft['stage6_review_items'] : [], 0, self::MAX_REVIEW_ITEMS) as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $code = is_string($item['code'] ?? null) ? $item['code'] : 'canonical_quantity_unresolved';
+            $messageKey = is_string($item['message_key'] ?? null)
+                ? $item['message_key'] : 'estimate_generation.geometry_coverage_review';
+            $reviewItems[] = [
+                'type' => 'quantity_blocking',
+                'code' => $code,
+                'work_item_key' => null,
+                'message' => $this->message($messageKey),
+                'entity_id' => is_string($item['entity_id'] ?? null) ? $item['entity_id'] : null,
+                'source_refs' => array_slice(is_array($item['source_refs'] ?? null) ? $item['source_refs'] : [], 0, 16),
+            ];
+        }
         $candidateRows = [];
         $processedRows = 0;
         foreach (['catalog_identity', 'technology_identity', 'rule_identity'] as $identityKey) {

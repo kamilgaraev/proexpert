@@ -82,6 +82,9 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
             ],
             'technology_identity' => $stage6Context['technology_identity'] ?? ['status' => 'unresolved'],
             'rule_identity' => $stage6Context['rule_identity'] ?? ['status' => 'unresolved'],
+            'stage6_review_items' => is_array($stage6Context['review_items'] ?? null)
+                ? array_slice($stage6Context['review_items'], 0, 1000)
+                : [],
         ];
         $warnings = [];
         $rebuildKey = $source['rebuild_section_key'] ?? null;

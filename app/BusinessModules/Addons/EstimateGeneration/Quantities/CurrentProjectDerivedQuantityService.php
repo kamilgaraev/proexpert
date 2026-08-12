@@ -34,22 +34,22 @@ final readonly class CurrentProjectDerivedQuantityService
         $technology = $this->models->currentTechnologyRecommendations($organizationId, $projectId, $sessionId);
         $completeness = $this->models->currentCompleteness($organizationId, $projectId, $sessionId);
         if (count($snapshot->facts) > self::MAX_FACTS) {
-            return $this->blocked('quantity_fact_budget_exceeded', $capture['token'], $technology, $completeness);
+            return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'quantity_fact_budget_exceeded', $capture['token'], $technology, $completeness);
         }
         if (! $this->isCurrentStageFive($capture['token'], $technology, $completeness)) {
-            return $this->blocked('stage5_projection_not_current', $capture['token'], $technology, $completeness);
+            return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'stage5_projection_not_current', $capture['token'], $technology, $completeness);
         }
 
         $decisionIds = array_values(array_unique(array_filter($decisionIds, 'is_string')));
         if (count($decisionIds) > 256) {
-            return $this->blocked('quantity_decision_budget_exceeded', $capture['token'], $technology, $completeness);
+            return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'quantity_decision_budget_exceeded', $capture['token'], $technology, $completeness);
         }
         $assumptionFactIds = array_values(array_map(
             static fn (Fact $fact): string => $fact->id,
             array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->origin === 'user_assumption'),
         ));
         if (count($assumptionFactIds) > 100) {
-            return $this->blocked('quantity_decision_budget_exceeded', $capture['token'], $technology, $completeness);
+            return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'quantity_decision_budget_exceeded', $capture['token'], $technology, $completeness);
         }
         $decisions = [
             ...$this->models->decisions($organizationId, $projectId, $sessionId, $decisionIds),
@@ -58,21 +58,28 @@ final readonly class CurrentProjectDerivedQuantityService
         $decisions = $this->uniqueDecisions($decisions);
         $requests = $this->requests($snapshot, $capture['token'], $technology, $completeness, $decisions);
         if (count($requests) > self::MAX_FORMULAS) {
-            return $this->blocked('quantity_formula_budget_exceeded', $capture['token'], $technology, $completeness);
+            return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'quantity_formula_budget_exceeded', $capture['token'], $technology, $completeness);
         }
 
         $derived = [];
         $quantities = [];
         $warnings = [];
+        $inactiveLogicalIds = [];
         foreach ($requests as $request) {
             $readiness = $this->factory->derive($snapshot, $decisions, $request);
             if (! $readiness->isReady()) {
+                $inactiveLogicalIds[] = $request['quantity_id'];
                 $warnings[] = [
                     'code' => 'canonical_quantity_unresolved',
+                    'logical_id' => $request['quantity_id'],
                     'formula' => $request['formula_identity'],
                     'entity_id' => $request['entity_id'],
                     'inputs' => $readiness->unresolvedInputs,
-                    'questions' => $readiness->questions,
+                    'questions' => [[
+                        'code' => $readiness->unresolvedInputs[0]['code'] ?? 'canonical_quantity_unresolved',
+                        'message_key' => 'estimate_generation.geometry_coverage_review',
+                        'entity_id' => $request['entity_id'],
+                    ]],
                 ];
 
                 continue;
@@ -83,9 +90,15 @@ final readonly class CurrentProjectDerivedQuantityService
             }
             $derived[] = $quantity;
         }
-        if ($derived !== []) {
-            $this->models->appendDerivedQuantities($derived, 200);
-        }
+        $sourceVersion = (string) ($technology['source_version'] ?? $completeness['source_version'] ?? '');
+        $this->models->replaceDerivedQuantityProjection(
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+            $derived,
+            $inactiveLogicalIds,
+        );
         $quantities = $this->quantityDataMap($derived, $capture['token'], $warnings);
 
         return [
@@ -140,15 +153,23 @@ final readonly class CurrentProjectDerivedQuantityService
                     $technology,
                     $completeness,
                 );
+                $this->applyCoverage($request, $facts, $entity, 'wall_openings', count($openingsByWall[$entity->id] ?? []));
             } elseif ($semanticType === 'roof') {
+                $roofChildren = $roofChildrenByRoof[$entity->id] ?? [];
                 $request = $this->roofRequest(
                     $entity,
-                    $roofChildrenByRoof[$entity->id] ?? [],
+                    $roofChildren,
                     $facts,
                     $token,
                     $technology,
                     $completeness,
                 );
+                $facetCount = count(array_filter($roofChildren, static fn (Entity $child): bool => ($child->attributes['semantic_type'] ?? $child->type) === 'roof_facet'
+                ));
+                $openingCount = count(array_filter($roofChildren, static fn (Entity $child): bool => ($child->attributes['semantic_type'] ?? $child->type) === 'roof_opening'
+                ));
+                $this->applyCoverage($request, $facts, $entity, 'roof_facets', $facetCount);
+                $this->applyCoverage($request, $facts, $entity, 'roof_openings', $openingCount);
             } elseif ($semanticType === 'site' && $this->requiresSitePreparation($completeness)) {
                 $request = $this->binaryRequest($entity, $facts, 'earthwork_volume', 'area', 'depth', $token, $technology, $completeness, 'm3', 3);
             } else {
@@ -286,6 +307,48 @@ final readonly class CurrentProjectDerivedQuantityService
         $matches = $facts[$entityId][$type] ?? [];
 
         return count($matches) === 1 ? $matches[0] : null;
+    }
+
+    /** @param array<string, array<string, list<Fact>>> $facts */
+    private function applyCoverage(array &$request, array $facts, Entity $entity, string $relation, int $entityCount): void
+    {
+        $coverageFacts = array_values(array_filter(
+            [
+                ...($facts[$entity->id]['geometry_coverage'] ?? []),
+                ...($facts[$entity->id]['geometry_coverage_'.$relation] ?? []),
+            ],
+            static fn (Fact $fact): bool => is_array($fact->value) && ($fact->value['relation'] ?? null) === $relation,
+        ));
+        if (count($coverageFacts) !== 1) {
+            $request['preflight_issues'][] = [
+                'code' => 'geometry_coverage_unknown',
+                'operand' => 'geometry_coverage',
+                'entity_id' => $entity->id,
+                'relation' => $relation,
+            ];
+
+            return;
+        }
+        $fact = $coverageFacts[0];
+        $coverage = GeometryCoverage::fromFact($fact, $relation);
+        if (! $coverage instanceof GeometryCoverage) {
+            $request['preflight_issues'][] = [
+                'code' => 'geometry_coverage_blocked',
+                'operand' => 'geometry_coverage',
+                'entity_id' => $entity->id,
+                'relation' => $relation,
+            ];
+
+            return;
+        }
+        $issue = $coverage->issue($fact->status, $entityCount);
+        if ($issue !== null) {
+            $request['preflight_issues'][] = [...$issue, 'entity_id' => $entity->id, 'relation' => $relation];
+
+            return;
+        }
+        $request['geometry_coverages'][] = $coverage->identity();
+        $request['snapshot']['geometry_coverages'][] = $coverage->identity();
     }
 
     /** @return list<Decision> */
@@ -501,6 +564,8 @@ final readonly class CurrentProjectDerivedQuantityService
             'limits' => [
                 'max_operands' => 128,
                 'max_geometry_entities' => 128,
+                'max_physical_references' => 256,
+                'max_physical_reference_bytes' => 65536,
                 'max_evidence' => 256,
                 'max_metadata_bytes' => 65536,
             ],
@@ -509,6 +574,12 @@ final readonly class CurrentProjectDerivedQuantityService
 
     private function quantityDataMap(array $derived, string $modelVersion, array &$warnings): array
     {
+        $unresolvedFormulas = [];
+        foreach ($warnings as $warning) {
+            if (is_string($warning['formula'] ?? null)) {
+                $unresolvedFormulas[$warning['formula']] = true;
+            }
+        }
         $byFormula = [];
         foreach ($derived as $quantity) {
             if ($quantity instanceof DerivedQuantity) {
@@ -523,7 +594,7 @@ final readonly class CurrentProjectDerivedQuantityService
         ];
         $result = [];
         foreach ($byFormula as $formula => $items) {
-            if (isset($aliases[$formula]) && count($items) === 1) {
+            if (isset($aliases[$formula]) && count($items) === 1 && ! isset($unresolvedFormulas[$formula])) {
                 $result[$aliases[$formula]] = $this->quantityData($items[0], $modelVersion, $aliases[$formula]);
 
                 continue;
@@ -612,7 +683,27 @@ final readonly class CurrentProjectDerivedQuantityService
         return [
             'quantities' => [],
             'warnings' => [['code' => $code]],
-            'context' => $this->context($token, $technology, $comteness),
+            'context' => $this->context($token, $technology, $completeness),
         ];
+    }
+
+    private function blockedAndDeactivate(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $code,
+        string $token,
+        ?array $technology,
+        ?array $completeness,
+    ): array {
+        $sourceVersion = $technology['source_version'] ?? $completeness['source_version'] ?? null;
+        $this->models->deactivateDerivedQuantityProjectionScope(
+            $organizationId,
+            $projectId,
+            $sessionId,
+            is_string($sourceVersion) ? $sourceVersion : null,
+        );
+
+        return $this->blocked($code, $token, $technology, $completeness);
     }
 }

@@ -294,7 +294,7 @@ final class EstimateGenerationReviewItemService
                 'reason_codes' => [$code],
                 'candidates_count' => 0,
                 'has_current_norm' => false,
-                'source_refs' => [],
+                'source_refs' => array_slice(is_array($item['source_refs'] ?? null) ? $item['source_refs'] : [], 0, 16),
                 'pricing_blocker' => $code,
                 'pricing_status' => 'not_calculated',
                 'normative_status' => null,

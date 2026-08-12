@@ -26,6 +26,41 @@ interface ProjectModelRepository
 
     public function appendDerivedQuantities(array $quantities, int $chunkSize = 200): void;
 
+    public function replaceDerivedQuantityProjection(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        array $quantities,
+        array $inactiveLogicalIds,
+    ): void;
+
+    public function deactivateDerivedQuantityProjectionScope(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        ?string $sourceVersion = null,
+    ): void;
+
+    /** @return list<DerivedQuantity> */
+    public function currentDerivedQuantities(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        int $limit = 200,
+    ): array;
+
+    /** @return list<DerivedQuantity> */
+    public function derivedQuantityHistory(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $logicalId,
+        int $limit = 200,
+    ): array;
+
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot;
 
     /** @return array{snapshot:ProjectModelSnapshot,token:string} */
