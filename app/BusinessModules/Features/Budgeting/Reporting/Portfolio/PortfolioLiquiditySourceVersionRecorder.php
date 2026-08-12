@@ -248,15 +248,19 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
             'organization_id' => $organizationId,
             'source_type' => $sourceType,
             'source_id' => $sourceId,
-            'missing_fields' => array_values($missingFields),
         ];
+        $sourceHash = hash('sha256', CanonicalJson::encode([
+            ...$identity,
+            'missing_fields' => array_values($missingFields),
+        ]));
 
         PortfolioLiquiditySourceGap::query()->firstOrCreate(
             [
                 ...$identity,
-                'source_hash' => hash('sha256', CanonicalJson::encode($identity)),
+                'source_hash' => $sourceHash,
             ],
             [
+                'missing_fields' => array_values($missingFields),
                 'observed_at' => $recordedAt ?? now(),
                 'business_effective_at' => $businessEffectiveAt ?? now(),
                 'recorded_at' => $recordedAt ?? now(),
