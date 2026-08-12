@@ -679,6 +679,17 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimatePricingService::class);
         $this->app->singleton(EstimateValidationService::class);
         $this->app->singleton(EstimateDraftPersistenceService::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Review\EstimateReviewExceptionSource::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Review\ProjectModelEstimateReviewExceptionSource::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions => new \App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\EstimateReviewExceptionSource::class),
+                hash('sha256', (string) config('app.key').'|estimate-review-exceptions-v1'),
+            ),
+        );
         $this->app->singleton(GeneratedEstimateNumberAllocator::class, LaravelGeneratedEstimateNumberAllocator::class);
         $this->app->singleton(RetryableEstimateGenerationSessionRepository::class, EloquentRetryableEstimateGenerationSessionRepository::class);
         $this->app->singleton(EstimateGenerationRetryDispatcher::class, LaravelEstimateGenerationRetryDispatcher::class);

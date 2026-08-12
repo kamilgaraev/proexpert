@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\RecordEstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\SelectNormativeCandidate;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
@@ -14,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ListEstimateGene
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SearchEstimateGenerationNormativeCandidatesRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SelectEstimateGenerationNormativeCandidateRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateReviewExceptionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
@@ -37,6 +39,7 @@ final class EstimateGenerationReviewController extends Controller
         private readonly SelectNormativeCandidate $selectCandidate,
         private readonly RecordEstimateGenerationFeedback $recordFeedback,
         private readonly EstimateGenerationPackagePresenter $packagePresenter,
+        private readonly ListEstimateReviewExceptions $reviewExceptions,
     ) {}
 
     public function index(ListEstimateGenerationReviewItemsRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -46,6 +49,17 @@ final class EstimateGenerationReviewController extends Controller
 
             return AdminResponse::success($this->reviewItems->forSession($session, $request->validated()));
         }, 'review items', $project, $session);
+    }
+
+    public function exceptions(ListEstimateGenerationReviewItemsRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        return $this->safeRead(function () use ($request, $project, $session): JsonResponse {
+            $this->guard($request, $project, $session);
+            $result = $this->reviewExceptions->handle($session, $request->validated());
+            $result['items'] = EstimateReviewExceptionResource::collection($result['items'])->resolve($request);
+
+            return AdminResponse::success($result);
+        }, 'review exceptions', $project, $session);
     }
 
     public function search(SearchEstimateGenerationNormativeCandidatesRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse

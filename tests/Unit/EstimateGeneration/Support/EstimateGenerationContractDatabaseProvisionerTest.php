@@ -181,6 +181,7 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
         self::assertSame([
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000225_add_project_model_correction_scope_unique.php',
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php',
         ], EstimateGenerationContractDatabaseProvisioner::subjectInventory('project-model', $root));
 
         self::assertStringEndsWith('/2026_07_12_002200_close_training_benchmark_races.php',

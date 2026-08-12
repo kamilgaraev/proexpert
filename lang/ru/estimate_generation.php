@@ -603,6 +603,13 @@ return [
             'parameter' => 'параметр',
         ],
     ],
+    'review_item' => 'Позиция требует проверки',
+    'review_types' => [
+        'conflict' => 'Конфликт исходных данных',
+        'missing_required_data' => 'Не хватает обязательных данных',
+        'low_confidence' => 'Низкая уверенность',
+        'technology_recommendation' => 'Рекомендация по технологии',
+    ],
     'planning' => [
         'blocking_reason' => 'Подготовка сметы остановлена: требуется проверить исходные данные проекта.',
         'technology' => [

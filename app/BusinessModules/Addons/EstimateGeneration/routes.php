@@ -55,6 +55,7 @@ Route::middleware([
         Route::get('/{session}/packages/{package}', [EstimateGenerationPackageController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('packages.show');
         Route::get('/{session}/draft', [EstimateGenerationPackageController::class, 'draft'])->middleware('authorize:estimate_generation.view,project,project')->name('draft');
         Route::get('/{session}/review-items', [EstimateGenerationReviewController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('review-items');
+        Route::get('/{session}/review-exceptions', [EstimateGenerationReviewController::class, 'exceptions'])->middleware('authorize:estimate_generation.view,project,project')->name('review-exceptions');
         Route::get('/{session}', [EstimateGenerationSessionController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('show');
         Route::get('/{session}/export', [EstimateGenerationPackageController::class, 'export'])->middleware('authorize:estimate_generation.export,project,project')->name('export');
         Route::post('/{session}/apply', [EstimateGenerationActionController::class, 'apply'])->middleware('authorize:estimate_generation.apply,project,project')->name('apply');
