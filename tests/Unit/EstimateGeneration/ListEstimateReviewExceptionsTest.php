@@ -72,6 +72,54 @@ final class ListEstimateReviewExceptionsTest extends TestCase
         $service->handle($stale, ['cursor' => $first['meta']['next_cursor']]);
     }
 
+    public function test_cursor_is_bound_to_scope_filters_and_origin_qualified_identity(): void
+    {
+        $service = new ListEstimateReviewExceptions($this->source([
+            $this->item('same-id', 'conflict', true, '10.00', 'blocking', '0.80', ['origin' => 'stage4']),
+            $this->item('same-id', 'conflict', true, '10.00', 'blocking', '0.80', ['origin' => 'stage5']),
+            $this->item('same-id', 'conflict', true, '10.00', 'blocking', '0.80', [
+                'origin' => 'stage5', 'provenance' => ['source_version' => 'v2'],
+            ]),
+        ]));
+
+        $first = $service->handle($this->session(), ['limit' => 1, 'severity' => 'blocking']);
+        $second = $service->handle($this->session(), [
+            'limit' => 1,
+            'severity' => 'blocking',
+            'cursor' => $first['meta']['next_cursor'],
+        ]);
+
+        self::assertCount(1, $second['items']);
+        self::assertNotSame($first['items'][0]['origin'], $second['items'][0]['origin']);
+        $third = $service->handle($this->session(), [
+            'limit' => 1,
+            'severity' => 'blocking',
+            'cursor' => $second['meta']['next_cursor'],
+        ]);
+        self::assertCount(1, $third['items']);
+        self::assertNotSame($second['items'][0]['provenance']['source_version'], $third['items'][0]['provenance']['source_version']);
+
+        $crossSession = $this->session();
+        $crossSession->id = 10;
+        try {
+            $service->handle($crossSession, [
+                'limit' => 1,
+                'severity' => 'blocking',
+                'cursor' => $first['meta']['next_cursor'],
+            ]);
+            self::fail('Cursor from another session must be rejected.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('estimate_generation.review_cursor_stale', $exception->getMessage());
+        }
+
+        $this->expectExceptionMessage('estimate_generation.review_cursor_stale');
+        $service->handle($this->session(), [
+            'limit' => 1,
+            'severity' => 'warning',
+            'cursor' => $first['meta']['next_cursor'],
+        ]);
+    }
+
     public function test_locator_and_cost_are_bounded_and_never_expose_internal_fields(): void
     {
         $locators = array_fill(0, 25, [

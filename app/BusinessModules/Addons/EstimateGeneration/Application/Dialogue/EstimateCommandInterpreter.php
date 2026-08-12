@@ -8,5 +8,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 interface EstimateCommandInterpreter
 {
-    public function interpret(EstimateGenerationSession $session, int $actorId, string $command): EstimateCommandInterpretation;
+    /** @param array<string, mixed>|null $context */
+    public function interpret(EstimateGenerationSession $session, int $actorId, string $command, ?array $context = null): EstimateCommandInterpretation;
 }

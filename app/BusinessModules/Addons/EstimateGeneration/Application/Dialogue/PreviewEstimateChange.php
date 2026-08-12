@@ -13,11 +13,18 @@ use RuntimeException;
 
 final readonly class PreviewEstimateChange
 {
-    public function __construct(private EstimateChangeProposalRepository $proposals, private EstimateProposalVersionFence $versions) {}
+    public function __construct(
+        private EstimateChangeProposalRepository $proposals,
+        private EstimateProposalVersionFence $versions,
+        private DeterministicEstimateChangePreview $calculator = new DeterministicEstimateChangePreview,
+    ) {}
 
     public function handle(EstimateGenerationSession $session, int $actorId, string $command, string $idempotencyKey, EstimateCommandInterpretation $interpretation): EstimateChangeProposal
     {
-        $fingerprint = hash('sha256', $command);
+        $fingerprint = hash('sha256', json_encode([
+            'command' => $command,
+            'context_fingerprint' => $interpretation->payload['context_fingerprint'] ?? null,
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         $existing = $this->proposals->findByIdempotency((int) $session->organization_id, (int) $session->id, $idempotencyKey);
         if ($existing !== null) {
             if (! hash_equals((string) $existing->payload['payload_fingerprint'], $fingerprint)) {
@@ -27,15 +34,13 @@ final readonly class PreviewEstimateChange
             return $existing;
         }
         $payload = $interpretation->payload;
-        $affected = is_array($payload['affected'] ?? null) ? array_values($payload['affected']) : [];
+        $calculation = $this->calculator->calculate($session, $interpretation);
+        $affected = $calculation['affected'];
         if (count($affected) > 5000) {
             throw new RuntimeException('estimate_generation.proposal_too_large');
         }
-        $known = ($payload['cost_delta_known'] ?? false) === true;
-        $cost = $known ? (string) ($payload['cost_delta'] ?? '') : null;
-        if ($known && preg_match('/\A-?(?:0|[1-9]\d*)(?:\.\d{1,4})?\z/', $cost ?? '') !== 1) {
-            throw new RuntimeException('estimate_generation.proposal_cost_invalid');
-        }
+        $known = $calculation['state'] === 'known';
+        $cost = $known ? $calculation['delta'] : null;
         $proposal = [
             'id' => (string) Str::uuid(), 'organization_id' => (int) $session->organization_id,
             'project_id' => (int) $session->project_id, 'session_id' => (int) $session->id, 'actor_id' => $actorId,
@@ -46,7 +51,9 @@ final readonly class PreviewEstimateChange
             'dependency_keys' => $this->boundedList($payload['dependency_keys'] ?? [], 1000),
             'assumptions' => $this->boundedList($payload['assumptions'] ?? [], 100), 'questions' => $this->boundedList($payload['questions'] ?? [], 100),
             'evidence' => array_slice(is_array($payload['evidence'] ?? null) ? $payload['evidence'] : [], 0, 100),
-            'version_fence' => $this->versions->capture($session), 'cost_delta_known' => $known, 'cost_delta' => $cost,
+            'version_fence' => $this->versions->capture($session),
+            'cost_state' => $calculation['state'], 'cost_blockers' => $calculation['blockers'],
+            'cost_delta_known' => $known, 'cost_delta' => $cost,
             'expires_at' => now()->addMinutes(30), 'created_at' => now(),
         ];
 

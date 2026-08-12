@@ -27,6 +27,11 @@ final class EstimateProposalVersionFence
             ])->sortBy('id')->values()->all(),
             'catalog_version' => $draft['technology_identity']['version'] ?? $analysis['catalog_version'] ?? null,
             'price_version' => $draft['price_identity']['version'] ?? $draft['regional_context']['estimate_regional_price_version_id'] ?? null,
+            'context_fingerprint' => 'sha256:'.hash('sha256', json_encode([
+                'analysis' => $analysis,
+                'draft' => $draft,
+                'state_version' => (int) $session->state_version,
+            ], JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION)),
         ];
     }
 

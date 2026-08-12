@@ -13,6 +13,8 @@ final class ListEstimateReviewExceptions
 
     private const SOURCE_LIMIT = 1001;
 
+    private const CURSOR_VERSION = 3;
+
     public function __construct(
         private readonly EstimateReviewExceptionSource $source,
         private readonly string $cursorSecret = 'estimate-review-exceptions-v1',
@@ -27,7 +29,8 @@ final class ListEstimateReviewExceptions
         usort($items, $this->compare(...));
         $summary = $this->summary($items);
 
-        $cursor = $this->decodeCursor($filters['cursor'] ?? null, (int) $session->state_version);
+        $cursorScope = $this->cursorScope($session, $filters, $limit);
+        $cursor = $this->decodeCursor($filters['cursor'] ?? null, $cursorScope);
         if ($cursor !== null) {
             $items = array_values(array_filter($items, fn (array $item): bool => $this->compareTuple($this->tuple($item), $cursor) > 0));
         }
@@ -35,7 +38,7 @@ final class ListEstimateReviewExceptions
         $pageItems = array_slice($items, 0, $limit);
         $hasMore = count($items) > $limit;
         $nextCursor = $hasMore && $pageItems !== []
-            ? $this->encodeCursor((int) $session->state_version, $this->tuple($pageItems[array_key_last($pageItems)]))
+            ? $this->encodeCursor($cursorScope, $this->tuple($pageItems[array_key_last($pageItems)]))
             : null;
 
         return [
@@ -127,6 +130,8 @@ final class ListEstimateReviewExceptions
             $cost,
             $severity[$item['severity']] ?? 9,
             $this->decimal($item['confidence'], '1'),
+            (string) ($item['origin'] ?? 'unknown'),
+            $this->sourceIdentity($item),
             (string) $item['id'],
         ];
     }
@@ -163,15 +168,15 @@ final class ListEstimateReviewExceptions
     }
 
     /** @param array<int, int|string> $tuple */
-    private function encodeCursor(int $version, array $tuple): string
+    private function encodeCursor(array $scope, array $tuple): string
     {
-        $payload = base64_encode(json_encode(['v' => $version, 'p' => $tuple], JSON_THROW_ON_ERROR));
+        $payload = rtrim(strtr(base64_encode($this->canonicalJson(['v' => self::CURSOR_VERSION, 's' => $scope, 'p' => $tuple])), '+/', '-_'), '=');
 
-        return $payload.'.'.hash_hmac('sha256', $payload, $this->cursorSecret);
+        return $payload.'.'.hash_hmac('sha256', $payload, $this->secret());
     }
 
     /** @return array<int, int|string>|null */
-    private function decodeCursor(mixed $cursor, int $version): ?array
+    private function decodeCursor(mixed $cursor, array $scope): ?array
     {
         if ($cursor === null || $cursor === '') {
             return null;
@@ -180,15 +185,67 @@ final class ListEstimateReviewExceptions
             throw new RuntimeException('estimate_generation.review_cursor_invalid');
         }
         [$payload, $signature] = explode('.', $cursor, 2);
-        if (! hash_equals(hash_hmac('sha256', $payload, $this->cursorSecret), $signature)) {
+        if (strlen($cursor) > 4096 || ! hash_equals(hash_hmac('sha256', $payload, $this->secret()), $signature)) {
             throw new RuntimeException('estimate_generation.review_cursor_invalid');
         }
-        $decoded = json_decode((string) base64_decode($payload, true), true, 32, JSON_THROW_ON_ERROR);
-        if (! is_array($decoded) || (int) ($decoded['v'] ?? 0) !== $version || ! is_array($decoded['p'] ?? null)) {
+        $decoded = json_decode((string) base64_decode(strtr($payload, '-_', '+/'), true), true, 32, JSON_THROW_ON_ERROR);
+        if (! is_array($decoded) || (int) ($decoded['v'] ?? 0) !== self::CURSOR_VERSION
+            || ! is_array($decoded['p'] ?? null) || ! hash_equals(hash('sha256', $this->canonicalJson($scope)), hash('sha256', $this->canonicalJson($decoded['s'] ?? [])))) {
             throw new RuntimeException('estimate_generation.review_cursor_stale');
         }
 
         return array_values($decoded['p']);
+    }
+
+    /** @return array<string, mixed> */
+    private function cursorScope(EstimateGenerationSession $session, array $filters, int $limit): array
+    {
+        unset($filters['cursor']);
+        $filters['limit'] = $limit;
+        foreach ($filters as $key => $value) {
+            if ($value === null || $value === '') {
+                unset($filters[$key]);
+            } elseif (is_string($value)) {
+                $filters[$key] = trim($value);
+            }
+        }
+        ksort($filters, SORT_STRING);
+
+        return [
+            'organization_id' => (int) $session->organization_id,
+            'project_id' => (int) $session->project_id,
+            'session_id' => (int) $session->getKey(),
+            'state_version' => (int) $session->state_version,
+            'filter_hash' => hash('sha256', $this->canonicalJson($filters)),
+            'sort_version' => 3,
+            'limit' => $limit,
+        ];
+    }
+
+    private function secret(): string
+    {
+        $applicationKey = function_exists('app') && app()->bound('config') ? (string) config('app.key') : '';
+
+        return hash('sha256', $applicationKey.'|'.$this->cursorSecret);
+    }
+
+    private function canonicalJson(mixed $value): string
+    {
+        $normalize = static function (mixed $item) use (&$normalize): mixed {
+            if (! is_array($item)) {
+                return $item;
+            }
+            foreach ($item as $key => $nested) {
+                $item[$key] = $normalize($nested);
+            }
+            if (! array_is_list($item)) {
+                ksort($item, SORT_STRING);
+            }
+
+            return $item;
+        };
+
+        return json_encode($normalize($value), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
     }
 
     private function decimal(mixed $value, string $fallback): string
@@ -203,6 +260,16 @@ final class ListEstimateReviewExceptions
         [$whole, $fraction] = array_pad(explode('.', ltrim($value, '-'), 2), 2, '');
 
         return (str_starts_with($value, '-') ? '0' : '1').str_pad($whole, 24, '0', STR_PAD_LEFT).str_pad($fraction, 4, '0');
+    }
+
+    /** @param array<string, mixed> $item */
+    private function sourceIdentity(array $item): string
+    {
+        return hash('sha256', $this->canonicalJson([
+            'origin' => $item['origin'] ?? null,
+            'provenance' => $item['provenance'] ?? [],
+            'locators' => $item['locators'] ?? [],
+        ]));
     }
 
     private function nullableBoundedString(mixed $value, int $limit): ?string

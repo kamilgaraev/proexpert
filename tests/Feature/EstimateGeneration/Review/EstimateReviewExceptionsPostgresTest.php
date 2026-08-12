@@ -15,6 +15,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use RuntimeException;
 
 final class EstimateReviewExceptionsPostgresTest extends TestCase
 {
@@ -95,6 +96,18 @@ final class EstimateReviewExceptionsPostgresTest extends TestCase
             self::assertSame(77, $first['items'][0]['locators'][0]['artifact_id']);
             self::assertSame('Лист АР-8', $first['items'][0]['locators'][0]['native_reference']);
 
+            foreach ([
+                ['origin' => 'stage5', 'cursor' => $first['meta']['next_cursor'], 'limit' => 100],
+                ['origin' => 'stage6', 'cursor' => substr((string) $first['meta']['next_cursor'], 0, -1).'x', 'limit' => 100],
+            ] as $invalidCursor) {
+                try {
+                    $service->handle($session->fresh(), $invalidCursor);
+                    self::fail('Changed filter or forged cursor must fail closed.');
+                } catch (RuntimeException $exception) {
+                    self::assertStringStartsWith('estimate_generation.review_cursor_', $exception->getMessage());
+                }
+            }
+
             $foreign = Organization::factory()->create();
             $foreignProject = Project::factory()->create(['organization_id' => $foreign->id]);
             $foreignSession = EstimateGenerationSession::query()->create([
@@ -103,6 +116,12 @@ final class EstimateReviewExceptionsPostgresTest extends TestCase
                 'input_payload' => [], 'problem_flags' => [], 'state_version' => 7, 'draft_payload' => $this->draft([]),
             ]);
             self::assertSame([], $service->handle($foreignSession->fresh(), [])['items']);
+            try {
+                $service->handle($foreignSession->fresh(), ['cursor' => $first['meta']['next_cursor'], 'limit' => 100]);
+                self::fail('Cross-session cursor must fail closed.');
+            } catch (RuntimeException $exception) {
+                self::assertStringStartsWith('estimate_generation.review_cursor_', $exception->getMessage());
+            }
 
             DB::statement('SET LOCAL enable_seqscan = off');
             $plan = DB::select('EXPLAIN (FORMAT TEXT) SELECT id FROM estimate_generation_sessions WHERE id = ? AND organization_id = ?', [$session->id, $organization->id]);
