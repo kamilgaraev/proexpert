@@ -107,6 +107,57 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         self::assertSame(1, $activity['completed_operational_cycles']);
     }
 
+    public function test_details_do_not_treat_a_non_approved_shift_as_completed_when_approved_at_is_populated(): void
+    {
+        $observationStartedAt = CarbonImmutable::parse('2026-08-12T00:00:00Z');
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $userId = (int) $context->user->id;
+        $intakeProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $workProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $service = app(MachineryOperationsService::class);
+
+        CarbonImmutable::setTestNow($observationStartedAt->addMinute());
+        $asset = $service->createAsset($organizationId, [
+            'asset_code' => 'CUTOVER-NOT-APPROVED',
+            'name' => 'Единица с противоречивым рапортом',
+            'inventory_number' => 'CUTOVER-NOT-APPROVED',
+            'current_project_id' => (int) $intakeProject->id,
+        ]);
+
+        CarbonImmutable::setTestNow($observationStartedAt->addMinutes(2));
+        $assignment = $service->assignAsset($asset, $userId, [
+            'project_id' => (int) $workProject->id,
+            'planned_start_at' => now(),
+        ]);
+
+        CarbonImmutable::setTestNow($observationStartedAt->addMinutes(3));
+        $shift = $service->createShiftReport($organizationId, $userId, [
+            'asset_id' => (int) $asset->id,
+            'project_id' => (int) $workProject->id,
+            'assignment_id' => (int) $assignment->id,
+            'report_date' => now()->toDateString(),
+            'actual_hours' => 1,
+            'fuel_consumed' => 0,
+        ]);
+        $shift->update([
+            'status' => 'rejected',
+            'approved_at' => $observationStartedAt->addMinutes(4),
+        ]);
+
+        CarbonImmutable::setTestNow($observationStartedAt->addMinutes(5));
+        $exitCode = Artisan::call('assets:verify-cutover', [
+            '--format' => 'json',
+            '--details' => true,
+            '--since' => $observationStartedAt->toIso8601String(),
+        ]);
+        $activity = $this->jsonOutput()['details']['activity'];
+
+        self::assertSame(0, $exitCode);
+        self::assertSame(0, $activity['approved_shift_reports']);
+        self::assertSame(0, $activity['completed_operational_cycles']);
+    }
+
     public function test_command_rejects_an_invalid_observation_start(): void
     {
         $exitCode = Artisan::call('assets:verify-cutover', [
