@@ -690,6 +690,20 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 hash('sha256', (string) config('app.key').'|estimate-review-exceptions-v1'),
             ),
         );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpreter::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\ExistingProviderEstimateCommandInterpreter::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalMutationExecutor::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\CanonicalEstimateProposalMutationExecutor::class,
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateChangeProposalRepository::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalVersionFence::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\PreviewEstimateChange::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\ApplyEstimateChangeProposal::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CancelEstimateChangeProposal::class);
         $this->app->singleton(GeneratedEstimateNumberAllocator::class, LaravelGeneratedEstimateNumberAllocator::class);
         $this->app->singleton(RetryableEstimateGenerationSessionRepository::class, EloquentRetryableEstimateGenerationSessionRepository::class);
         $this->app->singleton(EstimateGenerationRetryDispatcher::class, LaravelEstimateGenerationRetryDispatcher::class);

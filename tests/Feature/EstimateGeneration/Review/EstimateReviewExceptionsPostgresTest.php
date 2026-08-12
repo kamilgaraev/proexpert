@@ -91,6 +91,7 @@ final class EstimateReviewExceptionsPostgresTest extends TestCase
             self::assertSame([], array_intersect(array_column($first['items'], 'id'), array_column($second['items'], 'id')));
             self::assertTrue($first['meta']['canonical_sort']);
             self::assertSame(205, $first['summary']['unresolved']);
+            self::assertSame($first['summary'], $second['summary']);
             self::assertSame(77, $first['items'][0]['locators'][0]['artifact_id']);
             self::assertSame('Лист АР-8', $first['items'][0]['locators'][0]['native_reference']);
 

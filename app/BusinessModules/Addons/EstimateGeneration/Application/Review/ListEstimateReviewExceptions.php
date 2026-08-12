@@ -25,13 +25,13 @@ final class ListEstimateReviewExceptions
         $source = $this->source->current($session, self::SOURCE_LIMIT);
         $items = array_values(array_filter(array_map($this->sanitize(...), $source['items']), fn (array $item): bool => $this->matches($item, $filters)));
         usort($items, $this->compare(...));
+        $summary = $this->summary($items);
 
         $cursor = $this->decodeCursor($filters['cursor'] ?? null, (int) $session->state_version);
         if ($cursor !== null) {
             $items = array_values(array_filter($items, fn (array $item): bool => $this->compareTuple($this->tuple($item), $cursor) > 0));
         }
 
-        $summary = $this->summary($items);
         $pageItems = array_slice($items, 0, $limit);
         $hasMore = count($items) > $limit;
         $nextCursor = $hasMore && $pageItems !== []
