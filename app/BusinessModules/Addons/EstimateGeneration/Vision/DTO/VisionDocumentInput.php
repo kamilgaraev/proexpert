@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationConte
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use InvalidArgumentException;
+use JsonException;
 
 final readonly class VisionDocumentInput
 {
@@ -32,9 +33,17 @@ final readonly class VisionDocumentInput
         public array $nativeReferences = [],
         /** @var list<TargetedSheetEvidence> */
         public array $supplementalEvidence = [],
+        public ?string $auxiliaryText = null,
+        /** @var array<string, mixed> */
+        public array $auxiliaryMetadata = [],
     ) {
         $dimensions = @getimagesizefromstring($imageContent);
         $detectedMime = is_array($dimensions) ? ($dimensions['mime'] ?? null) : null;
+        try {
+            $auxiliaryMetadataBytes = strlen(json_encode($auxiliaryMetadata, JSON_THROW_ON_ERROR));
+        } catch (JsonException) {
+            $auxiliaryMetadataBytes = PHP_INT_MAX;
+        }
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1 || $documentId < 1 || $pageId < 1
             || $pageNumber < 1 || $pageNumber > 10_000 || $processingUnitId < 1
             || preg_match('/^sha256:[a-f0-9]{64}$/', $sourceVersion) !== 1
@@ -51,6 +60,8 @@ final readonly class VisionDocumentInput
             || ($recheckScope === null && $supplementalEvidence !== [])
             || ($recheckScope?->entityKey !== null && $supplementalEvidence !== [])
             || ($recheckScope !== null && $recheckScope->entityKey === null && count($supplementalEvidence) !== 1)
+            || ($auxiliaryText !== null && (mb_strlen($auxiliaryText) > 12_000 || str_contains($auxiliaryText, "\0")))
+            || $auxiliaryMetadataBytes > 20_000
             || $operationContext->organizationId !== $organizationId
             || $operationContext->projectId !== $projectId
             || $operationContext->sessionId !== $sessionId

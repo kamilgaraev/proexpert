@@ -25,6 +25,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProvid
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckPlanner;
 use App\Models\Organization;
+use InvalidArgumentException;
+use JsonException;
 use Throwable;
 
 final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProcessor
@@ -53,19 +55,71 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             }
 
             return $this->withMeasuredRepresentation($measurement->result, $measurement);
-        } catch (DocumentUnitProcessingException $exception) {
-            throw $exception;
-        } catch (S3ObjectLocatorException $exception) {
-            throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_integrity_failed', previous: $exception);
-        } catch (S3ObjectTransportException $exception) {
-            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
-        } catch (GeometryExtractionException $exception) {
-            throw new DocumentUnitProcessingException($exception->reason, $exception);
-        } catch (DocumentManifestNeedsReview $exception) {
-            throw new DocumentUnitProcessingException($exception->safeCode, $exception);
+        } catch (DocumentRepresentationMeasurementException $exception) {
+            throw $this->processingFailure(
+                $exception->getPrevious() ?? $exception,
+                [
+                    'duration_ms' => $exception->measurement->durationMs,
+                    'peak_memory_bytes' => $exception->measurement->incrementalPeakMemoryBytes,
+                    'memory_metric' => $exception->measurement->memoryMetric,
+                    'limitations' => $exception->measurement->limitations,
+                ],
+            );
         } catch (Throwable $exception) {
-            throw new DocumentUnitProcessingException('document_geometry_processing_failed', $exception);
+            throw $this->processingFailure($exception);
         }
+    }
+
+    /** @param array<string, mixed> $resourceUsage */
+    private function processingFailure(Throwable $exception, array $resourceUsage = []): Throwable
+    {
+        return match (true) {
+            $exception instanceof DocumentUnitProcessingException => $resourceUsage === []
+                ? $exception
+                : new DocumentUnitProcessingException($exception->safeCode, $exception, $resourceUsage),
+            $exception instanceof TypedFailureException => $resourceUsage === []
+                ? $exception
+                : new TypedFailureException(
+                    $exception->category,
+                    $exception->safeCode,
+                    $exception->safeContext,
+                    $exception,
+                    $resourceUsage,
+                ),
+            $exception instanceof S3ObjectLocatorException => new TypedFailureException(
+                FailureCategory::Terminal,
+                'document_artifact_integrity_failed',
+                previous: $exception,
+                resourceUsage: $resourceUsage,
+            ),
+            $exception instanceof S3ObjectTransportException => new TypedFailureException(
+                FailureCategory::Recoverable,
+                'document_storage_unavailable',
+                previous: $exception,
+                resourceUsage: $resourceUsage,
+            ),
+            $exception instanceof GeometryExtractionException => new TypedFailureException(
+                $exception->retryable ? FailureCategory::Recoverable : FailureCategory::Terminal,
+                $exception->reason,
+                $exception->safeContext,
+                $exception,
+                $resourceUsage,
+            ),
+            $exception instanceof VisionProviderException => new TypedFailureException(
+                $exception->retryable ? FailureCategory::Recoverable : FailureCategory::Terminal,
+                $exception->reason,
+                $exception->httpCode === null ? [] : ['http_status' => $exception->httpCode],
+                $exception,
+                $resourceUsage,
+            ),
+            $exception instanceof DocumentManifestNeedsReview => new TypedFailureException(
+                FailureCategory::UserActionRequired,
+                $exception->safeCode,
+                previous: $exception,
+                resourceUsage: $resourceUsage,
+            ),
+            default => new DocumentUnitProcessingException('document_unit_processing_failed', $exception, $resourceUsage),
+        };
     }
 
     private function processMeasured(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -185,6 +239,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         if (! is_string($artifactVersion) || ! is_int($sourceBytes) || ! is_string($sourceSha256)) {
             throw new DocumentUnitProcessingException('raster_source_locator_invalid');
         }
+        $auxiliary = $this->pdfAuxiliary($context);
+        $nativeReferences = $auxiliary['representation'] instanceof DocumentRepresentation
+            ? $this->representationNativeReferences($auxiliary['representation'])
+            : [];
+        $nativePdfText = $auxiliary['native_text'];
         $preprocessed = $this->raster->preprocess(new RasterPreprocessInput(
             organizationId: $context->organizationId,
             sessionId: $context->sessionId,
@@ -198,6 +257,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             sourceBytes: $sourceBytes,
             sourceSha256: $sourceSha256,
             perspectiveRequired: $context->type === DocumentUnitType::Sketch,
+            preserveColor: $context->type === DocumentUnitType::PdfPage,
         ));
         $image = $this->reader->read(
             $context->organizationId,
@@ -206,16 +266,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $preprocessed->derivativeBytes,
             $preprocessed->derivativeHash,
         )->body;
+        $auxiliaryText = is_string($nativePdfText) ? mb_substr($nativePdfText, 0, 12_000) : null;
+        $auxiliaryMetadata = $this->visionAuxiliaryMetadata($auxiliary, $preprocessed, $nativePdfText);
         $correlationId = SheetAnalysisOperationIdentity::primary(
             $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $preprocessed->derivativeHash,
         );
-        $serializedRepresentation = $context->locator['document_representation'] ?? null;
-        $nativeReferences = [];
-        if (is_array($serializedRepresentation)) {
-            $representation = DocumentRepresentation::fromArray($serializedRepresentation);
-            $registry = $representation->nativeStructure['native_reference_registry'] ?? null;
-            $nativeReferences = is_array($registry) ? array_values(array_filter($registry, 'is_string')) : [];
-        }
         $input = new VisionDocumentInput(
             organizationId: $context->organizationId,
             projectId: $context->projectId,
@@ -244,6 +299,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             ),
             sourceTransform: $preprocessed->transform,
             nativeReferences: $nativeReferences,
+            auxiliaryText: $auxiliaryText,
+            auxiliaryMetadata: $auxiliaryMetadata,
         );
         $scope = new DocumentSheetOperationScope($context->organizationId, $context->projectId, $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $context->claimToken);
         $primaryRouting = ['role' => 'unknown', 'needs_review' => false, 'outcome' => 'not_applicable'];
@@ -261,36 +318,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         }
         if ($analysis === null) {
             throw new DocumentUnitProcessingException('sheet_analysis_requires_review');
-        }
-        $pdfGeometry = null;
-        $nativePdfText = null;
-        $geometryPath = $context->locator['geometry_artifact_path'] ?? null;
-        if ($context->type === DocumentUnitType::PdfPage && ! is_string($geometryPath)) {
-            throw new DocumentUnitProcessingException('pdf_page_geometry_locator_invalid');
-        }
-        if (is_string($geometryPath)) {
-            $geometryBytes = $context->locator['geometry_artifact_bytes'] ?? null;
-            $geometrySha256 = $context->locator['geometry_artifact_sha256'] ?? null;
-            if (! is_int($geometryBytes) || ! is_string($geometrySha256)) {
-                throw new DocumentUnitProcessingException('pdf_page_geometry_locator_invalid');
-            }
-            $geometryContent = $this->reader->read(
-                $context->organizationId,
-                $geometryPath,
-                max(1, (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024)),
-                $geometryBytes,
-                $geometrySha256,
-            )->body;
-            $decoded = json_decode($geometryContent, true, 64, JSON_THROW_ON_ERROR);
-            if (! is_array($decoded) || ($decoded['schema_version'] ?? null) !== 1
-                || ! is_string($decoded['text'] ?? null)
-                || ! is_array($decoded['geometry'] ?? null)
-                || ! is_array($decoded['sources'] ?? null)
-                || ! is_array($decoded['provenance'] ?? null)) {
-                throw new DocumentUnitProcessingException('pdf_page_geometry_contract_invalid');
-            }
-            $pdfGeometry = $decoded;
-            $nativePdfText = $decoded['text'];
         }
         $routing = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
         $targetedRouting = null;
@@ -315,8 +342,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $input,
                     $preprocessed,
                     $analysis,
-                    $nativePdfText,
-                    $pdfGeometry,
+                    $auxiliary,
                     $targetedRouting,
                     $provenance,
                     $routing,
@@ -361,6 +387,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     supplementalEvidence: $targetedPlan->supplementalEvidence === null
                         ? []
                         : [$targetedPlan->supplementalEvidence],
+                    auxiliaryText: $input->auxiliaryText,
+                    auxiliaryMetadata: $input->auxiliaryMetadata,
                 );
                 $targetedRun = $this->sheetAnalysisJournal?->run(
                     $targetedOperation,
@@ -405,29 +433,192 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $input,
             $preprocessed,
             $analysis,
-            $nativePdfText,
-            $pdfGeometry,
+            $auxiliary,
             $targetedRouting,
             $provenance,
             $routing,
         );
     }
 
-    /** @param array<string, mixed>|null $pdfGeometry @param array<string, mixed>|null $targetedRouting */
+    /**
+     * @return array{
+     *     representation: ?DocumentRepresentation,
+     *     geometry: ?array<string, mixed>,
+     *     native_text: ?string,
+     *     representation_status: string,
+     *     geometry_status: string
+     * }
+     */
+    private function pdfAuxiliary(DocumentUnitExecutionContext $context): array
+    {
+        if ($context->type !== DocumentUnitType::PdfPage) {
+            return [
+                'representation' => null,
+                'geometry' => null,
+                'native_text' => null,
+                'representation_status' => 'not_applicable',
+                'geometry_status' => 'not_applicable',
+            ];
+        }
+
+        $serialized = $context->locator['document_representation'] ?? null;
+        if (is_array($serialized)
+            && is_string($serialized['source_version'] ?? null)
+            && $serialized['source_version'] !== $context->sourceVersion) {
+            throw new DocumentUnitProcessingException('document_representation_source_mismatch');
+        }
+        $representation = null;
+        $representationStatus = 'unavailable:document_representation_missing';
+        if (is_array($serialized)) {
+            try {
+                $representation = DocumentRepresentation::fromArray($serialized);
+                $representationStatus = 'available';
+            } catch (InvalidArgumentException) {
+                $representationStatus = 'unavailable:document_representation_contract_invalid';
+            }
+        }
+
+        $geometryPath = $context->locator['geometry_artifact_path'] ?? null;
+        if (! is_string($geometryPath)) {
+            return [
+                'representation' => $representation,
+                'geometry' => null,
+                'native_text' => null,
+                'representation_status' => $representationStatus,
+                'geometry_status' => 'unavailable:pdf_geometry_missing',
+            ];
+        }
+
+        $geometryBytes = $context->locator['geometry_artifact_bytes'] ?? null;
+        $geometrySha256 = $context->locator['geometry_artifact_sha256'] ?? null;
+        if (! is_int($geometryBytes) || ! is_string($geometrySha256)) {
+            return [
+                'representation' => $representation,
+                'geometry' => null,
+                'native_text' => null,
+                'representation_status' => $representationStatus,
+                'geometry_status' => 'unavailable:pdf_geometry_locator_invalid',
+            ];
+        }
+        try {
+            $geometryContent = $this->reader->read(
+                $context->organizationId,
+                $geometryPath,
+                max(1, (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024)),
+                $geometryBytes,
+                $geometrySha256,
+            )->body;
+        } catch (S3ObjectLocatorException) {
+            return [
+                'representation' => $representation,
+                'geometry' => null,
+                'native_text' => null,
+                'representation_status' => $representationStatus,
+                'geometry_status' => 'unavailable:pdf_geometry_integrity_failed',
+            ];
+        } catch (S3ObjectTransportException) {
+            return [
+                'representation' => $representation,
+                'geometry' => null,
+                'native_text' => null,
+                'representation_status' => $representationStatus,
+                'geometry_status' => 'unavailable:pdf_geometry_storage_unavailable',
+            ];
+        }
+        try {
+            $decoded = json_decode($geometryContent, true, 64, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            $decoded = null;
+        }
+        if (! is_array($decoded) || ($decoded['schema_version'] ?? null) !== 1
+            || ! is_string($decoded['text'] ?? null)
+            || ! is_array($decoded['geometry'] ?? null)
+            || ! is_array($decoded['sources'] ?? null)
+            || ! is_array($decoded['provenance'] ?? null)) {
+            return [
+                'representation' => $representation,
+                'geometry' => null,
+                'native_text' => null,
+                'representation_status' => $representationStatus,
+                'geometry_status' => 'unavailable:pdf_geometry_contract_invalid',
+            ];
+        }
+
+        return [
+            'representation' => $representation,
+            'geometry' => $decoded,
+            'native_text' => $decoded['text'],
+            'representation_status' => $representationStatus,
+            'geometry_status' => 'available',
+        ];
+    }
+
+    /** @return list<string> */
+    private function representationNativeReferences(DocumentRepresentation $representation): array
+    {
+        $registry = $representation->nativeStructure['native_reference_registry'] ?? null;
+
+        return is_array($registry) ? array_values(array_filter($registry, 'is_string')) : [];
+    }
+
+    /**
+     * @param array{
+     *     representation: ?DocumentRepresentation,
+     *     geometry: ?array<string, mixed>,
+     *     native_text: ?string,
+     *     representation_status: string,
+     *     geometry_status: string
+     * } $auxiliary
+     * @return array<string, mixed>
+     */
+    private function visionAuxiliaryMetadata(
+        array $auxiliary,
+        \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessResult $preprocessed,
+        ?string $nativePdfText,
+    ): array {
+        $representation = $auxiliary['representation'];
+
+        return [
+            'representation_status' => $auxiliary['representation_status'],
+            'geometry_status' => $auxiliary['geometry_status'],
+            'capabilities' => $representation?->capabilities->toArray() ?? [
+                'text_spans' => $nativePdfText === null ? 'unavailable:pdf_text_layer_missing' : 'available',
+                'vectors' => 'unavailable:pdf_vectors_missing',
+                'page_render' => 'available',
+                'source_coordinates' => 'available',
+            ],
+            'source_bounds' => $representation?->sourceBounds
+                ?? [0, 0, $preprocessed->sourceWidth, $preprocessed->sourceHeight],
+            'native_text_truncated' => is_string($nativePdfText) && mb_strlen($nativePdfText) > 12_000,
+        ];
+    }
+
+    /**
+     * @param array{
+     *     representation: ?DocumentRepresentation,
+     *     geometry: ?array<string, mixed>,
+     *     native_text: ?string,
+     *     representation_status: string,
+     *     geometry_status: string
+     * } $auxiliary
+     * @param  array<string, mixed>|null  $targetedRouting
+     */
     private function rasterOutput(
         DocumentUnitExecutionContext $context,
         VisionDocumentInput $input,
         \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessResult $preprocessed,
         \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData $analysis,
-        ?string $nativePdfText,
-        ?array $pdfGeometry,
+        array $auxiliary,
         ?array $targetedRouting,
         DocumentUnitProvenance $provenance,
         ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRoutingResult $routing,
     ): DocumentUnitOutput {
         $payload = $analysis->toArray();
         $rasterRepresentation = null;
-        if (in_array($context->type, [DocumentUnitType::RasterImage, DocumentUnitType::Sketch], true)) {
+        if ($context->type === DocumentUnitType::PdfPage) {
+            $rasterRepresentation = $auxiliary['representation']
+                ?? $this->pdfRasterRepresentation($context, $preprocessed, $auxiliary);
+        } elseif (in_array($context->type, [DocumentUnitType::RasterImage, DocumentUnitType::Sketch], true)) {
             $rasterRepresentation = (new ImageDocumentAdapter)->representation(new DocumentUnitData(
                 $context->type,
                 $context->index,
@@ -444,6 +635,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             'perspective_confirmation_required',
             'geometry_incomplete',
         ]));
+        $nativePdfText = $auxiliary['native_text'];
+        $pdfGeometry = $auxiliary['geometry'];
         $finalRouting = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
         $routingPayload = $targetedRouting ?? $finalRouting?->toArray() ?? $routing?->toArray();
         if ($routingPayload !== null && $finalRouting?->classification->requiresTargetedReanalysis()) {
@@ -456,6 +649,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'vision_analysis' => $payload,
                 'sheet_analysis_routing' => $routingPayload,
                 'pdf_native_text' => $nativePdfText,
+                'pdf_geometry' => $pdfGeometry,
+                'auxiliary_sources' => [$auxiliary['representation_status'], $auxiliary['geometry_status']],
             ], JSON_THROW_ON_ERROR)),
             text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
                 static fn (array $element): string => trim((string) ($element['label'] ?? '')),
@@ -469,6 +664,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'vision_analysis' => $payload,
                 'sheet_analysis_routing' => $routingPayload,
                 'pdf_geometry' => $pdfGeometry,
+                'auxiliary_sources' => [
+                    'document_representation' => ['status' => $auxiliary['representation_status']],
+                    'pdf_geometry' => ['status' => $auxiliary['geometry_status']],
+                ],
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,
                     'derivative_hash' => $preprocessed->derivativeHash,
@@ -499,7 +698,56 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'geometry' => [
                     'confidence' => $geometryConfidence,
                     'hard_blockers' => $hardGeometryWarnings,
+                    'evidence_source' => 'vision',
+                    'auxiliary_status' => $auxiliary['geometry_status'],
                 ],
+            ],
+        );
+    }
+
+    /**
+     * @param  array{representation_status: string, geometry_status: string}  $auxiliary
+     */
+    private function pdfRasterRepresentation(
+        DocumentUnitExecutionContext $context,
+        \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessResult $preprocessed,
+        array $auxiliary,
+    ): DocumentRepresentation {
+        $locator = $context->locator;
+        unset(
+            $locator['document_representation'],
+            $locator['geometry_artifact_path'],
+            $locator['geometry_artifact_bytes'],
+            $locator['geometry_artifact_sha256'],
+            $locator['native_reference_registry'],
+        );
+        $locator['visual_artifact_path'] = $preprocessed->derivativeStorageKey;
+        $locator['source_bounds'] = [0, 0, $preprocessed->sourceWidth, $preprocessed->sourceHeight];
+        $locator['text_layer_status'] = 'unavailable';
+        $locator['object_count'] = 0;
+        $locator['representation_bytes'] = $preprocessed->derivativeBytes;
+
+        return (new DocumentRepresentationBuilder)->build(
+            'pdf',
+            new DocumentUnitData(
+                DocumentUnitType::PdfPage,
+                $context->index,
+                $context->sourceVersion,
+                $locator,
+            ),
+            [
+                'geometry_artifact_path' => null,
+                'geometry_artifact_sha256' => null,
+                'text_spans_artifact_path' => null,
+                'vector_artifact_path' => null,
+                'native_reference_registry' => [],
+                'auxiliary_sources' => $auxiliary,
+            ],
+            [
+                'text_spans' => 'unavailable:pdf_text_layer_missing',
+                'vectors' => 'unavailable:pdf_vectors_missing',
+                'page_render' => 'available',
+                'source_coordinates' => 'available',
             ],
         );
     }

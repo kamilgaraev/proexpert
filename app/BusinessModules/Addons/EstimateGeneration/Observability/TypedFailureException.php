@@ -15,6 +15,7 @@ class TypedFailureException extends RuntimeException
         public readonly string $safeCode,
         public readonly array $safeContext = [],
         ?Throwable $previous = null,
+        public readonly array $resourceUsage = [],
     ) {
         parent::__construct($safeCode, previous: $previous);
     }

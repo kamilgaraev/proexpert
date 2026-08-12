@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSystemFailureDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -18,7 +19,10 @@ final readonly class EstimateGenerationDocumentActionBuilder
 
     private const IGNORE_STATUSES = ['ready', 'failed', 'needs_review'];
 
-    public function __construct(private AuthorizationService $authorization) {}
+    public function __construct(
+        private AuthorizationService $authorization,
+        private DocumentSystemFailureDetector $systemFailures = new DocumentSystemFailureDetector,
+    ) {}
 
     /** @return list<array{action: string, label: string, method: string, endpoint: string, requires_confirmation: bool, state_version: int}> */
     public function forDocument(EstimateGenerationDocument $document, User $user): array
@@ -40,6 +44,9 @@ final readonly class EstimateGenerationDocumentActionBuilder
         }
 
         $status = (string) $document->status;
+        if ($this->systemFailures->detected($document) && ! $this->systemFailures->temporary($document)) {
+            return [];
+        }
         $actions = [];
         if (in_array($status, self::RETRY_STATUSES, true)) {
             $actions[] = $this->action($document, $session, 'retry_document', 'retry', false);

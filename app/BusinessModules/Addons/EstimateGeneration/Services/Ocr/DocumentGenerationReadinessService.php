@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentLifecycleState;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSystemFailureDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -37,11 +38,15 @@ class DocumentGenerationReadinessService
 
     private EstimateGenerationQualityReviewPolicy $qualityReview;
 
+    private DocumentSystemFailureDetector $systemFailures;
+
     public function __construct(
         private readonly ?EffectiveSettingsResolver $settingsResolver = null,
         ?EstimateGenerationQualityReviewPolicy $qualityReview = null,
+        ?DocumentSystemFailureDetector $systemFailures = null,
     ) {
         $this->qualityReview = $qualityReview ?? new EstimateGenerationQualityReviewPolicy;
+        $this->systemFailures = $systemFailures ?? new DocumentSystemFailureDetector;
     }
 
     /**
@@ -52,7 +57,10 @@ class DocumentGenerationReadinessService
         $documents = $session->relationLoaded('documents')
             ? $session->documents
             : $session->documents()->get();
-        $effective = $documents->isEmpty()
+        $hasSystemFailure = $documents->contains(
+            fn (EstimateGenerationDocument $document): bool => $this->systemFailures->detected($document),
+        );
+        $effective = $documents->isEmpty() || $hasSystemFailure
             ? null
             : $this->settingsResolver?->forOperation(
                 AiOperationContext::deterministicId(implode('|', [
@@ -92,6 +100,7 @@ class DocumentGenerationReadinessService
         $items = $documents->map(fn (EstimateGenerationDocument $document): array => $this->documentState($document, $settings));
         $pending = $items->where('is_pending', true);
         $failed = $items->where('status', 'failed');
+        $systemFailures = $items->where('is_system_failure', true);
         $needsReview = $items->where('status', 'needs_review');
         $ignored = $items->where('status', 'ignored');
         $ready = $items->where('is_ready', true);
@@ -113,6 +122,7 @@ class DocumentGenerationReadinessService
             'ready_count' => $ready->count(),
             'pending_count' => $pending->count(),
             'failed_count' => $failed->count(),
+            'system_failure_count' => $systemFailures->count(),
             'needs_review_count' => $needsReview->count(),
             'ignored_count' => $ignored->count(),
             'missing_understanding_count' => $missingUnderstandingDocuments->count(),
@@ -125,8 +135,11 @@ class DocumentGenerationReadinessService
             'has_documents' => $hasDocuments,
             'has_pending' => $pending->isNotEmpty(),
             'has_action_required' => $actionRequiredCount > 0,
-            'can_analyze' => $hasDocuments && $pending->isEmpty(),
-            'can_generate' => $hasDocuments && $pending->isEmpty() && $actionRequiredCount === 0,
+            'can_analyze' => $hasDocuments && $pending->isEmpty() && $systemFailures->isEmpty(),
+            'can_generate' => $hasDocuments
+                && $pending->isEmpty()
+                && $systemFailures->isEmpty()
+                && $actionRequiredCount === 0,
             'problem_flags' => $this->problemFlags($items),
             'statuses' => (object) $items->countBy('status')->all(),
             'items' => $items->values()->all(),
@@ -142,7 +155,8 @@ class DocumentGenerationReadinessService
     ): array {
         $status = (string) ($document->status ?? 'uploaded');
         $isPending = in_array($status, self::PENDING_STATUSES, true);
-        $isActionStatus = in_array($status, self::ACTION_REQUIRED_STATUSES, true);
+        $isSystemFailure = $this->systemFailures->detected($document);
+        $isActionStatus = in_array($status, self::ACTION_REQUIRED_STATUSES, true) && ! $isSystemFailure;
         $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
         $qualityFlags = is_array($document->quality_flags) ? $document->quality_flags : [];
         $hasConflicts = (is_array($factsSummary['conflicts'] ?? null) && $factsSummary['conflicts'] !== []);
@@ -181,14 +195,18 @@ class DocumentGenerationReadinessService
             'capabilities_complete' => $capabilitiesComplete,
             'is_ready' => $status === 'ready' && $structureComplete && $capabilitiesComplete,
             'is_pending' => $isPending,
+            'is_system_failure' => $isSystemFailure,
+            'is_temporary_failure' => $isSystemFailure && $this->systemFailures->temporary($document),
             'is_action_required' => $isActionStatus
-                || $hasConflicts
-                || $hasLowQuality
-                || (! $isPending && ! $structureComplete)
-                || (! $isPending && ! $capabilitiesComplete)
-                || $missingDocumentUnderstanding
-                || $requiresDocumentReview
-                || $requiresQualityReview,
+                || (! $isSystemFailure && (
+                    $hasConflicts
+                    || $hasLowQuality
+                    || (! $isPending && ! $structureComplete)
+                    || (! $isPending && ! $capabilitiesComplete)
+                    || $missingDocumentUnderstanding
+                    || $requiresDocumentReview
+                    || $requiresQualityReview
+                )),
             'updated_at' => $document->updated_at?->toISOString(),
         ];
     }
@@ -305,6 +323,10 @@ class DocumentGenerationReadinessService
     {
         if (($summary['pending_count'] ?? 0) > 0) {
             return 'estimate_generation.documents_processing';
+        }
+
+        if (($summary['system_failure_count'] ?? 0) > 0) {
+            return 'estimate_generation.document_processing_system_failed';
         }
 
         if (($summary['action_required_count'] ?? 0) > 0) {

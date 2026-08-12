@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use DateTimeImmutable;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
@@ -98,6 +99,17 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
     public function claim(int $unitId, string $sourceVersion, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt, int $maxAttempts): DocumentProcessingUnitClaim
     {
         return $this->database->transaction(function () use ($unitId, $sourceVersion, $now, $leaseExpiresAt, $maxAttempts): DocumentProcessingUnitClaim {
+            $scope = $this->query()->find($unitId);
+            if (! $scope instanceof EstimateGenerationProcessingUnit) {
+                return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Stale);
+            }
+            $this->documentQuery()
+                ->whereKey($scope->document_id)
+                ->where('organization_id', $scope->organization_id)
+                ->where('project_id', $scope->project_id)
+                ->where('session_id', $scope->session_id)
+                ->lockForUpdate()
+                ->first();
             $unit = $this->query()->with('document')->lockForUpdate()->find($unitId);
 
             if (! $this->isCurrent($unit, $sourceVersion)) {
@@ -130,6 +142,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 'failed_at' => null,
                 'failure_code' => null,
                 'failure_fingerprint' => null,
+                'metadata' => array_diff_key((array) $unit->metadata, ['failure_category' => true]),
             ])->save();
             if ($unit->document instanceof EstimateGenerationDocument
                 && in_array((string) $unit->document->status, ['uploaded', 'queued', 'processing'], true)) {
@@ -222,13 +235,58 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             ->update(['lease_expires_at' => $leaseExpiresAt, 'updated_at' => $now]) === 1;
     }
 
-    public function fail(DocumentProcessingUnitClaim $claim, string $code, string $fingerprint, DateTimeImmutable $now): bool
-    {
-        return $this->database->transaction(function () use ($claim, $code, $fingerprint, $now): bool {
-            $updated = $this->claimQuery($claim)
-                ->where('status', DocumentProcessingUnitStatus::Running->value)
-                ->where('claim_token', $claim->token)->where('lease_expires_at', '>', $now)
-                ->update(['status' => DocumentProcessingUnitStatus::Failed->value, 'claim_token' => null, 'lease_expires_at' => null, 'failure_code' => $code, 'failure_fingerprint' => $fingerprint, 'failed_at' => $now, 'updated_at' => $now]) === 1;
+    public function fail(
+        DocumentProcessingUnitClaim $claim,
+        string $code,
+        string $fingerprint,
+        DateTimeImmutable $now,
+        FailureCategory $category = FailureCategory::Recoverable,
+        bool $circuitBreaking = false,
+        array $resourceUsage = [],
+    ): bool {
+        return $this->database->transaction(function () use ($claim, $code, $fingerprint, $now, $category, $circuitBreaking, $resourceUsage): bool {
+            $document = $this->documentQuery()
+                ->whereKey($claim->documentId)
+                ->where('organization_id', $claim->organizationId)
+                ->where('project_id', $claim->projectId)
+                ->where('session_id', $claim->sessionId)
+                ->where('source_version', $claim->sourceVersion)
+                ->lockForUpdate()
+                ->first();
+            if (! $document instanceof EstimateGenerationDocument) {
+                return false;
+            }
+
+            $unit = $this->claimQuery($claim)->lockForUpdate()->first();
+            if (! $unit instanceof EstimateGenerationProcessingUnit
+                || $unit->status !== DocumentProcessingUnitStatus::Running
+                || ! is_string($unit->claim_token)
+                || ! is_string($claim->token)
+                || ! hash_equals($unit->claim_token, $claim->token)
+                || $unit->lease_expires_at === null
+                || $unit->lease_expires_at->toDateTimeImmutable() <= $now) {
+                return false;
+            }
+
+            $updates = [
+                'status' => DocumentProcessingUnitStatus::Failed->value,
+                'claim_token' => null,
+                'lease_expires_at' => null,
+                'failure_code' => $code,
+                'failure_fingerprint' => $fingerprint,
+                'failed_at' => $now,
+                'updated_at' => $now,
+                'metadata' => [
+                    ...(array) $unit->metadata,
+                    'failure_category' => $category->value,
+                    ...($resourceUsage === [] ? [] : ['resource_usage' => $resourceUsage]),
+                ],
+            ];
+            if ($category !== FailureCategory::Recoverable) {
+                $updates['attempt_count'] = ProcessDocumentUnit::MAX_ATTEMPTS;
+            }
+            $unit->forceFill($updates)->save();
+            $updated = true;
 
             if ($updated) {
                 $this->pageQuery()
@@ -243,6 +301,42 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                         'status' => ManageEstimateGenerationDocumentPages::STATUS_FAILED,
                         'updated_at' => $now,
                     ]);
+            }
+
+            if ($updated && $circuitBreaking && $this->systemicFailureCount($claim, $fingerprint) >= 3) {
+                $pendingIds = $this->scopedUnitQuery($claim)
+                    ->where('status', DocumentProcessingUnitStatus::Pending->value)
+                    ->lockForUpdate()
+                    ->pluck('id');
+                if ($pendingIds->isNotEmpty()) {
+                    $this->scopedUnitQuery($claim)
+                        ->whereKey($pendingIds)
+                        ->where('status', DocumentProcessingUnitStatus::Pending->value)
+                        ->update([
+                            'status' => DocumentProcessingUnitStatus::Failed->value,
+                            'attempt_count' => ProcessDocumentUnit::MAX_ATTEMPTS,
+                            'claim_token' => null,
+                            'lease_expires_at' => null,
+                            'next_dispatch_at' => null,
+                            'failure_code' => 'document_systemic_failure',
+                            'failure_fingerprint' => $fingerprint,
+                            'metadata' => $this->terminalFailureMetadataExpression(),
+                            'failed_at' => $now,
+                            'updated_at' => $now,
+                        ]);
+                    $this->pageQuery()
+                        ->where('organization_id', $claim->organizationId)
+                        ->where('project_id', $claim->projectId)
+                        ->where('session_id', $claim->sessionId)
+                        ->where('document_id', $claim->documentId)
+                        ->where('source_version', $claim->sourceVersion)
+                        ->whereIn('processing_unit_id', $pendingIds)
+                        ->where('status', '<>', ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED)
+                        ->update([
+                            'status' => ManageEstimateGenerationDocumentPages::STATUS_FAILED,
+                            'updated_at' => $now,
+                        ]);
+                }
             }
 
             return $updated;
@@ -270,13 +364,29 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
 
     private function record(EstimateGenerationProcessingUnit $unit): DocumentProcessingUnitRecord
     {
-        return new DocumentProcessingUnitRecord((int) $unit->id, (int) $unit->organization_id, (int) $unit->project_id, (int) $unit->session_id, (int) $unit->document_id, new DocumentUnitData($unit->unit_type, (int) $unit->unit_index, (string) $unit->source_version, (array) $unit->locator), $unit->status, (int) $unit->attempt_count, $unit->claim_token, $unit->lease_expires_at?->toDateTimeImmutable(), $unit->output_version, (int) $unit->output_count, $unit->failure_code, $unit->failure_fingerprint);
+        $failureCategory = FailureCategory::tryFrom((string) (((array) $unit->metadata)['failure_category'] ?? ''));
+
+        return new DocumentProcessingUnitRecord((int) $unit->id, (int) $unit->organization_id, (int) $unit->project_id, (int) $unit->session_id, (int) $unit->document_id, new DocumentUnitData($unit->unit_type, (int) $unit->unit_index, (string) $unit->source_version, (array) $unit->locator), $unit->status, (int) $unit->attempt_count, $unit->claim_token, $unit->lease_expires_at?->toDateTimeImmutable(), $unit->output_version, (int) $unit->output_count, $unit->failure_code, $unit->failure_fingerprint, $failureCategory);
+    }
+
+    private function terminalFailureMetadataExpression(): \Illuminate\Database\Query\Expression
+    {
+        return $this->database->raw("COALESCE(metadata, '{}'::jsonb) || '{\"failure_category\":\"terminal\"}'::jsonb");
     }
 
     /** @return Builder<EstimateGenerationProcessingUnit> */
     private function query(): Builder
     {
         $model = new EstimateGenerationProcessingUnit;
+        $model->setConnection($this->database->getName());
+
+        return $model->newQuery();
+    }
+
+    /** @return Builder<EstimateGenerationDocument> */
+    private function documentQuery(): Builder
+    {
+        $model = new EstimateGenerationDocument;
         $model->setConnection($this->database->getName());
 
         return $model->newQuery();
@@ -360,5 +470,24 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             ->where('session_id', $claim->sessionId)
             ->where('document_id', $claim->documentId)
             ->where('source_version', $claim->sourceVersion);
+    }
+
+    /** @return Builder<EstimateGenerationProcessingUnit> */
+    private function scopedUnitQuery(DocumentProcessingUnitClaim $claim): Builder
+    {
+        return $this->query()
+            ->where('organization_id', $claim->organizationId)
+            ->where('project_id', $claim->projectId)
+            ->where('session_id', $claim->sessionId)
+            ->where('document_id', $claim->documentId)
+            ->where('source_version', $claim->sourceVersion);
+    }
+
+    private function systemicFailureCount(DocumentProcessingUnitClaim $claim, string $fingerprint): int
+    {
+        return $this->scopedUnitQuery($claim)
+            ->where('status', DocumentProcessingUnitStatus::Failed->value)
+            ->where('failure_fingerprint', $fingerprint)
+            ->count();
     }
 }

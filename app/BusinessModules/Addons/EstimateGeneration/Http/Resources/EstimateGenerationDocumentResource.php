@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentLifecycleState;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSystemFailureDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentActionBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\Models\User;
@@ -34,6 +35,7 @@ class EstimateGenerationDocumentResource extends JsonResource
             'progress_percent' => (int) ($document->progress_percent ?? 0),
             'page_count' => $document->page_count,
             'processed_page_count' => (int) ($document->processed_page_count ?? 0),
+            'processing_outcome' => $this->processingOutcome($document),
             'quality' => [
                 'score' => $document->quality_score,
                 'level' => $document->quality_level,
@@ -74,6 +76,52 @@ class EstimateGenerationDocumentResource extends JsonResource
             'message' => $document->error_message_key !== null
                 ? trans_message($document->error_message_key)
                 : null,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function processingOutcome(EstimateGenerationDocument $document): array
+    {
+        $facts = is_array($document->facts_summary) ? $document->facts_summary : [];
+        $stored = is_array($facts['processing_outcome'] ?? null) ? $facts['processing_outcome'] : [];
+        $failureDetector = app(DocumentSystemFailureDetector::class);
+        $legacyTemporaryFailure = $stored === [] && $failureDetector->temporary($document);
+        $legacySystemFailure = $stored === [] && ! $legacyTemporaryFailure && $failureDetector->detected($document);
+        $type = $legacyTemporaryFailure
+            ? 'temporary_failure'
+            : ($legacySystemFailure
+            ? 'system_failure'
+            : (is_string($stored['type'] ?? null) ? $stored['type'] : match ((string) $document->status) {
+                'ready' => 'ready',
+                'failed' => 'user_action_required',
+                'needs_review' => 'user_action_required',
+                default => 'processing',
+            }));
+        $counts = is_array($stored['counts'] ?? null) ? $stored['counts'] : [];
+        $included = max(0, (int) ($counts['included'] ?? $document->page_count ?? 0));
+        $ready = max(0, (int) ($counts['ready'] ?? $document->processed_page_count ?? 0));
+        $counts = [
+            'included' => $included,
+            'ready' => $ready,
+            'needs_user_action' => max(0, (int) ($counts['needs_user_action'] ?? ($type === 'user_action_required' ? $included - $ready : 0))),
+            'system_failed' => max(0, (int) ($counts['system_failed'] ?? (in_array($type, ['system_failure', 'temporary_failure'], true) ? $included - $ready : 0))),
+            'processing' => max(0, (int) ($counts['processing'] ?? ($type === 'processing' ? $included - $ready : 0))),
+            'excluded' => max(0, (int) ($counts['excluded'] ?? 0)),
+        ];
+        $messageKey = match ($type) {
+            'ready' => 'estimate_generation.document_processing_ready',
+            'temporary_failure' => 'estimate_generation.document_processing_temporarily_unavailable',
+            'system_failure' => 'estimate_generation.document_processing_system_failed',
+            'user_action_required' => 'estimate_generation.document_processing_user_action_required',
+            default => 'estimate_generation.document_processing_in_progress',
+        };
+
+        return [
+            'type' => $type,
+            'counts' => $counts,
+            'retry_allowed' => ($stored['retry_allowed'] ?? false) === true,
+            'message_key' => $messageKey,
+            'message' => trans_message($messageKey),
         ];
     }
 

@@ -25,6 +25,8 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryWorker;
@@ -39,6 +41,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\RasterPreprocessingException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
 use App\Models\Organization;
@@ -115,6 +118,15 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             new RasterPreprocessor($files, $reader),
             $reader,
         );
+        $locator = $unit->locator;
+        $locator['document_representation']['capabilities'] = array_reverse(
+            $locator['document_representation']['capabilities'],
+            true,
+        );
+        $locator['document_representation']['resource_usage'] = array_reverse(
+            $locator['document_representation']['resource_usage'],
+            true,
+        );
         $output = $processor->process(new DocumentUnitExecutionContext(
             1,
             2,
@@ -124,7 +136,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $unit->type,
             $unit->index,
             $sourceVersion,
-            $unit->locator,
+            $locator,
             'org-2/source.png',
             'image/png',
             'source.png',
@@ -144,6 +156,114 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $output->normalizedPayload['document_representation']['native_structure']['resource_measurement']['phases'],
         );
         self::assertSame('image_pixels', $output->normalizedPayload['document_representation']['coordinate_space']);
+    }
+
+    #[Test]
+    public function invalid_auxiliary_pdf_geometry_degrades_to_full_page_vision(): void
+    {
+        $source = $this->png(12, 8);
+        $geometry = json_encode(['schema_version' => 0], JSON_THROW_ON_ERROR);
+        $sourceVersion = 'sha256:'.hash('sha256', $source);
+        $objects = [
+            'org-2/page.png' => ['body' => $source, 'content_type' => 'image/png'],
+            'org-2/page.json' => ['body' => $geometry, 'content_type' => 'application/json'],
+        ];
+        $files = $this->createMock(FileService::class);
+        $files->method('describeCurrent')->willReturnCallback(static function (string $path) use (&$objects): array {
+            $object = $objects[$path];
+
+            return [
+                'path' => $path,
+                'body' => $object['body'],
+                'content_type' => $object['content_type'],
+                'size' => strlen($object['body']),
+                'sha256' => hash('sha256', $object['body']),
+                'etag' => hash('md5', $object['body']),
+            ];
+        });
+        $files->method('putImmutable')->willReturnCallback(static function (string $path, string $body, string $contentType) use (&$objects): array {
+            $objects[$path] = ['body' => $body, 'content_type' => $contentType];
+
+            return ['path' => $path, 'body' => $body, 'content_type' => $contentType, 'size' => strlen($body), 'sha256' => hash('sha256', $body), 'etag' => hash('md5', $body), 'created' => true];
+        });
+        $vision = new class($this->sheetAnalysis('floor_plan')) implements VisionProvider
+        {
+            public int $calls = 0;
+
+            /** @var list<VisionDocumentInput> */
+            public array $inputs = [];
+
+            public function __construct(private VisionAnalysisData $analysis) {}
+
+            public function analyze(VisionDocumentInput $input): VisionAnalysisData
+            {
+                $this->calls++;
+                $this->inputs[] = $input;
+
+                return $this->analysis;
+            }
+        };
+        $reader = new BoundedVersionedS3ObjectReader($files);
+        $processor = new ProductionDocumentUnitProcessor(
+            new OcrDocumentUnitProcessor(
+                $this->createMock(DocumentUnitContentReader::class),
+                $this->createMock(OcrClientInterface::class),
+            ),
+            $vision,
+            $this->createMock(CadGeometryProvider::class),
+            new RasterPreprocessor($files, $reader),
+            $reader,
+        );
+        $context = new DocumentUnitExecutionContext(
+            1,
+            2,
+            3,
+            5,
+            4,
+            DocumentUnitType::PdfPage,
+            1,
+            $sourceVersion,
+            [
+                'source_kind' => 'pdf',
+                'source_version' => $sourceVersion,
+                'coordinate_space' => 'pdf_page_pixels',
+                'artifact_path' => 'org-2/page.png',
+                'artifact_source_version' => $sourceVersion,
+                'artifact_bytes' => strlen($source),
+                'artifact_sha256' => $sourceVersion,
+                'content_type' => 'image/png',
+                'geometry_artifact_path' => 'org-2/page.json',
+                'geometry_artifact_bytes' => strlen($geometry),
+                'geometry_artifact_sha256' => 'sha256:'.hash('sha256', $geometry),
+            ],
+            'org-2/source.pdf',
+            'application/pdf',
+            'source.pdf',
+            'claim',
+            1,
+            1,
+            'processing_documents',
+            17,
+            static fn (): bool => true,
+        );
+
+        $output = $processor->process($context);
+
+        self::assertSame(1, $vision->calls);
+        self::assertSame('image/png', $vision->inputs[0]->contentType);
+        self::assertSame([12, 8], array_slice(getimagesizefromstring($vision->inputs[0]->imageContent), 0, 2));
+        self::assertSame('unavailable:pdf_geometry_contract_invalid', $vision->inputs[0]->auxiliaryMetadata['geometry_status']);
+        self::assertSame('available', $vision->inputs[0]->auxiliaryMetadata['capabilities']['page_render']);
+        self::assertNull($output->normalizedPayload['pdf_geometry']);
+        self::assertSame(
+            'unavailable:pdf_geometry_contract_invalid',
+            $output->normalizedPayload['auxiliary_sources']['pdf_geometry']['status'],
+        );
+        self::assertSame(
+            'unavailable:pdf_vectors_missing',
+            $output->normalizedPayload['document_representation']['capabilities']['vectors'],
+        );
+        self::assertSame(1, $output->normalizedPayload['document_representation']['schema_version']);
     }
 
     #[Test]
@@ -304,8 +424,39 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         try {
             $processor->process($this->cadContext());
             self::fail('Typed CAD failure must be wrapped.');
-        } catch (DocumentUnitProcessingException $exception) {
+        } catch (TypedFailureException $exception) {
+            self::assertSame(FailureCategory::Terminal, $exception->category);
             self::assertSame('cad_geometry_empty', $exception->safeCode);
+            self::assertSame($original, $exception->getPrevious());
+        }
+    }
+
+    #[Test]
+    public function retryable_geometry_failure_preserves_recoverable_category(): void
+    {
+        $original = new GeometryExtractionException('cad_runtime_unavailable', true);
+
+        try {
+            $this->cadFailureProcessor($original)->process($this->cadContext());
+            self::fail('Retryable geometry failure must escape as typed recoverable failure.');
+        } catch (TypedFailureException $exception) {
+            self::assertSame(FailureCategory::Recoverable, $exception->category);
+            self::assertSame('cad_runtime_unavailable', $exception->safeCode);
+            self::assertSame($original, $exception->getPrevious());
+        }
+    }
+
+    #[Test]
+    public function retryable_vision_failure_preserves_recoverable_category(): void
+    {
+        $original = new VisionProviderException('vision_provider_unavailable', 503, true);
+
+        try {
+            $this->visionFailureProcessor($original)->process($this->rasterContext());
+            self::fail('Retryable vision failure must escape as typed recoverable failure.');
+        } catch (TypedFailureException $exception) {
+            self::assertSame(FailureCategory::Recoverable, $exception->category);
+            self::assertSame('vision_provider_unavailable', $exception->safeCode);
             self::assertSame($original, $exception->getPrevious());
         }
     }
@@ -321,7 +472,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $processor->process($context);
             self::fail('Geometry failure must be wrapped.');
         } catch (DocumentUnitProcessingException $exception) {
-            self::assertSame('document_geometry_processing_failed', $exception->safeCode);
+            self::assertSame('document_unit_processing_failed', $exception->safeCode);
             self::assertSame($original, $exception->getPrevious());
         }
     }
@@ -445,6 +596,73 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             },
             new RasterPreprocessor($files, reader: new BoundedVersionedS3ObjectReader($files)),
             new BoundedVersionedS3ObjectReader($files),
+        );
+    }
+
+    private function visionFailureProcessor(VisionProviderException $error): ProductionDocumentUnitProcessor
+    {
+        $source = $this->png(12, 8);
+        $objects = ['org-2/page.png' => ['body' => $source, 'content_type' => 'image/png']];
+        $files = $this->createMock(FileService::class);
+        $files->method('describeCurrent')->willReturnCallback(static function (string $path) use (&$objects): array {
+            $object = $objects[$path];
+
+            return [
+                'path' => $path,
+                'body' => $object['body'],
+                'content_type' => $object['content_type'],
+                'size' => strlen($object['body']),
+                'sha256' => hash('sha256', $object['body']),
+                'etag' => hash('md5', $object['body']),
+            ];
+        });
+        $files->method('putImmutable')->willReturnCallback(static function (string $path, string $body, string $contentType) use (&$objects): array {
+            $objects[$path] = ['body' => $body, 'content_type' => $contentType];
+
+            return ['path' => $path, 'body' => $body, 'content_type' => $contentType, 'size' => strlen($body), 'sha256' => hash('sha256', $body), 'etag' => hash('md5', $body), 'created' => true];
+        });
+        $vision = new class($error) implements VisionProvider
+        {
+            public function __construct(private VisionProviderException $error) {}
+
+            public function analyze(VisionDocumentInput $input): VisionAnalysisData
+            {
+                throw $this->error;
+            }
+        };
+        $reader = new BoundedVersionedS3ObjectReader($files);
+
+        return new ProductionDocumentUnitProcessor(
+            new OcrDocumentUnitProcessor(
+                $this->createMock(DocumentUnitContentReader::class),
+                $this->createMock(OcrClientInterface::class),
+            ),
+            $vision,
+            $this->createMock(CadGeometryProvider::class),
+            new RasterPreprocessor($files, $reader),
+            $reader,
+        );
+    }
+
+    private function rasterContext(): DocumentUnitExecutionContext
+    {
+        $source = $this->png(12, 8);
+        $version = 'sha256:'.hash('sha256', $source);
+
+        return new DocumentUnitExecutionContext(
+            1, 2, 3, 5, 4, DocumentUnitType::PdfPage, 1, $version,
+            [
+                'source_kind' => 'pdf',
+                'source_version' => $version,
+                'coordinate_space' => 'pdf_page_pixels',
+                'artifact_path' => 'org-2/page.png',
+                'artifact_source_version' => $version,
+                'artifact_bytes' => strlen($source),
+                'artifact_sha256' => $version,
+                'content_type' => 'image/png',
+            ],
+            'org-2/source.pdf', 'application/pdf', 'source.pdf', 'claim', 1, 1, 'processing_documents', 17,
+            static fn (): bool => true,
         );
     }
 

@@ -24,6 +24,7 @@ final readonly class RasterPreprocessInput
         public int $maxBytes = 20_000_000,
         public int $maxPixels = 20_000_000,
         public int $maxDimension = 4096,
+        public bool $preserveColor = false,
     ) {
         if ($organizationId < 1 || $sessionId < 1 || $documentId < 1 || $pageNumber < 1
             || $maxBytes < 1 || $maxBytes > 50_000_000 || $maxPixels < 1 || $maxPixels > 50_000_000 || $maxDimension < 64 || $maxDimension > 8192

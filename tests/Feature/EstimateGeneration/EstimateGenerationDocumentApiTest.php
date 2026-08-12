@@ -79,6 +79,65 @@ class EstimateGenerationDocumentApiTest extends TestCase
         $this->assertSame('total_area', $detailPayload['data']['facts'][0]['fact_type']);
     }
 
+    public function test_list_classifies_current_legacy_systemic_units_without_page_retry_actions(): void
+    {
+        [$user, $project, $session] = $this->makeSession();
+        $document = $this->makeDocument($session, 'needs_review');
+        $document->forceFill([
+            'source_version' => 'sha256:current',
+            'page_count' => 3,
+            'processed_page_count' => 0,
+        ])->save();
+        foreach (range(1, 3) as $index) {
+            EstimateGenerationProcessingUnit::query()->create([
+                'organization_id' => $document->organization_id,
+                'project_id' => $document->project_id,
+                'session_id' => $document->session_id,
+                'document_id' => $document->id,
+                'unit_type' => 'pdf_page',
+                'unit_index' => $index,
+                'source_version' => 'sha256:current',
+                'status' => 'failed',
+                'attempt_count' => 3,
+                'output_count' => 0,
+                'failure_code' => 'document_geometry_processing_failed',
+                'failure_fingerprint' => hash('sha256', 'legacy-systemic-root'),
+                'failed_at' => now(),
+                'locator' => ['page' => $index],
+                'metadata' => [],
+            ]);
+        }
+        EstimateGenerationProcessingUnit::query()->create([
+            'organization_id' => $document->organization_id,
+            'project_id' => $document->project_id,
+            'session_id' => $document->session_id,
+            'document_id' => $document->id,
+            'unit_type' => 'pdf_page',
+            'unit_index' => 1,
+            'source_version' => 'sha256:stale',
+            'status' => 'failed',
+            'attempt_count' => 3,
+            'output_count' => 0,
+            'failure_code' => 'different_stale_failure',
+            'failure_fingerprint' => hash('sha256', 'stale-root'),
+            'failed_at' => now(),
+            'locator' => ['page' => 1],
+            'metadata' => [],
+        ]);
+
+        $response = app(EstimateGenerationDocumentController::class)->index(
+            $this->request('/documents', 'GET', $user),
+            $project,
+            $session,
+        );
+        $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame('system_failure', $payload['data']['documents'][0]['processing_outcome']['type']);
+        self::assertSame([], $payload['data']['documents'][0]['available_actions']);
+        self::assertSame(1, $payload['data']['documents_summary']['system_failure_count']);
+        self::assertSame(0, $payload['data']['documents_summary']['action_required_count']);
+    }
+
     public function test_retry_resets_failed_document_and_dispatches_ocr_job(): void
     {
         Queue::fake();

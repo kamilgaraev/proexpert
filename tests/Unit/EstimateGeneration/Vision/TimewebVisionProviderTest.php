@@ -663,6 +663,32 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function provider_sends_visual_page_with_bounded_native_text_and_extraction_metadata(): void
+    {
+        Http::fake(fn () => Http::response($this->response()));
+
+        $this->provider()->analyze($this->input(
+            auxiliaryText: 'Экспликация помещений',
+            auxiliaryMetadata: [
+                'representation_status' => 'available',
+                'geometry_status' => 'unavailable:pdf_vector_geometry_unavailable',
+                'capabilities' => ['vectors' => 'unavailable:pdf_vectors_missing', 'page_render' => 'available'],
+            ],
+        ));
+
+        Http::assertSent(function ($request): bool {
+            $content = $request['messages'][1]['content'];
+            $context = json_decode((string) $content[0]['text'], true, 16, JSON_THROW_ON_ERROR);
+
+            return $context['auxiliary_text'] === 'Экспликация помещений'
+                && $context['auxiliary_metadata']['geometry_status'] === 'unavailable:pdf_vector_geometry_unavailable'
+                && $context['auxiliary_metadata']['capabilities']['page_render'] === 'available'
+                && ($content[1]['type'] ?? null) === 'image_url'
+                && str_starts_with((string) ($content[1]['image_url']['url'] ?? ''), 'data:image/png;base64,');
+        });
+    }
+
+    #[Test]
     public function registry_above_provider_capacity_requires_review_before_http(): void
     {
         $references = array_map(static fn (int $index): string => 'cad:object:'.$index, range(1, 2001));
@@ -865,6 +891,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         array $supplementalEvidence = [],
         int $claim = 1,
         array $nativeReferences = [],
+        ?string $auxiliaryText = null,
+        array $auxiliaryMetadata = [],
     ): VisionDocumentInput {
         $image = imagecreatetruecolor(2, 2);
         imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
@@ -887,6 +915,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             recheckScope: $recheckScope,
             nativeReferences: $nativeReferences,
             supplementalEvidence: $supplementalEvidence,
+            auxiliaryText: $auxiliaryText,
+            auxiliaryMetadata: $auxiliaryMetadata,
         );
     }
 

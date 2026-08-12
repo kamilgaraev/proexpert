@@ -69,6 +69,175 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
     }
 
     #[Test]
+    public function generic_legacy_failed_document_remains_user_action_required(): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturnTrue();
+        $this->app->instance(
+            EstimateGenerationDocumentActionBuilder::class,
+            new EstimateGenerationDocumentActionBuilder($authorization),
+        );
+        $request = Request::create('/documents/91');
+        $user = $this->user(7);
+        $request->setUserResolver(static fn (): User => $user);
+
+        $payload = (new EstimateGenerationDocumentResource($this->document('failed')))->toArray($request);
+
+        self::assertSame('user_action_required', $payload['processing_outcome']['type']);
+        self::assertSame(['retry_document', 'ignore_document'], array_column($payload['available_actions'], 'action'));
+    }
+
+    #[Test]
+    public function systemic_document_failure_exposes_one_safe_outcome_and_no_retry_action(): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturnTrue();
+        $this->app->instance(
+            EstimateGenerationDocumentActionBuilder::class,
+            new EstimateGenerationDocumentActionBuilder($authorization),
+        );
+        $document = $this->document('failed');
+        $document->forceFill([
+            'page_count' => 22,
+            'processed_page_count' => 0,
+            'error_code' => 'document_processing_system_failed',
+            'error_message_key' => 'estimate_generation.document_processing_system_failed',
+            'facts_summary' => [
+                'processing_outcome' => [
+                    'type' => 'system_failure',
+                    'counts' => [
+                        'included' => 22,
+                        'ready' => 0,
+                        'needs_user_action' => 0,
+                        'system_failed' => 22,
+                        'processing' => 0,
+                        'excluded' => 0,
+                    ],
+                    'retry_allowed' => false,
+                ],
+            ],
+        ]);
+        $request = Request::create('/documents/91');
+        $user = $this->user(7);
+        $request->setUserResolver(static fn (): User => $user);
+
+        $payload = (new EstimateGenerationDocumentResource($document))->toArray($request);
+
+        self::assertSame('system_failure', $payload['processing_outcome']['type']);
+        self::assertSame(22, $payload['processing_outcome']['counts']['system_failed']);
+        self::assertSame(0, $payload['processing_outcome']['counts']['processing']);
+        self::assertSame('Сервис не смог обработать документ. Файл сохранён, повторная загрузка не требуется.', $payload['processing_outcome']['message']);
+        self::assertSame([], $payload['available_actions']);
+    }
+
+    #[Test]
+    public function temporary_document_failure_keeps_safe_retry_action(): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturnTrue();
+        $this->app->instance(
+            EstimateGenerationDocumentActionBuilder::class,
+            new EstimateGenerationDocumentActionBuilder($authorization),
+        );
+        $document = $this->document('failed');
+        $document->forceFill([
+            'page_count' => 22,
+            'processed_page_count' => 0,
+            'error_code' => 'document_processing_temporarily_unavailable',
+            'error_message_key' => 'estimate_generation.document_processing_temporarily_unavailable',
+            'facts_summary' => [
+                'processing_outcome' => [
+                    'type' => 'temporary_failure',
+                    'counts' => [
+                        'included' => 22,
+                        'ready' => 0,
+                        'needs_user_action' => 0,
+                        'system_failed' => 22,
+                        'processing' => 0,
+                        'excluded' => 0,
+                    ],
+                    'retry_allowed' => true,
+                ],
+            ],
+        ]);
+        $request = Request::create('/documents/91');
+        $user = $this->user(7);
+        $request->setUserResolver(static fn (): User => $user);
+
+        $payload = (new EstimateGenerationDocumentResource($document))->toArray($request);
+
+        self::assertSame('temporary_failure', $payload['processing_outcome']['type']);
+        self::assertTrue($payload['processing_outcome']['retry_allowed']);
+        self::assertSame(['retry_document', 'ignore_document'], array_column($payload['available_actions'], 'action'));
+    }
+
+    #[Test]
+    public function legacy_identical_unit_failures_are_presented_as_one_system_failure_without_retry(): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturnTrue();
+        $this->app->instance(
+            EstimateGenerationDocumentActionBuilder::class,
+            new EstimateGenerationDocumentActionBuilder($authorization),
+        );
+        $document = $this->document('needs_review');
+        $document->forceFill([
+            'page_count' => 22,
+            'processed_page_count' => 0,
+            'source_version' => 'sha256:current',
+        ]);
+        $fingerprint = hash('sha256', 'legacy-systemic-root');
+        $currentUnits = array_map(
+            static function (int $index) use ($fingerprint): EstimateGenerationProcessingUnit {
+                $unit = new EstimateGenerationProcessingUnit;
+                $unit->forceFill([
+                    'id' => 280 + $index,
+                    'organization_id' => 7,
+                    'project_id' => 17,
+                    'session_id' => 41,
+                    'document_id' => 91,
+                    'source_version' => 'sha256:current',
+                    'unit_type' => DocumentUnitType::PdfPage,
+                    'unit_index' => $index + 1,
+                    'status' => DocumentProcessingUnitStatus::Failed,
+                    'attempt_count' => 3,
+                    'output_count' => 0,
+                    'failure_code' => 'document_geometry_processing_failed',
+                    'failure_fingerprint' => $fingerprint,
+                ]);
+
+                return $unit;
+            }, range(0, 21));
+        $stale = new EstimateGenerationProcessingUnit;
+        $stale->forceFill([
+            'id' => 279,
+            'organization_id' => 7,
+            'project_id' => 17,
+            'session_id' => 41,
+            'document_id' => 91,
+            'source_version' => 'sha256:stale',
+            'unit_type' => DocumentUnitType::PdfPage,
+            'unit_index' => 1,
+            'status' => DocumentProcessingUnitStatus::Failed,
+            'attempt_count' => 3,
+            'output_count' => 0,
+            'failure_code' => 'different_stale_failure',
+            'failure_fingerprint' => hash('sha256', 'stale-root'),
+        ]);
+        $document->setRelation('processingUnits', new Collection([$stale, ...$currentUnits]));
+        $request = Request::create('/documents/91');
+        $user = $this->user(7);
+        $request->setUserResolver(static fn (): User => $user);
+
+        $payload = (new EstimateGenerationDocumentResource($document))->toArray($request);
+
+        self::assertSame('system_failure', $payload['processing_outcome']['type']);
+        self::assertSame(22, $payload['processing_outcome']['counts']['system_failed']);
+        self::assertSame(0, $payload['processing_outcome']['counts']['needs_user_action']);
+        self::assertSame([], $payload['available_actions']);
+    }
+
+    #[Test]
     public function document_actions_are_absent_without_permission_for_wrong_tenant_or_active_status(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
@@ -331,6 +500,8 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
             'mime_type' => 'application/pdf',
             'storage_path' => 'org-7/estimate-generation/sessions/41/documents/plan.pdf',
             'status' => $status,
+            'processing_stage' => $status === 'processing' ? 'preflight' : 'completed',
+            'progress_percent' => $status === 'processing' ? 30 : 100,
         ]);
         $document->setRelation('session', $session);
 

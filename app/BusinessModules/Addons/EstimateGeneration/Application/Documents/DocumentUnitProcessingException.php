@@ -9,8 +9,12 @@ use Throwable;
 
 final class DocumentUnitProcessingException extends RuntimeException
 {
-    public function __construct(public readonly string $safeCode, ?Throwable $previous = null)
-    {
+    /** @param array<string, mixed> $resourceUsage */
+    public function __construct(
+        public readonly string $safeCode,
+        ?Throwable $previous = null,
+        public readonly array $resourceUsage = [],
+    ) {
         parent::__construct($safeCode, 0, $previous);
     }
 }

@@ -243,6 +243,27 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function canonical_pdf_page_render_preserves_color_and_full_aspect_for_vision(): void
+    {
+        $image = imagecreatetruecolor(120, 80);
+        imagefilledrectangle($image, 0, 0, 59, 79, imagecolorallocate($image, 255, 0, 0));
+        imagefilledrectangle($image, 60, 0, 119, 79, imagecolorallocate($image, 0, 0, 255));
+        ob_start();
+        imagepng($image);
+        $source = ob_get_clean();
+        Storage::disk('s3')->put('org-7/uploads/source.png', is_string($source) ? $source : '');
+
+        $result = $this->preprocessor->preprocess($this->input(preserveColor: true));
+        $output = imagecreatefromstring(Storage::disk('s3')->get($result->derivativeStorageKey));
+        $left = imagecolorsforindex($output, imagecolorat($output, 20, 40));
+        $right = imagecolorsforindex($output, imagecolorat($output, 100, 40));
+
+        self::assertSame([120, 80], [$result->outputWidth, $result->outputHeight]);
+        self::assertGreaterThan($left['blue'], $left['red']);
+        self::assertGreaterThan($right['red'], $right['blue']);
+    }
+
+    #[Test]
     public function real_trapezoid_grid_maps_colored_corners_and_preserves_rectified_aspect(): void
     {
         $quad = [[0.10, 0.15], [0.90, 0.05], [0.80, 0.90], [0.20, 0.85]];
@@ -299,13 +320,13 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
     }
 
     /** @param array<int, array{0: float, 1: float}>|null $quad */
-    private function input(?array $quad = null, bool $perspectiveRequired = false, string $storageKey = 'org-7/uploads/source.png', int $maxPixels = 1_000_000, string $contentType = 'image/png', int $maxDimension = 256): RasterPreprocessInput
+    private function input(?array $quad = null, bool $perspectiveRequired = false, string $storageKey = 'org-7/uploads/source.png', int $maxPixels = 1_000_000, string $contentType = 'image/png', int $maxDimension = 256, bool $preserveColor = false): RasterPreprocessInput
     {
         $content = Storage::disk('s3')->exists($storageKey) ? Storage::disk('s3')->get($storageKey) : '';
 
         $sha = 'sha256:'.hash('sha256', $content);
 
-        return new RasterPreprocessInput(7, 11, 13, 1, $sha, $storageKey, $contentType, max(1, strlen($content)), $sha, $quad, $perspectiveRequired, 20_000_000, $maxPixels, $maxDimension);
+        return new RasterPreprocessInput(7, 11, 13, 1, $sha, $storageKey, $contentType, max(1, strlen($content)), $sha, $quad, $perspectiveRequired, 20_000_000, $maxPixels, $maxDimension, $preserveColor);
     }
 
     private function files(): FileService

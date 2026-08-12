@@ -11,4 +11,6 @@ enum DocumentProcessingUnitClaimStatus: string
     case Busy = 'busy';
     case Exhausted = 'exhausted';
     case Stale = 'stale';
+    case Terminal = 'terminal';
+    case UserActionRequired = 'user_action_required';
 }

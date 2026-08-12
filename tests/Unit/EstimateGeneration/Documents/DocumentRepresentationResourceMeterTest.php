@@ -7,6 +7,7 @@ namespace Tests\Unit\EstimateGeneration\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentationResourceMeter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SystemDocumentRepresentationResourceMeter;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Tests\Support\DatabaseLessTestCase;
 
 final class DocumentRepresentationResourceMeterTest extends DatabaseLessTestCase
@@ -56,6 +57,33 @@ final class DocumentRepresentationResourceMeterTest extends DatabaseLessTestCase
             ['duration_resolution_not_observed', 'incremental_process_peak_not_observed'],
             $measurement->limitations,
         );
+    }
+
+    #[Test]
+    public function failed_operation_keeps_exception_and_resource_measurement(): void
+    {
+        $times = [2_000_000_000, 2_007_100_000];
+        $peaks = [4096, 5120];
+        $meter = new SystemDocumentRepresentationResourceMeter(
+            static function () use (&$times): int {
+                return array_shift($times);
+            },
+            static function () use (&$peaks): int {
+                return array_shift($peaks);
+            },
+        );
+
+        try {
+            $meter->measure(static function (): never {
+                throw new RuntimeException('measured failure');
+            });
+            self::fail('The measured operation must fail.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('measured failure', $exception->getPrevious()?->getMessage());
+            self::assertObjectHasProperty('measurement', $exception);
+            self::assertSame(8, $exception->measurement->durationMs);
+            self::assertSame(1024, $exception->measurement->incrementalPeakMemoryBytes);
+        }
     }
 
     #[Test]

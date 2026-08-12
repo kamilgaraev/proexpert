@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use DateTimeImmutable;
 
 interface DocumentProcessingUnitStore
@@ -22,7 +23,15 @@ interface DocumentProcessingUnitStore
 
     public function renew(DocumentProcessingUnitClaim $claim, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): bool;
 
-    public function fail(DocumentProcessingUnitClaim $claim, string $code, string $fingerprint, DateTimeImmutable $now): bool;
+    public function fail(
+        DocumentProcessingUnitClaim $claim,
+        string $code,
+        string $fingerprint,
+        DateTimeImmutable $now,
+        FailureCategory $category = FailureCategory::Recoverable,
+        bool $circuitBreaking = false,
+        array $resourceUsage = [],
+    ): bool;
 
     public function supersedeDocumentSource(int $documentId, string $currentSourceVersion): void;
 }

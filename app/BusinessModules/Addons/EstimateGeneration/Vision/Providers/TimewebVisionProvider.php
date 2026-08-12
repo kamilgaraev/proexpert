@@ -378,6 +378,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 'sheet_role' => $input->sheetRole,
                 'role_contract' => self::roleContract($input->sheetRole),
                 'native_reference_registry' => $input->nativeReferences,
+                'auxiliary_text' => $input->auxiliaryText,
+                'auxiliary_metadata' => $input->auxiliaryMetadata,
                 'targeted_recheck' => $input->recheckScope?->toSafeUsageContext(),
                 'supplemental_evidence' => array_map(
                     static fn ($evidence): array => $evidence->locator(),

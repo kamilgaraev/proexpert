@@ -36,6 +36,8 @@ final class ManageEstimateGenerationDocumentPages
         private EstimateGenerationMutationPolicy $policy,
         private ReconcileEstimateGenerationDocuments $reconciler,
         private DocumentGenerationReadinessService $readiness,
+        private DocumentProcessingOutcomeResolver $outcomes = new DocumentProcessingOutcomeResolver,
+        private DocumentResourceUsageSummarizer $resourceUsage = new DocumentResourceUsageSummarizer,
     ) {}
 
     /**
@@ -320,25 +322,57 @@ final class ManageEstimateGenerationDocumentPages
 
     private function refreshDocumentAggregate(EstimateGenerationDocument $document): void
     {
-        $pages = $this->documentPages($document)->reject(
+        $allPages = $this->documentPages($document);
+        $pages = $allPages->reject(
             static fn (EstimateGenerationDocumentPage $page): bool => (string) $page->status === self::STATUS_EXCLUDED,
         );
-        $pageSummary = $this->pageSummary($document);
+        $outcome = $this->processingOutcome($document, $allPages);
+        $pageSummary = $this->pageSummaryFromOutcome($allPages->count(), $outcome);
         $qualityFlags = array_values(array_filter(
             array_map('strval', is_array($document->quality_flags) ? $document->quality_flags : []),
-            static fn (string $flag): bool => $flag !== 'pages_excluded_from_estimation',
+            static fn (string $flag): bool => ! in_array($flag, [
+                'pages_excluded_from_estimation',
+                'document_processing_system_failed',
+                'document_processing_temporarily_unavailable',
+            ], true),
         ));
         if ($pageSummary['excluded'] > 0) {
             $qualityFlags[] = 'pages_excluded_from_estimation';
         }
-        $status = $this->documentStatus($document);
+        if ($outcome->type === 'system_failure') {
+            $qualityFlags[] = 'document_processing_system_failed';
+        }
+        if ($outcome->type === 'temporary_failure') {
+            $qualityFlags[] = 'document_processing_temporarily_unavailable';
+        }
+        $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
+        $resourceUnits = EstimateGenerationProcessingUnit::query()
+            ->where('organization_id', $document->organization_id)
+            ->where('project_id', $document->project_id)
+            ->where('session_id', $document->session_id)
+            ->where('document_id', $document->id)
+            ->where('source_version', (string) $document->source_version)
+            ->whereIn('id', $allPages->pluck('processing_unit_id')->filter()->all())
+            ->get(['status', 'metadata'])
+            ->map(static fn (EstimateGenerationProcessingUnit $unit): array => [
+                'status' => $unit->status instanceof DocumentProcessingUnitStatus
+                    ? $unit->status->value
+                    : (string) $unit->status,
+                'metadata' => is_array($unit->metadata) ? $unit->metadata : [],
+            ])
+            ->all();
+        $resourceUsage = $this->resourceUsage->summarize(
+            $pages->pluck('normalized_payload')->all(),
+            $resourceUnits,
+        );
         $document->forceFill([
-            'status' => $status,
-            'processing_stage' => $status === self::STATUS_PROCESSING ? 'preflight' : 'completed',
-            'progress_percent' => $status === self::STATUS_PROCESSING ? max(10, (int) $document->progress_percent) : 100,
+            'status' => $outcome->documentStatus,
+            'processing_stage' => $outcome->type === 'processing' ? 'preflight' : 'completed',
+            'progress_percent' => $outcome->type === 'processing' ? max(10, (int) $document->progress_percent) : 100,
             'extracted_text' => $pages->pluck('text')->filter()->implode("\n\n"),
             'structured_payload' => [
                 'source_version' => (string) $document->source_version,
+                'processing_outcome' => $outcome->toArray(),
                 'pages' => $pages->map(static fn (EstimateGenerationDocumentPage $page): array => [
                     'page_number' => (int) $page->page_number,
                     'text' => $page->text,
@@ -347,31 +381,21 @@ final class ManageEstimateGenerationDocumentPages
                     'status' => $page->status ?? self::STATUS_READY,
                 ])->values()->all(),
             ],
-            'processed_page_count' => $pages->whereNotNull('text')->count(),
+            'facts_summary' => [
+                ...$factsSummary,
+                'processing_outcome' => $outcome->toArray(),
+                'resource_usage' => $resourceUsage,
+            ],
+            'processed_page_count' => $outcome->processedPages,
             'page_count' => $pageSummary['total'],
             'quality_flags' => array_values(array_unique($qualityFlags)),
+            'error_code' => $outcome->errorCode,
+            'error_message_key' => $outcome->errorMessageKey,
+            'error_context' => $outcome->errorCode === null ? null : ['counts' => $outcome->counts],
             'units_reconciled_source_version' => null,
             'units_reconcile_claim_token' => null,
             'units_reconcile_lease_expires_at' => null,
         ])->save();
-    }
-
-    private function documentStatus(EstimateGenerationDocument $document): string
-    {
-        $pages = $this->documentPages($document);
-        $included = $pages->reject(static fn (EstimateGenerationDocumentPage $page): bool => (string) $page->status === self::STATUS_EXCLUDED);
-
-        if ($included->isEmpty()) {
-            return self::STATUS_NEEDS_REVIEW;
-        }
-        if ($included->contains(static fn (EstimateGenerationDocumentPage $page): bool => in_array((string) $page->status, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true))) {
-            return self::STATUS_PROCESSING;
-        }
-        if ($included->contains(static fn (EstimateGenerationDocumentPage $page): bool => in_array((string) $page->status, [self::STATUS_FAILED, self::STATUS_NEEDS_REVIEW], true))) {
-            return self::STATUS_NEEDS_REVIEW;
-        }
-
-        return self::STATUS_READY;
     }
 
     /**
@@ -388,19 +412,55 @@ final class ManageEstimateGenerationDocumentPages
             ->get();
     }
 
-    /**
-     * @return array{total: int, included: int, excluded: int, action_required: int, processing: int}
-     */
+    /** @return array{total: int, included: int, excluded: int, ready: int, action_required: int, system_failed: int, processing: int} */
     private function pageSummary(EstimateGenerationDocument $document): array
     {
         $pages = $this->documentPages($document);
 
+        return $this->pageSummaryFromOutcome($pages->count(), $this->processingOutcome($document, $pages));
+    }
+
+    /** @param Collection<int, EstimateGenerationDocumentPage> $pages */
+    private function processingOutcome(EstimateGenerationDocument $document, Collection $pages): DocumentProcessingOutcome
+    {
+        $units = EstimateGenerationProcessingUnit::query()
+            ->where('organization_id', $document->organization_id)
+            ->where('project_id', $document->project_id)
+            ->where('session_id', $document->session_id)
+            ->where('document_id', $document->id)
+            ->where('source_version', (string) $document->source_version)
+            ->whereIn('id', $pages->pluck('processing_unit_id')->filter()->all())
+            ->get(['id', 'status', 'output_count', 'metadata']);
+
+        return $this->outcomes->resolve(
+            $pages->map(static fn (EstimateGenerationDocumentPage $page): array => [
+                'processing_unit_id' => (int) $page->processing_unit_id,
+                'status' => (string) $page->status,
+            ])->values()->all(),
+            $units->map(static fn (EstimateGenerationProcessingUnit $unit): array => [
+                'id' => (int) $unit->id,
+                'status' => $unit->status instanceof DocumentProcessingUnitStatus
+                    ? $unit->status->value
+                    : (string) $unit->status,
+                'output_count' => (int) $unit->output_count,
+                'metadata' => is_array($unit->metadata) ? $unit->metadata : [],
+            ])->values()->all(),
+        );
+    }
+
+    /** @return array{total: int, included: int, excluded: int, ready: int, action_required: int, system_failed: int, processing: int} */
+    private function pageSummaryFromOutcome(int $total, DocumentProcessingOutcome $outcome): array
+    {
+        $counts = $outcome->counts;
+
         return [
-            'total' => $pages->count(),
-            'included' => $pages->filter(static fn (EstimateGenerationDocumentPage $page): bool => (string) $page->status !== self::STATUS_EXCLUDED)->count(),
-            'excluded' => $pages->filter(static fn (EstimateGenerationDocumentPage $page): bool => (string) $page->status === self::STATUS_EXCLUDED)->count(),
-            'action_required' => $pages->filter(static fn (EstimateGenerationDocumentPage $page): bool => in_array((string) $page->status, [self::STATUS_NEEDS_REVIEW, self::STATUS_FAILED], true))->count(),
-            'processing' => $pages->filter(static fn (EstimateGenerationDocumentPage $page): bool => in_array((string) $page->status, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true))->count(),
+            'total' => $total,
+            'included' => $counts['included'],
+            'excluded' => $counts['excluded'],
+            'ready' => $counts['ready'],
+            'action_required' => $counts['needs_user_action'],
+            'system_failed' => $counts['system_failed'],
+            'processing' => $counts['processing'],
         ];
     }
 

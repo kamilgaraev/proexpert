@@ -2,12 +2,6 @@
 
 use Illuminate\Support\Str;
 
-$estimateGenerationUnitsMinProcesses = max(1, (int) env('ESTIMATE_GENERATION_UNITS_MIN_PROCESSES', 1));
-$estimateGenerationUnitsMaxProcesses = max(
-    $estimateGenerationUnitsMinProcesses,
-    (int) env('ESTIMATE_GENERATION_UNITS_MAX_PROCESSES', 3),
-);
-
 return [
     'domain' => env('HORIZON_DOMAIN'),
     'path' => env('HORIZON_PATH', 'horizon'),
@@ -144,10 +138,11 @@ return [
                 'queue' => ['estimate-generation-units'],
                 'balance' => 'auto',
                 'autoScalingStrategy' => 'time',
-                'minProcesses' => $estimateGenerationUnitsMinProcesses,
-                'maxProcesses' => $estimateGenerationUnitsMaxProcesses,
+                'minProcesses' => 1,
+                'maxProcesses' => 1,
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
+                'maxJobs' => 1,
                 'tries' => 20,
                 'timeout' => 2100,
                 'memory' => 512,
@@ -157,6 +152,7 @@ return [
                 'queue' => ['estimate-generation-units-recovery'],
                 'balance' => 'simple',
                 'processes' => 1,
+                'maxJobs' => 1,
                 'tries' => 20,
                 'timeout' => 2100,
                 'memory' => 512,
@@ -223,6 +219,7 @@ return [
                 'queue' => ['estimate-generation-units'],
                 'balance' => 'simple',
                 'processes' => max(1, (int) env('ESTIMATE_GENERATION_UNITS_LOCAL_PROCESSES', 1)),
+                'maxJobs' => 1,
                 'tries' => 20,
                 'timeout' => 2100,
                 'memory' => 512,
@@ -232,6 +229,7 @@ return [
                 'queue' => ['estimate-generation-units-recovery'],
                 'balance' => 'simple',
                 'processes' => 1,
+                'maxJobs' => 1,
                 'tries' => 20,
                 'timeout' => 2100,
                 'memory' => 512,

@@ -10,6 +10,8 @@ final readonly class DocumentRepresentation
 {
     public const SCHEMA_VERSION = 1;
 
+    public array $resourceUsage;
+
     public function __construct(
         public DocumentSourceVersion $source,
         public array $nativeStructure,
@@ -17,7 +19,7 @@ final readonly class DocumentRepresentation
         public string $coordinateSpace,
         public DocumentRepresentationCapabilities $capabilities,
         public DocumentCoordinateTransform $coordinates,
-        public array $resourceUsage,
+        array $resourceUsage,
     ) {
         if ($visualArtifactPath === '' || $coordinateSpace === '') {
             throw new InvalidArgumentException('Document representation is incomplete.');
@@ -25,7 +27,9 @@ final readonly class DocumentRepresentation
         if (preg_match('#^org-[1-9][0-9]*/#D', $visualArtifactPath) !== 1) {
             throw new InvalidArgumentException('Document representation artifact is outside organization storage.');
         }
-        (new DocumentRepresentationResourceLimits)->assertWithin($resourceUsage);
+        $limits = new DocumentRepresentationResourceLimits;
+        $this->resourceUsage = $limits->canonicalize($resourceUsage);
+        $limits->assertWithin($this->resourceUsage);
     }
 
     /** @return array<string, mixed> */

@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExhaustionHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitOutput;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationUnitJobDispatcher;
@@ -33,10 +34,12 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryWorker;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
@@ -261,7 +264,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
             {
                 if (++$this->calls === 1) {
-                    throw new \RuntimeException('secret source contents');
+                    throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
                 }
 
                 return new DocumentUnitOutput('retry-output', 'recognized');
@@ -281,9 +284,9 @@ final class DocumentProcessingUnitContractTest extends TestCase
         try {
             $usecase->handle($unit->id, 'source');
             self::fail('First attempt must fail.');
-        } catch (\RuntimeException) {
+        } catch (TypedFailureException) {
         }
-        self::assertSame('unit_processing_failed', $store->find($unit->id)?->failureCode);
+        self::assertSame('document_storage_unavailable', $store->find($unit->id)?->failureCode);
         self::assertNotSame('secret source contents', $store->find($unit->id)?->failureCode);
         $usecase->handle($unit->id, 'source');
 
@@ -292,6 +295,171 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertSame(2, $store->find($unit->id)?->attemptCount);
         self::assertSame('retry-output', $store->find($unit->id)?->outputVersion);
         self::assertNull($store->find($unit->id)?->failureCode);
+    }
+
+    #[Test]
+    public function deterministic_terminal_unit_failure_is_not_retried(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $unit = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, 1, 'source'));
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public int $calls = 0;
+
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                $this->calls++;
+
+                throw new DocumentUnitProcessingException(
+                    'document_representation_contract_invalid',
+                    new InvalidArgumentException('unsafe raw persistence detail'),
+                    [
+                        'duration_ms' => 81,
+                        'peak_memory_bytes' => 4096,
+                        'memory_metric' => 'incremental_process_peak_delta',
+                        'limitations' => [],
+                    ],
+                );
+            }
+        };
+        $reconciler = new class implements DocumentUnitAggregateReconciler
+        {
+            public int $calls = 0;
+
+            public function reconcile(int $documentId, string $sourceVersion): void
+            {
+                $this->calls++;
+            }
+        };
+        $usecase = $this->processUnit($store, $processor, $reconciler);
+
+        $first = $usecase->handle($unit->id, 'source');
+        $second = $usecase->handle($unit->id, 'source');
+
+        self::assertSame(DocumentProcessingUnitClaimStatus::Terminal, $first->status);
+        self::assertSame(DocumentProcessingUnitClaimStatus::Terminal, $second->status);
+        self::assertSame(1, $processor->calls);
+        self::assertSame(2, $reconciler->calls);
+        self::assertSame(ProcessDocumentUnit::MAX_ATTEMPTS, $store->find($unit->id)?->attemptCount);
+        self::assertSame('document_representation_contract_invalid', $store->find($unit->id)?->failureCode);
+        self::assertSame([
+            'duration_ms' => 81,
+            'peak_memory_bytes' => 4096,
+            'memory_metric' => 'incremental_process_peak_delta',
+            'limitations' => [],
+        ], $store->find($unit->id)?->metadata['resource_usage']);
+        self::assertSame(
+            hash('sha256', DocumentUnitProcessingException::class.'|'.InvalidArgumentException::class.'|document_representation_contract_invalid'),
+            $store->find($unit->id)?->failureFingerprint,
+        );
+    }
+
+    #[Test]
+    public function lost_failure_claim_is_retryable_and_never_reported_as_persisted_terminal_state(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $unit = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, 1, 'source'));
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                \Carbon\Carbon::setTestNow(now()->addSeconds(ProcessDocumentUnit::LEASE_SECONDS + 1));
+
+                throw new DocumentUnitProcessingException('document_representation_contract_invalid');
+            }
+        };
+        $reconciler = new class implements DocumentUnitAggregateReconciler
+        {
+            public int $calls = 0;
+
+            public function reconcile(int $documentId, string $sourceVersion): void
+            {
+                $this->calls++;
+            }
+        };
+
+        try {
+            $this->processUnit($store, $processor, $reconciler)->handle($unit->id, 'source');
+            self::fail('Lost claim must escape as a recoverable typed failure.');
+        } catch (TypedFailureException $exception) {
+            self::assertSame(FailureCategory::Recoverable, $exception->category);
+            self::assertSame('unit_claim_lost', $exception->safeCode);
+        } finally {
+            \Carbon\Carbon::setTestNow();
+        }
+
+        self::assertSame(DocumentProcessingUnitStatus::Running, $store->find($unit->id)?->status);
+        self::assertSame(0, $reconciler->calls);
+    }
+
+    #[Test]
+    public function third_identical_systemic_terminal_failure_stops_remaining_document_units(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $units = [];
+        foreach (range(1, 5) as $index) {
+            $units[] = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, $index, 'source'));
+        }
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public int $calls = 0;
+
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                $this->calls++;
+
+                throw new DocumentUnitProcessingException(
+                    'document_representation_contract_invalid',
+                    new InvalidArgumentException('different page details must remain private'),
+                );
+            }
+        };
+        $reconciler = new class implements DocumentUnitAggregateReconciler
+        {
+            public function reconcile(int $documentId, string $sourceVersion): void {}
+        };
+        $usecase = $this->processUnit($store, $processor, $reconciler);
+
+        foreach (array_slice($units, 0, 3) as $unit) {
+            self::assertSame(DocumentProcessingUnitClaimStatus::Terminal, $usecase->handle($unit->id, 'source')->status);
+        }
+
+        self::assertSame(3, $processor->calls);
+        foreach (array_slice($units, 3) as $unit) {
+            $record = $store->find($unit->id);
+            self::assertSame(DocumentProcessingUnitStatus::Failed, $record?->status);
+            self::assertSame(ProcessDocumentUnit::MAX_ATTEMPTS, $record?->attemptCount);
+            self::assertSame('document_systemic_failure', $record?->failureCode);
+        }
+    }
+
+    #[Test]
+    public function repeated_page_specific_contract_failures_do_not_open_document_circuit(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $units = [];
+        foreach (range(1, 4) as $index) {
+            $units[] = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, $index, 'source'));
+        }
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                throw new DocumentUnitProcessingException('pdf_page_geometry_contract_invalid');
+            }
+        };
+        $reconciler = new class implements DocumentUnitAggregateReconciler
+        {
+            public function reconcile(int $documentId, string $sourceVersion): void {}
+        };
+        $usecase = $this->processUnit($store, $processor, $reconciler);
+
+        foreach (array_slice($units, 0, 3) as $unit) {
+            self::assertSame(DocumentProcessingUnitClaimStatus::Terminal, $usecase->handle($unit->id, 'source')->status);
+        }
+
+        self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($units[3]->id)?->status);
+        self::assertSame(0, $store->find($units[3]->id)?->attemptCount);
     }
 
     #[Test]
@@ -325,14 +493,11 @@ final class DocumentProcessingUnitContractTest extends TestCase
             public function reconcile(int $documentId, string $sourceVersion): void {}
         };
 
-        try {
-            $this->processUnit($store, $processor, $reconciler)->handle($unit->id, 'source');
-            self::fail('Mismatched output must fail.');
-        } catch (\RuntimeException $error) {
-            self::assertSame('unit_output_identity_mismatch', $error->getMessage());
-        }
+        $outcome = $this->processUnit($store, $processor, $reconciler)->handle($unit->id, 'source');
 
+        self::assertSame(DocumentProcessingUnitClaimStatus::Terminal, $outcome->status);
         self::assertSame(DocumentProcessingUnitStatus::Failed, $store->find($unit->id)?->status);
+        self::assertSame('unit_output_identity_mismatch', $store->find($unit->id)?->failureCode);
         self::assertNull($store->find($unit->id)?->outputVersion);
     }
 

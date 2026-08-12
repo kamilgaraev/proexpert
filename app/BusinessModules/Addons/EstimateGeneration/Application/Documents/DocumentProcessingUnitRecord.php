@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use DateTimeImmutable;
 
 final class DocumentProcessingUnitRecord
@@ -23,5 +24,7 @@ final class DocumentProcessingUnitRecord
         public int $outputCount = 0,
         public ?string $failureCode = null,
         public ?string $failureFingerprint = null,
+        public ?FailureCategory $failureCategory = null,
+        public array $metadata = [],
     ) {}
 }

@@ -132,6 +132,64 @@ final class DocumentRepresentationMatrixTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function jsonb_reordered_representation_maps_are_restored_to_canonical_order(): void
+    {
+        $capabilities = DocumentRepresentationCapabilities::fromArray('pdf', [
+            'vectors' => 'available',
+            'text_spans' => 'available',
+            'page_render' => 'available',
+            'source_coordinates' => 'available',
+        ]);
+        $usage = (new DocumentRepresentationResourceLimits)->canonicalize([
+            'bytes' => 420000,
+            'pages' => 1,
+            'objects' => 19299,
+            'duration_ms' => 0,
+            'peak_memory_bytes' => 0,
+        ]);
+
+        self::assertSame(
+            ['text_spans', 'vectors', 'page_render', 'source_coordinates'],
+            array_keys($capabilities->toArray()),
+        );
+        self::assertSame(
+            ['pages', 'objects', 'bytes', 'peak_memory_bytes', 'duration_ms'],
+            array_keys($usage),
+        );
+    }
+
+    #[Test]
+    public function representation_maps_still_require_the_exact_typed_key_set(): void
+    {
+        foreach ([
+            ['vectors' => 'available'],
+            ['text_spans' => 'available', 'vectors' => 'available', 'page_render' => 'available', 'source_coordinates' => 'available', 'extra' => 'available'],
+        ] as $statuses) {
+            try {
+                DocumentRepresentationCapabilities::fromArray('pdf', $statuses);
+                self::fail('Invalid capability key set was accepted.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('Document capability contract is not canonical.', $exception->getMessage());
+            }
+        }
+
+        $limits = new DocumentRepresentationResourceLimits;
+        foreach ([
+            ['pages' => 1, 'objects' => 1, 'bytes' => 1, 'peak_memory_bytes' => 1],
+            ['pages' => 1, 'objects' => 1, 'bytes' => 1, 'peak_memory_bytes' => 1, 'duration_ms' => 1, 'extra' => 1],
+            ['pages' => 1, 'objects' => 1, 'bytes' => '1', 'peak_memory_bytes' => 1, 'duration_ms' => 1],
+            ['pages' => 1, 'objects' => -1, 'bytes' => 1, 'peak_memory_bytes' => 1, 'duration_ms' => 1],
+        ] as $usage) {
+            try {
+                $limits->canonicalize($usage);
+                self::fail('Invalid resource usage map was accepted.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('Document representation resource usage is invalid.', $exception->getMessage());
+            }
+        }
+    }
+
+    #[Test]
     #[DataProvider('limitViolations')]
     public function every_resource_limit_is_enforced(array $usage, string $safeCode): void
     {

@@ -12,10 +12,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\InMemoryDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -42,7 +44,11 @@ final class PipelineFailureRecoveryTest extends TestCase
             public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
             {
                 if (++$this->calls === 1) {
-                    throw new RuntimeException('Bearer private-drawing-token');
+                    throw new TypedFailureException(
+                        FailureCategory::Recoverable,
+                        'document_storage_unavailable',
+                        previous: new RuntimeException('Bearer private-drawing-token'),
+                    );
                 }
 
                 return new DocumentUnitOutput('output', 'recognized');
@@ -87,13 +93,13 @@ final class PipelineFailureRecoveryTest extends TestCase
         try {
             $useCase->handle($unit->id, 'source');
             self::fail('First attempt must fail.');
-        } catch (RuntimeException $error) {
-            self::assertSame('Bearer private-drawing-token', $error->getMessage());
+        } catch (TypedFailureException $error) {
+            self::assertSame('Bearer private-drawing-token', $error->getPrevious()?->getMessage());
         }
         $useCase->handle($unit->id, 'source');
 
         self::assertCount(1, $failures->recorded);
-        self::assertSame('unexpected_internal_failure', $failures->recorded[0]->code);
+        self::assertSame('document_storage_unavailable', $failures->recorded[0]->code);
         self::assertStringNotContainsString('private', json_encode($failures->recorded[0]->safeContext, JSON_THROW_ON_ERROR));
         self::assertSame(1, $failures->resolved);
     }
