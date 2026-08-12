@@ -135,6 +135,7 @@ final class VerifyAssetRegistryCutover extends Command
                     ->on('assignment.organization_asset_id', '=', 'shift.organization_asset_id');
             })
             ->whereNotNull('shift.organization_asset_id')
+            ->where('shift.status', 'approved')
             ->whereNull('shift.deleted_at')
             ->whereNull('assignment.deleted_at')
             ->whereBetween('assignment.created_at', [$since, $until])
@@ -166,7 +167,10 @@ final class VerifyAssetRegistryCutover extends Command
             'assignment_events' => (int) (clone $custodyEvents)->whereIn('event_type', ['machinery_assigned', 'issued'])->count(),
             'assignments' => (int) $assignments->count(),
             'shift_reports' => (int) $shifts->count(),
-            'approved_shift_reports' => (int) (clone $shifts)->whereBetween('approved_at', [$since, $until])->count(),
+            'approved_shift_reports' => (int) (clone $shifts)
+                ->where('status', 'approved')
+                ->whereBetween('approved_at', [$since, $until])
+                ->count(),
             'completed_operational_cycles' => (int) $completedCycles,
         ];
     }
