@@ -186,10 +186,10 @@ final readonly class TechnologySystemCatalog
             }
         }
         self::uniqueItems($system['materials'] ?? [], ['id', 'intent']);
-        self::uniqueItems($system['works'] ?? [], ['id', 'intent']);
         self::uniqueItems($system['machinery'] ?? [], ['id', 'intent']);
         self::uniqueItems($system['norm_intents'] ?? [], ['id', 'stable_intent', 'max_candidates']);
         self::uniqueItems($system['quantity_formulas'] ?? [], ['id', 'expression', 'result_unit', 'operands']);
+        self::validateWorks($system['works'], $system['quantity_formulas'], $system['norm_intents']);
         foreach (['materials', 'works', 'machinery'] as $collection) {
             foreach ($system[$collection] as $item) {
                 if (! self::nonEmptyString($item['intent'] ?? null)) {
@@ -327,6 +327,34 @@ final readonly class TechnologySystemCatalog
                 throw new InvalidArgumentException('Technology nested identifier is invalid.');
             }
             $ids[$item['id']] = true;
+        }
+    }
+
+    private static function validateWorks(array $works, array $formulas, array $normIntents): void
+    {
+        $formulaIds = array_fill_keys(array_column($formulas, 'id'), true);
+        $normIntentIds = array_fill_keys(array_column($normIntents, 'id'), true);
+        $seen = [];
+        foreach ($works as $work) {
+            if (! is_array($work)
+                || array_diff(array_keys($work), ['id', 'intent', 'quantity_formula_id', 'norm_intent_id', 'depends_on']) !== []
+                || array_diff(['id', 'intent', 'quantity_formula_id', 'norm_intent_id', 'depends_on'], array_keys($work)) !== []
+                || ! self::nonEmptyString($work['id'] ?? null)
+                || ! self::nonEmptyString($work['intent'] ?? null)
+                || ! isset($formulaIds[$work['quantity_formula_id'] ?? null])
+                || ! isset($normIntentIds[$work['norm_intent_id'] ?? null])
+                || ! is_array($work['depends_on'] ?? null)
+                || ! array_is_list($work['depends_on'])
+                || count($work['depends_on']) > 20
+                || isset($seen[$work['id']])) {
+                throw new InvalidArgumentException('Technology work planning contract is invalid.');
+            }
+            foreach ($work['depends_on'] as $dependency) {
+                if (! is_string($dependency) || ! isset($seen[$dependency])) {
+                    throw new InvalidArgumentException('Technology work dependency graph is invalid.');
+                }
+            }
+            $seen[$work['id']] = true;
         }
     }
 

@@ -56,9 +56,77 @@ final readonly class CurrentProjectDerivedQuantityService
             ...$this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, $assumptionFactIds),
         ];
         $decisions = $this->uniqueDecisions($decisions);
-        $requests = $this->requests($snapshot, $capture['token'], $technology, $completeness, $decisions);
+        $result = $this->calculateProjection($snapshot, $capture['token'], $technology, $completeness, $decisions);
+        $this->models->replaceDerivedQuantityProjection(
+            $organizationId,
+            $projectId,
+            $sessionId,
+            (string) ($technology['source_version'] ?? $completeness['source_version'] ?? ''),
+            $result['derived'],
+            $result['inactive_logical_ids'],
+        );
+
+        return [
+            'quantities' => $result['quantities'],
+            'warnings' => $result['warnings'],
+            'context' => $result['context'],
+        ];
+    }
+
+    /**
+     * @param  list<Decision>  $decisions
+     * @return array{quantities: array<string, QuantityData>, warnings: list<array<string, mixed>>, context: array<string, mixed>}
+     */
+    public function simulate(
+        ProjectModelSnapshot $snapshot,
+        string $projectModelToken,
+        ?array $technology,
+        ?array $completeness,
+        array $decisions,
+    ): array {
+        if (count($snapshot->facts) > self::MAX_FACTS) {
+            return $this->blocked('quantity_fact_budget_exceeded', $projectModelToken, $technology, $completeness);
+        }
+        if (! $this->isCurrentStageFive($projectModelToken, $technology, $completeness)) {
+            return $this->blocked('stage5_projection_not_current', $projectModelToken, $technology, $completeness);
+        }
+        if (count($decisions) > 256) {
+            return $this->blocked('quantity_decision_budget_exceeded', $projectModelToken, $technology, $completeness);
+        }
+
+        $result = $this->calculateProjection(
+            $snapshot,
+            $projectModelToken,
+            $technology,
+            $completeness,
+            $this->uniqueDecisions($decisions),
+        );
+
+        return [
+            'quantities' => $result['quantities'],
+            'warnings' => $result['warnings'],
+            'context' => $result['context'],
+        ];
+    }
+
+    /**
+     * @param  list<Decision>  $decisions
+     * @return array{derived:list<DerivedQuantity>,inactive_logical_ids:list<string>,quantities:array<string,QuantityData>,warnings:list<array<string,mixed>>,context:array<string,mixed>}
+     */
+    private function calculateProjection(
+        ProjectModelSnapshot $snapshot,
+        string $projectModelToken,
+        ?array $technology,
+        ?array $completeness,
+        array $decisions,
+    ): array {
+        $requests = $this->requests($snapshot, $projectModelToken, $technology, $completeness, $decisions);
         if (count($requests) > self::MAX_FORMULAS) {
-            return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'quantity_formula_budget_exceeded', $capture['token'], $technology, $completeness);
+            return [
+                'derived' => [],
+                'inactive_logical_ids' => [],
+                ...$this->blocked('quantity_formula_budget_exceeded', $projectModelToken, $technology, $completeness),
+            ];
         }
 
         $derived = [];
@@ -90,22 +158,15 @@ final readonly class CurrentProjectDerivedQuantityService
             }
             $derived[] = $quantity;
         }
-        $sourceVersion = (string) ($technology['source_version'] ?? $completeness['source_version'] ?? '');
-        $this->models->replaceDerivedQuantityProjection(
-            $organizationId,
-            $projectId,
-            $sessionId,
-            $sourceVersion,
-            $derived,
-            $inactiveLogicalIds,
-        );
-        $quantities = $this->quantityDataMap($derived, $capture['token'], $warnings);
+        $quantities = $this->quantityDataMap($derived, $projectModelToken, $warnings);
 
         return [
+            'derived' => $derived,
+            'inactive_logical_ids' => $inactiveLogicalIds,
             'quantities' => $quantities,
             'warnings' => $warnings,
             'context' => [
-                ...$this->context($capture['token'], $technology, $completeness),
+                ...$this->context($projectModelToken, $technology, $completeness),
                 'work_packages' => $this->workPackageContext($completeness, $requests, $decisions),
             ],
         ];

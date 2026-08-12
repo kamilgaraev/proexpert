@@ -679,6 +679,42 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimatePricingService::class);
         $this->app->singleton(EstimateValidationService::class);
         $this->app->singleton(EstimateDraftPersistenceService::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Review\EstimateReviewExceptionSource::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Review\ProjectModelEstimateReviewExceptionSource::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions => new \App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\EstimateReviewExceptionSource::class),
+                hash('sha256', (string) config('app.key').'|estimate-review-exceptions-v1'),
+            ),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpreter::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\ExistingProviderEstimateCommandInterpreter::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateDialogueContextSnapshotRepository::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EloquentEstimateDialogueContextSnapshotRepository::class,
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandContextBuilder::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CanonicalEstimateCommandProposalResolver::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeSimulation::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\DeterministicEstimateChangePreview::class,
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateInterpretationAttemptRepository::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalMutationExecutor::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\CanonicalEstimateProposalMutationExecutor::class,
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateChangeProposalRepository::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalVersionFence::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\PreviewEstimateChange::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\ApplyEstimateChangeProposal::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CancelEstimateChangeProposal::class);
         $this->app->singleton(GeneratedEstimateNumberAllocator::class, LaravelGeneratedEstimateNumberAllocator::class);
         $this->app->singleton(RetryableEstimateGenerationSessionRepository::class, EloquentRetryableEstimateGenerationSessionRepository::class);
         $this->app->singleton(EstimateGenerationRetryDispatcher::class, LaravelEstimateGenerationRetryDispatcher::class);

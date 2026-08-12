@@ -9,7 +9,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPacka
 final class EstimateGenerationNoAirWorkItemPolicy
 {
     public const BLOCKER = 'generic_work_item_requires_review';
+
     public const FLAG = 'generic_work_item_requires_review';
+
     public const NO_AIR_FLAG = 'no_air_generic_work_item';
 
     private const GENERIC_TITLES = [
@@ -32,15 +34,11 @@ final class EstimateGenerationNoAirWorkItemPolicy
     ];
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     public function requiresReview(array $workItem): bool
     {
-        if ($this->hasMatchedNormativeDecision($workItem)) {
-            return false;
-        }
-
-        if (!$this->isPricedWorkItem($workItem)) {
+        if (! $this->isPricedWorkItem($workItem)) {
             return false;
         }
 
@@ -54,17 +52,21 @@ final class EstimateGenerationNoAirWorkItemPolicy
             return true;
         }
 
-        return $this->isGenericTitle((string) ($workItem['name'] ?? ''))
+        $genericTitle = $this->isGenericTitle((string) ($workItem['name'] ?? ''))
             || $this->isGenericTitle((string) ($workItem['normative_search_text'] ?? ''));
+
+        return $genericTitle || ! $this->hasMatchedNormativeDecision($workItem) && in_array('requires_normative_review', $flags, true);
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     public function markRequiresReview(array $workItem, ?string $message = null): array
     {
-        if ($this->hasMatchedNormativeDecision($workItem)) {
+        if ($this->hasMatchedNormativeDecision($workItem)
+            && ! $this->isGenericTitle((string) ($workItem['name'] ?? ''))
+            && ! $this->isGenericTitle((string) ($workItem['normative_search_text'] ?? ''))) {
             return $workItem;
         }
 
@@ -100,14 +102,14 @@ final class EstimateGenerationNoAirWorkItemPolicy
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function isPricedWorkItem(array $workItem): bool
     {
         $type = (string) ($workItem['item_type'] ?? 'priced_work');
 
         return $type !== EstimateGenerationPackageItem::QUANTITY_REVIEW_ITEM_TYPE
-            && !in_array($type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true);
+            && ! in_array($type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true);
     }
 
     /** @param array<string, mixed> $workItem */
@@ -133,7 +135,7 @@ final class EstimateGenerationNoAirWorkItemPolicy
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<int, string>
      */
     private function flags(array $workItem): array

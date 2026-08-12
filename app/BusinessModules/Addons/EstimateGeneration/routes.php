@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationBuildingModelController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDialogueController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationGeometryController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
@@ -55,6 +56,12 @@ Route::middleware([
         Route::get('/{session}/packages/{package}', [EstimateGenerationPackageController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('packages.show');
         Route::get('/{session}/draft', [EstimateGenerationPackageController::class, 'draft'])->middleware('authorize:estimate_generation.view,project,project')->name('draft');
         Route::get('/{session}/review-items', [EstimateGenerationReviewController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('review-items');
+        Route::get('/{session}/review-exceptions', [EstimateGenerationReviewController::class, 'exceptions'])->middleware('authorize:estimate_generation.view,project,project')->name('review-exceptions');
+        Route::post('/{session}/assistant/interpret', [EstimateGenerationDialogueController::class, 'interpret'])->middleware('authorize:estimate_generation.review,project,project')->name('assistant.interpret');
+        Route::get('/{session}/assistant/proposals/{proposal}', [EstimateGenerationDialogueController::class, 'show'])->whereUuid('proposal')->middleware('authorize:estimate_generation.view,project,project')->name('assistant.proposals.show');
+        Route::get('/{session}/assistant/proposals/{proposal}/items', [EstimateGenerationDialogueController::class, 'items'])->whereUuid('proposal')->middleware('authorize:estimate_generation.view,project,project')->name('assistant.proposals.items');
+        Route::post('/{session}/assistant/proposals/{proposal}/apply', [EstimateGenerationDialogueController::class, 'apply'])->whereUuid('proposal')->middleware('authorize:estimate_generation.review,project,project')->name('assistant.proposals.apply');
+        Route::post('/{session}/assistant/proposals/{proposal}/cancel', [EstimateGenerationDialogueController::class, 'cancel'])->whereUuid('proposal')->middleware('authorize:estimate_generation.review,project,project')->name('assistant.proposals.cancel');
         Route::get('/{session}', [EstimateGenerationSessionController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('show');
         Route::get('/{session}/export', [EstimateGenerationPackageController::class, 'export'])->middleware('authorize:estimate_generation.export,project,project')->name('export');
         Route::post('/{session}/apply', [EstimateGenerationActionController::class, 'apply'])->middleware('authorize:estimate_generation.apply,project,project')->name('apply');

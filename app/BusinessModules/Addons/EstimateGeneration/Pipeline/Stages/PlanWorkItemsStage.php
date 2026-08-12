@@ -13,12 +13,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\AiResidentialWorkCompositionAdvisor;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\CanonicalTechnologyWorkItemPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\ResidentialWorkPlanReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialScopeDecisionQuantityMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver;
-use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use Illuminate\Support\Facades\Log;
 
 final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
@@ -33,6 +33,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private WorkItemQuantityResolver $quantityResolver = new WorkItemQuantityResolver,
         private ResidentialWorkPlanReconciler $compositionReconciler = new ResidentialWorkPlanReconciler,
         private ResidentialScopeDecisionQuantityMaterializer $scopeDecisionQuantities = new ResidentialScopeDecisionQuantityMaterializer,
+        private CanonicalTechnologyWorkItemPlanner $technologyWorkItems = new CanonicalTechnologyWorkItemPlanner,
     ) {}
 
     public function stage(): ProcessingStage
@@ -111,7 +112,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $payload = $this->compiler->compile($analysis, null, true);
         $payload = $this->compositionReconciler->reconcile($payload, $advice, $baselinePayload);
-        $stageFiveItems = NormativeWorkItemPlannerService::stageFivePackageItems(
+        $stageFiveItems = $this->technologyWorkItems->planPackages(
             is_array($stage6Context['work_packages'] ?? null) ? $stage6Context['work_packages'] : [],
         );
         if ($stageFiveItems !== []) {

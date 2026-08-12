@@ -81,6 +81,15 @@ final class TechnologyRecommendationServiceTest extends TestCase
             self::assertNotEmpty($option->scoreContributions);
             self::assertNotEmpty($option->system->materials);
             self::assertNotEmpty($option->system->works);
+            foreach ($option->system->works as $index => $work) {
+                self::assertArrayHasKey('quantity_formula_id', $work);
+                self::assertArrayHasKey('norm_intent_id', $work);
+                self::assertArrayHasKey('depends_on', $work);
+                self::assertSame(
+                    $index === 0 ? [] : [$option->system->works[$index - 1]['id']],
+                    $work['depends_on'],
+                );
+            }
             self::assertNotEmpty($option->system->machinery);
             self::assertNotEmpty($option->system->quantityFormulas);
             self::assertNotEmpty($option->system->normIntents);
@@ -592,6 +601,12 @@ final class TechnologyRecommendationServiceTest extends TestCase
 
         $works = $data;
         $works['systems'][0]['works'] = array_reverse($works['systems'][0]['works']);
+        $previousWorkId = null;
+        foreach ($works['systems'][0]['works'] as &$work) {
+            $work['depends_on'] = $previousWorkId === null ? [] : [$previousWorkId];
+            $previousWorkId = $work['id'];
+        }
+        unset($work);
         $worksCatalog = TechnologySystemCatalog::fromArray($works);
         self::assertNotSame($first->contentHash, $worksCatalog->contentHash);
         $systemId = $data['systems'][0]['id'];

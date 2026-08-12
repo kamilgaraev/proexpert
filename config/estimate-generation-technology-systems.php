@@ -18,6 +18,27 @@ $unavailableCost = [
     'amount_minor' => null,
     'reason' => 'requires_quantities_and_regional_prices',
 ];
+$workPlanningBySystem = [
+    'pitched_roof.metal_tile' => [
+        'install_underlay_membrane' => ['roof_covering_area', 'fsnb.roof.metal_profile_installation'],
+        'install_counter_batten' => ['batten_length', 'fsnb.roof.timber_batten_installation'],
+        'install_batten' => ['batten_length', 'fsnb.roof.timber_batten_installation'],
+        'install_metal_tile' => ['roof_covering_area', 'fsnb.roof.metal_profile_installation'],
+        'install_roof_accessories_and_flashings' => ['roof_covering_area', 'fsnb.roof.metal_profile_installation'],
+    ],
+    'pitched_roof.flexible_shingle' => [
+        'install_solid_deck' => ['solid_deck_area', 'fsnb.roof.solid_deck_installation'],
+        'install_underlay_carpet' => ['roof_covering_area', 'fsnb.roof.flexible_shingle_installation'],
+        'install_flexible_shingle' => ['roof_covering_area', 'fsnb.roof.flexible_shingle_installation'],
+        'install_roof_accessories_and_flashings' => ['roof_covering_area', 'fsnb.roof.flexible_shingle_installation'],
+    ],
+    'pitched_roof.standing_seam' => [
+        'prepare_standing_seam_base' => ['roof_panel_area', 'fsnb.roof.metal_base_installation'],
+        'install_separation_membrane' => ['roof_panel_area', 'fsnb.roof.standing_seam_installation'],
+        'install_standing_seam_panels' => ['roof_panel_area', 'fsnb.roof.standing_seam_installation'],
+        'form_seams_and_flashings' => ['seam_length', 'fsnb.roof.standing_seam_installation'],
+    ],
+];
 
 $catalog = [
     'version' => '2026.08.11-v1',
@@ -141,12 +162,21 @@ $unitByOperand = [
     'effective_panel_width' => 'm',
 ];
 foreach ($catalog['systems'] as &$system) {
-    foreach (['materials', 'works', 'machinery'] as $collection) {
+    foreach (['materials', 'machinery'] as $collection) {
         foreach ($system[$collection] as &$item) {
             $item['id'] = $collection.'.'.$item['intent'];
         }
         unset($item);
     }
+    $previousWorkId = null;
+    foreach ($system['works'] as &$work) {
+        $work['id'] = 'works.'.$work['intent'];
+        [$work['quantity_formula_id'], $work['norm_intent_id']] =
+            $workPlanningBySystem[$system['id']][$work['intent']];
+        $work['depends_on'] = $previousWorkId === null ? [] : [$previousWorkId];
+        $previousWorkId = $work['id'];
+    }
+    unset($work);
     foreach ($system['norm_intents'] as &$intent) {
         $intent['id'] = $intent['stable_intent'];
     }

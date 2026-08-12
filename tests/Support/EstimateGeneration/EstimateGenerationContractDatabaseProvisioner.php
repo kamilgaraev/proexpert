@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '36cdeec842c989336e6bd78be1ec46e328cf02394abc82291c01da9c2b6bc9ec',
-        'training' => '7a4458ad0e4b2d7b4d833225f67add97bed3b9e336233119b2af8da0c62d009c',
-        'pricing' => '7a4458ad0e4b2d7b4d833225f67add97bed3b9e336233119b2af8da0c62d009c',
+        'geometry' => '9b5945eda983bfb971dbe7e6ceed3fde05c0971d3be12b8d12eedc775b89fc31',
+        'training' => 'cc3cb4c635a0b15cd99587783d563676206f79dcec921e3175ea5da1e469400e',
+        'pricing' => 'cc3cb4c635a0b15cd99587783d563676206f79dcec921e3175ea5da1e469400e',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '21b11deec11971c93c739510d943b7dad35131b46408f8c2b0e3d4075578a51d';
+    private const FRESH_INVENTORY_DIGEST = '180e85d7a321445ec5f01a3923d0e8f7eba34d0b657d8a7758be8d77520aec2b';
 
     private const SUBJECT = [
         'geometry' => [
@@ -45,10 +45,10 @@ final class EstimateGenerationContractDatabaseProvisioner
     ];
 
     private const SUBJECT_DIGEST = [
-        'geometry' => '740d3b343d86ff7d386546fc9dd63a5d680b79df8f25ecd2d8e1fd46d88f5eab',
+        'geometry' => '724a3a195ab280c3f87ec1b29064024f6e0208709c3c340a85f6ce9c5983887b',
         'pricing' => '22c28514b665272f7e8cffeb911bf9bda48b098bd25947c04ee22bed41238158',
         'training' => 'ff394b33d8717a20622b4895a627e8784d987f0d11611601b5446fd59ee23026',
-        'project-model' => 'a646687227ecddc11d6da919c0e20d30a22d41694c146d80a2413fda221c3809',
+        'project-model' => 'b93980b093a0b93119d958ae46216ab51ca7175f8afe6591e965027d4d681b4a',
     ];
 
     private const CORE = [
@@ -145,15 +145,47 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000100_finalize_supplementary_project_material_prices.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000200_canonicalize_supplementary_project_material_price_fields.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000300_separate_work_scenario_from_project_material_assumption.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000400_extend_residential_project_material_catalog.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000500_allow_published_regional_price_lifecycle_transitions.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000100_fix_regional_price_version_insert_guard.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000200_finalize_semantic_abstract_resource_prices.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000300_cast_semantic_resource_payload_to_jsonb.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000400_accept_pinned_regional_resource_children.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000500_accept_pinned_children_in_input_validator.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000600_add_price_lookup_indexes.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_001300_materialize_pinned_abstract_resource_conversions.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_001400_fix_pinned_abstract_resource_conversion_units.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_001500_route_deferred_price_input_validation_to_v8.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_22_000100_extend_ai_usage_for_completeness_arbiter.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_22_000200_create_estimate_generation_targeted_rebuild_operations.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_23_000100_add_page_recovery_state_to_estimate_generation_document_pages.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000100_add_source_confirmation_context_to_geometry_audit.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000100_create_ai_estimate_quota_reservations.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000100_require_document_unit_provenance.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000150_add_project_model_projection_scope_indexes.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000200_create_estimate_generation_project_model_tables.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000225_add_project_model_correction_scope_unique.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000300_create_estimate_generation_sheet_analysis_operations.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_03_000100_backfill_document_unit_provenance.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_04_000100_fix_document_unit_provenance_regex_bound.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000100_add_request_context_to_estimate_generation_ai_usage.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000100_drop_internal_ai_budget_accounting.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000200_drop_obsolete_runtime_state.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000250_create_evaluation_corpus.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000300_create_vision_physical_attempts.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000400_add_recovery_lease_to_vision_physical_attempts.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000500_allow_ambiguous_ai_usage_status.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000600_consolidate_estimate_project_model_v2.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000610_secure_estimate_project_model_v2_schema.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000620_backfill_estimate_project_model_v2.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000630_finalize_estimate_project_model_v2_constraints.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000700_create_technology_planning_projections.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000710_create_completeness_planning_projections.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_12_000100_add_derived_quantity_current_projection.php',
+        'database/migrations/2026_08_12_000002_create_estimate_change_proposals.php',
+        'database/migrations/2026_08_12_000003_add_interpretation_attempts_and_cost_state.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void
@@ -289,7 +321,17 @@ final class EstimateGenerationContractDatabaseProvisioner
             'database/migrations/2026_06_28_000004_create_estimate_generation_training_dataset_tables.php',
         ]);
 
-        return [...$entries, ...self::SUBJECT['training']];
+        $trainingInsertAt = array_search(
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000100_add_estimate_generation_dashboard_indexes.php',
+            $entries,
+            true,
+        );
+        if ($trainingInsertAt === false) {
+            throw new InvalidArgumentException('estimate_generation_contract_inventory_invalid');
+        }
+        array_splice($entries, $trainingInsertAt, 0, self::SUBJECT['training']);
+
+        return $entries;
     }
 
     public static function inventory(string $phase = 'training'): array
