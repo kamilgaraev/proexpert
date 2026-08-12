@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Generation;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
 use Brick\Math\BigDecimal;
 use Closure;
 use Illuminate\Support\Facades\Facade;
@@ -12,6 +13,10 @@ use JsonException;
 final class BuildMostEstimateDraft
 {
     private const CONTRACT = 'most_ordinary_estimate:v1';
+
+    private const MAX_CANDIDATE_ROWS = 1000;
+
+    private const MAX_REVIEW_ITEMS = 1000;
 
     private const DEFAULT_LIMITS = [
         'max_rows' => 5000,
@@ -26,6 +31,7 @@ final class BuildMostEstimateDraft
     {
         $limits = $this->limits($draft['stage6_limits'] ?? null);
         $reviewItems = [];
+        $candidateRows = [];
         $processedRows = 0;
         foreach (['catalog_identity', 'technology_identity', 'rule_identity'] as $identityKey) {
             if (($draft[$identityKey]['status'] ?? null) !== 'current') {
@@ -47,15 +53,22 @@ final class BuildMostEstimateDraft
                 foreach ($section['work_items'] ?? [] as $workItem) {
                     if ($processedRows >= $limits['max_rows']) {
                         $reviewItems[] = $this->reviewItem('draft_budget', 'draft_row_budget_exceeded');
+                        if (is_array($workItem) && count($candidateRows) < self::MAX_CANDIDATE_ROWS) {
+                            $candidateRows[] = $this->budgetCandidate($workItem);
+                        }
 
-                        continue;
+                        break;
                     }
                     if (! is_array($workItem)) {
                         continue;
                     }
 
                     [$row, $rowReviewItems] = $this->processRow($workItem, $draft, $limits);
-                    $rows[] = $row;
+                    if ($rowReviewItems === []) {
+                        $rows[] = $row;
+                    } elseif (count($candidateRows) < self::MAX_CANDIDATE_ROWS) {
+                        $candidateRows[] = $row;
+                    }
                     array_push($reviewItems, ...$rowReviewItems);
                     $processedRows++;
                 }
@@ -65,6 +78,7 @@ final class BuildMostEstimateDraft
         }
 
         $draft['generation_contract'] = self::CONTRACT;
+        $draft['stage6_candidate_rows'] = $candidateRows;
         $draft['stage6_review_items'] = $this->uniqueReviewItems($reviewItems);
         $draft['is_complete'] = $draft['stage6_review_items'] === [];
         $draft['stage6_status'] = $draft['is_complete'] ? 'ready' : 'review_required';
@@ -111,6 +125,9 @@ final class BuildMostEstimateDraft
         if (! $this->priceIsReady($price, $workItem, $draft)) {
             $reviewItems[] = $this->reviewItem('price_blocking', 'regional_price_not_compatible', $workItem);
         }
+        if (! $this->storageDecimalsAreReady($workItem, $price)) {
+            $reviewItems[] = $this->reviewItem('draft_storage', 'ordinary_estimate_decimal_out_of_range', $workItem);
+        }
 
         $provenance = $this->provenance($workItem, $draft, $limits['max_source_refs_per_row']);
         if (strlen($this->canonicalJson($provenance)) > $limits['max_metadata_bytes_per_row']) {
@@ -121,6 +138,7 @@ final class BuildMostEstimateDraft
 
         $workItem['metadata'] = is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : [];
         $workItem['metadata']['stage6_provenance'] = $provenance;
+        unset($workItem['prompt'], $workItem['raw_document'], $workItem['document_content']);
         if ($reviewItems !== []) {
             $workItem['pricing_status'] = 'not_calculated';
             $workItem['pricing_blocker'] = $reviewItems[0]['code'];
@@ -132,6 +150,17 @@ final class BuildMostEstimateDraft
         }
 
         return [$workItem, $reviewItems];
+    }
+
+    /** @param array<string, mixed> $workItem @return array<string, mixed> */
+    private function budgetCandidate(array $workItem): array
+    {
+        unset($workItem['prompt'], $workItem['raw_document'], $workItem['document_content']);
+        $workItem['pricing_status'] = 'not_calculated';
+        $workItem['pricing_blocker'] = 'draft_row_budget_exceeded';
+        $workItem['total_cost'] = '0';
+
+        return $workItem;
     }
 
     /** @param mixed $quantity @param array<string, mixed> $workItem @param array<string, mixed> $draft */
@@ -244,6 +273,30 @@ final class BuildMostEstimateDraft
             && ($workItem['pricing_finalized_at'] ?? null) === $price['captured_at'];
     }
 
+    /** @param mixed $price @param array<string, mixed> $workItem */
+    private function storageDecimalsAreReady(array $workItem, mixed $price): bool
+    {
+        if (! OrdinaryEstimateDecimal::fitsQuantity($workItem['quantity'] ?? null)
+            || ! is_array($price)
+            || ! OrdinaryEstimateDecimal::fitsMoney($price['final_amount'] ?? null)) {
+            return false;
+        }
+        foreach (['materials', 'labor', 'machinery', 'other_resources'] as $group) {
+            foreach ($workItem[$group] ?? [] as $resource) {
+                if (! is_array($resource)
+                    || ! OrdinaryEstimateDecimal::fitsResourceQuantity($resource['quantity'] ?? null)
+                    || ! OrdinaryEstimateDecimal::fitsResourceQuantity($resource['quantity_per_unit'] ?? 1)
+                    || ! OrdinaryEstimateDecimal::fitsUnitPrice($resource['unit_price'] ?? null)
+                    || ! OrdinaryEstimateDecimal::fitsMoney($resource['unit_price'] ?? null)
+                    || ! OrdinaryEstimateDecimal::fitsMoney($resource['total_price'] ?? null)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     /** @param array<string, mixed> $workItem @param array<string, mixed> $draft @return array<string, mixed> */
     private function provenance(array $workItem, array $draft, int $maxSourceRefs): array
     {
@@ -341,8 +394,21 @@ final class BuildMostEstimateDraft
     private function uniqueReviewItems(array $items): array
     {
         $unique = [];
+        $exceeded = false;
         foreach ($items as $item) {
-            $unique[$item['type'].'|'.$item['code'].'|'.($item['work_item_key'] ?? '')] = $item;
+            $key = $item['type'].'|'.$item['code'].'|'.($item['work_item_key'] ?? '');
+            if (isset($unique[$key])) {
+                continue;
+            }
+            if (count($unique) >= self::MAX_REVIEW_ITEMS - 1) {
+                $exceeded = true;
+                break;
+            }
+            $unique[$key] = $item;
+        }
+        if ($exceeded) {
+            $item = $this->reviewItem('draft_budget', 'stage6_review_budget_exceeded');
+            $unique[$item['type'].'|'.$item['code'].'|'] = $item;
         }
 
         return array_values($unique);

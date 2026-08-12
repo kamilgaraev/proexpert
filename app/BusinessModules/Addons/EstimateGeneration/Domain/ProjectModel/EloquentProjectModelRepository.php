@@ -550,7 +550,27 @@ SQL, [
                             throw new InvalidArgumentException('Derived quantity operand is not storage-canonical.');
                         }
                     }
-                    $this->database->table('estimate_generation_project_model_derived_quantities')->insertOrIgnore([
+                    if ($quantity->exactIdentity === null
+                        || ! hash_equals($quantity->exactIdentity, DerivedQuantityIdentity::for($quantity))) {
+                        throw new InvalidArgumentException('Derived quantity exact identity does not match its content.');
+                    }
+                    $this->lockUnderstandingScope(
+                        $quantity->organizationId,
+                        $quantity->projectId,
+                        $quantity->sessionId,
+                    );
+                    $scopeQuery = $this->database->table('estimate_generation_project_model_derived_quantities')
+                        ->where('organization_id', $quantity->organizationId)
+                        ->where('project_id', $quantity->projectId)
+                        ->where('session_id', $quantity->sessionId)
+                        ->where('source_version', $quantity->sourceVersion);
+                    $existing = (clone $scopeQuery)->where('stable_key', $quantity->id)->first();
+                    if ($existing !== null) {
+                        $this->assertDerivedQuantityReplay($quantity, $existing);
+
+                        continue;
+                    }
+                    $quantityId = $this->database->table('estimate_generation_project_model_derived_quantities')->insertGetId([
                         'organization_id' => $quantity->organizationId,
                         'project_id' => $quantity->projectId,
                         'session_id' => $quantity->sessionId,
@@ -567,15 +587,8 @@ SQL, [
                         'unresolved_inputs' => $this->json($quantity->unresolvedInputs),
                         'created_at' => now(),
                     ]);
-                    $quantityId = $this->database->table('estimate_generation_project_model_derived_quantities')
-                        ->where('organization_id', $quantity->organizationId)
-                        ->where('project_id', $quantity->projectId)
-                        ->where('session_id', $quantity->sessionId)
-                        ->where('source_version', $quantity->sourceVersion)
-                        ->where('stable_key', $quantity->id)
-                        ->value('id');
                     foreach ($quantity->operands as $ordinal => $operand) {
-                        $this->database->table('estimate_generation_project_model_derived_operands')->insertOrIgnore([
+                        $this->database->table('estimate_generation_project_model_derived_operands')->insert([
                             'derived_quantity_id' => (int) $quantityId,
                             'fact_id' => $this->factDatabaseId($quantity, $operand['fact_id']),
                             'organization_id' => $quantity->organizationId,
@@ -589,6 +602,49 @@ SQL, [
                 }
             }, 3);
         }
+    }
+
+    private function assertDerivedQuantityReplay(DerivedQuantity $quantity, object $existing): void
+    {
+        $storedOperands = $this->database->table('estimate_generation_project_model_derived_operands')
+            ->where('derived_quantity_id', (int) $existing->id)
+            ->orderBy('operand_ordinal')
+            ->pluck('operand_snapshot')
+            ->map(fn (mixed $operand): mixed => is_string($operand) ? json_decode($operand, true, 512, JSON_THROW_ON_ERROR) : $operand)
+            ->all();
+        $stored = [
+            'formula' => (string) $existing->formula,
+            'value' => $existing->value === null ? null : DecimalValue::canonical((string) $existing->value),
+            'unit' => (string) $existing->unit,
+            'rounding_mode' => (string) $existing->rounding_mode,
+            'rounding_scale' => (int) $existing->rounding_scale,
+            'status' => (string) $existing->status,
+            'evidence_ids' => $this->decodedJson($existing->evidence_lineage),
+            'unresolved_inputs' => $this->decodedJson($existing->unresolved_inputs),
+            'operands' => $storedOperands,
+        ];
+        $expected = [
+            'formula' => $quantity->formula,
+            'value' => $quantity->value,
+            'unit' => $quantity->unit,
+            'rounding_mode' => $quantity->roundingMode,
+            'rounding_scale' => $quantity->roundingScale,
+            'status' => $quantity->status,
+            'evidence_ids' => $quantity->evidenceIds,
+            'unresolved_inputs' => $quantity->unresolvedInputs,
+            'operands' => $quantity->operands,
+        ];
+        if (! hash_equals(
+            DerivedQuantityIdentity::canonicalJson($expected),
+            DerivedQuantityIdentity::canonicalJson($stored),
+        )) {
+            throw new InvalidArgumentException('Derived quantity exact identity collision.');
+        }
+    }
+
+    private function decodedJson(mixed $value): mixed
+    {
+        return is_string($value) ? json_decode($value, true, 512, JSON_THROW_ON_ERROR) : $value;
     }
 
     private function appendCrossDocumentLinks(array $links, int $chunkSize = 200): void

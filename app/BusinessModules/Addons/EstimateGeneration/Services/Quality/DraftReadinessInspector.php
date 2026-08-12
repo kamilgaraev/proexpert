@@ -89,6 +89,24 @@ final class DraftReadinessInspector
         if ((int) ($draft['quality_summary']['review_items']['blocking'] ?? 0) > 0) {
             $codes[] = 'blocking_review_unresolved';
         }
+        $stage6Items = is_array($draft['stage6_review_items'] ?? null)
+            ? array_values($draft['stage6_review_items'])
+            : [];
+        if (count($stage6Items) > 1000) {
+            $codes[] = 'stage6_review_budget_exceeded';
+            $stage6Items = array_slice($stage6Items, 0, 1000);
+        }
+        foreach ($stage6Items as $item) {
+            $code = is_array($item) && is_string($item['code'] ?? null)
+                ? trim($item['code'])
+                : '';
+            $codes[] = $code !== '' ? $code : 'stage6_review_item_invalid';
+        }
+        if (($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1'
+            && (($draft['stage6_status'] ?? null) !== 'ready' || ($draft['is_complete'] ?? null) !== true)
+            && $stage6Items === []) {
+            $codes[] = 'stage6_draft_incomplete';
+        }
         $missingPackages = $this->packageCoverage->missingPackages($draft);
         $missingComposition = $this->residentialComposition->missingRequirements($draft);
         $unresolvedScope = $this->mergeMissingScope($missingPackages, $missingComposition);

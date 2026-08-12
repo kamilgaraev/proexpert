@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\Proj
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
@@ -37,6 +38,8 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
     public array $decisions = [];
 
     public array $quantities = [];
+
+    public array $currentQuantities = [];
 
     public array $links = [];
 
@@ -225,7 +228,28 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                     throw new InvalidArgumentException('Derived quantity operand is not the current projection.');
                 }
             }
-            $this->quantities[$this->recordKey($quantity)] = $quantity;
+            if ($quantity->exactIdentity === null
+                || ! hash_equals($quantity->exactIdentity, DerivedQuantityIdentity::for($quantity))) {
+                throw new InvalidArgumentException('Derived quantity exact identity does not match its content.');
+            }
+            $recordKey = $this->recordKey($quantity);
+            $existing = $this->quantities[$recordKey] ?? null;
+            if ($existing instanceof DerivedQuantity) {
+                if ($existing != $quantity) {
+                    throw new InvalidArgumentException('Derived quantity exact identity collision.');
+                }
+
+                continue;
+            }
+            $this->quantities[$recordKey] = $quantity;
+            $logicalKey = implode(':', [
+                $quantity->organizationId,
+                $quantity->projectId,
+                $quantity->sessionId,
+                $quantity->sourceVersion,
+                $quantity->logicalId,
+            ]);
+            $this->currentQuantities[$logicalKey] = $quantity;
         }
     }
 

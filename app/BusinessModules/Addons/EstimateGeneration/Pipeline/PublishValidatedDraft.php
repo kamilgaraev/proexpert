@@ -25,6 +25,7 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private EstimateGenerationNotificationService $notifications,
         private DraftReadinessInspector $readiness,
         private TargetedPackageRebuildOperationService $targetedRebuilds,
+        private DraftPublicationGate $publicationGate,
     ) {}
 
     public function beforeComplete(CheckpointClaim $claim, PipelineStageResult $result, DateTimeImmutable $completedAt): void
@@ -60,9 +61,15 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         if ($requiresReview !== $data['requires_review']) {
             throw new \DomainException('Validated draft readiness is stale.');
         }
-        $this->packages->syncFromDraft($session, $draft, $claim->context->baseInputVersion);
-        $this->packages->assertCalculatedPricesFinalized($session, $draft);
-        $this->audit->recordNormativeDecisionSummary($session, $draft);
+        $publishable = $this->publicationGate->persistWhenAllowed(
+            $draft,
+            $requiresReview,
+            function () use ($session, $draft, $claim): void {
+                $this->packages->syncFromDraft($session, $draft, $claim->context->baseInputVersion);
+                $this->packages->assertCalculatedPricesFinalized($session, $draft);
+                $this->audit->recordNormativeDecisionSummary($session, $draft);
+            },
+        );
         $published = $this->advance->generationCompleted($session, $requiresReview, [
             'processing_stage' => ProcessingStage::ValidateDraft->value,
             'processing_progress' => 100,
@@ -70,14 +77,16 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             'problem_flags' => $draft['problem_flags'] ?? [],
             'last_error' => null,
         ]);
-        $this->targetedRebuilds->scheduleAfterPublishedDraft($published, $draft);
+        if ($publishable) {
+            $this->targetedRebuilds->scheduleAfterPublishedDraft($published, $draft);
+        }
         $artifactHash = $result->output?->artifact->contentVersion ?? $result->outputVersion;
         $idempotencyKey = hash('sha256', implode('|', [
             $claim->context->sessionId,
             $claim->context->inputVersion,
             $artifactHash,
         ]));
-        if (! $requiresReview) {
+        if ($publishable) {
             $publication = $this->publishDraftOnce->publish(
                 (string) $claim->context->sessionId,
                 $claim->context->inputVersion,

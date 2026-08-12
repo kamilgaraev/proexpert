@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Generation;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialProjectMaterialCatalog;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 
 final readonly class AssembleMatchedResources
 {
@@ -72,13 +74,15 @@ final readonly class AssembleMatchedResources
             return $this->blocked($workItem);
         }
 
-        $workQuantity = is_numeric($workItem['quantity'] ?? null) ? (float) $workItem['quantity'] : 0.0;
-        $quantityPerUnit = (float) ($resource['quantity'] ?? 0);
-        if ($workQuantity <= 0 || $quantityPerUnit <= 0) {
+        $workQuantity = $this->decimal($workItem['quantity'] ?? null);
+        $quantityPerUnit = $this->decimal($resource['quantity'] ?? null);
+        $unitPrice = $this->decimal($resource['unit_price'] ?? null);
+        if ($workQuantity === null || $quantityPerUnit === null || $unitPrice === null
+            || $workQuantity->isLessThanOrEqualTo(0) || $quantityPerUnit->isLessThanOrEqualTo(0)
+            || $unitPrice->isLessThanOrEqualTo(0)) {
             return $this->blocked($workItem);
         }
-        $quantity = round($workQuantity * $quantityPerUnit, 6);
-        $unitPrice = (float) $resource['unit_price'];
+        $quantity = $workQuantity->multipliedBy($quantityPerUnit);
         $materials = is_array($workItem['materials'] ?? null)
             ? array_values(array_filter($workItem['materials'], 'is_array'))
             : [];
@@ -94,11 +98,11 @@ final readonly class AssembleMatchedResources
             'resource_type' => 'material',
             'unit' => $resource['unit'],
             'price_unit' => $resource['price_unit'],
-            'quantity' => $quantity,
-            'quantity_per_unit' => $quantityPerUnit,
+            'quantity' => $this->canonicalDecimal($quantity),
+            'quantity_per_unit' => $this->canonicalDecimal($quantityPerUnit),
             'quantity_basis' => 'project_material_scenario',
-            'unit_price' => $unitPrice,
-            'total_price' => round($quantity * $unitPrice, 2),
+            'unit_price' => $this->canonicalDecimal($unitPrice),
+            'total_price' => (string) $quantity->multipliedBy($unitPrice)->toScale(2, RoundingMode::HalfUp),
             'price_source' => $resource['price_source'],
             'price_source_version' => $resource['price_source_version'],
             'price_source_kind' => $resource['price_source_kind'] ?? null,
@@ -123,9 +127,9 @@ final readonly class AssembleMatchedResources
             ...$selection,
             'resource_code' => $resource['code'],
             'resource_name' => $resource['name'],
-            'quantity' => $quantity,
+            'quantity' => $this->canonicalDecimal($quantity),
             'unit' => $resource['unit'],
-            'unit_price' => $unitPrice,
+            'unit_price' => $this->canonicalDecimal($unitPrice),
             'price_source' => $resource['price_source'],
             'price_source_version' => $resource['price_source_version'],
             'price_source_kind' => $resource['price_source_kind'] ?? null,
@@ -167,13 +171,41 @@ final readonly class AssembleMatchedResources
         return $normalized !== null
             && ($normalized['code'] ?? null) === ($resource['code'] ?? null)
             && (string) $normalized['unit_price'] === (string) ($resource['unit_price'] ?? '')
-            && (float) $normalized['quantity'] === (float) ($resource['quantity'] ?? 0)
+            && $this->sameDecimal($normalized['quantity'] ?? null, $resource['quantity'] ?? null)
             && ($normalized['project_material_requirement']['selection_policy'] ?? null)
                 === ($selection['selection_policy'] ?? null)
             && ($normalized['project_material_requirement']['price_source_kind'] ?? null)
                 === ($selection['price_source_kind'] ?? null)
             && ($normalized['project_material_requirement']['price_provenance'] ?? null)
                 == ($selection['price_provenance'] ?? null);
+    }
+
+    private function decimal(mixed $value): ?BigDecimal
+    {
+        if (! is_string($value) && ! is_int($value) && ! is_float($value)) {
+            return null;
+        }
+        if (is_float($value) && ! is_finite($value)) {
+            return null;
+        }
+        try {
+            return BigDecimal::of(is_float($value) ? sprintf('%.14F', $value) : (string) $value);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function sameDecimal(mixed $left, mixed $right): bool
+    {
+        $left = $this->decimal($left);
+        $right = $this->decimal($right);
+
+        return $left !== null && $right !== null && $left->isEqualTo($right);
+    }
+
+    private function canonicalDecimal(BigDecimal $value): string
+    {
+        return $value->isZero() ? '0' : $value->strippedOfTrailingZeros()->__toString();
     }
 
     /** @return array<string, mixed> */

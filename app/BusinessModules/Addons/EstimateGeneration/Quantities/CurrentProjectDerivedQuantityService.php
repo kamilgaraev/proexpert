@@ -195,31 +195,49 @@ final readonly class CurrentProjectDerivedQuantityService
         $length = $this->oneFact($facts, $wall->id, 'length');
         $height = $this->oneFact($facts, $wall->id, 'height');
         $widths = $heights = [];
+        $geometryInputs = [];
         foreach ($openings as $opening) {
             $width = $this->oneFact($facts, $opening->id, 'width');
             $openingHeight = $this->oneFact($facts, $opening->id, 'height');
+            $geometryInputs[] = [
+                'entity_id' => $opening->id,
+                'kind' => 'wall_opening',
+                'operands' => [
+                    'width' => $width?->id,
+                    'height' => $openingHeight?->id,
+                ],
+            ];
             if ($width instanceof Fact && $openingHeight instanceof Fact) {
                 $widths[] = $width->id;
                 $heights[] = $openingHeight->id;
             }
         }
 
-        return $this->request('wall_net_area', $wall->id, [
+        $request = $this->request('wall_net_area', $wall->id, [
             'wall_length' => $length?->id,
             'wall_height' => $height?->id,
             'opening_widths' => $widths,
             'opening_heights' => $heights,
         ], $token, $technology, $completeness, 'm2', 2);
+        $request['geometry_inputs'] = $geometryInputs;
+
+        return $request;
     }
 
     /** @param list<Entity> $children @param array<string, array<string, list<Fact>>> $facts */
     private function roofRequest(Entity $roof, array $children, array $facts, string $token, array $technology, array $completeness): array
     {
         $areas = $rises = $runs = $openingAreas = [];
+        $geometryInputs = [];
         foreach ($children as $facet) {
             $semanticType = (string) ($facet->attributes['semantic_type'] ?? $facet->type);
             if ($semanticType === 'roof_opening') {
                 $openingArea = $this->oneFact($facts, $facet->id, 'area');
+                $geometryInputs[] = [
+                    'entity_id' => $facet->id,
+                    'kind' => 'roof_opening',
+                    'operands' => ['area' => $openingArea?->id],
+                ];
                 if ($openingArea instanceof Fact) {
                     $openingAreas[] = $openingArea->id;
                 }
@@ -232,6 +250,15 @@ final readonly class CurrentProjectDerivedQuantityService
             $area = $this->oneFact($facts, $facet->id, 'plan_area');
             $rise = $this->oneFact($facts, $facet->id, 'slope_rise');
             $run = $this->oneFact($facts, $facet->id, 'slope_run');
+            $geometryInputs[] = [
+                'entity_id' => $facet->id,
+                'kind' => 'roof_facet',
+                'operands' => [
+                    'plan_area' => $area?->id,
+                    'slope_rise' => $rise?->id,
+                    'slope_run' => $run?->id,
+                ],
+            ];
             if ($area instanceof Fact && $rise instanceof Fact && $run instanceof Fact) {
                 $areas[] = $area->id;
                 $rises[] = $rise->id;
@@ -247,7 +274,10 @@ final readonly class CurrentProjectDerivedQuantityService
             $operands['roof_opening_areas'] = $openingAreas;
         }
 
-        return $this->request('sloped_roof_area', $roof->id, $operands, $token, $technology, $completeness, 'm2', 2);
+        $request = $this->request('sloped_roof_area', $roof->id, $operands, $token, $technology, $completeness, 'm2', 2);
+        $request['geometry_inputs'] = $geometryInputs;
+
+        return $request;
     }
 
     /** @param array<string, array<string, list<Fact>>> $facts */
@@ -444,13 +474,36 @@ final readonly class CurrentProjectDerivedQuantityService
             'rounding_scale' => $scale,
             'snapshot' => [
                 'input_fingerprint' => $token,
-                'artifact_hash' => hash('sha256', $token."\0".$technology['catalog_hash']."\0".$completeness['rule_catalog_hash']),
+                'artifact_hash' => hash('sha256', json_encode([
+                    'input_fingerprint' => $token,
+                    'technology_run_id' => $technology['run_id'] ?? null,
+                    'technology_input_fingerprint' => $technology['input_fingerprint'] ?? null,
+                    'technology_source_version' => $technology['source_version'] ?? null,
+                    'catalog_version' => $technology['catalog_version'] ?? null,
+                    'catalog_hash' => $technology['catalog_hash'] ?? null,
+                    'completeness_run_id' => $completeness['run_id'] ?? null,
+                    'completeness_input_fingerprint' => $completeness['input_fingerprint'] ?? null,
+                    'completeness_source_version' => $completeness['source_version'] ?? null,
+                    'rule_version' => $completeness['rule_catalog_version'] ?? null,
+                    'rule_hash' => $completeness['rule_catalog_hash'] ?? null,
+                ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)),
+                'technology_run_id' => $technology['run_id'] ?? null,
+                'technology_input_fingerprint' => $technology['input_fingerprint'] ?? null,
+                'technology_source_version' => $technology['source_version'] ?? null,
+                'completeness_run_id' => $completeness['run_id'] ?? null,
+                'completeness_input_fingerprint' => $completeness['input_fingerprint'] ?? null,
+                'completeness_source_version' => $completeness['source_version'] ?? null,
                 'catalog_version' => $technology['catalog_version'],
                 'catalog_hash' => $technology['catalog_hash'],
                 'rule_version' => $completeness['rule_catalog_version'],
                 'rule_hash' => $completeness['rule_catalog_hash'],
             ],
-            'limits' => ['max_operands' => 128, 'max_evidence' => 256, 'max_metadata_bytes' => 65536],
+            'limits' => [
+                'max_operands' => 128,
+                'max_geometry_entities' => 128,
+                'max_evidence' => 256,
+                'max_metadata_bytes' => 65536,
+            ],
         ];
     }
 
@@ -476,7 +529,8 @@ final readonly class CurrentProjectDerivedQuantityService
                 continue;
             }
             foreach ($items as $quantity) {
-                $result[$quantity->id] = $this->quantityData($quantity, $modelVersion, $quantity->id);
+                $key = $quantity->logicalId ?? $quantity->id;
+                $result[$key] = $this->quantityData($quantity, $modelVersion, $key);
             }
             if (isset($aliases[$formula]) && count($items) > 1) {
                 $warnings[] = [

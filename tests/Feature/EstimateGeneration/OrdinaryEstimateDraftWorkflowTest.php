@@ -5,10 +5,14 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPublicationGate;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -86,7 +90,8 @@ final class OrdinaryEstimateDraftWorkflowTest extends TestCase
 
             self::assertSame('review_required', $draft['stage6_status']);
             self::assertContains('generation_identity_not_current', array_column($draft['stage6_review_items'], 'code'));
-            self::assertSame('0', $draft['local_estimates'][0]['sections'][0]['work_items'][0]['total_cost']);
+            self::assertSame([], $draft['local_estimates'][0]['sections'][0]['work_items']);
+            self::assertSame('0', $draft['stage6_candidate_rows'][0]['total_cost']);
         }
     }
 
@@ -104,8 +109,9 @@ final class OrdinaryEstimateDraftWorkflowTest extends TestCase
             self::assertSame('review_required', $draft['stage6_status']);
             self::assertFalse($draft['is_complete']);
             self::assertSame('normative_blocking', $draft['stage6_review_items'][0]['type']);
-            self::assertSame('0', $draft['local_estimates'][0]['sections'][0]['work_items'][0]['total_cost']);
-            self::assertSame('not_calculated', $draft['local_estimates'][0]['sections'][0]['work_items'][0]['pricing_status']);
+            self::assertSame([], $draft['local_estimates'][0]['sections'][0]['work_items']);
+            self::assertSame('0', $draft['stage6_candidate_rows'][0]['total_cost']);
+            self::assertSame('not_calculated', $draft['stage6_candidate_rows'][0]['pricing_status']);
         }
     }
 
@@ -122,7 +128,8 @@ final class OrdinaryEstimateDraftWorkflowTest extends TestCase
         foreach ($cases as $changes) {
             $draft = $this->builder()->build($this->draft([[...$this->validWorkItem(), ...$changes]]));
             self::assertSame('price_blocking', $draft['stage6_review_items'][0]['type']);
-            self::assertSame('0', $draft['local_estimates'][0]['sections'][0]['work_items'][0]['total_cost']);
+            self::assertSame([], $draft['local_estimates'][0]['sections'][0]['work_items']);
+            self::assertSame('0', $draft['stage6_candidate_rows'][0]['total_cost']);
         }
     }
 
@@ -136,6 +143,10 @@ final class OrdinaryEstimateDraftWorkflowTest extends TestCase
 
         $ready = $this->builder()->build($this->draft([$this->validWorkItem()]));
         self::assertSame('1250', $this->persistence()->persistableDraftTotal($ready));
+        $second = $this->validWorkItem();
+        $second['key'] = 'work:2';
+        $twoRows = $this->builder()->build($this->draft([$this->validWorkItem(), $second]));
+        self::assertSame('2500', $this->persistence()->persistableDraftTotal($twoRows));
         self::assertSame('incomplete_stage6_draft', $this->persistence()->findApplyBlocker($draft)['type'] ?? null);
     }
 
@@ -151,10 +162,111 @@ final class OrdinaryEstimateDraftWorkflowTest extends TestCase
         $result = $this->builder()->build($draft);
 
         self::assertSame('draft_row_budget_exceeded', $result['stage6_review_items'][0]['code']);
+        self::assertFalse((new DraftPublicationGate)->allows($result, true));
         self::assertCount(5, $result['local_estimates'][0]['sections'][0]['work_items']);
         $metadata = $result['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['stage6_provenance'];
         self::assertStringNotContainsString('secret', json_encode($metadata, JSON_THROW_ON_ERROR));
         self::assertStringNotContainsString('documentdocument', json_encode($metadata, JSON_THROW_ON_ERROR));
+
+        $boundary = $this->draft(array_fill(0, 5, $item));
+        $boundary['stage6_limits'] = $draft['stage6_limits'];
+        self::assertTrue((new DraftPublicationGate)->allows($this->builder()->build($boundary), false));
+    }
+
+    #[Test]
+    public function stage_six_blockers_reach_readiness_and_paginated_session_review_boundary(): void
+    {
+        $draft = $this->draft(array_fill(0, 6, $this->validWorkItem()));
+        $draft['stage6_limits'] = [
+            'max_rows' => 5,
+            'max_metadata_bytes_per_row' => 32768,
+            'max_source_refs_per_row' => 16,
+        ];
+        $built = $this->builder()->build($draft);
+
+        $inspection = (new DraftReadinessInspector)->inspect($built);
+        self::assertContains('draft_row_budget_exceeded', array_column($inspection->blockingIssues, 'code'));
+
+        $review = (new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter))->forSession(
+            new EstimateGenerationSession(['draft_payload' => $built]),
+            ['page' => 1, 'per_page' => 1],
+        );
+        self::assertSame(1, $review['summary']['blocking']);
+        self::assertSame('draft_row_budget_exceeded', $review['items'][0]['reason_codes'][0] ?? null);
+        self::assertSame(1, $review['meta']['per_page']);
+    }
+
+    #[Test]
+    public function ordinary_estimate_decimal_and_publication_boundaries_fail_closed_before_persistence(): void
+    {
+        $maximum = $this->validWorkItem();
+        $maximum['quantity'] = '999999999999.12345678';
+        $maximum['quantity_evidence']['amount'] = '999999999999.12345678';
+        $ready = (new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector)
+            ->project($this->builder()->build($this->draft([$maximum])));
+        self::assertSame('ready', $ready['stage6_status']);
+        self::assertTrue((new DraftPublicationGate)->allows($ready, false));
+        self::assertSame('1.23456790', OrdinaryEstimateDecimal::quantity('1.234567895'));
+        self::assertSame('0.00000000', OrdinaryEstimateDecimal::quantity('-0.00000000'));
+
+        $overflow = $maximum;
+        $overflow['quantity'] = '1000000000000';
+        $overflow['quantity_evidence']['amount'] = '1000000000000';
+        $blocked = (new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector)
+            ->project($this->builder()->build($this->draft([$overflow])));
+        self::assertSame('review_required', $blocked['stage6_status']);
+        self::assertContains(
+            'ordinary_estimate_decimal_out_of_range',
+            array_column($blocked['stage6_review_items'], 'code'),
+        );
+        self::assertFalse((new DraftPublicationGate)->allows($blocked, true));
+        self::assertSame([], $blocked['local_estimates'][0]['sections'][0]['work_items']);
+        $persistenceCalls = 0;
+        self::assertFalse((new DraftPublicationGate)->persistWhenAllowed(
+            $blocked,
+            true,
+            static function () use (&$persistenceCalls): void {
+                $persistenceCalls++;
+            },
+        ));
+        self::assertSame(0, $persistenceCalls);
+
+        $replayed = (new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector)
+            ->project($this->builder()->build($this->draft([$overflow])));
+        self::assertSame($blocked['artifact_hash'], $replayed['artifact_hash']);
+
+        $recovered = (new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector)
+            ->project($this->builder()->build($this->draft([$this->validWorkItem()])));
+        self::assertTrue((new DraftPublicationGate)->allows($recovered, false));
+        self::assertTrue((new DraftPublicationGate)->persistWhenAllowed(
+            $recovered,
+            false,
+            static function () use (&$persistenceCalls): void {
+                $persistenceCalls++;
+            },
+        ));
+        self::assertSame(1, $persistenceCalls);
+        self::assertTrue((new DraftPublicationGate)->allows(['legacy' => true], false));
+        self::assertNotSame($blocked['artifact_hash'], $recovered['artifact_hash']);
+    }
+
+    #[Test]
+    public function stage_six_candidate_and_review_registries_are_bounded_without_silent_truncation(): void
+    {
+        $items = [];
+        for ($index = 1; $index <= 1001; $index++) {
+            $item = $this->validWorkItem();
+            $item['key'] = 'work:bounded:'.$index;
+            $item['normative_match'] = null;
+            $items[] = $item;
+        }
+
+        $draft = $this->builder()->build($this->draft($items));
+
+        self::assertCount(1000, $draft['stage6_candidate_rows']);
+        self::assertCount(1000, $draft['stage6_review_items']);
+        self::assertSame('stage6_review_budget_exceeded', $draft['stage6_review_items'][999]['code']);
+        self::assertFalse((new DraftPublicationGate)->allows($draft, true));
     }
 
     private function builder(): BuildMostEstimateDraft

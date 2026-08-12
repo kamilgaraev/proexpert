@@ -85,6 +85,151 @@ final class DerivedQuantityFactoryTest extends TestCase
     }
 
     #[Test]
+    public function physical_opening_identity_uses_exact_source_locator_not_evidence_id_or_dimensions(): void
+    {
+        $entities = [
+            $this->entity('wall:1', 'wall'),
+            $this->entity('opening:1', 'opening', ['wall_id' => 'wall:1']),
+            $this->entity('opening:2', 'opening', ['wall_id' => 'wall:1']),
+        ];
+        $facts = [
+            $this->fact('wall-length', 'wall:1', 'length', '5', 'm', ['evidence:wall-length']),
+            $this->fact('wall-height', 'wall:1', 'height', '3', 'm', ['evidence:wall-height']),
+            $this->fact('opening-1-width', 'opening:1', 'width', '1', 'm', ['evidence:opening-1-width']),
+            $this->fact('opening-1-height', 'opening:1', 'height', '2', 'm', ['evidence:opening-1-height']),
+            $this->fact('opening-2-width', 'opening:2', 'width', '1', 'm', ['evidence:opening-2-width']),
+            $this->fact('opening-2-height', 'opening:2', 'height', '2', 'm', ['evidence:opening-2-height']),
+        ];
+        $evidence = [
+            $this->evidence('evidence:wall-length', 'wall:length'),
+            $this->evidence('evidence:wall-height', 'wall:height'),
+            $this->evidence('evidence:opening-1-width', 'cad:block:opening-42'),
+            $this->evidence('evidence:opening-1-height', 'cad:block:opening-42'),
+            $this->evidence('evidence:opening-2-width', 'cad:block:opening-42'),
+            $this->evidence('evidence:opening-2-height', 'cad:block:opening-42'),
+        ];
+        $request = $this->request('wall_net_area', 'wall:1', [
+            'wall_length' => 'wall-length',
+            'wall_height' => 'wall-height',
+            'opening_widths' => ['opening-1-width', 'opening-2-width'],
+            'opening_heights' => ['opening-1-height', 'opening-2-height'],
+        ]);
+
+        $duplicate = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [], $request);
+
+        self::assertFalse($duplicate->isReady());
+        self::assertSame('duplicate_geometry', $duplicate->unresolvedInputs[0]['code'] ?? null);
+
+        $evidence[4] = $this->evidence('evidence:opening-2-width', 'cad:block:opening-77');
+        $evidence[5] = $this->evidence('evidence:opening-2-height', 'cad:block:opening-77');
+        $distinct = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [], $request);
+
+        self::assertTrue($distinct->isReady());
+        self::assertSame('11', $distinct->quantity?->value);
+    }
+
+    #[Test]
+    public function repeated_geometry_reports_typed_partial_stale_unit_and_locator_failures(): void
+    {
+        $entities = [
+            $this->entity('wall:1', 'wall'),
+            $this->entity('opening:partial', 'opening', ['wall_id' => 'wall:1']),
+        ];
+        $baseFacts = [
+            $this->fact('wall-length', 'wall:1', 'length', '5', 'm', ['evidence:wall-length']),
+            $this->fact('wall-height', 'wall:1', 'height', '3', 'm', ['evidence:wall-height']),
+        ];
+        $baseEvidence = [
+            $this->evidence('evidence:wall-length', 'wall:length'),
+            $this->evidence('evidence:wall-height', 'wall:height'),
+        ];
+        $request = $this->request('wall_net_area', 'wall:1', [
+            'wall_length' => 'wall-length',
+            'wall_height' => 'wall-height',
+        ]);
+        $request['geometry_inputs'] = [[
+            'entity_id' => 'opening:partial',
+            'kind' => 'wall_opening',
+            'operands' => ['width' => 'opening-width', 'height' => null],
+        ]];
+
+        foreach ([
+            $this->fact('opening-width', 'opening:partial', 'width', '1', 'm', ['evidence:opening-width']),
+            $this->fact('opening-width', 'opening:partial', 'width', '1', 'm', ['evidence:opening-width'], status: 'candidate'),
+            $this->fact('opening-width', 'opening:partial', 'width', '1', 'm2', ['evidence:opening-width']),
+        ] as $width) {
+            $result = (new DerivedQuantityFactory)->derive(
+                $this->snapshot(
+                    $entities,
+                    [...$baseFacts, $width],
+                    [...$baseEvidence, $this->evidence('evidence:opening-width', 'opening:partial')],
+                ),
+                [],
+                $request,
+            );
+
+            self::assertFalse($result->isReady());
+            self::assertSame('opening:partial', $result->unresolvedInputs[0]['entity_id'] ?? null);
+            self::assertNotNull($result->unresolvedInputs[0]['source_locator'] ?? null);
+            self::assertContains(
+                $result->unresolvedInputs[0]['code'] ?? null,
+                ['geometry_operand_missing', 'geometry_operand_unresolved'],
+            );
+        }
+
+        $roofRequest = $this->request('sloped_roof_area', 'roof:1', [
+            'plan_areas' => [], 'slope_rises' => [], 'slope_runs' => [],
+        ]);
+        $roofRequest['geometry_inputs'] = [[
+            'entity_id' => 'facet:partial',
+            'kind' => 'roof_facet',
+            'operands' => ['plan_area' => 'facet-area', 'slope_rise' => null, 'slope_run' => null],
+        ]];
+        $roof = (new DerivedQuantityFactory)->derive(
+            $this->snapshot(
+                [
+                    $this->entity('roof:1', 'roof'),
+                    $this->entity('facet:partial', 'roof_facet', ['roof_id' => 'roof:1']),
+                ],
+                [$this->fact('facet-area', 'facet:partial', 'plan_area', '12', 'm2', ['evidence:facet-area'])],
+                [$this->evidence('evidence:facet-area', 'facet:partial')],
+            ),
+            [],
+            $roofRequest,
+        );
+        self::assertSame('geometry_operand_missing', $roof->unresolvedInputs[0]['code'] ?? null);
+        self::assertSame('facet:partial', $roof->unresolvedInputs[0]['entity_id'] ?? null);
+    }
+
+    #[Test]
+    public function geometry_registry_has_an_explicit_boundary_without_silent_truncation(): void
+    {
+        $request = $this->request('wall_net_area', 'wall:1', [
+            'wall_length' => 'missing-length', 'wall_height' => 'missing-height',
+        ]);
+        $request['limits']['max_geometry_entities'] = 128;
+        $request['geometry_inputs'] = array_map(
+            static fn (int $index): array => [
+                'entity_id' => 'opening:'.$index,
+                'kind' => 'wall_opening',
+                'operands' => ['width' => null, 'height' => null],
+            ],
+            range(1, 128),
+        );
+        $snapshot = $this->snapshot([$this->entity('wall:1', 'wall')], [], []);
+        $boundary = (new DerivedQuantityFactory)->derive($snapshot, [], $request);
+        self::assertNotSame('geometry_entity_budget_exceeded', $boundary->unresolvedInputs[0]['code'] ?? null);
+
+        $request['geometry_inputs'][] = [
+            'entity_id' => 'opening:129',
+            'kind' => 'wall_opening',
+            'operands' => ['width' => null, 'height' => null],
+        ];
+        $overflow = (new DerivedQuantityFactory)->derive($snapshot, [], $request);
+        self::assertSame('geometry_entity_budget_exceeded', $overflow->unresolvedInputs[0]['code'] ?? null);
+    }
+
+    #[Test]
     public function sloped_roof_keeps_facets_inside_one_roof_and_uses_no_float(): void
     {
         $entities = [
@@ -299,7 +444,7 @@ final class DerivedQuantityFactoryTest extends TestCase
         $entities = [
             $this->entity('roof:1', 'roof'),
             $this->entity('facet:1', 'roof_facet', ['roof_id' => 'roof:1']),
-            $this->entity('roof-opening:1', 'roof_opening', ['roof_id' => 'roof:1', 'geometry_identity' => 'opening:g1']),
+            $this->entity('roof-opening:1', 'roof_opening', ['roof_id' => 'roof:1']),
         ];
         $facts = [
             $this->fact('area', 'facet:1', 'plan_area', '12', 'm2', ['evidence:area']),
@@ -316,6 +461,26 @@ final class DerivedQuantityFactoryTest extends TestCase
         $result = (new DerivedQuantityFactory)->derive($this->snapshot($entities, $facts, $evidence), [], $request);
 
         self::assertSame('13.75', $result->quantity?->value);
+
+        $duplicateEntities = [
+            ...$entities,
+            $this->entity('roof-opening:2', 'roof_opening', ['roof_id' => 'roof:1']),
+        ];
+        $duplicateFacts = [
+            ...$facts,
+            $this->fact('opening-area-2', 'roof-opening:2', 'area', '1.25', 'm2', ['evidence:opening-2']),
+        ];
+        $duplicateEvidence = [
+            ...$evidence,
+            $this->evidence('evidence:opening-2', 'native:opening-area'),
+        ];
+        $request['operands']['roof_opening_areas'][] = 'opening-area-2';
+        $duplicate = (new DerivedQuantityFactory)->derive(
+            $this->snapshot($duplicateEntities, $duplicateFacts, $duplicateEvidence),
+            [],
+            $request,
+        );
+        self::assertSame('duplicate_geometry', $duplicate->unresolvedInputs[0]['code'] ?? null);
     }
 
     #[Test]

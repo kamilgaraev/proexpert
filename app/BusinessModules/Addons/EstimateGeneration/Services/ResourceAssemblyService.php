@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeC
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
+use Brick\Math\BigDecimal;
 
 use function trans_message;
 
@@ -441,7 +442,7 @@ class ResourceAssemblyService
         $selected = $match['selected'];
         $version = $match['version'];
         $priceVersion = $match['price_version'] ?? null;
-        $quantityFactor = NormativeUnitNormalizer::safeQuantityFactor(
+        $quantityFactor = NormativeUnitNormalizer::safeQuantityFactorDecimal(
             (string) ($workItem['unit'] ?? ''),
             (string) ($selected['unit'] ?? '')
         );
@@ -456,14 +457,19 @@ class ResourceAssemblyService
             ], $selectedByUser);
         }
 
-        $normQuantity = max((float) ($workItem['quantity'] ?? 0), 0.0) * $quantityFactor;
+        $exactDecimalPath = is_array($workItem['quantity_evidence'] ?? null);
+        $workQuantity = $this->decimal($workItem['quantity'] ?? null, 'canonical_work_quantity_missing');
+        if ($workQuantity->isLessThan(0)) {
+            throw new \InvalidArgumentException('canonical_work_quantity_negative');
+        }
+        $normQuantity = $workQuantity->multipliedBy($quantityFactor);
         $resources = $selected['resources'];
         $workItem = $this->clearNonNormativeResources($workItem);
 
-        $workItem['materials'] = $this->mapResources($resources['materials'] ?? [], 'material', $normQuantity, $selected, $version, $workItem);
-        $workItem['labor'] = $this->mapResources($resources['labor'] ?? [], 'labor', $normQuantity, $selected, $version, $workItem);
-        $workItem['machinery'] = $this->mapResources($resources['machinery'] ?? [], 'machinery', $normQuantity, $selected, $version, $workItem);
-        $workItem['other_resources'] = $this->mapResources($resources['other'] ?? [], 'other', $normQuantity, $selected, $version, $workItem);
+        $workItem['materials'] = $this->mapResources($resources['materials'] ?? [], 'material', $normQuantity, $selected, $version, $workItem, $exactDecimalPath);
+        $workItem['labor'] = $this->mapResources($resources['labor'] ?? [], 'labor', $normQuantity, $selected, $version, $workItem, $exactDecimalPath);
+        $workItem['machinery'] = $this->mapResources($resources['machinery'] ?? [], 'machinery', $normQuantity, $selected, $version, $workItem, $exactDecimalPath);
+        $workItem['other_resources'] = $this->mapResources($resources['other'] ?? [], 'other', $normQuantity, $selected, $version, $workItem, $exactDecimalPath);
         $workItem['normative_rate_code'] = $selected['code'];
         $workItem['normative_dataset'] = $version;
         $workItem['price_dataset'] = $priceVersion;
@@ -611,13 +617,30 @@ class ResourceAssemblyService
      * @param  array<string, mixed>  $version
      * @return array<int, array<string, mixed>>
      */
-    private function mapResources(array $resources, string $targetType, float $normQuantity, array $selected, array $version, array $workItem): array
-    {
+    private function mapResources(
+        array $resources,
+        string $targetType,
+        BigDecimal $normQuantity,
+        array $selected,
+        array $version,
+        array $workItem,
+        bool $exactDecimalPath,
+    ): array {
         return array_map(
-            function (array $resource, int $index) use ($targetType, $normQuantity, $selected, $version, $workItem): array {
-                $quantityPerUnit = $resource['quantity'] !== null ? (float) $resource['quantity'] : 0.0;
-                $quantity = round($quantityPerUnit * $normQuantity, 6);
-                $unitPrice = (float) ($resource['unit_price'] ?? 0);
+            function (array $resource, int $index) use ($targetType, $normQuantity, $selected, $version, $workItem, $exactDecimalPath): array {
+                $quantityPerUnitDecimal = $this->decimal($resource['quantity'] ?? null, 'canonical_resource_coefficient_missing');
+                $quantityDecimal = $quantityPerUnitDecimal->multipliedBy($normQuantity);
+                $unitPriceDecimal = $this->decimal($resource['unit_price'] ?? 0, 'canonical_resource_unit_price_invalid');
+                $totalDecimal = $quantityDecimal->multipliedBy($unitPriceDecimal);
+                $quantityPerUnit = $exactDecimalPath
+                    ? $this->canonicalDecimal($quantityPerUnitDecimal)
+                    : (float) $this->canonicalDecimal($quantityPerUnitDecimal);
+                $quantity = $exactDecimalPath
+                    ? $this->canonicalDecimal($quantityDecimal)
+                    : (float) $this->canonicalDecimal($quantityDecimal);
+                $unitPrice = $exactDecimalPath
+                    ? $this->canonicalDecimal($unitPriceDecimal)
+                    : (float) $this->canonicalDecimal($unitPriceDecimal);
                 $projectResourceSelection = is_array($resource['project_resource_selection'] ?? null)
                     ? $resource['project_resource_selection']
                     : null;
@@ -632,7 +655,9 @@ class ResourceAssemblyService
                     'quantity_per_unit' => $quantityPerUnit,
                     'quantity_basis' => 'normative_resource',
                     'unit_price' => $unitPrice,
-                    'total_price' => round($quantity * $unitPrice, 2),
+                    'total_price' => $exactDecimalPath
+                        ? $this->canonicalDecimal($totalDecimal)
+                        : round((float) $this->canonicalDecimal($totalDecimal), 2),
                     'price_source' => $resource['price_source'],
                     'price_source_version' => $resource['price_source_version'] ?? $version['version_key'],
                     'source' => 'fsnb_2022:'.$version['version_key'],
@@ -656,6 +681,30 @@ class ResourceAssemblyService
             array_values($resources),
             array_keys(array_values($resources))
         );
+    }
+
+    private function decimal(mixed $value, string $error): BigDecimal
+    {
+        if (! is_string($value) && ! is_int($value) && ! is_float($value)) {
+            throw new \InvalidArgumentException($error);
+        }
+        if (is_float($value)) {
+            if (! is_finite($value)) {
+                throw new \InvalidArgumentException($error);
+            }
+            $value = rtrim(rtrim(sprintf('%.14F', $value), '0'), '.');
+        }
+
+        try {
+            return BigDecimal::of((string) $value);
+        } catch (\Throwable) {
+            throw new \InvalidArgumentException($error);
+        }
+    }
+
+    private function canonicalDecimal(BigDecimal $value): string
+    {
+        return $value->isZero() ? '0' : $value->strippedOfTrailingZeros()->__toString();
     }
 
     /**

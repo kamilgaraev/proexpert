@@ -44,7 +44,8 @@ class ResolveRegionalPrice
         }
 
         $baseAmount = BigDecimal::of((string) $payload['base_price']);
-        $coefficients = ['quantity' => $this->decimal($resource['quantity'] ?? 0, 6)];
+        $quantity = BigDecimal::of((string) ($resource['quantity'] ?? '0'));
+        $coefficients = ['quantity' => $this->canonicalDecimal($quantity)];
         if ($baseCatalogPrice) {
             $coefficients['price_kind'] = 'base_catalog';
             $coefficients['dataset_version_id'] = (int) $payload['dataset_version_id'];
@@ -75,7 +76,7 @@ class ResolveRegionalPrice
             baseAmount: (string) $baseAmount->toScale(4, RoundingMode::HalfUp),
             coefficients: $coefficients,
             finalAmount: (string) $baseAmount
-                ->multipliedBy(BigDecimal::of((string) ($resource['quantity'] ?? '0')))
+                ->multipliedBy($quantity)
                 ->toScale(2, RoundingMode::HalfUp),
             currency: (string) ($payload['currency'] ?? 'RUB'),
             capturedAt: now()->toIso8601String(),
@@ -191,7 +192,7 @@ class ResolveRegionalPrice
                 : 'normative_rates:'.$rateId,
             baseAmount: (string) $baseAmount->toScale(4, RoundingMode::HalfUp),
             coefficients: [
-                'quantity' => (string) $quantity->toScale(6, RoundingMode::HalfUp),
+                'quantity' => $this->canonicalDecimal($quantity),
                 'base_year' => $embeddedPrice['base_year'] ?? null,
             ],
             finalAmount: (string) $baseAmount
@@ -286,5 +287,10 @@ class ResolveRegionalPrice
     private function decimal(mixed $value, int $scale): string
     {
         return (string) BigDecimal::of((string) $value)->toScale($scale, RoundingMode::HalfUp);
+    }
+
+    private function canonicalDecimal(BigDecimal $value): string
+    {
+        return $value->isZero() ? '0' : $value->strippedOfTrailingZeros()->__toString();
     }
 }

@@ -41,6 +41,8 @@ final readonly class DerivedQuantity
         public string $unitCompatibility = 'exact',
         array $snapshotIdentity = [],
         public ?string $technologyDecisionId = null,
+        public ?string $logicalId = null,
+        public ?string $exactIdentity = null,
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Derived quantity');
@@ -113,6 +115,12 @@ final readonly class DerivedQuantity
         }
         if ($technologyDecisionId !== null) {
             ProjectModelInvariant::id($technologyDecisionId, 'Derived quantity technology decision');
+        }
+        if ($logicalId !== null) {
+            ProjectModelInvariant::id($logicalId, 'Derived quantity logical');
+        }
+        if ($exactIdentity !== null && preg_match('/^[a-f0-9]{64}$/D', $exactIdentity) !== 1) {
+            throw new InvalidArgumentException('Derived quantity exact identity is invalid.');
         }
         $this->snapshotIdentity = $snapshotIdentity;
     }

@@ -45,9 +45,9 @@ final class AssembleMatchedResourcesTest extends TestCase
         $item = $second['local_estimates'][0]['sections'][0]['work_items'][0];
 
         self::assertCount(1, $item['materials']);
-        self::assertSame(0.105, $item['materials'][0]['quantity']);
-        self::assertSame(72000.0, $item['materials'][0]['unit_price']);
-        self::assertSame(7560.0, $item['materials'][0]['total_price']);
+        self::assertSame('0.105', $item['materials'][0]['quantity']);
+        self::assertSame('72000', $item['materials'][0]['unit_price']);
+        self::assertSame('7560.00', $item['materials'][0]['total_price']);
         self::assertSame('regional_catalog', $item['materials'][0]['price_source']);
         self::assertSame('region-16-q2-2026', $item['materials'][0]['price_source_version']);
         self::assertSame('calculated', $item['pricing_status']);
@@ -118,8 +118,8 @@ final class AssembleMatchedResourcesTest extends TestCase
         $missing = (new AssembleMatchedResources($catalog))->handle($missingInput)['data']['local_estimates'][0]['sections'][0]['work_items'][0];
 
         self::assertSame('89.1.63.01-0079', $priced['materials'][0]['code'] ?? null);
-        self::assertSame(1.0, $priced['materials'][0]['quantity'] ?? null);
-        self::assertSame(68450.0, $priced['materials'][0]['total_price'] ?? null);
+        self::assertSame('1', $priced['materials'][0]['quantity'] ?? null);
+        self::assertSame('68450.00', $priced['materials'][0]['total_price'] ?? null);
         self::assertSame('regional_catalog', $priced['materials'][0]['price_source'] ?? null);
         self::assertSame('project_material_price_missing', $missing['pricing_blocker'] ?? null);
     }
@@ -152,7 +152,7 @@ final class AssembleMatchedResourcesTest extends TestCase
         $item = $result['local_estimates'][0]['sections'][0]['work_items'][0];
 
         self::assertSame('20.4.04.02-0101', $item['materials'][0]['code'] ?? null);
-        self::assertSame(3200.0, $item['materials'][0]['unit_price'] ?? null);
+        self::assertSame('3200', $item['materials'][0]['unit_price'] ?? null);
         self::assertSame('semantic_group_median', $item['materials'][0]['project_material_selection']['selection_policy'] ?? null);
         self::assertSame('calculated', $item['pricing_status']);
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
@@ -358,18 +359,20 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 : null,
             'normative_rate_code' => $this->draftService->normativeRateCode($workItem),
             'measurement_unit_id' => $this->resolveMeasurementUnitId((int) $session->organization_id, $workItem['unit']),
-            'quantity' => $workItem['quantity'],
-            'quantity_total' => $workItem['quantity'],
-            'unit_price' => (string) BigDecimal::of((string) $workItem['total_cost'])
-                ->dividedBy(BigDecimal::of((string) $workItem['quantity']), 4, RoundingMode::HalfUp),
+            'quantity' => OrdinaryEstimateDecimal::quantity($workItem['quantity']),
+            'quantity_total' => OrdinaryEstimateDecimal::quantity($workItem['quantity']),
+            'unit_price' => OrdinaryEstimateDecimal::unitPrice(
+                BigDecimal::of((string) $workItem['total_cost'])
+                    ->dividedBy(BigDecimal::of((string) $workItem['quantity']), 12, RoundingMode::HalfUp),
+            ),
             'materials_cost' => $workItem['materials_cost'],
             'machinery_cost' => $workItem['machinery_cost'],
             'labor_cost' => $workItem['labor_cost'],
             'labor_hours' => $workItem['labor_hours'],
             'machinery_hours' => $workItem['machinery_hours'],
-            'direct_costs' => $workItem['total_cost'],
-            'total_amount' => $workItem['total_cost'],
-            'current_total_amount' => $workItem['total_cost'],
+            'direct_costs' => OrdinaryEstimateDecimal::money($workItem['total_cost']),
+            'total_amount' => OrdinaryEstimateDecimal::money($workItem['total_cost']),
+            'current_total_amount' => OrdinaryEstimateDecimal::money($workItem['total_cost']),
             'justification' => $workItem['quantity_basis'],
             'is_manual' => true,
             'metadata' => $this->itemMetadata->make($workItem),
@@ -395,11 +398,11 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 'description' => $resource['source'] ?? null,
                 'normative_rate_code' => $resource['normative_ref']['resource_code'] ?? null,
                 'measurement_unit_id' => $measurementUnitId,
-                'quantity' => $resource['quantity'],
-                'quantity_total' => $resource['quantity'],
-                'unit_price' => $resource['unit_price'],
-                'total_amount' => $resource['total_price'],
-                'current_total_amount' => $resource['total_price'],
+                'quantity' => OrdinaryEstimateDecimal::quantity($resource['quantity']),
+                'quantity_total' => OrdinaryEstimateDecimal::quantity($resource['quantity']),
+                'unit_price' => OrdinaryEstimateDecimal::unitPrice($resource['unit_price']),
+                'total_amount' => OrdinaryEstimateDecimal::money($resource['total_price']),
+                'current_total_amount' => OrdinaryEstimateDecimal::money($resource['total_price']),
                 'labor_hours' => $itemType === EstimatePositionItemType::LABOR->value
                     ? $resource['quantity']
                     : 0,
@@ -428,10 +431,10 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 'name' => $this->estimateItemResourceName((string) $resource['name']),
                 'description' => $resource['normative_ref']['resource_code'] ?? ($resource['source'] ?? null),
                 'measurement_unit_id' => $measurementUnitId,
-                'quantity_per_unit' => $resource['quantity_per_unit'] ?? 1,
-                'total_quantity' => $resource['quantity'],
-                'unit_price' => $resource['unit_price'],
-                'total_amount' => $resource['total_price'],
+                'quantity_per_unit' => OrdinaryEstimateDecimal::resourceQuantity($resource['quantity_per_unit'] ?? 1),
+                'total_quantity' => OrdinaryEstimateDecimal::resourceQuantity($resource['quantity']),
+                'unit_price' => OrdinaryEstimateDecimal::resourceUnitPrice($resource['unit_price']),
+                'total_amount' => OrdinaryEstimateDecimal::money($resource['total_price']),
             ]);
         }
     }
