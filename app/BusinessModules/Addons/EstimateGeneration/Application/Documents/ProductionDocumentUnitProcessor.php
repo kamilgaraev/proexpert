@@ -55,33 +55,71 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             }
 
             return $this->withMeasuredRepresentation($measurement->result, $measurement);
-        } catch (DocumentUnitProcessingException $exception) {
-            throw $exception;
-        } catch (TypedFailureException $exception) {
-            throw $exception;
-        } catch (S3ObjectLocatorException $exception) {
-            throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_integrity_failed', previous: $exception);
-        } catch (S3ObjectTransportException $exception) {
-            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
-        } catch (GeometryExtractionException $exception) {
-            throw new TypedFailureException(
+        } catch (DocumentRepresentationMeasurementException $exception) {
+            throw $this->processingFailure(
+                $exception->getPrevious() ?? $exception,
+                [
+                    'duration_ms' => $exception->measurement->durationMs,
+                    'peak_memory_bytes' => $exception->measurement->incrementalPeakMemoryBytes,
+                    'memory_metric' => $exception->measurement->memoryMetric,
+                    'limitations' => $exception->measurement->limitations,
+                ],
+            );
+        } catch (Throwable $exception) {
+            throw $this->processingFailure($exception);
+        }
+    }
+
+    /** @param array<string, mixed> $resourceUsage */
+    private function processingFailure(Throwable $exception, array $resourceUsage = []): Throwable
+    {
+        return match (true) {
+            $exception instanceof DocumentUnitProcessingException => $resourceUsage === []
+                ? $exception
+                : new DocumentUnitProcessingException($exception->safeCode, $exception, $resourceUsage),
+            $exception instanceof TypedFailureException => $resourceUsage === []
+                ? $exception
+                : new TypedFailureException(
+                    $exception->category,
+                    $exception->safeCode,
+                    $exception->safeContext,
+                    $exception,
+                    $resourceUsage,
+                ),
+            $exception instanceof S3ObjectLocatorException => new TypedFailureException(
+                FailureCategory::Terminal,
+                'document_artifact_integrity_failed',
+                previous: $exception,
+                resourceUsage: $resourceUsage,
+            ),
+            $exception instanceof S3ObjectTransportException => new TypedFailureException(
+                FailureCategory::Recoverable,
+                'document_storage_unavailable',
+                previous: $exception,
+                resourceUsage: $resourceUsage,
+            ),
+            $exception instanceof GeometryExtractionException => new TypedFailureException(
                 $exception->retryable ? FailureCategory::Recoverable : FailureCategory::Terminal,
                 $exception->reason,
                 $exception->safeContext,
                 $exception,
-            );
-        } catch (VisionProviderException $exception) {
-            throw new TypedFailureException(
+                $resourceUsage,
+            ),
+            $exception instanceof VisionProviderException => new TypedFailureException(
                 $exception->retryable ? FailureCategory::Recoverable : FailureCategory::Terminal,
                 $exception->reason,
                 $exception->httpCode === null ? [] : ['http_status' => $exception->httpCode],
                 $exception,
-            );
-        } catch (DocumentManifestNeedsReview $exception) {
-            throw new TypedFailureException(FailureCategory::UserActionRequired, $exception->safeCode, previous: $exception);
-        } catch (Throwable $exception) {
-            throw new DocumentUnitProcessingException('document_unit_processing_failed', $exception);
-        }
+                $resourceUsage,
+            ),
+            $exception instanceof DocumentManifestNeedsReview => new TypedFailureException(
+                FailureCategory::UserActionRequired,
+                $exception->safeCode,
+                previous: $exception,
+                resourceUsage: $resourceUsage,
+            ),
+            default => new DocumentUnitProcessingException('document_unit_processing_failed', $exception, $resourceUsage),
+        };
     }
 
     private function processMeasured(DocumentUnitExecutionContext $context): DocumentUnitOutput

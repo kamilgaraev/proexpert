@@ -30,6 +30,7 @@ interface DocumentProcessingUnitStore
         DateTimeImmutable $now,
         FailureCategory $category = FailureCategory::Recoverable,
         bool $circuitBreaking = false,
+        array $resourceUsage = [],
     ): bool;
 
     public function supersedeDocumentSource(int $documentId, string $currentSourceVersion): void;

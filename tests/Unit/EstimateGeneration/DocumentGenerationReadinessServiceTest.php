@@ -274,6 +274,39 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertTrue($summary['items'][0]['is_action_required']);
     }
 
+    public function test_system_processing_failure_blocks_generation_without_requesting_user_review(): void
+    {
+        $document = new EstimateGenerationDocument;
+        $document->forceFill([
+            'id' => 168,
+            'filename' => 'ar (1).pdf',
+            'status' => 'failed',
+            'processing_stage' => 'completed',
+            'progress_percent' => 100,
+            'page_count' => 22,
+            'processed_page_count' => 0,
+            'error_code' => 'document_processing_system_failed',
+            'error_message_key' => 'estimate_generation.document_processing_system_failed',
+            'quality_flags' => ['document_processing_system_failed'],
+            'facts_summary' => [
+                'processing_outcome' => [
+                    'type' => 'system_failure',
+                    'counts' => ['included' => 22, 'ready' => 0, 'needs_user_action' => 0, 'system_failed' => 22, 'processing' => 0, 'excluded' => 0],
+                ],
+            ],
+        ]);
+
+        $summary = (new DocumentGenerationReadinessService)->summary(new Collection([$document]));
+
+        self::assertSame(1, $summary['system_failure_count']);
+        self::assertSame(0, $summary['action_required_count']);
+        self::assertFalse($summary['can_analyze']);
+        self::assertFalse($summary['can_generate']);
+        self::assertContains('document_processing_failed', $summary['problem_flags']);
+        self::assertTrue($summary['items'][0]['is_system_failure']);
+        self::assertFalse($summary['items'][0]['is_action_required']);
+    }
+
     /** @param array<string, array<string, mixed>> $signals */
     private function qualitySignalDocument(array $signals): EstimateGenerationDocument
     {

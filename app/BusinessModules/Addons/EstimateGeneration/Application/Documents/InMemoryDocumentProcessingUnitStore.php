@@ -156,6 +156,7 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         DateTimeImmutable $now,
         FailureCategory $category = FailureCategory::Recoverable,
         bool $circuitBreaking = false,
+        array $resourceUsage = [],
     ): bool {
         $record = $this->find($claim->unitId);
 
@@ -167,6 +168,11 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         $record->failureCode = $code;
         $record->failureFingerprint = $fingerprint;
         $record->failureCategory = $category;
+        $record->metadata = [
+            ...$record->metadata,
+            'failure_category' => $category->value,
+            ...($resourceUsage === [] ? [] : ['resource_usage' => $resourceUsage]),
+        ];
         $record->claimToken = null;
         $record->leaseExpiresAt = null;
         if ($category !== FailureCategory::Recoverable) {

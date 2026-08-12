@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use Closure;
+use Throwable;
 
 final class SystemDocumentRepresentationResourceMeter implements DocumentRepresentationResourceMeter
 {
@@ -26,7 +27,20 @@ final class SystemDocumentRepresentationResourceMeter implements DocumentReprese
     {
         $startedAt = ($this->monotonicNanoseconds)();
         $peakBefore = ($this->processPeakBytes)();
-        $result = $operation();
+        try {
+            $result = $operation();
+        } catch (Throwable $exception) {
+            throw new DocumentRepresentationMeasurementException(
+                $this->measurement(null, $startedAt, $peakBefore),
+                $exception,
+            );
+        }
+
+        return $this->measurement($result, $startedAt, $peakBefore);
+    }
+
+    private function measurement(mixed $result, int $startedAt, int $peakBefore): DocumentRepresentationMeasurement
+    {
         $peakAfter = ($this->processPeakBytes)();
         $finishedAt = ($this->monotonicNanoseconds)();
         $elapsed = max(0, $finishedAt - $startedAt);

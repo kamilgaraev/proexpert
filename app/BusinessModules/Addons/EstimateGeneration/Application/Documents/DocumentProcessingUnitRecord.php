@@ -25,5 +25,6 @@ final class DocumentProcessingUnitRecord
         public ?string $failureCode = null,
         public ?string $failureFingerprint = null,
         public ?FailureCategory $failureCategory = null,
+        public array $metadata = [],
     ) {}
 }

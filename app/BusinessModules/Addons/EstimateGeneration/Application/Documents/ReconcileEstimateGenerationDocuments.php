@@ -67,13 +67,27 @@ final class ReconcileEstimateGenerationDocuments implements EstimateGenerationSe
 
     public function reconcile(EstimateGenerationSession $session): EstimateGenerationSession
     {
-        $session = $session->fresh(['documents']) ?? $session;
+        $session = $session->fresh(['documents.processingUnits']) ?? $session;
         if ($session->status !== EstimateGenerationStatus::ProcessingDocuments) {
             return $session;
         }
 
         $readiness = $this->readiness->evaluate($session);
         if (! $readiness['can_generate']) {
+            if ((int) ($readiness['summary']['pending_count'] ?? 0) === 0
+                && (int) ($readiness['summary']['system_failure_count'] ?? 0) > 0) {
+                $failures = collect($readiness['summary']['items'] ?? [])
+                    ->where('is_system_failure', true);
+
+                return $this->advance->failed(
+                    $session,
+                    $failures->contains(
+                        static fn (array $item): bool => ($item['is_temporary_failure'] ?? false) !== true,
+                    )
+                        ? 'document_processing_system_failed'
+                        : 'document_processing_temporarily_unavailable',
+                );
+            }
             if ((int) ($readiness['summary']['pending_count'] ?? 0) === 0
                 && (int) ($readiness['summary']['action_required_count'] ?? 0) > 0) {
                 return $this->advance->documentsNeedReview($session);

@@ -18,6 +18,14 @@
 - TDD: каждый behavior fix начинается с доказательного RED, затем минимальный GREEN и пропорциональная регрессия.
 - Один собственный итоговый correctness/security/UX review; не маскировать baseline failures и `storage_configuration_invalid`.
 
+### Результат исправлений независимого review блока 2
+
+- Системный document outcome теперь завершает сессию штатным переходом `processing_documents -> failed` с `resume_status=processing_documents`; `can_analyze=false`, генерация и pin AI settings не выполняются. PostgreSQL state-machine regression проверяет код `document_processing_system_failed`.
+- Legacy fallback для document 168 одинаково работает в list/detail/readiness/operational snapshot: list eager-load выполняется одним scoped relation query, detector учитывает только текущие `organization_id + project_id + session_id + document_id + source_version`, а PostgreSQL SQL-классификатор исключает только минимум три полностью одинаковых failed unit текущей версии.
+- Измерение processor boundary стало exception-safe. При ошибке сохраняются bounded `duration_ms`, `peak_memory_bytes`, metric type и limitations в существующем JSONB `processing_units.metadata.resource_usage`; document aggregate объединяет успешные page outputs и failed-unit metadata без суммирования memory peaks.
+- Доказательный PostgreSQL gate после исправлений: `5 tests, 32 assertions, 0 skipped`; покрыты JSONB key order, конкурентный breaker, `0/N` canonical outcome + session transition + failed resource aggregate, legacy operational SQL и legacy session transition.
+- Повторное субагентское review не запускалось: замечания проверены и исправлены основным агентом, затем повторены только затронутые regression gates.
+
 ---
 
 ## Зафиксированные доказательства инцидента
@@ -171,6 +179,18 @@ Read-only SSH evidence gate восстановлен. В `/var/www/prohelper/sto
 ---
 
 ## Блок 2. Canonical state, admin UX и resource safety
+
+### Реализованный контракт и evidence
+
+- `DocumentProcessingOutcomeResolver` агрегирует page/unit state в пять явных outcome: `processing`, `ready`, `user_action_required`, `temporary_failure`, `system_failure`. Канонические counts: участвуют, готовы, требуют решения пользователя, системно не обработаны, обрабатываются, исключены.
+- Reconciler завершает workflow при terminal units, но сохраняет отдельно честный outcome: all-terminal `0/3` становится `status=failed`, `processing_stage=completed`, `progress=100`, `processed_page_count=0`, document-level safe error. Mixed/user-review/all-ready/stale replay покрыты DB-free matrix; clean isolated Stage 7 PostgreSQL wrapper доказал JSONB/concurrency/state contract: `3 tests, 25 assertions, 0 skipped`.
+- Точечные retry/exclude/restore используют тот же resolver, а не повторную несовместимую классификацию. `processed_page_count` считается по usable completed output, не по наличию OCR-текста.
+- Readiness отличает системный сбой от пользовательского review: генерация блокируется, но `action_required_count` не увеличивается. Для legacy-документа с минимум тремя failed units, `output_count=0` и одним fingerprint detail API выводит единый system outcome и не предлагает retry.
+- API отдаёт backward-compatible `processing_outcome` с русским `message`, counts и `retry_allowed`; admin runtime-normalizer валидирует контракт. UI скрывает одинаковые failed unit cards и internal failure codes, показывает одну серверную причину, честные counts и не предлагает page/mass retry для document-wide terminal failure. Новый MSW/Vitest сценарий прошёл `2 tests`.
+- Per-unit `duration_ms`/`peak_memory_bytes` уже измеряются на representation boundary; `DocumentResourceUsageSummarizer` сохраняет document aggregate: количество измеренных units, суммарную/максимальную длительность и максимальный (не суммарный) peak memory.
+- Production Horizon для тяжёлой основной unit queue ограничен одним процессом, recovery остаётся одним процессом: одновременно не более двух тяжёлых unit jobs на host. `maxJobs=1` принудительно освобождает память после каждой страницы. Worker memory `512 MiB` и timeout `2100 s` оставлены без повышения.
+- Два локальных безопасных прогона исходного PDF без S3 и AI дали 22/22 full-page preview, `13 986 694` bytes preview output, wall `11.1–11.7 s`, CPU `11.08 s` (`94.7%` одного ядра), peak RSS `207–209 MiB`. Это укладывается в worker limit, но подтверждает, что три параллельных page workers на host с ClamAV/OnlyOffice и без swap были неоправданны.
+- Рекомендация: 12 GiB достаточно только для одного контролируемого post-release повтора при новом лимите. Перед продажами и параллельными клиентскими загрузками существующие AI-worker containers следует вынести на второй обычный Docker host, если canary полного pipeline подтвердит сопоставимый либо больший peak; OnlyOffice/ClamAV в этой задаче не переносятся.
 
 ### Задача 5. Канонический document outcome
 

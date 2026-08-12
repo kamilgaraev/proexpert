@@ -26,9 +26,11 @@ final class EstimateGenerationUnitHorizonContractTest extends TestCase
             self::assertSame((new ProcessEstimateGenerationUnitJob(1, 'source'))->tries, $unitSupervisor['tries']);
             self::assertGreaterThanOrEqual((new ProcessEstimateGenerationUnitJob(1, 'source'))->timeout, $unitSupervisor['timeout']);
             self::assertSame(512, $unitSupervisor['memory']);
+            self::assertSame(1, $unitSupervisor['maxJobs']);
             self::assertSame(ProcessEstimateGenerationUnitJob::CONNECTION, $recoverySupervisor['connection']);
             self::assertSame([ProcessEstimateGenerationUnitJob::RECOVERY_QUEUE], $recoverySupervisor['queue']);
             self::assertSame(1, $recoverySupervisor['processes']);
+            self::assertSame(1, $recoverySupervisor['maxJobs']);
             self::assertSame(RecoverEstimateGenerationUnitsJob::CONNECTION, $maintenanceSupervisor['connection']);
             self::assertSame([RecoverEstimateGenerationUnitsJob::QUEUE], $maintenanceSupervisor['queue']);
             self::assertSame((new RecoverEstimateGenerationUnitsJob)->tries, $maintenanceSupervisor['tries']);
@@ -38,6 +40,12 @@ final class EstimateGenerationUnitHorizonContractTest extends TestCase
 
         self::assertGreaterThanOrEqual(1, $config['environments']['production']['supervisor-estimate-generation-units']['minProcesses']);
         self::assertGreaterThanOrEqual(1, $config['environments']['production']['supervisor-estimate-generation-units']['maxProcesses']);
+        self::assertSame(1, $config['environments']['production']['supervisor-estimate-generation-units']['maxProcesses']);
+        self::assertLessThanOrEqual(
+            2,
+            $config['environments']['production']['supervisor-estimate-generation-units']['maxProcesses']
+                + $config['environments']['production']['supervisor-estimate-generation-units-recovery']['processes'],
+        );
         self::assertGreaterThanOrEqual(1, $config['environments']['local']['supervisor-estimate-generation-units']['processes']);
         self::assertGreaterThanOrEqual(1, $config['environments']['local']['supervisor-estimate-generation-unit-maintenance']['processes']);
         self::assertArrayHasKey('redis_estimate_generation:'.ProcessEstimateGenerationUnitJob::QUEUE, $config['waits']);

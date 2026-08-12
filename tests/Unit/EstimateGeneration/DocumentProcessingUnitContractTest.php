@@ -313,6 +313,12 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 throw new DocumentUnitProcessingException(
                     'document_representation_contract_invalid',
                     new InvalidArgumentException('unsafe raw persistence detail'),
+                    [
+                        'duration_ms' => 81,
+                        'peak_memory_bytes' => 4096,
+                        'memory_metric' => 'incremental_process_peak_delta',
+                        'limitations' => [],
+                    ],
                 );
             }
         };
@@ -336,6 +342,12 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertSame(2, $reconciler->calls);
         self::assertSame(ProcessDocumentUnit::MAX_ATTEMPTS, $store->find($unit->id)?->attemptCount);
         self::assertSame('document_representation_contract_invalid', $store->find($unit->id)?->failureCode);
+        self::assertSame([
+            'duration_ms' => 81,
+            'peak_memory_bytes' => 4096,
+            'memory_metric' => 'incremental_process_peak_delta',
+            'limitations' => [],
+        ], $store->find($unit->id)?->metadata['resource_usage']);
         self::assertSame(
             hash('sha256', DocumentUnitProcessingException::class.'|'.InvalidArgumentException::class.'|document_representation_contract_invalid'),
             $store->find($unit->id)?->failureFingerprint,

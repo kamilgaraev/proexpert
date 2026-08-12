@@ -10,7 +10,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProce
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DocumentVisualAttributeSummaryBuilder;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
@@ -22,6 +21,8 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
         private Connection $database,
         private EloquentSessionBuildingModelBridge $buildingModels,
         private DocumentVisualAttributeSummaryBuilder $visualAttributes = new DocumentVisualAttributeSummaryBuilder,
+        private DocumentProcessingOutcomeResolver $outcomes = new DocumentProcessingOutcomeResolver,
+        private DocumentResourceUsageSummarizer $resourceUsage = new DocumentResourceUsageSummarizer,
     ) {}
 
     public function reconcile(int $documentId, string $sourceVersion): void
@@ -48,8 +49,10 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                 return null;
             }
 
+            $shouldRebuildBuildingModel = false;
             if ((string) $document->units_finalized_source_version !== $sourceVersion) {
-                $currentUnitIds = (clone $base)->pluck('id');
+                $units = (clone $base)->get(['id', 'status', 'attempt_count', 'output_count', 'metadata']);
+                $currentUnitIds = $units->pluck('id');
                 $document->facts()->delete();
                 $document->drawingElements()->delete();
                 $document->quantityTakeoffs()->delete();
@@ -63,13 +66,34 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     ->get();
                 $includedPages = $pages->reject(static fn ($page): bool => (string) $page->status === 'excluded');
                 $excludedCount = $pages->count() - $includedPages->count();
-                $status = $this->documentStatus($includedPages);
+                $outcome = $this->outcomes->resolve(
+                    $pages->map(static fn ($page): array => [
+                        'processing_unit_id' => (int) $page->processing_unit_id,
+                        'status' => (string) $page->status,
+                    ])->all(),
+                    $units->map(static fn ($unit): array => [
+                        'id' => (int) $unit->id,
+                        'status' => $unit->status->value,
+                        'output_count' => (int) $unit->output_count,
+                        'metadata' => is_array($unit->metadata) ? $unit->metadata : [],
+                    ])->all(),
+                );
+                $status = $outcome->documentStatus;
+                $shouldRebuildBuildingModel = $outcome->processedPages > 0;
                 $qualitySignals = $this->qualitySignals($includedPages->pluck('normalized_payload')->all());
                 $visualAttributes = $this->visualAttributes->summarize($includedPages->pluck('normalized_payload')->all());
+                $resourceUsage = $this->resourceUsage->summarize(
+                    $includedPages->pluck('normalized_payload')->all(),
+                    $units->map(static fn ($unit): array => [
+                        'status' => $unit->status->value,
+                        'metadata' => is_array($unit->metadata) ? $unit->metadata : [],
+                    ])->all(),
+                );
                 $document->forceFill([
                     'extracted_text' => $includedPages->pluck('text')->filter()->implode("\n\n"),
                     'structured_payload' => [
                         'source_version' => $sourceVersion,
+                        'processing_outcome' => $outcome->toArray(),
                         'pages' => $includedPages->map(fn ($page): array => [
                             'page_number' => $page->page_number,
                             'text' => $page->text,
@@ -78,20 +102,32 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                         ])->all(),
                     ],
                     'page_count' => $pages->count(),
-                    'processed_page_count' => $includedPages->whereNotNull('text')->count(),
+                    'processed_page_count' => $outcome->processedPages,
                     'units_finalized_source_version' => $sourceVersion,
                     'status' => $status,
                     'processing_stage' => 'completed',
                     'progress_percent' => 100,
                     'quality_score' => $status === 'ready' ? 1.0 : null,
                     'quality_level' => $status === 'ready' ? 'good' : null,
-                    'quality_flags' => $this->qualityFlags($document, $excludedCount),
+                    'quality_flags' => $this->qualityFlags($document, $excludedCount, $outcome),
                     'facts_summary' => [
+                        'processing_outcome' => $outcome->toArray(),
+                        'resource_usage' => $resourceUsage,
                         ...($qualitySignals === [] ? [] : ['quality_signals' => $qualitySignals]),
                         ...$visualAttributes,
                     ],
+                    'error_code' => $outcome->errorCode,
+                    'error_message_key' => $outcome->errorMessageKey,
+                    'error_context' => $outcome->errorCode === null ? null : ['counts' => $outcome->counts],
                     'ocr_finished_at' => now(),
                 ]);
+            } else {
+                $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
+                $processingOutcome = is_array($factsSummary['processing_outcome'] ?? null)
+                    ? $factsSummary['processing_outcome']
+                    : [];
+                $counts = is_array($processingOutcome['counts'] ?? null) ? $processingOutcome['counts'] : [];
+                $shouldRebuildBuildingModel = (int) ($counts['ready'] ?? 0) > 0;
             }
 
             $token = (string) Str::uuid();
@@ -100,17 +136,19 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                 'units_reconcile_lease_expires_at' => now()->addMinutes(5),
             ])->save();
 
-            return [$document->session, $token];
+            return [$document->session, $token, $shouldRebuildBuildingModel];
         }, 3);
 
         if ($claim === null) {
             return;
         }
 
-        [$session, $token] = $claim;
+        [$session, $token, $shouldRebuildBuildingModel] = $claim;
 
         try {
-            $this->buildingModels->rebuild((int) $session->getKey());
+            if ($shouldRebuildBuildingModel) {
+                $this->buildingModels->rebuild((int) $session->getKey());
+            }
             $marked = $this->documentQuery()
                 ->whereKey($documentId)
                 ->where('source_version', $sourceVersion)
@@ -183,27 +221,17 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
         return $result;
     }
 
-    private function documentStatus(Collection $includedPages): string
-    {
-        if ($includedPages->isEmpty()) {
-            return 'needs_review';
-        }
-
-        if ($includedPages->contains(static fn ($page): bool => in_array((string) $page->status, ['queued', 'processing'], true))) {
-            return 'processing';
-        }
-
-        if ($includedPages->contains(static fn ($page): bool => in_array((string) $page->status, ['failed', 'needs_review'], true))) {
-            return 'needs_review';
-        }
-
-        return 'ready';
-    }
-
     private function hasBlockingUnits(Builder $base): bool
     {
         return (clone $base)
-            ->where('status', '<>', DocumentProcessingUnitStatus::Completed->value)
+            ->where(static function (Builder $query): void {
+                $query->whereIn('status', [
+                    DocumentProcessingUnitStatus::Pending->value,
+                    DocumentProcessingUnitStatus::Running->value,
+                ])->orWhere(static fn (Builder $failed): Builder => $failed
+                    ->where('status', DocumentProcessingUnitStatus::Failed->value)
+                    ->where('attempt_count', '<', ProcessDocumentUnit::MAX_ATTEMPTS));
+            })
             ->whereDoesntHave('page', static function (Builder $query): void {
                 $query->where('status', 'excluded');
             })
@@ -213,8 +241,11 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
     /**
      * @return list<string>
      */
-    private function qualityFlags(EstimateGenerationDocument $document, int $excludedCount): array
-    {
+    private function qualityFlags(
+        EstimateGenerationDocument $document,
+        int $excludedCount,
+        DocumentProcessingOutcome $outcome,
+    ): array {
         $flags = array_values(array_filter(
             array_map('strval', is_array($document->quality_flags) ? $document->quality_flags : []),
             static fn (string $flag): bool => ! in_array($flag, [
@@ -225,6 +256,12 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
 
         if ($excludedCount > 0) {
             $flags[] = 'pages_excluded_from_estimation';
+        }
+        if ($outcome->type === 'system_failure') {
+            $flags[] = 'document_processing_system_failed';
+        }
+        if ($outcome->type === 'temporary_failure') {
+            $flags[] = 'document_processing_temporarily_unavailable';
         }
 
         return array_values(array_unique($flags));

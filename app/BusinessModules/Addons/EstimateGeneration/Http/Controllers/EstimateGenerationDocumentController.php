@@ -85,7 +85,10 @@ class EstimateGenerationDocumentController extends Controller
         return $this->safeReadResponse(function () use ($request, $project, $session): JsonResponse {
             $this->guardSession($request, $project, $session);
             $documents = $session->documents()
-                ->with('session')
+                ->with([
+                    'session',
+                    'processingUnits:id,organization_id,project_id,session_id,document_id,source_version,status,output_count,failure_fingerprint',
+                ])
                 ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
                 ->orderBy('id')
                 ->get();

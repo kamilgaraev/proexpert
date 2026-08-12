@@ -103,6 +103,7 @@ final readonly class ProcessDocumentUnit
                         'document_representation_contract_invalid',
                         'document_representation_source_mismatch',
                     ], true),
+                $this->resourceUsage($error),
             );
 
             if (! $persisted) {
@@ -125,6 +126,16 @@ final readonly class ProcessDocumentUnit
         $this->reconciler->reconcile($context->documentId, $sourceVersion);
 
         return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::Acquired);
+    }
+
+    /** @return array<string, mixed> */
+    private function resourceUsage(Throwable $error): array
+    {
+        return match (true) {
+            $error instanceof DocumentUnitProcessingException => $error->resourceUsage,
+            $error instanceof TypedFailureException => $error->resourceUsage,
+            default => [],
+        };
     }
 
     private function failureFingerprint(Throwable $error, string $code): string

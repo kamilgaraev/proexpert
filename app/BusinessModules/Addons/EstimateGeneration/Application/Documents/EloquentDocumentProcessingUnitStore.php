@@ -242,8 +242,9 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
         DateTimeImmutable $now,
         FailureCategory $category = FailureCategory::Recoverable,
         bool $circuitBreaking = false,
+        array $resourceUsage = [],
     ): bool {
-        return $this->database->transaction(function () use ($claim, $code, $fingerprint, $now, $category, $circuitBreaking): bool {
+        return $this->database->transaction(function () use ($claim, $code, $fingerprint, $now, $category, $circuitBreaking, $resourceUsage): bool {
             $document = $this->documentQuery()
                 ->whereKey($claim->documentId)
                 ->where('organization_id', $claim->organizationId)
@@ -275,7 +276,11 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 'failure_fingerprint' => $fingerprint,
                 'failed_at' => $now,
                 'updated_at' => $now,
-                'metadata' => [...(array) $unit->metadata, 'failure_category' => $category->value],
+                'metadata' => [
+                    ...(array) $unit->metadata,
+                    'failure_category' => $category->value,
+                    ...($resourceUsage === [] ? [] : ['resource_usage' => $resourceUsage]),
+                ],
             ];
             if ($category !== FailureCategory::Recoverable) {
                 $updates['attempt_count'] = ProcessDocumentUnit::MAX_ATTEMPTS;

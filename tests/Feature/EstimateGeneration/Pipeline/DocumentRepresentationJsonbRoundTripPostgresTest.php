@@ -6,11 +6,14 @@ namespace Tests\Feature\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DocumentReadinessClassifier;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -272,6 +275,232 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             ->pluck('status')
             ->all());
         self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($unrelated->id)->status->value);
+    }
+
+    #[Test]
+    public function all_terminal_pages_persist_honest_document_outcome_and_stale_replay_is_inert(): void
+    {
+        $this->requireEnvironment();
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $user = User::factory()->create();
+        $sourceVersion = 'sha256:'.str_repeat('e', 64);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => 'processing_documents',
+            'processing_stage' => 'processing_documents',
+            'processing_progress' => 30,
+            'input_payload' => [],
+            'state_version' => 0,
+        ]);
+        $document = EstimateGenerationDocument::query()->create([
+            'session_id' => $session->id,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'filename' => 'terminal.pdf',
+            'mime_type' => 'application/pdf',
+            'source_version' => $sourceVersion,
+            'status' => 'processing',
+            'processing_stage' => 'preflight',
+            'progress_percent' => 30,
+        ]);
+        foreach (range(1, 3) as $index) {
+            $unit = EstimateGenerationProcessingUnit::query()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'session_id' => $session->id,
+                'document_id' => $document->id,
+                'unit_type' => 'pdf_page',
+                'unit_index' => $index,
+                'source_version' => $sourceVersion,
+                'status' => 'failed',
+                'attempt_count' => ProcessDocumentUnit::MAX_ATTEMPTS,
+                'output_count' => 0,
+                'failure_code' => 'document_systemic_failure',
+                'failure_fingerprint' => hash('sha256', 'terminal-root'),
+                'failed_at' => now(),
+                'locator' => $this->locator($organization->id, $sourceVersion, $index),
+                'metadata' => [
+                    'failure_category' => 'terminal',
+                    'resource_usage' => [
+                        'duration_ms' => 50 * $index,
+                        'peak_memory_bytes' => 1024 * $index,
+                    ],
+                ],
+            ]);
+            EstimateGenerationDocumentPage::query()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'session_id' => $session->id,
+                'document_id' => $document->id,
+                'processing_unit_id' => $unit->id,
+                'source_version' => $sourceVersion,
+                'page_number' => $index,
+                'status' => 'failed',
+                'language_codes' => [],
+                'normalized_payload' => [],
+                'quality_flags' => [],
+            ]);
+        }
+        $reconciler = app(EloquentDocumentUnitAggregateReconciler::class);
+
+        $reconciler->reconcile($document->id, 'sha256:'.str_repeat('f', 64));
+        self::assertSame('processing', $document->fresh()->status);
+        $reconciler->reconcile($document->id, $sourceVersion);
+        $persisted = $document->fresh();
+
+        self::assertSame('failed', $persisted->status);
+        self::assertSame('completed', $persisted->processing_stage);
+        self::assertSame(100, $persisted->progress_percent);
+        self::assertSame(3, $persisted->page_count);
+        self::assertSame(0, $persisted->processed_page_count);
+        self::assertSame('document_processing_system_failed', $persisted->error_code);
+        self::assertSame('estimate_generation.document_processing_system_failed', $persisted->error_message_key);
+        self::assertSame(3, $persisted->facts_summary['processing_outcome']['counts']['system_failed']);
+        self::assertSame(0, $persisted->facts_summary['processing_outcome']['counts']['processing']);
+        self::assertEqualsCanonicalizing([
+            'measured_units' => 3,
+            'duration_ms_total' => 300,
+            'duration_ms_max' => 150,
+            'peak_memory_bytes_max' => 3072,
+        ], $persisted->facts_summary['resource_usage']);
+        $persistedSession = $session->fresh();
+        self::assertSame('failed', $persistedSession->status->value);
+        self::assertSame('processing_documents', $persistedSession->resume_status->value);
+        self::assertSame('document_processing_system_failed', $persistedSession->failure_code);
+
+        $updatedAt = $persisted->updated_at->toISOString();
+        $reconciler->reconcile($document->id, $sourceVersion);
+        self::assertSame($updatedAt, $document->fresh()->updated_at->toISOString());
+    }
+
+    #[Test]
+    public function operational_sql_does_not_classify_legacy_current_source_systemic_failure_as_user_action(): void
+    {
+        $this->requireEnvironment();
+        DB::beginTransaction();
+
+        try {
+            $organization = Organization::factory()->create();
+            $project = Project::factory()->for($organization)->create();
+            $user = User::factory()->create();
+            $session = EstimateGenerationSession::query()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'user_id' => $user->id,
+                'status' => 'processing_documents',
+                'processing_stage' => 'processing_documents',
+                'processing_progress' => 30,
+                'input_payload' => [],
+                'state_version' => 0,
+            ]);
+            $document = EstimateGenerationDocument::query()->create([
+                'session_id' => $session->id,
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'user_id' => $user->id,
+                'filename' => 'legacy-systemic.pdf',
+                'mime_type' => 'application/pdf',
+                'source_version' => 'sha256:current',
+                'status' => 'needs_review',
+            ]);
+            foreach (range(1, 3) as $index) {
+                EstimateGenerationProcessingUnit::query()->create([
+                    'organization_id' => $organization->id,
+                    'project_id' => $project->id,
+                    'session_id' => $session->id,
+                    'document_id' => $document->id,
+                    'unit_type' => 'pdf_page',
+                    'unit_index' => $index,
+                    'source_version' => 'sha256:current',
+                    'status' => 'failed',
+                    'attempt_count' => 3,
+                    'output_count' => 0,
+                    'failure_code' => 'document_geometry_processing_failed',
+                    'failure_fingerprint' => hash('sha256', 'legacy-root'),
+                    'failed_at' => now(),
+                    'locator' => $this->locator($organization->id, 'sha256:current', $index),
+                    'metadata' => (object) [],
+                ]);
+            }
+
+            $actionRequired = EstimateGenerationDocument::query()
+                ->whereKey($document->id)
+                ->whereRaw((new DocumentReadinessClassifier)->actionRequiredSql())
+                ->count();
+
+            self::assertSame(0, $actionRequired);
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function legacy_systemic_units_transition_processing_session_to_resumable_system_failure(): void
+    {
+        $this->requireEnvironment();
+        DB::beginTransaction();
+
+        try {
+            $organization = Organization::factory()->create();
+            $project = Project::factory()->for($organization)->create();
+            $user = User::factory()->create();
+            $session = EstimateGenerationSession::query()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'user_id' => $user->id,
+                'status' => 'processing_documents',
+                'processing_stage' => 'processing_documents',
+                'processing_progress' => 30,
+                'input_payload' => [],
+                'state_version' => 0,
+            ]);
+            $document = EstimateGenerationDocument::query()->create([
+                'session_id' => $session->id,
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'user_id' => $user->id,
+                'filename' => 'legacy-systemic.pdf',
+                'mime_type' => 'application/pdf',
+                'source_version' => 'sha256:current',
+                'status' => 'needs_review',
+                'processing_stage' => 'completed',
+                'progress_percent' => 100,
+                'page_count' => 3,
+                'processed_page_count' => 0,
+            ]);
+            foreach (range(1, 3) as $index) {
+                EstimateGenerationProcessingUnit::query()->create([
+                    'organization_id' => $organization->id,
+                    'project_id' => $project->id,
+                    'session_id' => $session->id,
+                    'document_id' => $document->id,
+                    'unit_type' => 'pdf_page',
+                    'unit_index' => $index,
+                    'source_version' => 'sha256:current',
+                    'status' => 'failed',
+                    'attempt_count' => 3,
+                    'output_count' => 0,
+                    'failure_code' => 'document_geometry_processing_failed',
+                    'failure_fingerprint' => hash('sha256', 'legacy-root'),
+                    'failed_at' => now(),
+                    'locator' => $this->locator($organization->id, 'sha256:current', $index),
+                    'metadata' => (object) [],
+                ]);
+            }
+
+            app(ReconcileEstimateGenerationDocuments::class)->reconcile($session);
+            $persisted = $session->fresh();
+
+            self::assertSame('failed', $persisted->status->value);
+            self::assertSame('processing_documents', $persisted->resume_status->value);
+            self::assertSame('document_processing_system_failed', $persisted->failure_code);
+        } finally {
+            DB::rollBack();
+        }
     }
 
     private function requireEnvironment(): void
