@@ -694,9 +694,16 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpreter::class,
             \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\ExistingProviderEstimateCommandInterpreter::class,
         );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateDialogueContextSnapshotRepository::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EloquentEstimateDialogueContextSnapshotRepository::class,
+        );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandContextBuilder::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CanonicalEstimateCommandProposalResolver::class);
-        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\DeterministicEstimateChangePreview::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeSimulation::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\DeterministicEstimateChangePreview::class,
+        );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateInterpretationAttemptRepository::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalMutationExecutor::class,

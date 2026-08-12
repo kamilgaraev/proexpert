@@ -14,7 +14,8 @@ final class EstimateChangeProposalRepository
     public function create(array $proposal, array $items): EstimateChangeProposal
     {
         DB::table('estimate_change_proposals')->insert($this->encode($proposal, [
-            'before_payload', 'after_payload', 'affected_payload', 'dependency_keys', 'assumptions', 'questions', 'evidence', 'version_fence', 'cost_blockers',
+            'before_payload', 'after_payload', 'affected_payload', 'dependency_keys', 'assumptions', 'questions',
+            'evidence', 'version_fence', 'cost_blockers', 'simulation_input',
         ]));
         DB::table('estimate_change_proposal_states')->insert([
             'proposal_id' => $proposal['id'], 'status' => 'proposed', 'version' => 1, 'updated_at' => now(),
@@ -109,7 +110,7 @@ final class EstimateChangeProposalRepository
     /** @param array<string, mixed> $values @return array<string, mixed> */
     private function decode(array $values): array
     {
-        foreach (['before_payload', 'after_payload', 'affected_payload', 'dependency_keys', 'assumptions', 'questions', 'evidence', 'version_fence', 'cost_blockers', 'result', 'locator'] as $field) {
+        foreach (['before_payload', 'after_payload', 'affected_payload', 'dependency_keys', 'assumptions', 'questions', 'evidence', 'version_fence', 'cost_blockers', 'simulation_input', 'result', 'locator'] as $field) {
             if (is_string($values[$field] ?? null)) {
                 $values[$field] = json_decode($values[$field], true, 32, JSON_THROW_ON_ERROR);
             }

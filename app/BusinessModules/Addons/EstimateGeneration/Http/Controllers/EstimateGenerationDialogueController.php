@@ -88,15 +88,49 @@ final class EstimateGenerationDialogueController extends Controller
     {
         try {
             return AdminResponse::success($callback());
-        } catch (RuntimeException $exception) {
-            $code = str_contains($exception->getMessage(), 'not_found') ? 404 : (str_contains($exception->getMessage(), 'invalid') || str_contains($exception->getMessage(), 'collision') ? 422 : 409);
-            $messageKey = str_starts_with($exception->getMessage(), 'estimate_generation.') ? $exception->getMessage() : 'estimate_generation.state_conflict';
+        } catch (RuntimeException|\InvalidArgumentException $exception) {
+            [$machineCode, $messageKey, $code] = $this->publicError($exception);
 
-            return AdminResponse::error(trans_message($messageKey), $code);
+            return AdminResponse::error(trans_message($messageKey), $code, null, ['code' => $machineCode]);
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Dialogue failed', ['session_id' => $session->id, 'failure_code' => 'estimate_dialogue_failed']);
 
             return AdminResponse::error(trans_message('estimate_generation.dialogue_error'), 500);
         }
+    }
+
+    /** @return array{string,string,int} */
+    private function publicError(\Throwable $exception): array
+    {
+        $raw = $exception->getMessage();
+        $code = str_starts_with($raw, 'estimate_generation.')
+            ? explode(':', substr($raw, strlen('estimate_generation.')), 2)[0]
+            : 'state_conflict';
+        $map = [
+            'command_intent_invalid' => ['estimate_generation.command_intent_invalid', 422],
+            'command_provider_invalid' => ['estimate_generation.command_provider_invalid', 502],
+            'command_context_review_required' => ['estimate_generation.command_context_review_required', 422],
+            'command_reference_invalid' => ['estimate_generation.command_reference_invalid', 422],
+            'interpretation_attempt_active' => ['estimate_generation.interpretation_attempt_active', 409],
+            'interpretation_attempt_lost' => ['estimate_generation.interpretation_attempt_lost', 409],
+            'interpretation_attempt_ambiguous' => ['estimate_generation.interpretation_attempt_ambiguous', 409],
+            'interpretation_attempt_expired' => ['estimate_generation.interpretation_attempt_expired', 409],
+            'interpretation_response_invalid' => ['estimate_generation.interpretation_response_invalid', 409],
+            'interpretation_response_collision' => ['estimate_generation.interpretation_response_collision', 409],
+            'interpretation_completion_collision' => ['estimate_generation.interpretation_completion_collision', 409],
+            'proposal_idempotency_collision' => ['estimate_generation.proposal_idempotency_collision', 422],
+            'proposal_not_found' => ['estimate_generation.proposal_not_found', 404],
+            'proposal_stale' => ['estimate_generation.proposal_stale', 409],
+            'proposal_expired' => ['estimate_generation.proposal_expired', 409],
+            'proposal_terminal' => ['estimate_generation.proposal_terminal', 409],
+            'proposal_concurrent' => ['estimate_generation.proposal_concurrent', 409],
+            'proposal_too_large' => ['estimate_generation.proposal_too_large', 422],
+            'proposal_payload_invalid' => ['estimate_generation.proposal_payload_invalid', 422],
+            'proposal_intent_unsupported' => ['estimate_generation.proposal_intent_unsupported', 422],
+            'locator_invalid' => ['estimate_generation.locator_invalid', 422],
+        ];
+        [$key, $status] = $map[$code] ?? ['estimate_generation.state_conflict', 409];
+
+        return [$code, $key, $status];
     }
 }

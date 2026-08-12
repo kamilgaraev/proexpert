@@ -16,7 +16,7 @@ final readonly class ApplyEstimateChangeProposal
         private EstimateChangeProposalRepository $proposals,
         private EstimateProposalVersionFence $versions,
         private EstimateProposalMutationExecutor $executor,
-        private DeterministicEstimateChangePreview $preview = new DeterministicEstimateChangePreview,
+        private EstimateChangeSimulation $preview,
     ) {}
 
     public function handle(User $actor, int $organizationId, int $projectId, int $sessionId, string $proposalId, int $expectedStateVersion): EstimateChangeProposal
@@ -41,16 +41,19 @@ final readonly class ApplyEstimateChangeProposal
 
                     return $this->proposals->find($proposalId, $organizationId, $projectId, $sessionId);
                 }
-                $recalculated = $this->preview->calculate($session, new EstimateCommandInterpretation([
-                    'kind' => (string) $proposal->payload['intent'],
-                    'version' => (string) $proposal->payload['interpretation_version'],
-                    'before' => $proposal->payload['before_payload'],
-                    'after' => $proposal->payload['after_payload'],
-                    'value' => $proposal->payload['after_payload']['value']['value'] ?? null,
-                    'dependency_keys' => $proposal->payload['dependency_keys'],
-                ]));
+                $simulationInput = is_array($proposal->payload['simulation_input'] ?? null)
+                    ? $proposal->payload['simulation_input']
+                    : [];
+                $recalculated = $this->preview->calculate(
+                    $session,
+                    new EstimateCommandInterpretation($simulationInput),
+                );
                 if (($proposal->payload['cost_state'] ?? 'unknown') !== $recalculated['state']
-                    || (($proposal->payload['cost_delta'] ?? null) !== $recalculated['delta'])) {
+                    || (($proposal->payload['cost_delta'] ?? null) !== $recalculated['delta'])
+                    || ! hash_equals(
+                        (string) ($proposal->payload['simulation_fingerprint'] ?? ''),
+                        (string) $recalculated['fingerprint'],
+                    )) {
                     $this->proposals->transition($proposalId, 'proposed', 'stale', (int) $actor->id);
 
                     return $this->proposals->find($proposalId, $organizationId, $projectId, $sessionId);

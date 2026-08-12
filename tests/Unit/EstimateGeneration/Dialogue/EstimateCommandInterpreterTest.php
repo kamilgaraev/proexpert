@@ -7,6 +7,12 @@ namespace Tests\Unit\EstimateGeneration\Dialogue;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CanonicalEstimateCommandProposalResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandContextBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpretation;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\ExistingProviderEstimateCommandInterpreter;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
@@ -146,6 +152,48 @@ final class EstimateCommandInterpreterTest extends TestCase
         self::assertSame('Площадь помещения 101', $request['context']['facts'][0]['label']);
         self::assertSame('evidence:roof:1', $request['context']['evidence'][0]['id']);
         self::assertMatchesRegularExpression('/^sha256:[a-f0-9]{64}$/', $request['context']['fingerprint']);
+    }
+
+    public function test_context_uses_canonical_snapshot_evidence_instead_of_analysis_payload(): void
+    {
+        $sourceVersion = 'sha256:'.str_repeat('a', 64);
+        $entity = new Entity('room:101', 7, 8, 9, $sourceVersion, 'room', 'room:101', []);
+        $evidence = new Evidence(
+            'evidence:canonical', 7, 8, 9, $sourceVersion, 'document:17', 'pdf', 4,
+            ['x' => 1, 'y' => 2, 'width' => 3, 'height' => 4],
+        );
+        $fact = new Fact(
+            'fact:room:101:area', 7, 8, 9, $sourceVersion, $entity->id, 'area', ['amount' => '50.0000'], 'm2',
+            1.0, 'document', 'confirmed', [$evidence->id], version: 3,
+        );
+        $decision = new Decision(
+            'decision:room:101:area', 7, 8, 9, $sourceVersion, 'fact', $fact->id, $fact->id,
+            'user', '10', 'Подтверждено пользователем', 7, [$evidence->id],
+        );
+        $models = $this->createMock(ProjectModelRepository::class);
+        $models->method('currentFacts')->willReturn([$fact]);
+        $models->method('currentTechnologyRecommendations')->willReturn(null);
+        $models->method('snapshot')->willReturn(new ProjectModelSnapshot([$entity], [$fact], [$evidence], []));
+        $models->method('decisionsForSelectedFacts')->willReturn([$decision]);
+        $session = new EstimateGenerationSession([
+            'organization_id' => 7,
+            'project_id' => 8,
+            'state_version' => 4,
+            'analysis_payload' => ['evidence' => [[
+                'id' => 'evidence:untrusted',
+                'artifact_id' => 999,
+                'page' => 1,
+            ]]],
+            'draft_payload' => [],
+        ]);
+        $session->id = 9;
+
+        $context = (new EstimateCommandContextBuilder($models))->build($session);
+
+        self::assertSame(['evidence:canonical'], array_column($context['evidence'], 'id'));
+        self::assertSame(7, $context['facts'][0]['decision_version']);
+        self::assertSame('page', $context['evidence'][0]['representation_kind']);
+        self::assertNotContains('evidence:untrusted', $context['allowed_references']['evidence_ids']);
     }
 
     public function test_malformed_or_unapproved_provider_intent_fails_closed(): void
@@ -288,39 +336,14 @@ final class EstimateCommandInterpreterTest extends TestCase
         (new EstimateCommandContextBuilder)->build($session);
     }
 
-    public function test_deterministic_preview_reports_missing_price_and_recalculates_roof_package(): void
+    public function test_preview_boundary_cannot_read_cached_provider_or_simulation_totals(): void
     {
-        $calculator = new \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\DeterministicEstimateChangePreview;
-        $session = new EstimateGenerationSession([
-            'draft_payload' => ['local_estimates' => [['sections' => [['work_items' => [[
-                'key' => 'row:roof:old', 'total_cost' => '1000.0000',
-                'metadata' => ['dependency_keys' => ['decision:roof']],
-            ]]]]]]],
-            'analysis_payload' => ['technology_recommendations' => [[
-                'decision_key' => 'decision:roof',
-                'options' => [['id' => 'roof:soft', 'work_packages' => [['work_items' => [[
-                    'key' => 'row:roof:new', 'total_cost' => '1350.2500', 'pricing_status' => 'calculated',
-                ]]]]]],
-            ]]],
-        ]);
-        $known = $calculator->calculate($session, new EstimateCommandInterpretation([
-            'kind' => 'select_technology', 'version' => 'server:v1',
-            'after' => ['decision_key' => 'decision:roof', 'response' => 'roof:soft'],
-            'dependency_keys' => ['decision:roof'],
-        ]));
-        self::assertSame('known', $known['state']);
-        self::assertSame('350.2500', $known['delta']);
-
-        $session->draft_payload = ['local_estimates' => [['sections' => [['work_items' => [[
-            'key' => 'row:area', 'pricing_status' => 'blocked', 'pricing_blocker' => 'norm_missing',
-            'metadata' => ['dependency_keys' => ['fact:area']],
-        ]]]]]]];
-        $unknown = $calculator->calculate($session, new EstimateCommandInterpretation([
-            'kind' => 'correct_fact', 'version' => 'server:v1', 'before' => ['value' => '40.0000'],
-            'value' => '50.0000', 'dependency_keys' => ['fact:area'],
-        ]));
-        self::assertSame('unknown', $unknown['state']);
-        self::assertNull($unknown['delta']);
-        self::assertSame(['norm_missing'], $unknown['blockers']);
+        $source = file_get_contents(dirname(__DIR__, 4).
+            '/app/BusinessModules/Addons/EstimateGeneration/Application/Dialogue/DeterministicEstimateChangePreview.php');
+        self::assertIsString($source);
+        self::assertStringNotContainsString('preview_simulations', $source);
+        self::assertStringNotContainsString("['cost_delta']", $source);
+        self::assertStringContainsString('CurrentProjectDerivedQuantityService', $source);
+        self::assertStringContainsString('EstimatePricingService', $source);
     }
 }

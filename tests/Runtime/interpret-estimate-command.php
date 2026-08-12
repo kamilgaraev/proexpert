@@ -2,14 +2,9 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandContextBuilder;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpretation;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpreter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\PreviewEstimateChange;
-use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateChangeProposalRepository;
-use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateInterpretationAttemptRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
 
@@ -23,42 +18,47 @@ while (microtime(true) < (float) $barrier) {
     usleep(1_000);
 }
 
-$interpreter = new class($idempotencyKey) implements EstimateCommandInterpreter
+$app->instance(LLMProviderInterface::class, new class($idempotencyKey) implements LLMProviderInterface
 {
     public function __construct(private readonly string $requestKey) {}
 
-    public function interpret(EstimateGenerationSession $session, int $actorId, string $command, ?array $context = null): EstimateCommandInterpretation
+    public function chat(array $messages, array $options = []): array
     {
+        $context = json_decode((string) ($messages[1]['content'] ?? ''), true, 64, JSON_THROW_ON_ERROR);
+        if (! is_array($context['context']['snapshot'] ?? null)) {
+            throw new RuntimeException('production_context_missing');
+        }
         DB::table('estimate_stage7_provider_spy')->insert([
             'request_key' => $this->requestKey,
             'created_at' => now(),
         ]);
         usleep(300_000);
 
-        return new EstimateCommandInterpretation([
-            'kind' => 'correct_fact',
+        return ['content' => json_encode([
+            'kind' => 'explain',
             'version' => 'provider-spy:v1',
-            'before' => ['value' => '10.0000'],
-            'after' => ['value' => '11.0000'],
-            'affected' => [],
-            'dependency_keys' => [],
-            'assumptions' => [],
-            'questions' => [],
-            'evidence' => [],
-            'cost_delta_known' => false,
-            'cost_delta' => null,
-        ]);
+            'explanation' => 'Проверка производственного контура.',
+            'evidence_ids' => [],
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)];
     }
-};
 
-$service = new InterpretEstimateCommand(
-    $interpreter,
-    $app->make(PreviewEstimateChange::class),
-    $app->make(EstimateChangeProposalRepository::class),
-    $app->make(EstimateInterpretationAttemptRepository::class),
-    new EstimateCommandContextBuilder,
-);
-$result = $service->handle(
+    public function countTokens(string $text): int
+    {
+        return max(1, (int) ceil(strlen($text) / 4));
+    }
+
+    public function isAvailable(): bool
+    {
+        return true;
+    }
+
+    public function getModel(): string
+    {
+        return 'stage7-provider-spy';
+    }
+});
+
+$result = $app->make(InterpretEstimateCommand::class)->handle(
     EstimateGenerationSession::query()->findOrFail((int) $sessionId),
     (int) $actorId,
     $command,

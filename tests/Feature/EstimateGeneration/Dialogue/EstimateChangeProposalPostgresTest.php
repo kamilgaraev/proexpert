@@ -6,6 +6,7 @@ namespace Tests\Feature\EstimateGeneration\Dialogue;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\ApplyEstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeProposal;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeSimulation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpretation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalMutationExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalVersionFence;
@@ -156,10 +157,25 @@ final class EstimateChangeProposalPostgresTest extends TestCase
                     return ['ordinary_estimate_changed' => true];
                 }
             };
-            $service = new ApplyEstimateChangeProposal($repository, $versions, $executor);
+            $service = new ApplyEstimateChangeProposal(
+                $repository,
+                $versions,
+                $executor,
+                app(EstimateChangeSimulation::class),
+            );
 
             $id = (string) \Illuminate\Support\Str::uuid();
             $repository->create($this->scopedProposal($id, $session, $actor, $versions->capture($session), now()->addMinutes(30)), []);
+            $stored = $repository->find($id, (int) $organization->id, (int) $project->id, (int) $session->id);
+            $recalculated = app(EstimateChangeSimulation::class)->calculate(
+                $session->fresh(),
+                new EstimateCommandInterpretation($stored->payload['simulation_input']),
+            );
+            self::assertSame(
+                $stored->payload['simulation_fingerprint'],
+                $recalculated['fingerprint'],
+                json_encode([$stored->payload['simulation_input'], $recalculated], JSON_UNESCAPED_UNICODE),
+            );
             self::assertSame('applied', $service->handle($actor, (int) $organization->id, (int) $project->id, (int) $session->id, $id, 9)->payload['status']);
             self::assertSame('applied', $service->handle($actor, (int) $organization->id, (int) $project->id, (int) $session->id, $id, 9)->payload['status']);
             self::assertSame(1, $executor->calls);
@@ -239,7 +255,10 @@ final class EstimateChangeProposalPostgresTest extends TestCase
                 'source_version' => 'source-v1',
                 'value_fingerprint' => 'fingerprint-v1',
             ]]],
-            'draft_payload' => [],
+            'draft_payload' => ['local_estimates' => [['sections' => [['work_items' => [[
+                'key' => 'row:context', 'name' => 'Контекстная строка', 'quantity' => '1.0000',
+                'unit' => 'шт', 'total_cost' => '1.0000', 'pricing_status' => 'calculated',
+            ]]]]]]],
             'problem_flags' => [],
             'state_version' => 9,
         ]);
@@ -281,13 +300,20 @@ final class EstimateChangeProposalPostgresTest extends TestCase
             self::assertTrue($first->isSuccessful(), $first->getErrorOutput());
             self::assertTrue($second->isSuccessful(), $second->getErrorOutput());
             self::assertSame(1, DB::table('estimate_stage7_provider_spy')->where('request_key', 'parallel-request')->count(), $first->getOutput().' | '.$second->getOutput());
-            self::assertSame(1, DB::table('estimate_change_proposals')->where('session_id', $session->id)->count());
+            self::assertSame(0, DB::table('estimate_change_proposals')->where('session_id', $session->id)->count());
+            self::assertSame(
+                'completed',
+                DB::table('estimate_interpretation_attempts')
+                    ->where('session_id', $session->id)
+                    ->where('idempotency_key', 'parallel-request')
+                    ->value('state'),
+            );
         } finally {
             Schema::dropIfExists('estimate_stage7_provider_spy');
         }
     }
 
-    public function test_preview_ignores_provider_cost_and_uses_server_calculated_delta(): void
+    public function test_preview_ignores_cached_and_provider_cost_and_uses_proposed_value(): void
     {
         $organization = Organization::factory()->create();
         $actor = User::factory()->create(['current_organization_id' => $organization->id]);
@@ -339,9 +365,36 @@ final class EstimateChangeProposalPostgresTest extends TestCase
             $interpretation,
         );
 
-        self::assertTrue($proposal->payload['cost_delta_known']);
-        self::assertSame('250.5000', (string) $proposal->payload['cost_delta']);
-        self::assertNotSame('999999.0000', (string) $proposal->payload['cost_delta']);
+        self::assertFalse($proposal->payload['cost_delta_known']);
+        self::assertNull($proposal->payload['cost_delta']);
+        self::assertContains(
+            'canonical_project_model_target_missing',
+            $proposal->payload['cost_blockers'],
+        );
+
+        $largerProposal = app(PreviewEstimateChange::class)->handle(
+            $session,
+            (int) $actor->id,
+            'Исправить площадь до 60',
+            'cost-request-60',
+            new EstimateCommandInterpretation([
+                'kind' => 'correct_fact',
+                'version' => 'dialogue:v1',
+                'target_key' => 'fact:room:101:area',
+                'value' => '60.0000',
+                'before' => ['value' => '40.0000'],
+                'dependency_keys' => ['fact:room:101:area'],
+                'affected' => [['stable_key' => 'row:room:101', 'kind' => 'estimate_row']],
+                'cost_delta_known' => true,
+                'cost_delta' => '999999.0000',
+            ]),
+        );
+
+        self::assertFalse($largerProposal->payload['cost_delta_known']);
+        self::assertNotSame(
+            (string) $proposal->payload['simulation_fingerprint'],
+            (string) $largerProposal->payload['simulation_fingerprint'],
+        );
         self::assertEquals($session->draft_payload, $session->fresh()->draft_payload);
         self::assertSame('proposed', DB::table('estimate_change_proposal_states')->where('proposal_id', $proposal->id())->value('status'));
     }
@@ -417,6 +470,18 @@ final class EstimateChangeProposalPostgresTest extends TestCase
         $payload['cost_delta'] = null;
         $payload['cost_state'] = 'unknown';
         $payload['cost_blockers'] = ['affected_rows_not_found'];
+        $payload['simulation_input'] = [
+            'kind' => 'correct_fact',
+            'version' => 'test:v1',
+            'before' => $payload['before_payload'],
+            'after' => $payload['after_payload'],
+            'value' => null,
+            'dependency_keys' => $payload['dependency_keys'],
+        ];
+        $payload['simulation_fingerprint'] = app(EstimateChangeSimulation::class)->calculate(
+            $session,
+            new EstimateCommandInterpretation($payload['simulation_input']),
+        )['fingerprint'];
 
         return $payload;
     }

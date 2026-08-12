@@ -226,7 +226,10 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
 
         return [
             'artifact_id' => isset($matches[1]) ? (int) $matches[1] : 0, 'source_version' => $evidence->sourceVersion,
-            'page' => $evidence->page, 'region' => $evidence->region, 'native_reference' => $evidence->nativeReference,
+            'representation_kind' => $evidence->nativeReference !== null ? 'native' : 'page',
+            'page' => $evidence->page,
+            'region' => $evidence->region,
+            'native_reference' => $evidence->nativeReference,
         ];
     }
 
@@ -235,8 +238,11 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
     {
         return [
             'artifact_id' => (int) ($source['artifact_id'] ?? $source['document_id'] ?? 0),
-            'source_version' => $source['source_version'] ?? null, 'page' => $source['page'] ?? $source['page_number'] ?? null,
-            'sheet' => $source['sheet'] ?? null, 'region' => $source['region'] ?? $source['bbox'] ?? null,
+            'representation_kind' => $source['representation_kind'] ?? null,
+            'source_version' => $source['source_version'] ?? null,
+            'page' => $source['page'] ?? $source['page_number'] ?? null,
+            'sheet' => $source['sheet'] ?? null,
+            'region' => $source['region'] ?? $source['bbox'] ?? null,
             'native_reference' => $source['native_reference'] ?? $source['filename'] ?? null,
         ];
     }

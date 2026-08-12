@@ -39,6 +39,8 @@ return new class extends Migration
         Schema::table('estimate_change_proposals', function (Blueprint $table): void {
             $table->string('cost_state', 16)->default('unknown');
             $table->jsonb('cost_blockers')->default('[]');
+            $table->char('simulation_fingerprint', 71)->nullable();
+            $table->jsonb('simulation_input')->nullable();
         });
 
         if (DB::getDriverName() === 'pgsql') {
@@ -53,7 +55,13 @@ return new class extends Migration
             DB::statement('ALTER TABLE estimate_change_proposals DROP CONSTRAINT IF EXISTS estimate_change_proposals_cost_state_check');
         }
         Schema::table('estimate_change_proposals', function (Blueprint $table): void {
-            $table->dropColumn(['cost_state', 'cost_blockers']);
+            $columns = array_values(array_filter(
+                ['cost_state', 'cost_blockers', 'simulation_fingerprint', 'simulation_input'],
+                static fn (string $column): bool => Schema::hasColumn('estimate_change_proposals', $column),
+            ));
+            if ($columns !== []) {
+                $table->dropColumn($columns);
+            }
         });
         Schema::dropIfExists('estimate_interpretation_attempts');
     }

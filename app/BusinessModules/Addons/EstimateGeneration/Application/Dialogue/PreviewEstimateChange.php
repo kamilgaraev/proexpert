@@ -15,8 +15,7 @@ final readonly class PreviewEstimateChange
 {
     public function __construct(
         private EstimateChangeProposalRepository $proposals,
-        private EstimateProposalVersionFence $versions,
-        private DeterministicEstimateChangePreview $calculator = new DeterministicEstimateChangePreview,
+        private EstimateChangeSimulation $calculator,
     ) {}
 
     public function handle(EstimateGenerationSession $session, int $actorId, string $command, string $idempotencyKey, EstimateCommandInterpretation $interpretation): EstimateChangeProposal
@@ -51,9 +50,11 @@ final readonly class PreviewEstimateChange
             'dependency_keys' => $this->boundedList($payload['dependency_keys'] ?? [], 1000),
             'assumptions' => $this->boundedList($payload['assumptions'] ?? [], 100), 'questions' => $this->boundedList($payload['questions'] ?? [], 100),
             'evidence' => array_slice(is_array($payload['evidence'] ?? null) ? $payload['evidence'] : [], 0, 100),
-            'version_fence' => $this->versions->capture($session),
+            'version_fence' => $calculation['version_fence'],
             'cost_state' => $calculation['state'], 'cost_blockers' => $calculation['blockers'],
             'cost_delta_known' => $known, 'cost_delta' => $cost,
+            'simulation_fingerprint' => $calculation['fingerprint'],
+            'simulation_input' => $payload,
             'expires_at' => now()->addMinutes(30), 'created_at' => now(),
         ];
 

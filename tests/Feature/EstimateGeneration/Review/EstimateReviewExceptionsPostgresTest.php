@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration\Review;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot;
 use App\Models\Organization;
@@ -49,6 +50,17 @@ final class EstimateReviewExceptionsPostgresTest extends TestCase
             $organization = Organization::factory()->create();
             $user = User::factory()->create(['current_organization_id' => $organization->id]);
             $project = Project::factory()->create(['organization_id' => $organization->id]);
+            $session = EstimateGenerationSession::query()->create([
+                'organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $user->id,
+                'status' => 'ready_to_apply', 'processing_stage' => 'quality_check', 'processing_progress' => 100,
+                'input_payload' => [], 'problem_flags' => [], 'state_version' => 7, 'draft_payload' => $this->draft([]),
+            ]);
+            $document = EstimateGenerationDocument::query()->create([
+                'session_id' => $session->id, 'organization_id' => $organization->id,
+                'project_id' => $project->id, 'user_id' => $user->id,
+                'filename' => 'review-source.pdf', 'mime_type' => 'application/pdf',
+                'source_version' => 'artifact-v7',
+            ]);
             $items = [];
             foreach (range(1, 205) as $index) {
                 $items[] = [
@@ -63,18 +75,15 @@ final class EstimateReviewExceptionsPostgresTest extends TestCase
                     'severity' => $index <= 3 ? 'blocking' : 'warning', 'required_action' => 'confirm_quantity',
                     'reason_codes' => ['quantity_review_required'],
                     'source_refs' => [[
-                        'artifact_id' => 77, 'source_version' => 'artifact-v7', 'page_number' => 8,
+                        'artifact_id' => (int) $document->id, 'source_version' => 'artifact-v7',
+                        'representation_kind' => 'native', 'page_number' => 8,
                         'region' => ['x' => 0.1, 'y' => 0.2, 'width' => 0.3, 'height' => 0.4],
                         'native_reference' => 'Лист АР-8',
                     ]],
                 ];
             }
             $draft = $this->draft($items);
-            $session = EstimateGenerationSession::query()->create([
-                'organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $user->id,
-                'status' => 'ready_to_apply', 'processing_stage' => 'quality_check', 'processing_progress' => 100,
-                'input_payload' => [], 'problem_flags' => [], 'state_version' => 7, 'draft_payload' => $draft,
-            ]);
+            $session->update(['draft_payload' => $draft]);
 
             $service = app(ListEstimateReviewExceptions::class);
             $first = $service->handle($session->fresh(), [
@@ -93,7 +102,7 @@ final class EstimateReviewExceptionsPostgresTest extends TestCase
             self::assertTrue($first['meta']['canonical_sort']);
             self::assertSame(205, $first['summary']['unresolved']);
             self::assertSame($first['summary'], $second['summary']);
-            self::assertSame(77, $first['items'][0]['locators'][0]['artifact_id']);
+            self::assertSame((int) $document->id, $first['items'][0]['locators'][0]['artifact_id']);
             self::assertSame('Лист АР-8', $first['items'][0]['locators'][0]['native_reference']);
 
             foreach ([

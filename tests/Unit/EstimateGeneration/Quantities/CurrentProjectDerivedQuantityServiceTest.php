@@ -22,6 +22,50 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     private const SOURCE = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     #[Test]
+    public function simulation_uses_proposed_decimal_value_and_never_persists_projection(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $room = new Entity('room:simulation', 10, 20, 30, self::SOURCE, 'room', 'room:simulation');
+        $lengthEvidence = new Evidence('evidence:simulation-length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length');
+        $widthEvidence = new Evidence('evidence:simulation-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width');
+        $repository->saveSourceModel([$room], [
+            new Fact('fact:simulation-length', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
+            new Fact('fact:simulation-width', 10, 20, 30, self::SOURCE, $room->id, 'width', '10', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
+        ], [$lengthEvidence, $widthEvidence]);
+        $this->makeStageFiveCurrent($repository);
+        $capture = $repository->snapshotForPlanning(10, 20, 30, 100);
+        $service = new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory);
+
+        $amounts = [];
+        foreach (['5', '6', '7'] as $value) {
+            $facts = array_map(static fn (Fact $fact): Fact => $fact->id === 'fact:simulation-length'
+                ? new Fact(
+                    $fact->id, $fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion,
+                    $fact->entityId, $fact->type, $value, $fact->unit, $fact->confidence, $fact->origin,
+                    $fact->status, $fact->evidenceIds, $fact->version + 1, $fact->supersedesFactId,
+                )
+                : $fact, $capture['snapshot']->facts);
+            $projection = $service->simulate(
+                new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot(
+                    $capture['snapshot']->entities,
+                    $facts,
+                    $capture['snapshot']->evidence,
+                    $capture['snapshot']->conflicts,
+                ),
+                $capture['token'],
+                $repository->currentTechnologyRecommendations(10, 20, 30),
+                $repository->currentCompleteness(10, 20, 30),
+                [],
+            );
+            $amounts[] = $projection['quantities']['floor_area']->amount ?? null;
+        }
+
+        self::assertSame(['50', '60', '70'], $amounts);
+        self::assertSame([], $repository->quantities);
+        self::assertSame([], $repository->currentQuantities);
+    }
+
+    #[Test]
     public function production_projection_requires_proven_empty_opening_coverage_and_keeps_partial_opening_unresolved(): void
     {
         $repository = new InMemoryProjectModelRepository;

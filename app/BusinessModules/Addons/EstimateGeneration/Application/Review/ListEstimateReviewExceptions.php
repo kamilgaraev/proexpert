@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Review;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use RuntimeException;
 
@@ -25,7 +26,11 @@ final class ListEstimateReviewExceptions
     {
         $limit = max(1, min((int) ($filters['limit'] ?? 50), 100));
         $source = $this->source->current($session, self::SOURCE_LIMIT);
-        $items = array_values(array_filter(array_map($this->sanitize(...), $source['items']), fn (array $item): bool => $this->matches($item, $filters)));
+        $artifactVersions = $this->artifactVersions($session);
+        $items = array_values(array_filter(
+            array_map(fn (array $item): array => $this->sanitize($item, $artifactVersions), $source['items']),
+            fn (array $item): bool => $this->matches($item, $filters),
+        ));
         usort($items, $this->compare(...));
         $summary = $this->summary($items);
 
@@ -56,7 +61,7 @@ final class ListEstimateReviewExceptions
     }
 
     /** @param array<string, mixed> $item @return array<string, mixed> */
-    private function sanitize(array $item): array
+    private function sanitize(array $item, array $artifactVersions): array
     {
         $cost = is_array($item['cost_impact'] ?? null) ? $item['cost_impact'] : [];
         $state = in_array($cost['state'] ?? null, ['known', 'unknown', 'not_applicable'], true) ? $cost['state'] : 'unknown';
@@ -83,7 +88,10 @@ final class ListEstimateReviewExceptions
             'unresolved_type' => $this->nullableBoundedString($item['unresolved_type'] ?? null, 80),
             'codes' => array_slice(array_values(array_unique(array_filter(array_map('strval', is_array($item['codes'] ?? null) ? $item['codes'] : [])))), 0, 32),
             'provenance' => $this->sanitizeProvenance($item['provenance'] ?? null),
-            'locators' => array_slice(array_values(array_filter(array_map($this->sanitizeLocator(...), is_array($item['locators'] ?? null) ? $item['locators'] : []))), 0, 16),
+            'locators' => array_slice(array_values(array_filter(array_map(
+                fn (mixed $locator): ?array => $this->sanitizeLocator($locator, $artifactVersions),
+                is_array($item['locators'] ?? null) ? $item['locators'] : [],
+            ))), 0, 16),
             'recommendation' => $this->sanitizeRecommendation($item['recommendation'] ?? null),
         ];
     }
@@ -292,20 +300,87 @@ final class ListEstimateReviewExceptions
     }
 
     /** @return array<string, mixed>|null */
-    private function sanitizeLocator(mixed $value): ?array
+    private function sanitizeLocator(mixed $value, array $artifactVersions): ?array
     {
         if (! is_array($value) || ! is_int($value['artifact_id'] ?? null) || $value['artifact_id'] <= 0) {
+            return null;
+        }
+        $sourceVersion = $this->nullableBoundedString($value['source_version'] ?? null, 160);
+        if ($sourceVersion === null
+            || ! isset($artifactVersions[$value['artifact_id']])
+            || ! hash_equals($artifactVersions[$value['artifact_id']], $sourceVersion)) {
+            return null;
+        }
+        $kind = $value['representation_kind'] ?? null;
+        if (! is_string($kind) || ! in_array($kind, ['page', 'sheet', 'native'], true)) {
+            return null;
+        }
+        $page = is_int($value['page'] ?? null) && $value['page'] > 0 && $value['page'] <= 1_000_000
+            ? $value['page']
+            : null;
+        $sheet = $this->nullableBoundedString($value['sheet'] ?? null, 160);
+        $nativeReference = $this->nullableBoundedString($value['native_reference'] ?? null, 255);
+        $region = $this->sanitizeRegion($value['region'] ?? null);
+        if (($value['region'] ?? null) !== null && $region === null) {
+            return null;
+        }
+        if (($kind === 'page' && $page === null)
+            || ($kind === 'sheet' && $sheet === null)
+            || ($kind === 'native' && $nativeReference === null)) {
             return null;
         }
 
         return [
             'artifact_id' => $value['artifact_id'],
-            'source_version' => $this->nullableBoundedString($value['source_version'] ?? null, 160),
-            'page' => is_int($value['page'] ?? null) && $value['page'] > 0 ? $value['page'] : null,
-            'sheet' => $this->nullableBoundedString($value['sheet'] ?? null, 160),
-            'region' => is_array($value['region'] ?? null) ? array_intersect_key($value['region'], array_flip(['x', 'y', 'width', 'height'])) : null,
-            'native_reference' => $this->nullableBoundedString($value['native_reference'] ?? null, 255),
+            'representation_kind' => $kind,
+            'source_version' => $sourceVersion,
+            'page' => $page,
+            'sheet' => $sheet,
+            'region' => $region,
+            'native_reference' => $nativeReference,
         ];
+    }
+
+    /** @return array<int, string> */
+    private function artifactVersions(EstimateGenerationSession $session): array
+    {
+        $documents = $session->relationLoaded('documents')
+            ? $session->documents
+            : $session->documents()->get(['id', 'source_version']);
+        $versions = [];
+        foreach ($documents as $document) {
+            if (! $document instanceof EstimateGenerationDocument) {
+                continue;
+            }
+            $sourceVersion = $this->nullableBoundedString($document->source_version, 160);
+            if ($sourceVersion !== null) {
+                $versions[(int) $document->getKey()] = $sourceVersion;
+            }
+        }
+
+        return $versions;
+    }
+
+    /** @return array{x:int|float,y:int|float,width:int|float,height:int|float}|null */
+    private function sanitizeRegion(mixed $value): ?array
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (! is_array($value) || array_keys($value) !== ['x', 'y', 'width', 'height']) {
+            return null;
+        }
+        foreach ($value as $key => $coordinate) {
+            if ((! is_int($coordinate) && ! is_float($coordinate))
+                || ! is_finite((float) $coordinate)
+                || $coordinate < 0
+                || $coordinate > 10_000_000
+                || (in_array($key, ['width', 'height'], true) && $coordinate <= 0)) {
+                return null;
+            }
+        }
+
+        return $value;
     }
 
     /** @return array<string, mixed>|null */

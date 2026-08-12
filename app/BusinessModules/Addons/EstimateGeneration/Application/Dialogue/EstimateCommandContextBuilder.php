@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendation;
 use RuntimeException;
@@ -29,36 +32,58 @@ final class EstimateCommandContextBuilder
 
     private const MAX_DEPTH = 12;
 
-    public function __construct(private readonly ?ProjectModelRepository $models = null) {}
+    public function __construct(
+        private readonly ?ProjectModelRepository $models = null,
+        private readonly ?EstimateDialogueContextSnapshotRepository $snapshots = null,
+    ) {}
 
     /** @return array<string, mixed> */
     public function build(EstimateGenerationSession $session): array
     {
-        $analysis = is_array($session->analysis_payload) ? $session->analysis_payload : [];
-        $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
+        $exact = $this->snapshots?->capture(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->getKey(),
+        );
+        $analysis = $exact?->analysisPayload ?? (is_array($session->analysis_payload) ? $session->analysis_payload : []);
+        $draft = $exact?->draftPayload ?? (is_array($session->draft_payload) ? $session->draft_payload : []);
         $facts = $this->lists($analysis, ['facts', 'building_model.facts']);
         $recommendations = $this->lists($analysis, ['technology_recommendations', 'planning.technology_recommendations', 'planning.recommendations']);
+        $evidence = $this->lists($analysis, ['evidence', 'building_model.evidence']);
+        $decisions = [];
         if ($this->models !== null) {
-            $facts = array_map(
-                $this->repositoryFact(...),
-                $this->models->currentFacts(
-                    (int) $session->organization_id,
-                    (int) $session->project_id,
-                    (int) $session->getKey(),
-                    limit: self::MAX_FACTS + 1,
-                ),
+            $projectModel = $exact?->projectModel ?? $this->models->snapshot(
+                (int) $session->organization_id,
+                (int) $session->project_id,
+                (int) $session->getKey(),
+                self::MAX_FACTS + 1,
             );
-            $run = $this->models->currentTechnologyRecommendations(
+            $decisions = $exact?->decisions ?? $this->models->decisionsForSelectedFacts(
+                (int) $session->organization_id,
+                (int) $session->project_id,
+                (int) $session->getKey(),
+                array_map(static fn (Fact $fact): string => $fact->id, $projectModel->facts),
+            );
+            $facts = array_map(
+                fn (Fact $fact): array => $this->repositoryFact($fact, $decisions),
+                $projectModel->facts,
+            );
+            $evidence = array_map($this->repositoryEvidence(...), $projectModel->evidence);
+            $run = $exact?->technology ?? $this->models->currentTechnologyRecommendations(
                 (int) $session->organization_id,
                 (int) $session->project_id,
                 (int) $session->getKey(),
             );
             $recommendations = $run === null ? [] : array_map(
-                fn (TechnologyRecommendation $recommendation): array => $this->repositoryRecommendation($recommendation, $run),
+                fn (TechnologyRecommendation $recommendation): array => $this->repositoryRecommendation(
+                    $recommendation,
+                    $run,
+                    $projectModel,
+                    $decisions,
+                ),
                 array_values(array_filter($run['recommendations'] ?? [], static fn (mixed $item): bool => $item instanceof TechnologyRecommendation)),
             );
         }
-        $evidence = $this->lists($analysis, ['evidence', 'building_model.evidence']);
         $rows = $this->draftRows($draft);
         $facts = $this->scoped($facts, $session);
         $recommendations = $this->scoped($recommendations, $session);
@@ -80,7 +105,7 @@ final class EstimateCommandContextBuilder
                 'project_id' => (int) $session->project_id,
                 'session_id' => (int) $session->getKey(),
             ],
-            'snapshot' => ['state_version' => (int) $session->state_version],
+            'snapshot' => $exact?->versionFence() ?? ['state_version' => (int) $session->state_version],
             'facts' => array_map($this->fact(...), $facts),
             'recommendations' => array_map($this->recommendation(...), $recommendations),
             'draft_rows' => array_map($this->row(...), $rows),
@@ -104,14 +129,23 @@ final class EstimateCommandContextBuilder
         if (strlen($canonical) > self::MAX_BYTES || (int) ceil(strlen($canonical) / 4) > self::MAX_ESTIMATED_TOKENS) {
             throw new RuntimeException('estimate_generation.command_context_review_required');
         }
-        $context['fingerprint'] = 'sha256:'.hash('sha256', $canonical);
+        $context['fingerprint'] = $exact?->fingerprint() ?? 'sha256:'.hash('sha256', $canonical);
 
         return $context;
     }
 
     /** @return array<string, mixed> */
-    private function repositoryFact(Fact $fact): array
+    /** @param list<Decision> $decisions */
+    private function repositoryFact(Fact $fact, array $decisions): array
     {
+        $decisionVersion = null;
+        foreach ($decisions as $decision) {
+            if ($decision instanceof Decision
+                && ($decision->selectedFactId === $fact->id || $decision->targetId === $fact->id)) {
+                $decisionVersion = max($decisionVersion ?? 0, $decision->version);
+            }
+        }
+
         return [
             'organization_id' => $fact->organizationId,
             'project_id' => $fact->projectId,
@@ -125,15 +159,45 @@ final class EstimateCommandContextBuilder
             'status' => $fact->status,
             'version' => $fact->version,
             'source_version' => $fact->sourceVersion,
-            'value_fingerprint' => ProjectModelValueFingerprint::for($fact->value),
-            'decision_version' => $fact->version,
+            'value_fingerprint' => $this->valueFingerprint($fact->value),
+            'decision_version' => $decisionVersion,
             'evidence_ids' => $fact->evidenceIds,
         ];
     }
 
-    /** @param array<string, mixed> $run @return array<string, mixed> */
-    private function repositoryRecommendation(TechnologyRecommendation $recommendation, array $run): array
+    private function valueFingerprint(mixed $value): string
     {
+        if (is_array($value)) {
+            return ProjectModelValueFingerprint::for($value);
+        }
+
+        return hash('sha256', json_encode($value, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION));
+    }
+
+    /** @param array<string, mixed> $run @param list<Decision> $decisions @return array<string, mixed> */
+    private function repositoryRecommendation(
+        TechnologyRecommendation $recommendation,
+        array $run,
+        ProjectModelSnapshot $snapshot,
+        array $decisions,
+    ): array {
+        $decision = null;
+        foreach ($decisions as $candidate) {
+            if ($candidate instanceof Decision && $candidate->targetId === $recommendation->targetFactId) {
+                $decision = $candidate;
+                break;
+            }
+        }
+        $selectedFact = null;
+        if ($decision instanceof Decision && $decision->selectedFactId !== null) {
+            foreach ($snapshot->facts as $fact) {
+                if ($fact->id === $decision->selectedFactId) {
+                    $selectedFact = $fact;
+                    break;
+                }
+            }
+        }
+
         return [
             'organization_id' => $recommendation->organizationId,
             'project_id' => $recommendation->projectId,
@@ -143,9 +207,12 @@ final class EstimateCommandContextBuilder
             'question' => $recommendation->question,
             'rationale' => $recommendation->recommended?->explanation,
             'planning_run_id' => (int) ($run['run_id'] ?? 0),
-            'decision_version' => 1,
+            'decision_version' => $decision?->version,
             'source_version' => $recommendation->sourceVersion,
-            'selected_option' => $recommendation->recommended?->system->id,
+            'selected_option' => $selectedFact instanceof Fact && is_array($selectedFact->value)
+                ? ($selectedFact->value['system_id'] ?? null)
+                : null,
+            'recommended_option' => $recommendation->recommended?->system->id,
             'options' => array_map(static fn ($option): array => [
                 'id' => $option->system->id,
                 'label' => $option->label,
@@ -153,6 +220,24 @@ final class EstimateCommandContextBuilder
                 'availability' => $option->applicabilityStatus === 'applicable' ? 'available' : 'unavailable',
                 'work_packages' => $option->system->costPreview['work_packages'] ?? [],
             ], $recommendation->options),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function repositoryEvidence(Evidence $evidence): array
+    {
+        $artifact = preg_match('/\Adocument:(\d+)\z/', $evidence->sourceArtifactId, $matches) === 1
+            ? (int) $matches[1]
+            : $evidence->sourceArtifactId;
+
+        return [
+            'id' => $evidence->id,
+            'artifact_id' => $artifact,
+            'source_version' => $evidence->sourceVersion,
+            'representation_kind' => $evidence->nativeReference !== null ? 'native' : 'page',
+            'page' => $evidence->page,
+            'region' => $evidence->region,
+            'native_reference' => $evidence->nativeReference,
         ];
     }
 
@@ -256,7 +341,9 @@ final class EstimateCommandContextBuilder
     /** @return array<string, mixed> */
     private function evidence(array $evidence): array
     {
-        return array_intersect_key($evidence, array_flip(['id', 'artifact_id', 'source_version', 'page', 'sheet', 'region', 'native_reference']));
+        return array_intersect_key($evidence, array_flip([
+            'id', 'artifact_id', 'source_version', 'representation_kind', 'page', 'sheet', 'region', 'native_reference',
+        ]));
     }
 
     private function assertBudget(array $items, int $limit, string $kind): void
