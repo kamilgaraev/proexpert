@@ -34,8 +34,47 @@ final class MarketingSeoArticleCatalogTest extends TestCase
             self::assertStringContainsString('<h2>', $article['content'], $article['slug']);
             self::assertStringContainsString('<h2>Частые вопросы', $article['content'], $article['slug']);
             self::assertStringContainsString('<figure>', $article['content'], $article['slug']);
-            self::assertStringContainsString('rel="noopener noreferrer"', $article['content'], $article['slug']);
         }
+    }
+
+    public function testEveryArticleIntroducesMostAndLinksToRelevantProductPage(): void
+    {
+        $expectedProductLinks = [
+            'sistema-upravleniya-stroitelstvom' => '/construction-erp',
+            'grafik-proizvodstva-rabot-v-stroitelstve' => '/construction-erp',
+            'ispolnitelnaya-dokumentaciya-v-stroitelstve' => '/construction-documents',
+        ];
+
+        foreach ($this->articles() as $article) {
+            self::assertStringContainsString('МОСТ</a> — система управления строительством', $article['content'], $article['slug']);
+            self::assertStringContainsString(
+                'href="' . $expectedProductLinks[$article['slug']] . '"',
+                $article['content'],
+                $article['slug']
+            );
+        }
+    }
+
+    public function testSourcesArePresentedOnlyWhereTheySupportTheArticle(): void
+    {
+        $articles = array_column($this->articles(), null, 'slug');
+
+        self::assertStringNotContainsString(
+            '<h2>Источники и данные для проверки</h2>',
+            $articles['sistema-upravleniya-stroitelstvom']['content']
+        );
+        self::assertStringContainsString(
+            'Стратегическое направление цифровой трансформации',
+            $articles['sistema-upravleniya-stroitelstvom']['content']
+        );
+        self::assertStringNotContainsString(
+            '<h2>Источники и данные для проверки</h2>',
+            $articles['grafik-proizvodstva-rabot-v-stroitelstve']['content']
+        );
+        self::assertStringContainsString(
+            '<h2>Нормативная база</h2>',
+            $articles['ispolnitelnaya-dokumentaciya-v-stroitelstve']['content']
+        );
     }
 
     public function testEveryArticleHasCompleteSeoAndVisualMetadata(): void
