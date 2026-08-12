@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\CanonicalTechnologyWorkItemPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendation;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemOption;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
@@ -26,6 +27,7 @@ final readonly class DeterministicEstimateChangePreview implements EstimateChang
         private ResourceAssemblyService $resources,
         private AssembleMatchedResources $matchedResources,
         private EstimatePricingService $pricing,
+        private CanonicalTechnologyWorkItemPlanner $technologyWorkItems = new CanonicalTechnologyWorkItemPlanner,
     ) {}
 
     public function calculate(EstimateGenerationSession $session, EstimateCommandInterpretation $interpretation): array
@@ -99,9 +101,36 @@ final readonly class DeterministicEstimateChangePreview implements EstimateChang
             return $this->unknown('proposal_too_large', $fingerprint, $versionFence);
         }
 
-        $candidateRows = $interpretation->kind() === 'select_technology'
-            ? $this->technologyRows($technologyOption, $projection, $interpretation)
-            : $beforeRows;
+        $assumptions = [];
+        $risks = [];
+        if ($interpretation->kind() === 'select_technology') {
+            if (! $technologyOption instanceof TechnologySystemOption) {
+                return $this->unknown('canonical_work_package_missing', $fingerprint, $versionFence);
+            }
+            $decisionKey = (string) ($interpretation->payload['decision_key']
+                ?? $interpretation->payload['after']['decision_key']
+                ?? '');
+            $technologyPlan = $this->technologyWorkItems->simulateOption(
+                $technologyOption,
+                $model,
+                $projection,
+                $decisionKey,
+            );
+            if ($technologyPlan['blockers'] !== []) {
+                return [
+                    ...$this->unknown($technologyPlan['blockers'][0], $fingerprint, $versionFence),
+                    'blockers' => $technologyPlan['blockers'],
+                    'assumptions' => $technologyPlan['assumptions'],
+                    'risks' => $technologyPlan['risks'],
+                ];
+            }
+            $projection['quantities'] = [...$projection['quantities'], ...$technologyPlan['quantities']];
+            $candidateRows = $technologyPlan['rows'];
+            $assumptions = $technologyPlan['assumptions'];
+            $risks = $technologyPlan['risks'];
+        } else {
+            $candidateRows = $beforeRows;
+        }
         if ($candidateRows === []) {
             return $this->unknown('canonical_work_package_missing', $fingerprint, $versionFence);
         }
@@ -167,6 +196,8 @@ final readonly class DeterministicEstimateChangePreview implements EstimateChang
             'state' => 'known',
             'delta' => $afterTotal->minus($beforeTotal)->toScale(4, RoundingMode::HALF_UP)->__toString(),
             'blockers' => [],
+            'assumptions' => $assumptions,
+            'risks' => $risks,
             'affected' => $affected,
             'fingerprint' => $this->fingerprint($exact, $interpretation, $afterAllRows),
             'version_fence' => $versionFence,
@@ -322,61 +353,6 @@ final readonly class DeterministicEstimateChangePreview implements EstimateChang
             [...$decisions, $decision],
             $option,
         ];
-    }
-
-    /**
-     * @param  array{quantities: array<string, mixed>}  $projection
-     * @return list<array<string, mixed>>
-     */
-    private function technologyRows(
-        ?TechnologySystemOption $option,
-        array $projection,
-        EstimateCommandInterpretation $interpretation,
-    ): array {
-        if (! $option instanceof TechnologySystemOption) {
-            return [];
-        }
-        $formula = $option->system->quantityFormulas[0] ?? null;
-        $operands = is_array($formula['operands'] ?? null) ? $formula['operands'] : [];
-        $operand = is_array($operands[0] ?? null) ? $operands[0] : null;
-        $quantityKey = is_array($operand) && ($operand['type'] ?? null) === 'fact'
-            ? ($operand['name'] ?? null)
-            : null;
-        if (! is_string($quantityKey)
-            || ! isset($projection['quantities'][$quantityKey])
-            || trim((string) ($formula['expression'] ?? '')) !== $quantityKey) {
-            return [];
-        }
-        $decisionKey = (string) ($interpretation->payload['decision_key']
-            ?? $interpretation->payload['after']['decision_key']
-            ?? '');
-        $intent = is_array($option->system->normIntents[0] ?? null)
-            ? (string) ($option->system->normIntents[0]['stable_intent'] ?? '')
-            : '';
-        $rows = [];
-        foreach ($option->system->works as $work) {
-            if (! is_array($work) || ! is_string($work['id'] ?? null) || ! is_string($work['intent'] ?? null)) {
-                return [];
-            }
-            $rows[] = [
-                'key' => 'stage5:'.hash('sha256', $option->system->id."\0".$work['id']),
-                'name' => $work['intent'],
-                'item_type' => 'priced_work',
-                'category' => 'technology',
-                'normative_search_text' => trim($work['intent'].' '.$intent),
-                'unit' => (string) ($formula['result_unit'] ?? ''),
-                'source_refs' => [],
-                'metadata' => [
-                    'quantity_key' => $quantityKey,
-                    'technology_system_id' => $option->system->id,
-                    'technology_decision_key' => $decisionKey,
-                    'technology_formula_id' => $formula['id'] ?? null,
-                    'dependency_keys' => [$decisionKey, $quantityKey],
-                ],
-            ];
-        }
-
-        return $rows;
     }
 
     /** @return list<array<string,mixed>> */

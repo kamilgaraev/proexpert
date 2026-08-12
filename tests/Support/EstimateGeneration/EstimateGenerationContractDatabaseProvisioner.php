@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '6754838cfa289dcb56b2e07d828e8897546addc3f045baee7c6b07cf98acb378',
-        'training' => 'deec6090975a080f1ee8c25ad6a02817e4b2646d2010cb7c60ac6f5f58297abc',
-        'pricing' => 'deec6090975a080f1ee8c25ad6a02817e4b2646d2010cb7c60ac6f5f58297abc',
+        'geometry' => '9b5945eda983bfb971dbe7e6ceed3fde05c0971d3be12b8d12eedc775b89fc31',
+        'training' => 'cc3cb4c635a0b15cd99587783d563676206f79dcec921e3175ea5da1e469400e',
+        'pricing' => 'cc3cb4c635a0b15cd99587783d563676206f79dcec921e3175ea5da1e469400e',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '0ea7b2718b19322fa875e1f90c1eb196d6b880b205d9d15739f475b55715da5a';
+    private const FRESH_INVENTORY_DIGEST = '180e85d7a321445ec5f01a3923d0e8f7eba34d0b657d8a7758be8d77520aec2b';
 
     private const SUBJECT = [
         'geometry' => [
@@ -321,7 +321,17 @@ final class EstimateGenerationContractDatabaseProvisioner
             'database/migrations/2026_06_28_000004_create_estimate_generation_training_dataset_tables.php',
         ]);
 
-        return [...$entries, ...self::SUBJECT['training']];
+        $trainingInsertAt = array_search(
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000100_add_estimate_generation_dashboard_indexes.php',
+            $entries,
+            true,
+        );
+        if ($trainingInsertAt === false) {
+            throw new InvalidArgumentException('estimate_generation_contract_inventory_invalid');
+        }
+        array_splice($entries, $trainingInsertAt, 0, self::SUBJECT['training']);
+
+        return $entries;
     }
 
     public static function inventory(string $phase = 'training'): array

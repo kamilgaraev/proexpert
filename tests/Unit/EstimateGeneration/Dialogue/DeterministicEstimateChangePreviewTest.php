@@ -39,11 +39,13 @@ final class DeterministicEstimateChangePreviewTest extends TestCase
         $room = new Entity('room:1', 10, 20, 30, self::SOURCE, 'room', 'room:1');
         $lengthEvidence = new Evidence('evidence:length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'length');
         $widthEvidence = new Evidence('evidence:width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'width');
+        $wasteEvidence = new Evidence('evidence:waste', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'waste');
         $models->saveSourceModel([$room], [
             new Fact('fact:length', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
             new Fact('fact:width', 10, 20, 30, self::SOURCE, $room->id, 'width', '10', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
+            new Fact('fact:waste', 10, 20, 30, self::SOURCE, $room->id, 'waste_factor', '1.1', 'count', 1.0, 'document', 'confirmed', [$wasteEvidence->id]),
             new Fact('fact:roof-system', 10, 20, 30, self::SOURCE, $room->id, 'roof_covering_system', null, null, 1.0, 'unresolved', 'unresolved', []),
-        ], [$lengthEvidence, $widthEvidence]);
+        ], [$lengthEvidence, $widthEvidence, $wasteEvidence]);
         $token = $models->snapshotForPlanning(10, 20, 30, 100)['token'];
         $catalogHash = str_repeat('c', 64);
         $technology = new TechnologyRecommendation(
@@ -58,6 +60,8 @@ final class DeterministicEstimateChangePreviewTest extends TestCase
             options: [
                 $this->technologyOption('roof.metal', 'Монтаж металлической кровли', true),
                 $this->technologyOption('roof.flexible', 'Монтаж гибкой кровли', false),
+                $this->technologyOption('roof.unsupported', 'Неподдерживаемая кровля', false, 'floor_area + waste_factor'),
+                $this->technologyOption('roof.conditional', 'Условная кровля', false, 'floor_area', 'conditional'),
             ],
             responseOptions: [],
             question: 'Выберите кровельную систему',
@@ -203,17 +207,42 @@ final class DeterministicEstimateChangePreviewTest extends TestCase
             'dependency_keys' => ['roof_covering_system.room'],
         ]));
         self::assertSame('known', $technologyResult['state'], json_encode($technologyResult, JSON_THROW_ON_ERROR));
-        self::assertSame('100.0000', $technologyResult['delta']);
-        self::assertSame(
-            ['stage5:current-roof', 'stage5:'.hash('sha256', "roof.flexible\0work:roof.flexible")],
-            array_column($technologyResult['affected'], 'stable_key'),
-        );
+        self::assertSame('650.0000', $technologyResult['delta']);
+        $technologyKeys = [
+            'stage5:current-roof',
+            'stage5:'.hash('sha256', "roof.flexible\0work:roof.flexible"),
+            'stage5:'.hash('sha256', "roof.flexible\0work:roof.flexible.deck"),
+        ];
+        sort($technologyKeys, SORT_STRING);
+        self::assertSame($technologyKeys, array_column($technologyResult['affected'], 'stable_key'));
+        self::assertSame(['roof_ready'], $technologyResult['assumptions']);
+        self::assertSame(['weather_risk'], $technologyResult['risks']);
+
+        $unsupportedResult = $service->calculate($session, new EstimateCommandInterpretation([
+            'kind' => 'select_technology', 'version' => 'v1',
+            'decision_key' => 'roof_covering_system.room', 'option_id' => 'roof.unsupported',
+            'dependency_keys' => ['roof_covering_system.room'],
+        ]));
+        self::assertSame('unknown', $unsupportedResult['state']);
+        self::assertSame(['canonical_formula_unsupported'], $unsupportedResult['blockers']);
+
+        $conditionalResult = $service->calculate($session, new EstimateCommandInterpretation([
+            'kind' => 'select_technology', 'version' => 'v1',
+            'decision_key' => 'roof_covering_system.room', 'option_id' => 'roof.conditional',
+            'dependency_keys' => ['roof_covering_system.room'],
+        ]));
+        self::assertSame('unknown', $conditionalResult['state']);
         self::assertSame([], $models->quantities);
         self::assertSame([], $models->currentQuantities);
     }
 
-    private function technologyOption(string $id, string $work, bool $recommended): TechnologySystemOption
-    {
+    private function technologyOption(
+        string $id,
+        string $work,
+        bool $recommended,
+        string $firstExpression = 'floor_area * waste_factor',
+        string $applicability = 'applicable',
+    ): TechnologySystemOption {
         $availability = ['available' => true, 'region' => '16', 'source' => 'catalog', 'version' => 'v1', 'reason' => 'available'];
         $cost = [...$availability, 'currency' => 'RUB', 'amount_minor' => null];
 
@@ -224,15 +253,32 @@ final class DeterministicEstimateChangePreviewTest extends TestCase
                 [['roof_type' => 'pitched']],
                 ['floor_area'],
                 [['id' => 'material:'.$id, 'intent' => 'roof_material']],
-                [['id' => 'work:'.$id, 'intent' => $work]],
+                [
+                    ['id' => 'work:'.$id, 'intent' => $work, 'quantity_formula_id' => 'area:'.$id, 'norm_intent_id' => 'norm:'.$id],
+                    ['id' => 'work:'.$id.'.deck', 'intent' => $work.' — основание', 'quantity_formula_id' => 'deck:'.$id, 'norm_intent_id' => 'norm:'.$id.'.deck'],
+                ],
                 [['id' => 'machinery:'.$id, 'intent' => 'lifting_equipment']],
-                [['id' => 'norm:'.$id, 'stable_intent' => 'fsnb.roof.installation', 'max_candidates' => 5]],
-                [[
-                    'id' => 'area:'.$id,
-                    'expression' => 'floor_area',
-                    'result_unit' => 'm2',
-                    'operands' => [['name' => 'floor_area', 'type' => 'fact', 'unit' => 'm2']],
-                ]],
+                [
+                    ['id' => 'norm:'.$id, 'stable_intent' => 'fsnb.roof.installation', 'max_candidates' => 5],
+                    ['id' => 'norm:'.$id.'.deck', 'stable_intent' => 'fsnb.roof.deck', 'max_candidates' => 5],
+                ],
+                [
+                    [
+                        'id' => 'area:'.$id,
+                        'expression' => $firstExpression,
+                        'result_unit' => 'm2',
+                        'operands' => [
+                            ['name' => 'floor_area', 'type' => 'fact', 'unit' => 'm2'],
+                            ['name' => 'waste_factor', 'type' => 'parameter', 'unit' => 'count'],
+                        ],
+                    ],
+                    [
+                        'id' => 'deck:'.$id,
+                        'expression' => 'floor_area',
+                        'result_unit' => 'm2',
+                        'operands' => [['name' => 'floor_area', 'type' => 'fact', 'unit' => 'm2']],
+                    ],
+                ],
                 $availability,
                 $cost,
                 ['weather_risk'],
@@ -245,7 +291,7 @@ final class DeterministicEstimateChangePreviewTest extends TestCase
             $recommended,
             $work,
             $work,
-            'applicable',
+            $applicability,
         );
     }
 }

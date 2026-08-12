@@ -38,8 +38,19 @@ final readonly class InterpretEstimateCommand
         if ($claim['action'] === 'replay' && is_array($claim['result'] ?? null)) {
             return $claim['result'];
         }
+        if ($claim['action'] === 'ambiguous') {
+            throw new InterpretEstimateCommandFailure(
+                'estimate_generation.interpretation_attempt_ambiguous',
+                'attempt_ambiguous_no_retry',
+            );
+        }
         if (! in_array($claim['action'], ['owned', 'resume'], true)) {
-            return ['kind' => 'in_progress', 'status' => $claim['action'], 'retryable' => false];
+            return [
+                'kind' => 'in_progress',
+                'status' => $claim['action'],
+                'retryable' => false,
+                'retry_disposition' => 'attempt_in_progress',
+            ];
         }
         if ($claim['action'] === 'resume') {
             if (! is_array($claim['interpretation'] ?? null)) {
@@ -53,19 +64,33 @@ final readonly class InterpretEstimateCommand
                 $this->attempts->storeResponse((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner, $interpretation->payload);
             } catch (\Throwable $exception) {
                 $this->attempts->markAmbiguous((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner);
-                throw $exception;
+                throw new InterpretEstimateCommandFailure(
+                    'estimate_generation.interpretation_attempt_ambiguous',
+                    'attempt_ambiguous_no_retry',
+                    $exception,
+                );
             }
         }
-        if ($interpretation->kind() === 'explain') {
-            $result = ['kind' => 'explanation', 'explanation' => mb_substr((string) ($interpretation->payload['explanation'] ?? ''), 0, 8000), 'evidence' => array_slice(is_array($interpretation->payload['evidence'] ?? null) ? $interpretation->payload['evidence'] : [], 0, 100), 'read_only' => true];
+        try {
+            if ($interpretation->kind() === 'explain') {
+                $result = ['kind' => 'explanation', 'explanation' => mb_substr((string) ($interpretation->payload['explanation'] ?? ''), 0, 8000), 'evidence' => array_slice(is_array($interpretation->payload['evidence'] ?? null) ? $interpretation->payload['evidence'] : [], 0, 100), 'read_only' => true];
+                $this->attempts->complete((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner, $result);
+
+                return $result;
+            }
+
+            $result = ['kind' => 'proposal', 'proposal' => $this->preview->handle($session, $actorId, $command, $idempotencyKey, $interpretation)->payload];
             $this->attempts->complete((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner, $result);
 
             return $result;
+        } catch (InterpretEstimateCommandFailure $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            throw new InterpretEstimateCommandFailure(
+                'estimate_generation.interpretation_publication_failed',
+                'retry_same_attempt',
+                $exception,
+            );
         }
-
-        $result = ['kind' => 'proposal', 'proposal' => $this->preview->handle($session, $actorId, $command, $idempotencyKey, $interpretation)->payload];
-        $this->attempts->complete((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner, $result);
-
-        return $result;
     }
 }

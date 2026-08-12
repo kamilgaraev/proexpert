@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 interface EstimateChangeSimulation
 {
-    /** @return array{state:string,delta:?string,blockers:string[],affected:array<int,array<string,mixed>>,fingerprint:string,version_fence:array<string,mixed>} */
+    /** @return array{state:string,delta:?string,blockers:string[],affected:array<int,array<string,mixed>>,fingerprint:string,version_fence:array<string,mixed>,assumptions?:string[],risks?:string[]} */
     public function calculate(
         EstimateGenerationSession $session,
         EstimateCommandInterpretation $interpretation,

@@ -178,6 +178,19 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002100_finalize_training_benchmark_architecture.php',
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002200_close_training_benchmark_races.php',
         ], EstimateGenerationContractDatabaseProvisioner::subjectInventory('training', $root));
+        $fresh = EstimateGenerationContractDatabaseProvisioner::freshInventory();
+        self::assertLessThan(
+            array_search(
+                'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000400_add_training_dataset_trusted_review.php',
+                $fresh,
+                true,
+            ),
+            array_search(
+                'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001700_rebuild_estimate_generation_training_and_benchmarks.php',
+                $fresh,
+                true,
+            ),
+        );
         self::assertSame([
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000225_add_project_model_correction_scope_unique.php',
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php',

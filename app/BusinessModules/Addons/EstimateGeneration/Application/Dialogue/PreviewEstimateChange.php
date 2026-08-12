@@ -48,7 +48,14 @@ final readonly class PreviewEstimateChange
             'command_excerpt' => $this->redact($command), 'before_payload' => $this->boundedMap($payload['before'] ?? []),
             'after_payload' => $this->boundedMap($payload['after'] ?? []), 'affected_payload' => ['count' => count($affected), 'preview_count' => min(count($affected), 100)],
             'dependency_keys' => $this->boundedList($payload['dependency_keys'] ?? [], 1000),
-            'assumptions' => $this->boundedList($payload['assumptions'] ?? [], 100), 'questions' => $this->boundedList($payload['questions'] ?? [], 100),
+            'assumptions' => $this->boundedList([
+                ...(is_array($payload['assumptions'] ?? null) ? $payload['assumptions'] : []),
+                ...(is_array($calculation['assumptions'] ?? null) ? $calculation['assumptions'] : []),
+            ], 100),
+            'questions' => $this->boundedList([
+                ...(is_array($payload['questions'] ?? null) ? $payload['questions'] : []),
+                ...(is_array($calculation['risks'] ?? null) ? $calculation['risks'] : []),
+            ], 100),
             'evidence' => array_slice(is_array($payload['evidence'] ?? null) ? $payload['evidence'] : [], 0, 100),
             'version_fence' => $calculation['version_fence'],
             'cost_state' => $calculation['state'], 'cost_blockers' => $calculation['blockers'],

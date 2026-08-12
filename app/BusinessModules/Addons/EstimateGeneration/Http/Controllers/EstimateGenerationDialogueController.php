@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\ApplyEstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CancelEstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateChangeProposalRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CancelEstimateChangeProposalRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\InterpretEstimateCommandRequest;
@@ -88,10 +89,21 @@ final class EstimateGenerationDialogueController extends Controller
     {
         try {
             return AdminResponse::success($callback());
-        } catch (RuntimeException|\InvalidArgumentException $exception) {
+        } catch (InterpretEstimateCommandFailure $exception) {
             [$machineCode, $messageKey, $code] = $this->publicError($exception);
 
-            return AdminResponse::error(trans_message($messageKey), $code, null, ['code' => $machineCode]);
+            return AdminResponse::error(trans_message($messageKey), $code, null, [
+                'code' => $machineCode,
+                'retry_disposition' => $exception->retryDisposition(),
+            ]);
+        } catch (RuntimeException|\InvalidArgumentException $exception) {
+            [$machineCode, $messageKey, $code] = $this->publicError($exception);
+            $retryDisposition = $this->publicRetryDisposition($machineCode);
+
+            return AdminResponse::error(trans_message($messageKey), $code, null, array_filter([
+                'code' => $machineCode,
+                'retry_disposition' => $retryDisposition,
+            ], static fn (mixed $value): bool => $value !== null));
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Dialogue failed', ['session_id' => $session->id, 'failure_code' => 'estimate_dialogue_failed']);
 
@@ -117,6 +129,7 @@ final class EstimateGenerationDialogueController extends Controller
             'interpretation_attempt_expired' => ['estimate_generation.interpretation_attempt_expired', 409],
             'interpretation_response_invalid' => ['estimate_generation.interpretation_response_invalid', 409],
             'interpretation_response_collision' => ['estimate_generation.interpretation_response_collision', 409],
+            'interpretation_publication_failed' => ['estimate_generation.interpretation_publication_failed', 500],
             'interpretation_completion_collision' => ['estimate_generation.interpretation_completion_collision', 409],
             'proposal_idempotency_collision' => ['estimate_generation.proposal_idempotency_collision', 422],
             'proposal_not_found' => ['estimate_generation.proposal_not_found', 404],
@@ -132,5 +145,25 @@ final class EstimateGenerationDialogueController extends Controller
         [$key, $status] = $map[$code] ?? ['estimate_generation.state_conflict', 409];
 
         return [$code, $key, $status];
+    }
+
+    private function publicRetryDisposition(string $machineCode): ?string
+    {
+        if (in_array($machineCode, [
+            'command_intent_invalid',
+            'command_context_review_required',
+            'command_reference_invalid',
+            'proposal_idempotency_collision',
+            'proposal_payload_invalid',
+            'proposal_intent_unsupported',
+            'locator_invalid',
+        ], true)) {
+            return 'payload_invalid';
+        }
+        if (in_array($machineCode, ['proposal_stale', 'proposal_expired', 'proposal_terminal'], true)) {
+            return 'terminal_new_attempt_allowed';
+        }
+
+        return null;
     }
 }

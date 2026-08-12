@@ -7,10 +7,25 @@ namespace Tests\Feature\EstimateGeneration\Dialogue;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\ApplyEstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeSimulation;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandContextBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpretation;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpreter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalMutationExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalVersionFence;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\PreviewEstimateChange;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateChangeProposalRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateInterpretationAttemptRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -209,8 +224,84 @@ final class EstimateChangeProposalPostgresTest extends TestCase
     {
         $repository = app(EstimateChangeProposalRepository::class);
         $id = (string) \Illuminate\Support\Str::uuid();
-        $scope = random_int(100000, 900000);
-        $repository->create($this->proposal($id, $scope, 'race-'.$id), []);
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $actor->id,
+            'status' => 'ready_to_apply', 'processing_stage' => 'quality_check', 'processing_progress' => 100,
+            'input_payload' => [], 'analysis_payload' => [], 'draft_payload' => ['rows' => [['quantity' => '10.0000']]],
+            'problem_flags' => [], 'state_version' => 7,
+        ]);
+        $sourceVersion = 'sha256:'.str_repeat('e', 64);
+        $evidenceRepository = new EloquentEvidenceRepository(DB::connection());
+        $evidence = $evidenceRepository->insertOrGet(new EvidenceData(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+            EvidenceType::Measured,
+            EvidenceSourceType::DocumentUnit,
+            'document:1',
+            'sha256:'.str_repeat('a', 64),
+            ['document_id' => 1, 'unit_index' => 1, 'page' => 1],
+            ['quantity' => 2.8, 'unit' => 'm'],
+            1,
+            'pdf_geometry',
+            'extractor:v1',
+        ));
+        $model = (new BuildingModelRepository(
+            new EloquentBuildingModelStore(DB::connection()),
+            $evidenceRepository,
+            new EloquentProjectModelRepository(app('db')),
+        ))->store(
+            new BuildingModelOperationContext((int) $organization->id, (int) $project->id, (int) $session->id, $sourceVersion),
+            new NormalizedBuildingModelData('m', 'confirmed', 0.01, [
+                new FloorData('floor-1', 0, 2.8, [], [], [], [], [$evidence->id], 1, 'confirmed'),
+            ], [], 'building-model:v1'),
+        );
+        $entityId = (int) DB::table('estimate_generation_project_model_entities')->insertGetId([
+            'building_model_id' => $model->id,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'session_id' => $session->id,
+            'source_version' => $model->contentVersion,
+            'stable_key' => 'dimension:race-height',
+            'entity_kind' => 'dimension',
+            'payload' => json_encode(['kind' => 'dimension', 'key' => 'dimension:race-height', 'value' => 2.8, 'unit' => 'm'], JSON_THROW_ON_ERROR),
+            'confidence' => 1,
+            'created_at' => now(),
+        ]);
+        $assertionKey = 'assertion:race-height';
+        DB::table('estimate_generation_project_model_assertions')->insert([
+            'building_model_id' => $model->id,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'session_id' => $session->id,
+            'source_version' => $model->contentVersion,
+            'stable_key' => $assertionKey,
+            'entity_id' => $entityId,
+            'assertion_type' => 'dimension',
+            'payload' => json_encode(['source' => 'cad', 'value' => 2.8, 'unit' => 'm'], JSON_THROW_ON_ERROR),
+            'confidence' => 1,
+            'created_at' => now(),
+        ]);
+        $payload = $this->scopedProposal(
+            $id,
+            $session,
+            $actor,
+            app(EstimateProposalVersionFence::class)->capture($session),
+            now()->addMinutes(30),
+        );
+        $payload['idempotency_key'] = 'race-'.$id;
+        $payload['after_payload'] = [
+            'source_version' => $model->contentVersion,
+            'value_fingerprint' => ProjectModelValueFingerprint::for(['value' => 2.8, 'unit' => 'm']),
+            'assertion_stable_key' => $assertionKey,
+            'value' => ['value' => 3.0, 'unit' => 'm'],
+            'reason' => 'Проверка конкурентного применения',
+            'decision_version' => 0,
+        ];
+        $repository->create($payload, []);
         $barrier = (string) (microtime(true) + 0.8);
         $script = base_path('tests/Runtime/race-estimate-change-proposal.php');
         $environment = [
@@ -219,8 +310,8 @@ final class EstimateChangeProposalPostgresTest extends TestCase
             'DB_DATABASE' => (string) config('database.connections.pgsql.database'), 'DB_USERNAME' => (string) config('database.connections.pgsql.username'),
             'DB_PASSWORD' => (string) config('database.connections.pgsql.password'),
         ];
-        $apply = new Process([PHP_BINARY, $script, $id, 'applying', (string) $scope, $barrier], base_path(), $environment);
-        $cancel = new Process([PHP_BINARY, $script, $id, 'cancelled', (string) $scope, $barrier], base_path(), $environment);
+        $apply = new Process([PHP_BINARY, $script, 'apply', (string) $actor->id, (string) $organization->id, (string) $project->id, (string) $session->id, $id, '7', $barrier], base_path(), $environment);
+        $cancel = new Process([PHP_BINARY, $script, 'cancel', (string) $actor->id, (string) $organization->id, (string) $project->id, (string) $session->id, $id, '7', $barrier], base_path(), $environment);
         $apply->start();
         $cancel->start();
         $apply->wait();
@@ -228,11 +319,49 @@ final class EstimateChangeProposalPostgresTest extends TestCase
 
         self::assertTrue($apply->isSuccessful(), $apply->getErrorOutput());
         self::assertTrue($cancel->isSuccessful(), $cancel->getErrorOutput());
-        $outcomes = array_values(array_unique([$apply->getOutput(), $cancel->getOutput()]));
-        sort($outcomes);
-        self::assertSame(['0', '1'], $outcomes);
-        self::assertContains(DB::table('estimate_change_proposal_states')->where('proposal_id', $id)->value('status'), ['applying', 'cancelled']);
-        self::assertSame(2, DB::table('estimate_change_proposal_transitions')->where('proposal_id', $id)->count());
+        $outcomes = array_map($this->raceOutcome(...), [$apply, $cancel]);
+        $status = DB::table('estimate_change_proposal_states')->where('proposal_id', $id)->value('status');
+        self::assertContains($status, ['applied', 'cancelled']);
+        self::assertSame([$status, $status], array_column($outcomes, 'status'));
+        $correctionsBeforeReplay = $status === 'applied' ? 1 : 0;
+        self::assertSame($correctionsBeforeReplay, DB::table('estimate_generation_project_model_corrections')->where('building_model_id', $model->id)->count());
+
+        $replayId = (string) \Illuminate\Support\Str::uuid();
+        $currentValue = $status === 'applied'
+            ? ['value' => 3.0, 'unit' => 'm']
+            : ['value' => 2.8, 'unit' => 'm'];
+        $replayPayload = $this->scopedProposal(
+            $replayId,
+            $session->fresh(),
+            $actor,
+            app(EstimateProposalVersionFence::class)->capture($session->fresh()),
+            now()->addMinutes(30),
+        );
+        $replayPayload['idempotency_key'] = 'race-replay-'.$replayId;
+        $replayPayload['after_payload'] = [
+            'source_version' => $model->contentVersion,
+            'value_fingerprint' => ProjectModelValueFingerprint::for($currentValue),
+            'assertion_stable_key' => $assertionKey,
+            'value' => ['value' => 3.2, 'unit' => 'm'],
+            'reason' => 'Проверка идемпотентного конкурентного применения',
+            'decision_version' => $correctionsBeforeReplay,
+        ];
+        $repository->create($replayPayload, []);
+        $replayBarrier = (string) (microtime(true) + 0.8);
+        $firstApply = new Process([PHP_BINARY, $script, 'apply', (string) $actor->id, (string) $organization->id, (string) $project->id, (string) $session->id, $replayId, '7', $replayBarrier], base_path(), $environment);
+        $secondApply = new Process([PHP_BINARY, $script, 'apply', (string) $actor->id, (string) $organization->id, (string) $project->id, (string) $session->id, $replayId, '7', $replayBarrier], base_path(), $environment);
+        $firstApply->start();
+        $secondApply->start();
+        $firstApply->wait();
+        $secondApply->wait();
+
+        self::assertTrue($firstApply->isSuccessful(), $firstApply->getErrorOutput());
+        self::assertTrue($secondApply->isSuccessful(), $secondApply->getErrorOutput());
+        self::assertSame(['applied', 'applied'], array_column([
+            $this->raceOutcome($firstApply),
+            $this->raceOutcome($secondApply),
+        ], 'status'));
+        self::assertSame($correctionsBeforeReplay + 1, DB::table('estimate_generation_project_model_corrections')->where('building_model_id', $model->id)->count());
     }
 
     public function test_two_concurrent_interpret_requests_reserve_once_before_provider_wire(): void
@@ -444,6 +573,103 @@ final class EstimateChangeProposalPostgresTest extends TestCase
         self::assertStringContainsString('estimate_interpretation_attempt_scope_key_unique', implode("\n", array_map(static fn (object $row): string => (string) $row->{'QUERY PLAN'}, $plan)));
     }
 
+    public function test_response_received_failure_retries_same_attempt_without_second_provider_call(): void
+    {
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $actor->id,
+            'status' => 'ready_to_apply',
+            'processing_stage' => 'quality_check',
+            'processing_progress' => 100,
+            'input_payload' => [],
+            'analysis_payload' => ['facts' => [[
+                'stable_key' => 'fact:area',
+                'label' => 'Площадь',
+                'type' => 'area',
+                'value' => '9',
+                'unit' => 'm2',
+                'status' => 'confirmed',
+                'version' => 1,
+            ]]],
+            'draft_payload' => [],
+            'problem_flags' => [],
+            'state_version' => 1,
+        ]);
+        $provider = new class implements EstimateCommandInterpreter
+        {
+            public int $calls = 0;
+
+            public function interpret(EstimateGenerationSession $session, int $actorId, string $command, ?array $context = null): EstimateCommandInterpretation
+            {
+                $this->calls++;
+
+                return new EstimateCommandInterpretation([
+                    'kind' => 'correct_fact',
+                    'version' => 'test:v1',
+                    'target_key' => 'fact:area',
+                    'value' => '10',
+                    'dependency_keys' => ['fact:area'],
+                ]);
+            }
+        };
+        $simulation = new class implements EstimateChangeSimulation
+        {
+            public int $calls = 0;
+
+            public function calculate(EstimateGenerationSession $session, EstimateCommandInterpretation $interpretation): array
+            {
+                $this->calls++;
+                if ($this->calls === 1) {
+                    throw new RuntimeException('simulation publication failed');
+                }
+
+                return [
+                    'state' => 'unknown',
+                    'delta' => null,
+                    'blockers' => ['canonical_project_model_target_missing'],
+                    'affected' => [],
+                    'fingerprint' => hash('sha256', 'recovered'),
+                    'version_fence' => ['state_version' => 1],
+                ];
+            }
+        };
+        $repository = app(EstimateChangeProposalRepository::class);
+        $command = new InterpretEstimateCommand(
+            $provider,
+            new PreviewEstimateChange($repository, $simulation),
+            $repository,
+            app(EstimateInterpretationAttemptRepository::class),
+            new EstimateCommandContextBuilder,
+        );
+        $key = 'response-recovery-'.\Illuminate\Support\Str::uuid();
+
+        try {
+            $command->handle($session, (int) $actor->id, 'Исправить площадь', $key);
+            self::fail('Post-provider failure must expose a safe retry disposition.');
+        } catch (\Throwable $exception) {
+            self::assertInstanceOf(
+                InterpretEstimateCommandFailure::class,
+                $exception,
+                $exception::class.': '.$exception->getMessage(),
+            );
+            self::assertSame('retry_same_attempt', $exception->retryDisposition());
+        }
+        DB::table('estimate_interpretation_attempts')
+            ->where('idempotency_key', $key)
+            ->update(['lease_expires_at' => now()->subSecond()]);
+
+        $result = $command->handle($session, (int) $actor->id, 'Исправить площадь', $key);
+
+        self::assertSame('proposal', $result['kind']);
+        self::assertSame(1, $provider->calls);
+        self::assertSame(2, $simulation->calls);
+        self::assertSame('completed', DB::table('estimate_interpretation_attempts')->where('idempotency_key', $key)->value('state'));
+    }
+
     /** @return array<string, mixed> */
     private function proposal(string $id, int $scope, string $idempotencyKey): array
     {
@@ -484,5 +710,17 @@ final class EstimateChangeProposalPostgresTest extends TestCase
         )['fingerprint'];
 
         return $payload;
+    }
+
+    /** @return array{status:string} */
+    private function raceOutcome(Process $process): array
+    {
+        $output = $process->getOutput();
+        $start = strrpos($output, '{"status"');
+        $end = $start === false ? false : strpos($output, '}', $start);
+        self::assertIsInt($start, $output);
+        self::assertIsInt($end, $output);
+
+        return json_decode(substr($output, $start, $end - $start + 1), true, 512, JSON_THROW_ON_ERROR);
     }
 }
