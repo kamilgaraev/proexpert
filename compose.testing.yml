@@ -1,6 +1,6 @@
 services:
   postgres-testing:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:0.8.5-pg16-bookworm
     environment:
       POSTGRES_DB: most_backend_testing
       POSTGRES_USER: most_testing
@@ -14,6 +14,7 @@ services:
       retries: 30
     volumes:
       - postgres_testing_data:/var/lib/postgresql/data
+      - ./docker/postgres-testing/init.sql:/docker-entrypoint-initdb.d/10-enable-vector.sql:ro
 
 volumes:
   postgres_testing_data:

@@ -36,8 +36,18 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'docker_command_unavailable'
 }
 
-& docker info --format '{{.ServerVersion}}' | Out-Null
-if ($LASTEXITCODE -ne 0) {
+$dockerReady = $false
+for ($attempt = 1; $attempt -le 30; $attempt++) {
+    $dockerServerVersion = (& docker info --format '{{.ServerVersion}}' 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0 -and $dockerServerVersion -match '^\d+\.\d+') {
+        $dockerReady = $true
+        break
+    }
+
+    Start-Sleep -Seconds 2
+}
+
+if (-not $dockerReady) {
     throw 'docker_daemon_unavailable'
 }
 

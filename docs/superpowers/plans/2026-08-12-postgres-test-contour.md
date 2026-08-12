@@ -6,7 +6,7 @@
 
 **Architecture:** Отдельный Docker Compose-файл предоставляет локальную тестовую БД на loopback-порту. Отдельная PHPUnit-конфигурация принудительно выбирает `pgsql`, а PowerShell launcher проверяет тестовое имя базы, поднимает контейнер и запускает выбранный тест. Текущий SQLite-контур остаётся без изменений.
 
-**Tech Stack:** PHP 8.2, Laravel 11, PHPUnit 11, PostgreSQL 16 Alpine, Docker Compose v2, PowerShell.
+**Tech Stack:** PHP 8.2, Laravel 11, PHPUnit 11, PostgreSQL 16 с pgvector 0.8.5, Docker Compose v2, PowerShell.
 
 ## Global Constraints
 
@@ -26,7 +26,7 @@
 
 **Interfaces:**
 - Consumes: базовый `Tests\TestCase` с `RefreshDatabase`.
-- Produces: тест `test_laravel_uses_isolated_postgresql_database`, проверяющий драйвер, имя базы и созданную таблицу миграций.
+- Produces: тест `test_laravel_uses_isolated_postgresql_database`, проверяющий драйвер, точное имя базы и версию PostgreSQL через реальное Laravel-соединение.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -38,16 +38,28 @@ declare(strict_types=1);
 namespace Tests\Feature\Infrastructure;
 
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
-use Tests\TestCase;
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Testing\TestCase;
 
 final class PostgresDatabaseSmokeTest extends TestCase
 {
+    public function createApplication(): Application
+    {
+        $app = require dirname(__DIR__, 3).'/bootstrap/app.php';
+        $app->make(Kernel::class)->bootstrap();
+
+        return $app;
+    }
+
     public function test_laravel_uses_isolated_postgresql_database(): void
     {
-        self::assertSame('pgsql', DB::connection()->getDriverName());
-        self::assertStringEndsWith('_testing', DB::connection()->getDatabaseName());
-        self::assertTrue(Schema::hasTable('migrations'));
+        $connection = DB::connection();
+        self::assertSame('pgsql', $connection->getDriverName());
+        self::assertSame('most_backend_testing', $connection->getDatabaseName());
+        $version = DB::selectOne('SELECT version() AS version');
+        self::assertIsObject($version);
+        self::assertStringStartsWith('PostgreSQL 16.', (string) $version->version);
     }
 }
 ```
@@ -69,6 +81,7 @@ git commit -m "test[backend]: добавлен контракт PostgreSQL-ко�
 
 **Files:**
 - Create: `compose.testing.yml`
+- Create: `docker/postgres-testing/init.sql`
 - Create: `phpunit.postgres.xml`
 - Create: `tests/Runtime/run-postgres-tests.ps1`
 - Modify: `.gitignore`
@@ -89,7 +102,7 @@ git commit -m "test[backend]: добавлен контракт PostgreSQL-ко�
 
 - [ ] **Step 2: Add Docker Compose service**
 
-Создать `compose.testing.yml` с `postgres:16-alpine`, тестовыми credentials, портом `127.0.0.1:55433:5432`, именованным volume и healthcheck `pg_isready -U most_testing -d most_backend_testing`.
+Создать `compose.testing.yml` с `pgvector/pgvector:0.8.5-pg16-bookworm`, тестовыми credentials, портом `127.0.0.1:55433:5432`, именованным volume и healthcheck `pg_isready -U most_testing -d most_backend_testing`. Подключить `docker/postgres-testing/init.sql` в `/docker-entrypoint-initdb.d/10-enable-vector.sql` для выполнения `CREATE EXTENSION IF NOT EXISTS vector` при создании disposable-базы.
 
 - [ ] **Step 3: Add forced PHPUnit PostgreSQL environment**
 
@@ -122,7 +135,7 @@ Expected: exit code 0.
 - [ ] **Step 7: Commit infrastructure**
 
 ```powershell
-git add .gitignore composer.json compose.testing.yml phpunit.postgres.xml tests/Runtime/run-postgres-tests.ps1
+git add .gitignore composer.json compose.testing.yml docker/postgres-testing/init.sql phpunit.postgres.xml tests/Runtime/run-postgres-tests.ps1
 git commit -m "chore[backend]: добавлен PostgreSQL-контур тестов"
 ```
 
@@ -146,7 +159,7 @@ git commit -m "chore[backend]: добавлен PostgreSQL-контур тест
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File tests/Runtime/run-postgres-tests.ps1 -TestPath tests/Feature/Infrastructure/PostgresDatabaseSmokeTest.php`
 
-Expected: PHPUnit reports exactly one passing test; assertions confirm `pgsql`, database suffix `_testing`, and migrated schema.
+Expected: PHPUnit reports exactly one passing test; assertions confirm `pgsql`, exact database `most_backend_testing`, and PostgreSQL major version 16.
 
 - [ ] **Step 3: Inspect effective container state**
 
