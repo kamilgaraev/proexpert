@@ -12,7 +12,7 @@ final readonly class PipelineStagePayload
     private const KEYS = [
         'understand_documents' => ['base_input_version', 'documents', 'documents_count', 'rebuild_section_key'],
         'understand_object' => ['analysis'],
-        'extract_quantities' => ['quantity_learning_hints', 'quantity_coverage_warnings', 'building_quantities'],
+        'extract_quantities' => ['quantity_learning_hints', 'quantity_coverage_warnings', 'building_quantities', 'stage6_generation_context'],
         'plan_work_items' => ['object_profile', 'package_plan', 'document_requirements', 'generation_mode', 'regional_context', 'normative_context_pin', 'local_estimates'],
         'match_normatives' => ['regional_context', 'supplementary_materials', 'local_estimates'],
         'assemble_resources' => ['regional_context', 'supplementary_materials', 'local_estimates'],
@@ -93,6 +93,7 @@ final readonly class PipelineStagePayload
             }
         }
         self::assertArray($data['building_quantities']);
+        self::assertArray($data['stage6_generation_context']);
     }
 
     private static function assertCanonicalQuantityEvidence(array $localEstimates): void

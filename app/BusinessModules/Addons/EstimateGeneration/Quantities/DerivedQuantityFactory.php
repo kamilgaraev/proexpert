@@ -1,0 +1,991 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Quantities;
+
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
+use Brick\Math\BigDecimal;
+use Brick\Math\Exception\MathException;
+use Brick\Math\RoundingMode;
+
+final class DerivedQuantityFactory
+{
+    private const FORMULAS = [
+        'floor_area' => ['length', 'width'],
+        'wall_net_area' => ['wall_length', 'wall_height'],
+        'sloped_roof_area' => ['plan_areas', 'slope_rises', 'slope_runs'],
+        'earthwork_volume' => ['area', 'depth'],
+        'technology_work_package' => ['base_quantity', 'coefficient'],
+    ];
+
+    private const UNIT_GROUPS = [
+        'length' => ['mm' => '0.001', 'cm' => '0.01', 'm' => '1'],
+        'area' => ['mm2' => '0.000001', 'cm2' => '0.0001', 'm2' => '1'],
+        'volume' => ['mm3' => '0.000000001', 'cm3' => '0.000001', 'm3' => '1'],
+        'count' => ['count' => '1'],
+    ];
+
+    /** @param list<Decision> $decisions @param array<string, mixed> $request */
+    public function derive(ProjectModelSnapshot $snapshot, array $decisions, array $request): QuantityReadiness
+    {
+        $preflightIssues = is_array($request['preflight_issues'] ?? null) ? $request['preflight_issues'] : [];
+        if ($preflightIssues !== []) {
+            return $this->issues($preflightIssues);
+        }
+        $formula = is_string($request['formula_identity'] ?? null) ? $request['formula_identity'] : '';
+        $roles = self::FORMULAS[$formula] ?? null;
+        if ($roles === null) {
+            return $this->unresolved('formula_unknown', 'formula');
+        }
+        if ($formula === 'wall_net_area') {
+            $openingWidths = ($request['operands'] ?? [])['opening_widths'] ?? null;
+            $openingHeights = ($request['operands'] ?? [])['opening_heights'] ?? null;
+            if ((is_array($openingWidths) && $openingWidths !== [])
+                || (is_array($openingHeights) && $openingHeights !== [])) {
+                $roles[] = 'opening_widths';
+                $roles[] = 'opening_heights';
+            }
+        }
+        if ($formula === 'sloped_roof_area' && is_array(($request['operands'] ?? [])['roof_opening_areas'] ?? null)
+            && $request['operands']['roof_opening_areas'] !== []) {
+            $roles[] = 'roof_opening_areas';
+        }
+        $technologyOperation = $request['technology_operation'] ?? 'multiply_by_coefficient';
+        if ($formula === 'technology_work_package') {
+            if (! in_array($technologyOperation, ['identity', 'multiply_by_coefficient'], true)) {
+                return $this->unresolved('formula_unknown', 'technology_operation');
+            }
+            $roles = $technologyOperation === 'identity' ? ['base_quantity'] : $roles;
+        }
+        $limits = is_array($request['limits'] ?? null) ? $request['limits'] : [];
+        $maxOperands = $this->boundedLimit($limits['max_operands'] ?? null, 128, 1, 1000);
+        $maxGeometryEntities = $this->boundedLimit($limits['max_geometry_entities'] ?? null, 128, 1, 1000);
+        $maxPhysicalReferences = $this->boundedLimit($limits['max_physical_references'] ?? null, 256, 1, 2000);
+        $maxPhysicalReferenceBytes = $this->boundedLimit($limits['max_physical_reference_bytes'] ?? null, 65536, 1024, 1048576);
+        $maxEvidence = $this->boundedLimit($limits['max_evidence'] ?? null, 256, 1, 2000);
+        $maxMetadataBytes = $this->boundedLimit($limits['max_metadata_bytes'] ?? null, 65536, 1024, 1048576);
+        $requestedOperands = is_array($request['operands'] ?? null) ? $request['operands'] : [];
+        $operandCount = 0;
+        foreach ($requestedOperands as $value) {
+            $operandCount += is_array($value) ? count($value) : 1;
+        }
+        $geometryInputs = is_array($request['geometry_inputs'] ?? null) ? $request['geometry_inputs'] : [];
+        if ($operandCount > $maxOperands) {
+            return $this->unresolved('operand_budget_exceeded', 'operands');
+        }
+        if (count($geometryInputs) > $maxGeometryEntities) {
+            return $this->unresolved('geometry_entity_budget_exceeded', 'geometry');
+        }
+        if (count($snapshot->evidence) > $maxEvidence) {
+            return $this->unresolved('evidence_budget_exceeded', 'evidence');
+        }
+
+        $entities = $this->indexEntities($snapshot->entities);
+        $facts = $this->indexFacts($snapshot->facts);
+        $evidence = $this->indexEvidence($snapshot->evidence);
+        $decisionIndex = $this->indexDecisions($decisions);
+        $entityId = is_string($request['entity_id'] ?? null) ? $request['entity_id'] : '';
+        $target = $entities[$entityId] ?? null;
+        if (! $target instanceof Entity) {
+            return $this->unresolved('entity_missing', 'entity', $entityId);
+        }
+        $geometryIssues = $this->validateGeometryInputs(
+            $formula,
+            $target,
+            $geometryInputs,
+            $entities,
+            $facts,
+            $evidence,
+        );
+        if ($geometryIssues !== []) {
+            return $this->issues($geometryIssues);
+        }
+        $technologyDecisionId = is_string($request['technology_decision_id'] ?? null)
+            ? $request['technology_decision_id'] : null;
+        if ($formula === 'technology_work_package') {
+            $decision = $technologyDecisionId === null ? null : ($decisionIndex[$technologyDecisionId] ?? null);
+            $selectedSystem = $decision instanceof Decision && $decision->selectedFactId !== null
+                ? ($facts[$decision->selectedFactId] ?? null)
+                : null;
+            $selectedValue = $selectedSystem instanceof Fact && is_array($selectedSystem->value)
+                ? $selectedSystem->value
+                : [];
+            $snapshotIdentity = is_array($request['snapshot'] ?? null) ? $request['snapshot'] : [];
+            if (! $decision instanceof Decision || $decision->actorType !== 'user'
+                || [$decision->organizationId, $decision->projectId, $decision->sessionId, $decision->sourceVersion]
+                    !== [$target->organizationId, $target->projectId, $target->sessionId, $target->sourceVersion]
+                || $decision->selectedFactId === null || ! isset($facts[$decision->selectedFactId])
+                || ($selectedValue['kind'] ?? null) !== 'catalog_system'
+                || ($selectedValue['system_id'] ?? null) !== ($request['applicable_system_id'] ?? null)
+                || ($selectedValue['catalog_version'] ?? null) !== ($snapshotIdentity['catalog_version'] ?? null)
+                || ($selectedValue['catalog_hash'] ?? null) !== ($snapshotIdentity['catalog_hash'] ?? null)
+                || ($request['technology_status'] ?? null) !== 'current'
+                || ($request['technology_applicable'] ?? null) !== true
+                || ($request['technology_availability'] ?? null) !== 'available'
+                || ! isset($request['applicable_system_id']) || ! is_string($request['applicable_system_id'])
+                || trim($request['applicable_system_id']) === '') {
+                return $this->unresolved('decision_missing', 'technology_decision', $technologyDecisionId);
+            }
+        }
+        $issues = [];
+        $resolved = [];
+        foreach ($roles as $role) {
+            $ids = $requestedOperands[$role] ?? null;
+            $ids = is_array($ids) ? array_values($ids) : [$ids];
+            if ($ids === [null] || $ids === [] || in_array(null, $ids, true)) {
+                $issues[] = $this->issue('operand_missing', $role);
+
+                continue;
+            }
+            if (count($ids) !== count(array_unique($ids, SORT_STRING))) {
+                $issues[] = $this->issue('duplicate_operand', $role);
+
+                continue;
+            }
+            foreach ($ids as $id) {
+                if (! is_string($id) || ! isset($facts[$id])) {
+                    $issues[] = $this->issue('fact_missing', $role, is_string($id) ? $id : null);
+
+                    continue;
+                }
+                $resolvedOperand = $this->resolveOperand(
+                    $facts[$id], $role, $target, $evidence, $decisionIndex, $formula,
+                    is_string($request['output_unit'] ?? null) ? $request['output_unit'] : null,
+                );
+                if (isset($resolvedOperand['issue'])) {
+                    $issues[] = $resolvedOperand['issue'];
+
+                    continue;
+                }
+                $resolved[$role][] = $resolvedOperand;
+            }
+        }
+        if ($issues !== []) {
+            return $this->issues($issues);
+        }
+
+        $scopeIssue = $this->validateGeometryScope(
+            $formula,
+            $target,
+            $resolved,
+            $entities,
+            $maxPhysicalReferences,
+            $maxPhysicalReferenceBytes,
+        );
+        if ($scopeIssue !== null) {
+            return $this->issues([$scopeIssue]);
+        }
+        try {
+            $value = $this->calculate($formula, $resolved, (string) $technologyOperation);
+        } catch (MathException) {
+            return $this->unresolved('decimal_operation_invalid', 'formula');
+        }
+        if ($value->isLessThanOrEqualTo(0)) {
+            return $this->unresolved('negative_quantity', 'formula');
+        }
+        $roundingMode = is_string($request['rounding_mode'] ?? null) ? $request['rounding_mode'] : 'half_up';
+        $roundingScale = is_int($request['rounding_scale'] ?? null) ? $request['rounding_scale'] : 2;
+        if (! in_array($roundingMode, ['half_up', 'half_even', 'floor', 'ceil'], true)
+            || $roundingScale < 0 || $roundingScale > 12) {
+            return $this->unresolved('rounding_policy_invalid', 'rounding');
+        }
+        $rounded = $value->toScale($roundingScale, $this->roundingMode($roundingMode));
+        $flatOperands = [];
+        foreach ($roles as $role) {
+            foreach ($resolved[$role] as $operand) {
+                $flatOperands[] = $operand;
+            }
+        }
+        usort($flatOperands, static fn (array $left, array $right): int => [
+            $left['role'],
+            $left['entity_id'],
+            $left['fact_id'],
+            $left['projection_version'],
+        ] <=> [
+            $right['role'],
+            $right['entity_id'],
+            $right['fact_id'],
+            $right['projection_version'],
+        ]);
+        $evidenceIds = [];
+        foreach ($flatOperands as $operand) {
+            $evidenceIds = [...$evidenceIds, ...$operand['evidence_ids']];
+        }
+        $evidenceIds = array_values(array_unique($evidenceIds));
+        $coverages = is_array($request['geometry_coverages'] ?? null) ? $request['geometry_coverages'] : [];
+        foreach ($coverages as $coverage) {
+            foreach (is_array($coverage) ? ($coverage['evidence_ids'] ?? []) : [] as $coverageEvidenceId) {
+                if (is_string($coverageEvidenceId)) {
+                    $evidenceIds[] = $coverageEvidenceId;
+                }
+            }
+        }
+        $evidenceIds = array_values(array_unique($evidenceIds));
+        sort($evidenceIds, SORT_STRING);
+        $snapshotIdentity = is_array($request['snapshot'] ?? null) ? $request['snapshot'] : [];
+        foreach ($flatOperands as &$operand) {
+            $operand['formula_identity'] = $formula;
+            $operand['formula_version'] = (string) ($request['formula_version'] ?? '');
+            $operand['rounding_policy'] = [
+                'mode' => $roundingMode,
+                'scale' => $roundingScale,
+                'boundary' => $formula === 'sloped_roof_area'
+                    ? 'irrational_operation_then_formula_result' : 'formula_result',
+            ];
+            $operand['snapshot_identity'] = $snapshotIdentity;
+            $operand['technology_decision_id'] = $technologyDecisionId;
+        }
+        unset($operand);
+        $metadataBytes = strlen(json_encode([$flatOperands, $snapshotIdentity], JSON_THROW_ON_ERROR));
+        if ($metadataBytes > $maxMetadataBytes) {
+            return $this->unresolved('metadata_budget_exceeded', 'metadata');
+        }
+        $unit = is_string($request['output_unit'] ?? null) ? $request['output_unit'] : '';
+        if (! $this->outputUnitIsCompatible($formula, $resolved, $unit)) {
+            return $this->unresolved('output_unit_incompatible', 'output_unit');
+        }
+
+        $logicalId = (string) ($request['quantity_id'] ?? '');
+        $quantity = new DerivedQuantity(
+            id: $logicalId,
+            organizationId: $target->organizationId,
+            projectId: $target->projectId,
+            sessionId: $target->sessionId,
+            sourceVersion: $target->sourceVersion,
+            entityId: $target->id,
+            formula: $formula.':'.(string) ($request['formula_version'] ?? ''),
+            operands: $flatOperands,
+            value: (string) $rounded,
+            unit: $unit,
+            roundingMode: $roundingMode,
+            roundingScale: $roundingScale,
+            evidenceIds: $evidenceIds,
+            status: 'confirmed',
+            formulaIdentity: $formula,
+            formulaVersion: (string) ($request['formula_version'] ?? ''),
+            roundingBoundary: $formula === 'sloped_roof_area'
+                ? 'irrational_operation_then_formula_result' : 'formula_result',
+            unitCompatibility: 'canonical_conversion',
+            snapshotIdentity: $snapshotIdentity,
+            technologyDecisionId: $technologyDecisionId,
+            logicalId: $logicalId,
+        );
+
+        $exactIdentity = DerivedQuantityIdentity::for($quantity);
+        $quantity = new DerivedQuantity(
+            id: 'quantityv:'.$exactIdentity,
+            organizationId: $quantity->organizationId,
+            projectId: $quantity->projectId,
+            sessionId: $quantity->sessionId,
+            sourceVersion: $quantity->sourceVersion,
+            entityId: $quantity->entityId,
+            formula: $quantity->formula,
+            operands: $quantity->operands,
+            value: $quantity->value,
+            unit: $quantity->unit,
+            roundingMode: $quantity->roundingMode,
+            roundingScale: $quantity->roundingScale,
+            evidenceIds: $quantity->evidenceIds,
+            status: $quantity->status,
+            formulaIdentity: $quantity->formulaIdentity,
+            formulaVersion: $quantity->formulaVersion,
+            roundingBoundary: $quantity->roundingBoundary,
+            unitCompatibility: $quantity->unitCompatibility,
+            snapshotIdentity: $quantity->snapshotIdentity,
+            technologyDecisionId: $quantity->technologyDecisionId,
+            logicalId: $logicalId,
+            exactIdentity: $exactIdentity,
+        );
+
+        return new QuantityReadiness($quantity, [], []);
+    }
+
+    /** @return array<string, Entity> */
+    private function indexEntities(array $entities): array
+    {
+        $result = [];
+        foreach ($entities as $entity) {
+            if ($entity instanceof Entity && ! isset($result[$entity->id])) {
+                $result[$entity->id] = $entity;
+            }
+        }
+        ksort($result, SORT_STRING);
+
+        return $result;
+    }
+
+    /** @return array<string, Fact> */
+    private function indexFacts(array $facts): array
+    {
+        $result = [];
+        foreach ($facts as $fact) {
+            if ($fact instanceof Fact && ! isset($result[$fact->id])) {
+                $result[$fact->id] = $fact;
+            }
+        }
+        ksort($result, SORT_STRING);
+
+        return $result;
+    }
+
+    /** @return array<string, Evidence> */
+    private function indexEvidence(array $evidence): array
+    {
+        $result = [];
+        foreach ($evidence as $item) {
+            if ($item instanceof Evidence && ! isset($result[$item->id])) {
+                $result[$item->id] = $item;
+            }
+        }
+        ksort($result, SORT_STRING);
+
+        return $result;
+    }
+
+    /** @param list<Decision> $decisions @return array<string, Decision> */
+    private function indexDecisions(array $decisions): array
+    {
+        $result = [];
+        foreach ($decisions as $decision) {
+            if ($decision instanceof Decision && ! isset($result[$decision->id])) {
+                $result[$decision->id] = $decision;
+            }
+        }
+        ksort($result, SORT_STRING);
+
+        return $result;
+    }
+
+    /** @return array<string, mixed> */
+    private function resolveOperand(
+        Fact $fact,
+        string $role,
+        Entity $target,
+        array $evidence,
+        array $decisions,
+        string $formula,
+        ?string $outputUnit,
+    ): array {
+        if ([$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]
+            !== [$target->organizationId, $target->projectId, $target->sessionId, $target->sourceVersion]) {
+            return ['issue' => $this->issue('scope_mismatch', $role, $fact->id)];
+        }
+        if ($fact->status !== 'confirmed') {
+            return ['issue' => $this->issue('operand_not_confirmed', $role, $fact->id)];
+        }
+        if (! is_string($fact->value) && ! is_int($fact->value)) {
+            return ['issue' => $this->issue('decimal_value_required', $role, $fact->id)];
+        }
+        $group = $this->expectedGroup($formula, $role, $outputUnit);
+        $factor = self::UNIT_GROUPS[$group][$fact->unit ?? ''] ?? null;
+        if ($factor === null) {
+            return ['issue' => $this->issue('unit_incompatible', $role, $fact->id)];
+        }
+        try {
+            $sourceValue = BigDecimal::of($fact->value);
+        } catch (MathException) {
+            return ['issue' => $this->issue('decimal_value_required', $role, $fact->id)];
+        }
+        if ($sourceValue->isLessThanOrEqualTo(0)) {
+            return ['issue' => $this->issue('operand_not_positive', $role, $fact->id)];
+        }
+        $decision = null;
+        if ($fact->origin === 'user_assumption') {
+            foreach ($decisions as $candidate) {
+                if ($candidate->selectedFactId === $fact->id
+                    && $candidate->actorType === 'user'
+                    && [$candidate->organizationId, $candidate->projectId, $candidate->sessionId, $candidate->sourceVersion]
+                        === [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]) {
+                    $decision = $candidate;
+                    break;
+                }
+            }
+            if (! $decision instanceof Decision) {
+                return ['issue' => $this->issue('assumption_decision_missing', $role, $fact->id)];
+            }
+        }
+        $evidencePayload = [];
+        foreach ($fact->evidenceIds as $evidenceId) {
+            $item = $evidence[$evidenceId] ?? null;
+            if (! $item instanceof Evidence
+                || [$item->organizationId, $item->projectId, $item->sessionId, $item->sourceVersion]
+                    !== [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]) {
+                return ['issue' => $this->issue('evidence_missing_or_replaced', $role, $fact->id)];
+            }
+            $evidencePayload[] = [
+                'id' => $item->id,
+                'source_artifact_id' => $item->sourceArtifactId,
+                'source_type' => $item->sourceType,
+                'source_version' => $item->sourceVersion,
+                'page' => $item->page,
+                'region' => $item->region,
+                'native_reference' => $item->nativeReference,
+            ];
+        }
+        if ($evidencePayload === [] && ! $decision instanceof Decision) {
+            return ['issue' => $this->issue('evidence_missing_or_replaced', $role, $fact->id)];
+        }
+        $normalized = $sourceValue->multipliedBy($factor);
+
+        return [
+            'role' => $role,
+            'fact_id' => $fact->id,
+            'fact_version' => $fact->version,
+            'projection_version' => $fact->version,
+            'status' => $fact->status,
+            'current' => true,
+            'source_value' => (string) $sourceValue,
+            'source_unit' => $fact->unit,
+            'value' => (string) $normalized,
+            'unit' => $this->canonicalUnit($group),
+            'compatibility_group' => $group,
+            'organization_id' => $fact->organizationId,
+            'project_id' => $fact->projectId,
+            'session_id' => $fact->sessionId,
+            'entity_id' => $fact->entityId,
+            'source_version' => $fact->sourceVersion,
+            'evidence_ids' => $fact->evidenceIds,
+            'evidence' => $evidencePayload,
+            'decision_id' => $decision?->id,
+            'decision_version' => $decision?->version,
+            'decision_actor_id' => $decision?->actorId,
+            'decision_reason' => $decision?->reason,
+        ];
+    }
+
+    /**
+     * @param  list<mixed>  $geometryInputs
+     * @param  array<string, Entity>  $entities
+     * @param  array<string, Fact>  $facts
+     * @param  array<string, Evidence>  $evidence
+     * @return list<array<string, mixed>>
+     */
+    private function validateGeometryInputs(
+        string $formula,
+        Entity $target,
+        array $geometryInputs,
+        array $entities,
+        array $facts,
+        array $evidence,
+    ): array {
+        $expectedKinds = match ($formula) {
+            'wall_net_area' => [
+                'wall_opening' => ['width', 'height'],
+            ],
+            'sloped_roof_area' => [
+                'roof_facet' => ['plan_area', 'slope_rise', 'slope_run'],
+                'roof_opening' => ['area'],
+            ],
+            default => [],
+        };
+        if ($expectedKinds === []) {
+            return [];
+        }
+
+        $issues = [];
+        $seenEntities = [];
+        foreach ($geometryInputs as $input) {
+            if (! is_array($input)
+                || ! is_string($input['entity_id'] ?? null)
+                || ! is_string($input['kind'] ?? null)
+                || ! is_array($input['operands'] ?? null)
+                || ! isset($expectedKinds[$input['kind']])) {
+                $issues[] = $this->issue('geometry_input_invalid', 'geometry');
+
+                continue;
+            }
+            $entityId = $input['entity_id'];
+            if (isset($seenEntities[$entityId])) {
+                $issues[] = $this->geometryIssue('duplicate_geometry', 'geometry', $entityId, null, null);
+
+                continue;
+            }
+            $seenEntities[$entityId] = true;
+            $entity = $entities[$entityId] ?? null;
+            $relationKey = $input['kind'] === 'wall_opening' ? 'wall_id' : 'roof_id';
+            if (! $entity instanceof Entity || ($entity->attributes[$relationKey] ?? null) !== $target->id) {
+                $issues[] = $this->geometryIssue('entity_scope_mismatch', 'geometry', $entityId, null, null);
+
+                continue;
+            }
+            $locator = $this->geometrySourceLocator($input['operands'], $facts, $evidence);
+            foreach ($expectedKinds[$input['kind']] as $operand) {
+                $factId = $input['operands'][$operand] ?? null;
+                if (! is_string($factId) || ! isset($facts[$factId])) {
+                    $issues[] = $this->geometryIssue(
+                        'geometry_operand_missing',
+                        $input['kind'],
+                        $entityId,
+                        $operand,
+                        $locator,
+                    );
+
+                    continue;
+                }
+                $fact = $facts[$factId];
+                $reason = $this->geometryFactIssue($fact, $target, $operand, $evidence);
+                if ($reason !== null) {
+                    $issues[] = [
+                        ...$this->geometryIssue(
+                            'geometry_operand_unresolved',
+                            $input['kind'],
+                            $entityId,
+                            $operand,
+                            $locator,
+                        ),
+                        'reason' => $reason,
+                        'fact_id' => $factId,
+                    ];
+                }
+            }
+        }
+
+        return $issues;
+    }
+
+    /** @param array<string, Evidence> $evidence */
+    private function geometryFactIssue(Fact $fact, Entity $target, string $operand, array $evidence): ?string
+    {
+        if ([$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]
+            !== [$target->organizationId, $target->projectId, $target->sessionId, $target->sourceVersion]) {
+            return 'scope_mismatch';
+        }
+        if ($fact->status !== 'confirmed') {
+            return 'operand_not_confirmed';
+        }
+        if (! is_string($fact->value) && ! is_int($fact->value)) {
+            return 'decimal_value_required';
+        }
+        $group = $operand === 'plan_area' || $operand === 'area' ? 'area' : 'length';
+        if (! isset(self::UNIT_GROUPS[$group][$fact->unit ?? ''])) {
+            return 'unit_incompatible';
+        }
+        try {
+            if (BigDecimal::of($fact->value)->isLessThanOrEqualTo(0)) {
+                return 'operand_not_positive';
+            }
+        } catch (MathException) {
+            return 'decimal_value_required';
+        }
+        if ($fact->evidenceIds === []) {
+            return 'evidence_missing_or_replaced';
+        }
+        foreach ($fact->evidenceIds as $evidenceId) {
+            $item = $evidence[$evidenceId] ?? null;
+            if (! $item instanceof Evidence
+                || [$item->organizationId, $item->projectId, $item->sessionId, $item->sourceVersion]
+                    !== [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]) {
+                return 'evidence_missing_or_replaced';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $operands
+     * @param  array<string, Fact>  $facts
+     * @param  array<string, Evidence>  $evidence
+     * @return array<string, mixed>|null
+     */
+    private function geometrySourceLocator(array $operands, array $facts, array $evidence): ?array
+    {
+        foreach ($operands as $factId) {
+            if (! is_string($factId) || ! isset($facts[$factId])) {
+                continue;
+            }
+            foreach ($facts[$factId]->evidenceIds as $evidenceId) {
+                $item = $evidence[$evidenceId] ?? null;
+                if ($item instanceof Evidence) {
+                    return $this->evidenceLocator($item);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** @return array<string, mixed> */
+    private function geometryIssue(
+        string $code,
+        string $operand,
+        string $entityId,
+        ?string $missingOperand,
+        ?array $sourceLocator,
+    ): array {
+        return [
+            ...$this->issue($code, $operand),
+            'entity_id' => $entityId,
+            'missing_operand' => $missingOperand,
+            'source_locator' => $sourceLocator,
+        ];
+    }
+
+    private function validateGeometryScope(
+        string $formula,
+        Entity $target,
+        array $resolved,
+        array $entities,
+        int $maxPhysicalReferences,
+        int $maxPhysicalReferenceBytes,
+    ): ?array {
+        if ($formula === 'wall_net_area') {
+            $widths = $resolved['opening_widths'] ?? [];
+            $heights = $resolved['opening_heights'] ?? [];
+            if (count($widths) !== count($heights)) {
+                return $this->issue('opening_operand_mismatch', 'openings');
+            }
+            $registry = ['references' => [], 'count' => 0, 'bytes' => 0];
+            foreach ($widths as $index => $width) {
+                $height = $heights[$index];
+                if ($width['entity_id'] !== $height['entity_id']) {
+                    return $this->issue('opening_operand_mismatch', 'openings');
+                }
+                $opening = $entities[$width['entity_id']] ?? null;
+                if (! $opening instanceof Entity || ($opening->attributes['wall_id'] ?? null) !== $target->id) {
+                    return $this->issue('entity_scope_mismatch', 'openings', $width['fact_id']);
+                }
+                $registryIssue = $this->registerPhysicalGeometry(
+                    $registry, $target, 'wall_opening', $opening, 'openings', $width['fact_id'],
+                    $maxPhysicalReferences, $maxPhysicalReferenceBytes, $width, $height,
+                );
+                if ($registryIssue !== null) {
+                    return $registryIssue;
+                }
+            }
+        }
+        if ($formula === 'sloped_roof_area') {
+            $count = count($resolved['plan_areas']);
+            if ($count !== count($resolved['slope_rises']) || $count !== count($resolved['slope_runs'])) {
+                return $this->issue('roof_operand_mismatch', 'roof_facets');
+            }
+            $roofRegistry = ['references' => [], 'count' => 0, 'bytes' => 0];
+            for ($index = 0; $index < $count; $index++) {
+                $entityId = $resolved['plan_areas'][$index]['entity_id'];
+                $facet = $entities[$entityId] ?? null;
+                if ($resolved['slope_rises'][$index]['entity_id'] !== $entityId
+                    || $resolved['slope_runs'][$index]['entity_id'] !== $entityId
+                    || ! $facet instanceof Entity || ($facet->attributes['roof_id'] ?? null) !== $target->id) {
+                    return $this->issue('entity_scope_mismatch', 'roof_facets', $resolved['plan_areas'][$index]['fact_id']);
+                }
+                $registryIssue = $this->registerPhysicalGeometry(
+                    $roofRegistry, $target, 'roof_facet', $facet, 'roof_facets',
+                    $resolved['plan_areas'][$index]['fact_id'], $maxPhysicalReferences,
+                    $maxPhysicalReferenceBytes, $resolved['plan_areas'][$index],
+                    $resolved['slope_rises'][$index], $resolved['slope_runs'][$index],
+                );
+                if ($registryIssue !== null) {
+                    return $registryIssue;
+                }
+            }
+            $openingAreas = $resolved['roof_opening_areas'] ?? [];
+            foreach ($openingAreas as $openingArea) {
+                $opening = $entities[$openingArea['entity_id']] ?? null;
+                if (! $opening instanceof Entity || ($opening->attributes['roof_id'] ?? null) !== $target->id) {
+                    return $this->issue('entity_scope_mismatch', 'roof_openings', $openingArea['fact_id']);
+                }
+                $registryIssue = $this->registerPhysicalGeometry(
+                    $roofRegistry, $target, 'roof_opening', $opening, 'roof_openings',
+                    $openingArea['fact_id'], $maxPhysicalReferences, $maxPhysicalReferenceBytes, $openingArea,
+                );
+                if ($registryIssue !== null) {
+                    return $registryIssue;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function registerPhysicalGeometry(
+        array &$registry,
+        Entity $target,
+        string $relation,
+        Entity $geometry,
+        string $operand,
+        string $factId,
+        int $maxReferences,
+        int $maxBytes,
+        array ...$operands,
+    ): ?array {
+        $references = $this->strongPhysicalReferences($target, $relation, $geometry, ...$operands);
+        if ($references === []) {
+            return $this->issue('geometry_identity_unresolved', $operand, $factId);
+        }
+        $signature = $this->canonicalIdentityJson([
+            'relation' => $relation,
+            'target' => $target->id,
+            'geometry' => array_diff_key($geometry->attributes, ['geometry_identity' => true]),
+            'operands' => array_map(static fn (array $item): array => array_intersect_key($item, array_flip([
+                'role', 'value', 'unit', 'source_value',
+            ])), $operands),
+        ]);
+        foreach ($references as $reference) {
+            $registry['count']++;
+            $registry['bytes'] += strlen($reference);
+            if ($registry['count'] > $maxReferences || $registry['bytes'] > $maxBytes) {
+                return $this->issue('physical_reference_budget_exceeded', $operand, $factId);
+            }
+            if (isset($registry['references'][$reference])) {
+                return $this->issue(
+                    hash_equals($registry['references'][$reference], $signature)
+                        ? 'duplicate_geometry' : 'geometry_conflict',
+                    $operand,
+                    $factId,
+                );
+            }
+            $registry['references'][$reference] = $signature;
+        }
+
+        return null;
+    }
+
+    /** @return list<string> */
+    private function strongPhysicalReferences(
+        Entity $target,
+        string $relation,
+        Entity $geometry,
+        array ...$operands,
+    ): array {
+        $declared = $geometry->attributes['geometry_identity'] ?? null;
+        if (is_string($declared) && trim($declared) !== '') {
+            $sourceVersions = [];
+            foreach ($operands as $operand) {
+                foreach ($operand['evidence'] ?? [] as $item) {
+                    if (is_array($item) && is_string($item['source_version'] ?? null)) {
+                        $sourceVersions[$item['source_version']] = true;
+                    }
+                }
+            }
+            ksort($sourceVersions, SORT_STRING);
+            if ($sourceVersions === []) {
+                return [];
+            }
+
+            return [$this->canonicalIdentityJson([
+                'scope' => [$target->organizationId, $target->projectId, $target->sessionId, $target->sourceVersion],
+                'target' => $target->id,
+                'relation' => $relation,
+                'geometry_identity' => $declared,
+                'source_versions' => array_keys($sourceVersions),
+            ])];
+        }
+        $references = [];
+        foreach ($operands as $operand) {
+            foreach ($operand['evidence'] ?? [] as $item) {
+                $native = is_array($item) ? ($item['native_reference'] ?? null) : null;
+                if (! is_string($native) || trim($native) === ''
+                    || preg_match('/^(annotation|label|text):/i', $native) === 1) {
+                    continue;
+                }
+                $locator = array_intersect_key($item, array_flip([
+                    'source_artifact_id',
+                    'source_type',
+                    'source_version',
+                    'page',
+                    'region',
+                    'native_reference',
+                ]));
+                $reference = $this->canonicalIdentityJson([
+                    'scope' => [$target->organizationId, $target->projectId, $target->sessionId],
+                    'target' => $target->id,
+                    'relation' => $relation,
+                    'coordinate_transform' => $geometry->attributes['coordinate_transform'] ?? null,
+                    'locator' => $locator,
+                ]);
+                $references[$reference] = true;
+            }
+        }
+        ksort($references, SORT_STRING);
+
+        return array_keys($references);
+    }
+
+    /** @return array<string, mixed> */
+    private function evidenceLocator(Evidence $evidence): array
+    {
+        return [
+            'source_artifact_id' => $evidence->sourceArtifactId,
+            'source_type' => $evidence->sourceType,
+            'source_version' => $evidence->sourceVersion,
+            'page' => $evidence->page,
+            'region' => $evidence->region,
+            'native_reference' => $evidence->nativeReference,
+        ];
+    }
+
+    private function canonicalIdentityJson(mixed $value): string
+    {
+        return json_encode(
+            $this->canonicalIdentityValue($value),
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        );
+    }
+
+    private function canonicalIdentityValue(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            if (! array_is_list($value)) {
+                ksort($value, SORT_STRING);
+            }
+            foreach ($value as $key => $item) {
+                $value[$key] = $this->canonicalIdentityValue($item);
+            }
+        }
+
+        return $value;
+    }
+
+    private function calculate(string $formula, array $resolved, string $technologyOperation): BigDecimal
+    {
+        return match ($formula) {
+            'floor_area' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0])),
+            'earthwork_volume' => $this->decimal($resolved['area'][0])->multipliedBy($this->decimal($resolved['depth'][0])),
+            'technology_work_package' => $technologyOperation === 'identity'
+                ? $this->decimal($resolved['base_quantity'][0])
+                : $this->decimal($resolved['base_quantity'][0])->multipliedBy($this->decimal($resolved['coefficient'][0])),
+            'wall_net_area' => $this->wallArea($resolved),
+            'sloped_roof_area' => $this->roofArea($resolved),
+        };
+    }
+
+    private function wallArea(array $resolved): BigDecimal
+    {
+        $area = $this->decimal($resolved['wall_length'][0])->multipliedBy($this->decimal($resolved['wall_height'][0]));
+        foreach ($resolved['opening_widths'] ?? [] as $index => $width) {
+            $area = $area->minus($this->decimal($width)->multipliedBy($this->decimal($resolved['opening_heights'][$index])));
+        }
+
+        return $area;
+    }
+
+    private function roofArea(array $resolved): BigDecimal
+    {
+        $area = BigDecimal::zero();
+        foreach ($resolved['plan_areas'] as $index => $planArea) {
+            $rise = $this->decimal($resolved['slope_rises'][$index]);
+            $run = $this->decimal($resolved['slope_runs'][$index]);
+            $hypotenuse = $rise->multipliedBy($rise)->plus($run->multipliedBy($run))
+                ->sqrt(12, RoundingMode::HalfUp);
+            $factor = $hypotenuse->dividedBy($run, 12, RoundingMode::HalfUp);
+            $area = $area->plus($this->decimal($planArea)->multipliedBy($factor));
+        }
+        foreach ($resolved['roof_opening_areas'] ?? [] as $openingArea) {
+            $area = $area->minus($this->decimal($openingArea));
+        }
+
+        return $area;
+    }
+
+    private function outputUnit(string $formula, array $resolved): string
+    {
+        return match ($formula) {
+            'earthwork_volume' => 'm3',
+            'technology_work_package' => $resolved['base_quantity'][0]['unit'],
+            default => 'm2',
+        };
+    }
+
+    private function expectedGroup(string $formula, string $role, ?string $outputUnit): string
+    {
+        if ($role === 'coefficient') {
+            return 'count';
+        }
+        if ($formula === 'technology_work_package' && $role === 'base_quantity') {
+            return match ($outputUnit) {
+                'm' => 'length',
+                'm2' => 'area',
+                'm3' => 'volume',
+                'item', 'count' => 'count',
+                default => 'unknown',
+            };
+        }
+        if (in_array($role, ['area', 'base_quantity', 'plan_areas', 'roof_opening_areas'], true)) {
+            return 'area';
+        }
+
+        return 'length';
+    }
+
+    private function outputUnitIsCompatible(string $formula, array $resolved, string $requested): bool
+    {
+        if ($formula !== 'technology_work_package') {
+            return $requested === $this->outputUnit($formula, $resolved);
+        }
+
+        $actual = $resolved['base_quantity'][0]['compatibility_group'] ?? null;
+
+        return $actual === match ($requested) {
+            'm' => 'length',
+            'm2' => 'area',
+            'm3' => 'volume',
+            'item', 'count' => 'count',
+            default => null,
+        };
+    }
+
+    private function canonicalUnit(string $group): string
+    {
+        return match ($group) {
+            'length' => 'm', 'area' => 'm2', 'volume' => 'm3', 'count' => 'count',
+        };
+    }
+
+    private function decimal(array $operand): BigDecimal
+    {
+        return BigDecimal::of($operand['value']);
+    }
+
+    private function roundingMode(string $mode): RoundingMode
+    {
+        return match ($mode) {
+            'half_up' => RoundingMode::HalfUp,
+            'half_even' => RoundingMode::HalfEven,
+            'floor' => RoundingMode::Floor,
+            'ceil' => RoundingMode::Ceiling,
+            default => RoundingMode::Unnecessary,
+        };
+    }
+
+    private function boundedLimit(mixed $value, int $default, int $minimum, int $maximum): int
+    {
+        return is_int($value) && $value >= $minimum && $value <= $maximum ? $value : $default;
+    }
+
+    private function unresolved(string $code, string $operand, ?string $factId = null): QuantityReadiness
+    {
+        return $this->issues([$this->issue($code, $operand, $factId)]);
+    }
+
+    /** @param list<array{code: string, operand: string, fact_id: string|null}> $issues */
+    private function issues(array $issues): QuantityReadiness
+    {
+        usort($issues, static fn (array $left, array $right): int => [$left['operand'], $left['fact_id'], $left['code']]
+            <=> [$right['operand'], $right['fact_id'], $right['code']]);
+        $unique = [];
+        foreach ($issues as $issue) {
+            $unique[implode('|', [$issue['code'], $issue['operand'], $issue['fact_id'] ?? ''])] = $issue;
+        }
+        $issues = array_values($unique);
+        $questions = array_map(static fn (array $issue): array => [
+            'code' => $issue['code'],
+            'message_key' => 'estimate_generation.quantity.'.$issue['code'],
+            'operand' => $issue['operand'],
+        ], $issues);
+
+        return new QuantityReadiness(null, $issues, $questions);
+    }
+
+    /** @return array{code: string, operand: string, fact_id: string|null} */
+    private function issue(string $code, string $operand, ?string $factId = null): array
+    {
+        return ['code' => $code, 'operand' => $operand, 'fact_id' => $factId];
+    }
+}

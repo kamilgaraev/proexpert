@@ -399,6 +399,63 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
         self::assertSame('estimate_resource_prices:9001', $priced['price_snapshot']['coefficients']['resource_evidence'][0]['source_reference']);
     }
 
+    #[Test]
+    public function stage_six_resource_assembly_and_pricing_keep_canonical_decimal_exact_until_money_rounding(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0]['quantity'] = '0.0000000100';
+        $service = new ResourceAssemblyService(
+            $this->createMock(EstimateNormativeMatcher::class),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+        );
+        $regionalContext = [
+            'dataset_id' => 77,
+            'dataset_version' => 'fsnb-2026.1',
+            'region_id' => 77,
+            'price_zone_id' => 1,
+            'period_id' => 202606,
+            'price_version' => 'prices-2026.06',
+            'estimate_regional_price_version_id' => 8,
+        ];
+
+        $assembled = $service->assembleFromDecision(
+            [
+                'key' => 'work-exact',
+                'name' => 'Точная ресурсная строка',
+                'unit' => 'm2',
+                'quantity' => '999999999999.12345678',
+                'quantity_evidence' => ['amount' => '999999999999.12345678', 'review_blockers' => []],
+                'confidence' => 0.8,
+            ],
+            AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record),
+            $regionalContext,
+        );
+
+        self::assertSame('999999999999.12345678', $assembled['quantity']);
+        self::assertSame('0.00000001', $assembled['materials'][0]['quantity_per_unit']);
+        self::assertSame('9999.9999999912345678', $assembled['materials'][0]['quantity']);
+        self::assertDoesNotMatchRegularExpression('/[eE]/', (string) $assembled['materials'][0]['quantity']);
+
+        $priced = (new EstimatePricingService(new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId,
+            'region_id' => 77,
+            'price_zone_id' => 1,
+            'period_id' => 202606,
+            'regional_price_version_id' => 8,
+            'base_price' => '3.50',
+            'source_type' => 'fsbc',
+            'currency' => 'RUB',
+        ])))->price([$assembled], $regionalContext)[0];
+
+        self::assertSame('35000.00', $priced['materials'][0]['total_price']);
+        self::assertSame('35000.00', $priced['total_cost']);
+        self::assertSame(
+            '9999.9999999912345678',
+            $priced['price_snapshot']['coefficients']['resource_evidence'][0]['coefficients']['quantity'],
+        );
+    }
+
     private function workflow(): NormativeWorkflowResultData
     {
         $candidate = new NormativeCandidateData(

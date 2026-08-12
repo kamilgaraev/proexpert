@@ -18,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialScopeDecisionQuantityMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use Illuminate\Support\Facades\Log;
 
 final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
@@ -47,8 +48,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
     public function executeWithHeartbeat(
         PipelineContext $context,
         PipelineLeaseHeartbeat $heartbeat,
-    ): PipelineStageResult
-    {
+    ): PipelineStageResult {
         self::renewLease($heartbeat);
         $result = $this->executeStage($context, $heartbeat);
         self::renewLease($heartbeat);
@@ -59,10 +59,12 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
     private function executeStage(
         PipelineContext $context,
         ?PipelineLeaseHeartbeat $heartbeat = null,
-    ): PipelineStageResult
-    {
+    ): PipelineStageResult {
         $analysis = $context->priorOutputs->payload(ProcessingStage::UnderstandObject)['analysis'];
         $quantityOutput = $context->priorOutputs->payload(ProcessingStage::ExtractQuantities);
+        $stage6Context = is_array($quantityOutput['stage6_generation_context'] ?? null)
+            ? $quantityOutput['stage6_generation_context']
+            : [];
         $hints = $quantityOutput['quantity_learning_hints'];
         if ($hints !== []) {
             $analysis['document_context']['quantity_learning_hints'] = $hints;
@@ -109,6 +111,21 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $payload = $this->compiler->compile($analysis, null, true);
         $payload = $this->compositionReconciler->reconcile($payload, $advice, $baselinePayload);
+        $stageFiveItems = NormativeWorkItemPlannerService::stageFivePackageItems(
+            is_array($stage6Context['work_packages'] ?? null) ? $stage6Context['work_packages'] : [],
+        );
+        if ($stageFiveItems !== []) {
+            $payload['local_estimates'][] = [
+                'key' => 'stage5-technology-packages',
+                'title' => trans_message('estimate_generation.stage6.technology_packages_title'),
+                'scope_type' => 'technology',
+                'sections' => [[
+                    'key' => 'stage5-technology-packages',
+                    'title' => trans_message('estimate_generation.stage6.technology_packages_section'),
+                    'work_items' => $stageFiveItems,
+                ]],
+            ];
+        }
         $this->logProgress($context, 'composition_reconciled');
         $this->renewAfterProgress($heartbeat);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {

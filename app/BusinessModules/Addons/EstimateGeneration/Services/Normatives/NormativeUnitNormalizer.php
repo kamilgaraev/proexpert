@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeUnitData;
+use Brick\Math\BigDecimal;
 
 final class NormativeUnitNormalizer
 {
@@ -72,6 +73,50 @@ final class NormativeUnitNormalizer
         }
 
         return round($work['multiplier'] / $norm['multiplier'], 10);
+    }
+
+    public static function safeQuantityFactorDecimal(string $workUnit, string $normUnit): ?string
+    {
+        $work = self::parseExact($workUnit);
+        $norm = self::parseExact($normUnit);
+        if ($work['base'] === '' || $work['base'] !== $norm['base']
+            || BigDecimal::of($norm['multiplier'])->isLessThanOrEqualTo(0)) {
+            return null;
+        }
+
+        try {
+            return BigDecimal::of($work['multiplier'])
+                ->dividedByExact($norm['multiplier'])
+                ->strippedOfTrailingZeros()
+                ->__toString();
+        } catch (\Brick\Math\Exception\MathException) {
+            return null;
+        }
+    }
+
+    /** @return array{base: string, multiplier: string} */
+    private static function parseExact(string $unit): array
+    {
+        $normalized = self::normalize(trim($unit));
+        $multiplier = BigDecimal::one();
+        if (preg_match('/^тыс\.?\s+(.+)$/u', $normalized, $matches) === 1) {
+            $multiplier = $multiplier->multipliedBy('1000');
+            $normalized = trim($matches[1]);
+        }
+        if (preg_match('/^(\d+(?:[,.]\d+)?)\s*(.+)$/u', $normalized, $matches) === 1) {
+            $prefix = BigDecimal::of(str_replace(',', '.', $matches[1]));
+            if ($prefix->isGreaterThan(0)) {
+                $multiplier = $multiplier->multipliedBy($prefix);
+            }
+            $normalized = trim($matches[2]);
+        }
+        [, $base, $unitMultiplier] = self::classify($normalized);
+        $multiplier = $multiplier->multipliedBy($unitMultiplier === 1000.0 ? '1000' : '1');
+
+        return [
+            'base' => $base,
+            'multiplier' => $multiplier->strippedOfTrailingZeros()->__toString(),
+        ];
     }
 
     /**

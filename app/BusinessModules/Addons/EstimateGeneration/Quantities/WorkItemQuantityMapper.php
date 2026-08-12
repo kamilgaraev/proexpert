@@ -46,6 +46,27 @@ final class WorkItemQuantityMapper
             }
 
             $factor = BigDecimal::of($candidate['factor']);
+            if ($factor->isEqualTo(BigDecimal::one())
+                && $rule['unit'] === $source->unit
+                && $source->source === QuantitySource::Evidenced
+                && $source->reviewBlockers === []
+                && is_array($source->formulaInputs['operands'] ?? null)
+                && $source->formulaInputs['operands'] !== []
+                && is_array($source->formulaInputs['snapshot_identity'] ?? null)) {
+                return new QuantityData(
+                    key: $workItemKey,
+                    unit: $source->unit,
+                    amount: $source->amount,
+                    formulaKey: $source->formulaKey,
+                    formulaVersion: $source->formulaVersion,
+                    formulaInputs: $source->formulaInputs,
+                    source: QuantitySource::Evidenced,
+                    evidenceIds: $source->evidenceIds,
+                    modelVersion: $source->modelVersion,
+                    assumptions: $source->assumptions,
+                    reviewBlockers: [],
+                );
+            }
             $amount = BigDecimal::of($source->amount)->multipliedBy($factor);
             $minimum = BigDecimal::of($rule['minimum'] ?? '0.000001');
             if ($amount->isLessThan($minimum)) {

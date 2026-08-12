@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationSer
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use Brick\Math\BigDecimal;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -87,7 +88,7 @@ class NormativeCandidateSelectionService
                         'selection_source' => $allowCatalogSelection ? 'catalog_search' : 'offered_candidate',
                     ];
 
-                    $confirmedCurrentSelection = $this->confirmedCurrentPricedSelection($workItem, $normId);
+                    $confirmedCurrentSelection = $this->confirmedCurrentPricedSelection($workItem, $normId, $context);
                     if ($confirmedCurrentSelection !== null) {
                         $learningSelection = [$originalWorkItem, $confirmedCurrentSelection, $context];
                         $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $confirmedCurrentSelection;
@@ -211,7 +212,7 @@ class NormativeCandidateSelectionService
      * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>|null
      */
-    protected function confirmedCurrentPricedSelection(array $workItem, int $normId): ?array
+    protected function confirmedCurrentPricedSelection(array $workItem, int $normId, array $context = []): ?array
     {
         $currentMatch = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
         $hasPricedResources = array_filter([
@@ -226,9 +227,10 @@ class NormativeCandidateSelectionService
             || (string) ($currentMatch['status'] ?? '') !== 'matched'
             || (string) ($workItem['pricing_status'] ?? '') !== 'calculated'
             || ($workItem['pricing_blocker'] ?? null) !== null
-            || (float) ($workItem['quantity'] ?? 0) <= 0
-            || (float) ($workItem['total_cost'] ?? 0) <= 0
+            || ! $this->positiveDecimal($workItem['quantity'] ?? null)
+            || ! $this->positiveDecimal($workItem['total_cost'] ?? null)
             || ! $hasPricedResources
+            || $this->selectionHardGate->rejectionReasons($workItem, $context, $currentMatch) !== []
         ) {
             return null;
         }
@@ -236,9 +238,24 @@ class NormativeCandidateSelectionService
         $workItem['normative_match'] = [
             ...$currentMatch,
             'selected_by_user' => true,
+            'hard_gate_passed' => true,
+            'selection_source' => 'confirmed_current_after_hard_gate',
         ];
 
         return $workItem;
+    }
+
+    private function positiveDecimal(mixed $value): bool
+    {
+        if (! is_string($value) && ! is_int($value)) {
+            return false;
+        }
+
+        try {
+            return BigDecimal::of((string) $value)->isGreaterThan(BigDecimal::zero());
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     protected function message(string $key): string

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
@@ -15,8 +18,11 @@ use App\Models\EstimateItem;
 use App\Models\EstimateItemResource;
 use App\Models\EstimateSection;
 use App\Models\MeasurementUnit;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
 {
@@ -39,16 +45,69 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         private FinalizedPackageDraftProjector $finalizedDraftProjector = new FinalizedPackageDraftProjector,
         private EstimateBudgetScope $budgetScope = new EstimateBudgetScope,
         private EstimateScopeMetadataProjector $scopeMetadata = new EstimateScopeMetadataProjector,
+        private BuildMostEstimateDraft $stage6DraftBuilder = new BuildMostEstimateDraft,
+        private ?ProjectModelRepository $projectModels = null,
     ) {}
 
     public function createFromSession(
         EstimateGenerationSession $session,
         ApplyGeneratedEstimateCommand $command,
     ): int {
+        $sourceDraft = $this->draftService->validatedDraft($session);
+        if (($sourceDraft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1'
+            && ! $this->stage6DraftBuilder->verifyArtifact($sourceDraft)) {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.stage6_artifact_invalid')],
+            ]);
+        }
+        if ($command->artifactHash !== null
+            && ! hash_equals($command->artifactHash, (string) ($sourceDraft['artifact_hash'] ?? ''))) {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.stage6_artifact_invalid')],
+            ]);
+        }
+        if (($sourceDraft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1'
+            && (! $this->projectModels instanceof ProjectModelRepository
+                || ! is_string($sourceDraft['input_snapshot_hash'] ?? null))) {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.stage6_snapshot_stale')],
+            ]);
+        }
+        if ($this->projectModels !== null && is_string($sourceDraft['input_snapshot_hash'] ?? null)) {
+            $capture = $this->projectModels->snapshotForPlanning(
+                (int) $session->organization_id,
+                (int) $session->project_id,
+                (int) $session->getKey(),
+                10001,
+            );
+            $technology = $this->projectModels->currentTechnologyRecommendations(
+                (int) $session->organization_id,
+                (int) $session->project_id,
+                (int) $session->getKey(),
+            );
+            $completeness = $this->projectModels->currentCompleteness(
+                (int) $session->organization_id,
+                (int) $session->project_id,
+                (int) $session->getKey(),
+            );
+            if (! hash_equals($sourceDraft['input_snapshot_hash'], $capture['token'])
+                || ! $this->stageFiveProjectionIsCurrent($sourceDraft, $technology, $completeness)) {
+                throw ValidationException::withMessages([
+                    'draft' => [trans_message('estimate_generation.stage6_snapshot_stale')],
+                ]);
+            }
+        }
         $draft = $this->finalizedDraftProjector->project(
             $session,
-            $this->draftService->validatedDraft($session),
+            $sourceDraft,
         );
+        $draft = $this->stage6DraftBuilder->build($draft);
+        $blocker = $this->draftService->findApplyBlocker($draft);
+        if ($blocker !== null) {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.stage6_draft_incomplete')],
+            ]);
+        }
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
         $total = $this->draftService->persistableDraftTotal($draft);
         $estimate = $this->createEstimate($session, $command, $draft, $regionalContext, $total);
@@ -56,6 +115,44 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         $this->persistSections($session, $estimate, $draft);
 
         return (int) $estimate->id;
+    }
+
+    protected function stageFiveProjectionIsCurrent(array $draft, ?array $technology, ?array $completeness): bool
+    {
+        if (! is_array($technology) || ! is_array($completeness)
+            || ($technology['is_current'] ?? false) !== true
+            || ($completeness['is_current'] ?? false) !== true) {
+            return false;
+        }
+        $snapshotHash = (string) ($draft['input_snapshot_hash'] ?? '');
+        $sourceVersion = (string) ($draft['scope_identity']['source_version'] ?? '');
+
+        return hash_equals($snapshotHash, (string) ($technology['input_fingerprint'] ?? ''))
+            && hash_equals($snapshotHash, (string) ($completeness['input_fingerprint'] ?? ''))
+            && hash_equals($sourceVersion, (string) ($technology['source_version'] ?? ''))
+            && hash_equals($sourceVersion, (string) ($completeness['source_version'] ?? ''))
+            && ($draft['technology_identity']['version'] ?? null) === ($technology['catalog_version'] ?? null)
+            && ($draft['technology_identity']['hash'] ?? null) === ($technology['catalog_hash'] ?? null)
+            && ($draft['technology_identity']['run_id'] ?? null) === ($technology['run_id'] ?? null)
+            && ($draft['rule_identity']['version'] ?? null) === ($completeness['rule_catalog_version'] ?? null)
+            && ($draft['rule_identity']['hash'] ?? null) === ($completeness['rule_catalog_hash'] ?? null)
+            && ($draft['rule_identity']['run_id'] ?? null) === ($completeness['run_id'] ?? null);
+    }
+
+    public function publishedMetadata(
+        int $estimateId,
+        int $organizationId,
+        int $projectId,
+    ): ?array {
+        $estimate = Estimate::query()
+            ->whereKey($estimateId)
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->first(['metadata']);
+
+        return $estimate !== null && is_array($estimate->metadata)
+            ? $estimate->metadata
+            : null;
     }
 
     /**
@@ -67,8 +164,11 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         ApplyGeneratedEstimateCommand $command,
         array $draft,
         array $regionalContext,
-        float $total,
+        string|int|float $total,
     ): Estimate {
+        $total = ($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1'
+            ? (string) BigDecimal::of((string) $total)->toScale(2, RoundingMode::HalfUp)
+            : round((float) $total, 2);
         $budgetScope = $this->budgetScope->project($draft, $total);
 
         for ($attempt = 0; $attempt < self::NUMBER_CREATE_ATTEMPTS; $attempt++) {
@@ -91,6 +191,14 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                         'draft_traceability' => $draft['traceability'] ?? [],
                         'quality_summary' => $draft['quality_summary'] ?? null,
                         'regional_context' => $regionalContext,
+                        'generation_contract' => $draft['generation_contract'] ?? null,
+                        'generation_artifact_hash' => $draft['artifact_hash'] ?? null,
+                        'generation_source_artifact_hash' => $command->artifactHash
+                            ?? $draft['artifact_hash']
+                            ?? null,
+                        'generation_input_snapshot_hash' => $draft['input_snapshot_hash'] ?? null,
+                        'generation_idempotency_key' => $command->idempotencyKey
+                            ?? 'estimate-generation:'.$session->getKey().':'.($draft['artifact_hash'] ?? ''),
                         'ai_scope' => $this->scopeMetadata->project($draft, $budgetScope),
                     ],
                     'total_direct_costs' => $total,
@@ -169,8 +277,11 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 continue;
             }
 
-            $localTotal = $this->draftService->persistableLocalEstimateTotal($localEstimate);
-            if ($localTotal <= 0) {
+            $localTotal = $this->draftService->persistableLocalEstimateTotal(
+                $localEstimate,
+                ($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1',
+            );
+            if (BigDecimal::of($localTotal)->isLessThanOrEqualTo(BigDecimal::zero())) {
                 continue;
             }
 
@@ -205,7 +316,10 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                     'name' => $section['title'],
                     'description' => $section['construction_part'] ?? null,
                     'sort_order' => $sectionIndex - 1,
-                    'section_total_amount' => $this->draftService->workItemsTotal($workItems),
+                    'section_total_amount' => $this->draftService->workItemsTotal(
+                        $workItems,
+                        ($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1',
+                    ),
                 ]);
 
                 foreach ($workItems as $workIndex => $workItem) {
@@ -245,17 +359,20 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 : null,
             'normative_rate_code' => $this->draftService->normativeRateCode($workItem),
             'measurement_unit_id' => $this->resolveMeasurementUnitId((int) $session->organization_id, $workItem['unit']),
-            'quantity' => $workItem['quantity'],
-            'quantity_total' => $workItem['quantity'],
-            'unit_price' => $workItem['quantity'] > 0 ? round($workItem['total_cost'] / $workItem['quantity'], 4) : 0,
+            'quantity' => OrdinaryEstimateDecimal::quantity($workItem['quantity']),
+            'quantity_total' => OrdinaryEstimateDecimal::quantity($workItem['quantity']),
+            'unit_price' => OrdinaryEstimateDecimal::unitPrice(
+                BigDecimal::of((string) $workItem['total_cost'])
+                    ->dividedBy(BigDecimal::of((string) $workItem['quantity']), 12, RoundingMode::HalfUp),
+            ),
             'materials_cost' => $workItem['materials_cost'],
             'machinery_cost' => $workItem['machinery_cost'],
             'labor_cost' => $workItem['labor_cost'],
             'labor_hours' => $workItem['labor_hours'],
             'machinery_hours' => $workItem['machinery_hours'],
-            'direct_costs' => $workItem['total_cost'],
-            'total_amount' => $workItem['total_cost'],
-            'current_total_amount' => $workItem['total_cost'],
+            'direct_costs' => OrdinaryEstimateDecimal::money($workItem['total_cost']),
+            'total_amount' => OrdinaryEstimateDecimal::money($workItem['total_cost']),
+            'current_total_amount' => OrdinaryEstimateDecimal::money($workItem['total_cost']),
             'justification' => $workItem['quantity_basis'],
             'is_manual' => true,
             'metadata' => $this->itemMetadata->make($workItem),
@@ -281,11 +398,11 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 'description' => $resource['source'] ?? null,
                 'normative_rate_code' => $resource['normative_ref']['resource_code'] ?? null,
                 'measurement_unit_id' => $measurementUnitId,
-                'quantity' => $resource['quantity'],
-                'quantity_total' => $resource['quantity'],
-                'unit_price' => $resource['unit_price'],
-                'total_amount' => $resource['total_price'],
-                'current_total_amount' => $resource['total_price'],
+                'quantity' => OrdinaryEstimateDecimal::quantity($resource['quantity']),
+                'quantity_total' => OrdinaryEstimateDecimal::quantity($resource['quantity']),
+                'unit_price' => OrdinaryEstimateDecimal::unitPrice($resource['unit_price']),
+                'total_amount' => OrdinaryEstimateDecimal::money($resource['total_price']),
+                'current_total_amount' => OrdinaryEstimateDecimal::money($resource['total_price']),
                 'labor_hours' => $itemType === EstimatePositionItemType::LABOR->value
                     ? $resource['quantity']
                     : 0,
@@ -314,10 +431,10 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 'name' => $this->estimateItemResourceName((string) $resource['name']),
                 'description' => $resource['normative_ref']['resource_code'] ?? ($resource['source'] ?? null),
                 'measurement_unit_id' => $measurementUnitId,
-                'quantity_per_unit' => $resource['quantity_per_unit'] ?? 1,
-                'total_quantity' => $resource['quantity'],
-                'unit_price' => $resource['unit_price'],
-                'total_amount' => $resource['total_price'],
+                'quantity_per_unit' => OrdinaryEstimateDecimal::resourceQuantity($resource['quantity_per_unit'] ?? 1),
+                'total_quantity' => OrdinaryEstimateDecimal::resourceQuantity($resource['quantity']),
+                'unit_price' => OrdinaryEstimateDecimal::resourceUnitPrice($resource['unit_price']),
+                'total_amount' => OrdinaryEstimateDecimal::money($resource['total_price']),
             ]);
         }
     }
@@ -415,7 +532,10 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         }
 
         if (($input['area'] ?? null) !== null && $input['area'] !== '') {
-            $parts[] = ((float) $input['area']).' м²';
+            try {
+                $parts[] = BigDecimal::of((string) $input['area'])->strippedOfTrailingZeros().' м²';
+            } catch (\Throwable) {
+            }
         }
 
         return mb_substr(implode(' • ', $parts), 0, self::ESTIMATE_NAME_MAX_LENGTH);

@@ -219,7 +219,7 @@ final class EstimateGenerationReviewItemService
      */
     private function draftReviewItems(array $draft): array
     {
-        $items = [];
+        $items = $this->stageSixReviewItems($draft);
 
         foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
             if (! is_array($localEstimate)) {
@@ -243,6 +243,63 @@ final class EstimateGenerationReviewItemService
                     }
                 }
             }
+        }
+
+        return $items;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function stageSixReviewItems(array $draft): array
+    {
+        $source = is_array($draft['stage6_review_items'] ?? null)
+            ? array_values($draft['stage6_review_items'])
+            : [];
+        $budgetExceeded = count($source) > 1000;
+        $source = array_slice($source, 0, 1000);
+        if ($budgetExceeded) {
+            $source[] = [
+                'type' => 'draft_budget',
+                'code' => 'stage6_review_budget_exceeded',
+                'message' => trans_message('estimate_generation.stage6.stage6_review_budget_exceeded'),
+            ];
+        }
+
+        $items = [];
+        foreach ($source as $index => $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $code = is_string($item['code'] ?? null) && trim($item['code']) !== ''
+                ? $item['code']
+                : 'stage6_review_item_invalid';
+            $workItemKey = is_string($item['work_item_key'] ?? null) && $item['work_item_key'] !== ''
+                ? $item['work_item_key']
+                : null;
+            $action = match ($item['type'] ?? null) {
+                'quantity_blocking' => self::ACTION_CONFIRM_QUANTITY,
+                'normative_blocking' => self::ACTION_SELECT_NORM,
+                'price_blocking' => self::ACTION_CHECK_PRICE,
+                default => self::ACTION_RESOLVE_GENERIC_WORK,
+            };
+            $items[] = [
+                'key' => implode(':', ['stage6', $code, $workItemKey ?? (string) $index]),
+                'local_estimate_key' => '',
+                'local_estimate_title' => (string) ($draft['title'] ?? ''),
+                'section_key' => '',
+                'section_title' => '',
+                'work_item_key' => $workItemKey,
+                'work_item' => $workItemKey === null ? [] : ['key' => $workItemKey],
+                'severity' => self::SEVERITY_BLOCKING,
+                'required_action' => $action,
+                'reason_codes' => [$code],
+                'candidates_count' => 0,
+                'has_current_norm' => false,
+                'source_refs' => array_slice(is_array($item['source_refs'] ?? null) ? $item['source_refs'] : [], 0, 16),
+                'pricing_blocker' => $code,
+                'pricing_status' => 'not_calculated',
+                'normative_status' => null,
+                'message' => is_string($item['message'] ?? null) ? $item['message'] : null,
+            ];
         }
 
         return $items;

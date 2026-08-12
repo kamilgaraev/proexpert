@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
@@ -17,7 +18,10 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
 {
     use RenewsPipelineLease;
 
-    public function __construct(private StageResultFactory $results) {}
+    public function __construct(
+        private StageResultFactory $results,
+        private BuildMostEstimateDraft $draftBuilder = new BuildMostEstimateDraft,
+    ) {}
 
     public function stage(): ProcessingStage
     {
@@ -30,7 +34,12 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
         $data = $context->priorOutputs->payload(ProcessingStage::ResolvePrices);
         $source = $context->priorOutputs->payload(ProcessingStage::UnderstandDocuments);
         $analysis = $context->priorOutputs->payload(ProcessingStage::UnderstandObject)['analysis'];
-        $quantities = $context->priorOutputs->payload(ProcessingStage::ExtractQuantities)['building_quantities'];
+        $quantityOutput = $context->priorOutputs->payload(ProcessingStage::ExtractQuantities);
+        $quantities = $quantityOutput['building_quantities'];
+        $stage6Context = is_array($quantityOutput['stage6_generation_context'] ?? null)
+            ? $quantityOutput['stage6_generation_context'] : [];
+        $normativeSummary = $this->normativeSummary($data['local_estimates']);
+        $normativePin = is_array($plan['normative_context_pin'] ?? null) ? $plan['normative_context_pin'] : [];
         $description = trim((string) Arr::get($analysis, 'object.description', ''));
         $draft = [
             'title' => $description !== ''
@@ -53,7 +62,29 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
             'regional_context' => Arr::get($analysis, 'regional_context', []),
             'contingency_percent' => Arr::get($analysis, 'object.contingency_percent'),
             'problem_flags' => Arr::get($analysis, 'problem_flags', []),
-            'normative_matching' => $this->normativeSummary($data['local_estimates']),
+            'normative_matching' => $normativeSummary,
+            'input_snapshot_hash' => $stage6Context['input_snapshot_hash'] ?? null,
+            'scope_identity' => [
+                'organization_id' => $context->organizationId,
+                'project_id' => $context->projectId,
+                'session_id' => $context->sessionId,
+                'source_version' => $stage6Context['source_version'] ?? null,
+            ],
+            'catalog_identity' => [
+                'version' => $normativePin['dataset_version'] ?? $normativeSummary['version_key'],
+                'hash' => $normativePin['catalog_content_hash'] ?? null,
+                'identity_version' => $normativePin['identity_version'] ?? null,
+                'applicability_date' => $normativePin['applicability_date'] ?? null,
+                'status' => ($normativePin['status'] ?? null) === 'pinned'
+                    && is_string($normativePin['catalog_content_hash'] ?? null)
+                    ? 'current'
+                    : 'unresolved',
+            ],
+            'technology_identity' => $stage6Context['technology_identity'] ?? ['status' => 'unresolved'],
+            'rule_identity' => $stage6Context['rule_identity'] ?? ['status' => 'unresolved'],
+            'stage6_review_items' => is_array($stage6Context['review_items'] ?? null)
+                ? array_slice($stage6Context['review_items'], 0, 1000)
+                : [],
         ];
         $warnings = [];
         $rebuildKey = $source['rebuild_section_key'] ?? null;
@@ -71,6 +102,8 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
                 $warnings[] = 'rebuild_section_not_found';
             }
         }
+
+        $draft = $this->draftBuilder->build($draft);
 
         return $this->results->make($context, $this->stage(), ['draft' => $draft], warnings: $warnings);
     }

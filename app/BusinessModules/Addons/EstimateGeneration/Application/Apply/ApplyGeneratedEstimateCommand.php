@@ -14,5 +14,7 @@ final readonly class ApplyGeneratedEstimateCommand
         public ?string $name = null,
         public ?string $type = null,
         public ?string $estimateDate = null,
+        public ?string $idempotencyKey = null,
+        public ?string $artifactHash = null,
     ) {}
 }

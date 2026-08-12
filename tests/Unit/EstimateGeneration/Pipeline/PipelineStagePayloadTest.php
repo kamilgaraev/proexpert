@@ -19,6 +19,7 @@ final class PipelineStagePayloadTest extends TestCase
             'building_quantities' => [],
             'quantity_learning_hints' => [],
             'quantity_coverage_warnings' => [],
+            'stage6_generation_context' => [],
         ];
 
         $payload = PipelineStagePayload::from(ProcessingStage::ExtractQuantities, $data);
@@ -34,6 +35,7 @@ final class PipelineStagePayloadTest extends TestCase
         PipelineStagePayload::from(ProcessingStage::ExtractQuantities, [
             'building_quantities' => [],
             'quantity_learning_hints' => [],
+            'stage6_generation_context' => [],
             'quantity_coverage_warnings' => [[
                 'quantity_key' => 'stairs.railings',
                 'reason' => 'arbitrary_missing_reason',

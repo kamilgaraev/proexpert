@@ -51,6 +51,94 @@ final class NormativeWorkItemPlannerService
         return $this->uniquePricedItems($items);
     }
 
+    /** @return list<array<string, mixed>> */
+    public static function stageFivePackageItems(array $packages): array
+    {
+        if (! array_is_list($packages) || count($packages) > 200) {
+            return [];
+        }
+
+        $items = [];
+        $seen = [];
+        foreach ($packages as $package) {
+            if (! is_array($package)
+                || ! in_array($package['status'] ?? null, ['unknown', 'proven_missing'], true)
+                || ! is_array($package['works'] ?? null) || count($package['works']) > 40
+                || ! is_array($package['quantities'] ?? null) || count($package['quantities']) > 20
+                || ! is_array($package['norm_intents'] ?? null) || count($package['norm_intents']) > 20
+                || ! is_array($package['evidence_fact_ids'] ?? null) || count($package['evidence_fact_ids']) > 256) {
+                continue;
+            }
+            $packageId = self::stageFiveString($package['id'] ?? null);
+            $quantity = is_array($package['quantities'][0] ?? null) ? $package['quantities'][0] : [];
+            $quantityKey = self::stageFiveString($quantity['key'] ?? null);
+            $unit = self::stageFiveString($quantity['unit'] ?? null);
+            if ($packageId === null || $quantityKey === null || $unit === null) {
+                continue;
+            }
+            $intent = is_array($package['norm_intents'][0] ?? null) ? $package['norm_intents'][0] : [];
+            $candidateRefs = array_values(array_filter(
+                is_array($intent['candidate_refs'] ?? null) ? array_slice($intent['candidate_refs'], 0, 5) : [],
+                static fn (mixed $value): bool => self::stageFiveString($value) !== null,
+            ));
+            foreach ($package['works'] as $work) {
+                if (! is_array($work)) {
+                    continue;
+                }
+                $workId = self::stageFiveString($work['id'] ?? null);
+                $label = self::stageFiveString($work['label'] ?? null);
+                if ($workId === null || $label === null) {
+                    continue;
+                }
+                $key = 'stage5:'.hash('sha256', $packageId."\0".$workId);
+                if (isset($seen[$key]) || count($items) >= 500) {
+                    continue;
+                }
+                $seen[$key] = true;
+                $items[] = [
+                    'key' => $key,
+                    'name' => $label,
+                    'item_type' => 'priced_work',
+                    'category' => 'technology',
+                    'normative_search_text' => trim($label.' '.implode(' ', $candidateRefs)),
+                    'unit' => $unit,
+                    'source_refs' => array_map(
+                        static fn (string $factId): array => ['fact_id' => $factId],
+                        array_values(array_filter(
+                            $package['evidence_fact_ids'],
+                            static fn (mixed $value): bool => self::stageFiveString($value) !== null,
+                        )),
+                    ),
+                    'metadata' => [
+                        'quantity_key' => $quantityKey,
+                        'technology_package_id' => $packageId,
+                        'technology_formula_id' => $quantity['formula_id'] ?? null,
+                        'technology_decision' => $package['technology_decision'] ?? null,
+                        'completeness_decision' => $package['completeness_decision'] ?? null,
+                        'completeness_finding' => [
+                            'key' => $package['finding_key'] ?? null,
+                            'version' => $package['finding_version'] ?? null,
+                            'status' => $package['status'],
+                        ],
+                        'normative_intent' => [
+                            'id' => $intent['id'] ?? null,
+                            'candidate_refs' => $candidateRefs,
+                        ],
+                    ],
+                ];
+            }
+        }
+
+        return $items;
+    }
+
+    private static function stageFiveString(mixed $value): ?string
+    {
+        return is_string($value) && trim($value) !== '' && mb_strlen($value) <= 191
+            ? trim($value)
+            : null;
+    }
+
     /**
      * @param  array<string, mixed>  $row
      * @param  array<string, mixed>  $localEstimate

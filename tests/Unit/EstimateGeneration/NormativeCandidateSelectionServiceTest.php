@@ -81,10 +81,12 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
     {
         $workItem = [
             'key' => 'ventilation.ducts',
-            'quantity' => 23.136,
+            'name' => 'Монтаж воздуховодов вентиляции',
+            'unit' => 'м2',
+            'quantity' => '23.136',
             'pricing_status' => 'calculated',
             'pricing_blocker' => null,
-            'total_cost' => 29910.50,
+            'total_cost' => '29910.50',
             'materials' => [[
                 'code' => '19.1.01.03-0071',
                 'total_price' => 16569.51,
@@ -99,13 +101,19 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
                 'selected_by_user' => false,
                 'norm_id' => 501,
                 'code' => '20-01-001-01',
+                'selected' => [
+                    'name' => 'Монтаж воздуховодов вентиляции',
+                    'unit' => 'м2',
+                    'object_type' => 'residential',
+                    'section' => ['code' => '20'],
+                ],
                 'project_resource_selections' => [[
                     'selected_resource_code' => '19.1.01.03-0071',
                 ]],
             ],
         ];
 
-        $confirmed = $this->service()->confirmCurrentPricedSelection($workItem, 501);
+        $confirmed = $this->service($this->selectionHardGate())->confirmCurrentPricedSelection($workItem, 501);
 
         self::assertNotNull($confirmed);
         self::assertTrue($confirmed['normative_match']['selected_by_user']);
@@ -273,7 +281,11 @@ final class TestableNormativeCandidateSelectionService extends NormativeCandidat
      */
     public function confirmCurrentPricedSelection(array $workItem, int $normId): ?array
     {
-        return $this->confirmedCurrentPricedSelection($workItem, $normId);
+        return $this->confirmedCurrentPricedSelection($workItem, $normId, [
+            'scope_type' => 'engineering',
+            'section_title' => 'Вентиляция',
+            'object_type' => 'residential',
+        ]);
     }
 
     /** @return array<string, mixed> */

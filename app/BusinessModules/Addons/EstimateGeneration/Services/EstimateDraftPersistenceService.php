@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
+use Brick\Math\BigDecimal;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -46,31 +47,59 @@ final class EstimateDraftPersistenceService
     }
 
     /** @param array<string, mixed> $draft */
-    public function persistableDraftTotal(array $draft): float
+    public function persistableDraftTotal(array $draft): float|string
     {
-        $total = 0.0;
+        $exact = ($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1';
+        if (! $exact) {
+            $total = 0.0;
+
+            foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
+                if (is_array($localEstimate)) {
+                    $total += $this->persistableLocalEstimateTotal($localEstimate);
+                }
+            }
+
+            return round($total, 2);
+        }
+
+        $total = BigDecimal::zero();
 
         foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
             if (is_array($localEstimate)) {
-                $total += $this->persistableLocalEstimateTotal($localEstimate);
+                $total = $total->plus($this->persistableLocalEstimateTotal($localEstimate, true));
             }
         }
 
-        return round($total, 2);
+        return $total->strippedOfTrailingZeros()->__toString();
     }
 
     /** @param array<string, mixed> $localEstimate */
-    public function persistableLocalEstimateTotal(array $localEstimate): float
+    public function persistableLocalEstimateTotal(array $localEstimate, bool $exact = false): float|string
     {
-        $total = 0.0;
+        if (! $exact) {
+            $total = 0.0;
+
+            foreach ($localEstimate['sections'] ?? [] as $section) {
+                if (is_array($section)) {
+                    $total += $this->workItemsTotal($this->persistableWorkItems($section['work_items'] ?? []));
+                }
+            }
+
+            return round($total, 2);
+        }
+
+        $total = BigDecimal::zero();
 
         foreach ($localEstimate['sections'] ?? [] as $section) {
             if (is_array($section)) {
-                $total += $this->workItemsTotal($this->persistableWorkItems($section['work_items'] ?? []));
+                $total = $total->plus($this->workItemsTotal(
+                    $this->persistableWorkItems($section['work_items'] ?? []),
+                    true,
+                ));
             }
         }
 
-        return round($total, 2);
+        return $total->strippedOfTrailingZeros()->__toString();
     }
 
     /**
@@ -86,12 +115,29 @@ final class EstimateDraftPersistenceService
     }
 
     /** @param array<int, array<string, mixed>> $workItems */
-    public function workItemsTotal(array $workItems): float
+    public function workItemsTotal(array $workItems, bool $exact = false): float|string
     {
-        return round(array_sum(array_map(
-            static fn (array $workItem): float => (float) ($workItem['total_cost'] ?? 0),
-            $workItems,
-        )), 2);
+        if (! $exact) {
+            return round(array_sum(array_map(
+                static fn (array $workItem): float => (float) ($workItem['total_cost'] ?? 0),
+                $workItems,
+            )), 2);
+        }
+
+        $total = BigDecimal::zero();
+        foreach ($workItems as $workItem) {
+            $value = $workItem['total_cost'] ?? '0';
+            if (! is_string($value) && ! is_int($value)) {
+                continue;
+            }
+            try {
+                $total = $total->plus((string) $value);
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return $total->strippedOfTrailingZeros()->__toString();
     }
 
     private function assertNoBlockingReviewItems(EstimateGenerationSession $session): void
@@ -138,6 +184,11 @@ final class EstimateDraftPersistenceService
      */
     public function findApplyBlocker(array $draft): ?array
     {
+        if (($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1'
+            && (($draft['stage6_status'] ?? null) !== 'ready' || ($draft['is_complete'] ?? null) !== true)) {
+            return ['type' => 'incomplete_stage6_draft'];
+        }
+
         $inspection = ($this->readinessInspector ?? new DraftReadinessInspector)->inspect($draft);
         if ($inspection->blockingIssues !== []) {
             return ['type' => 'blocked', 'code' => $inspection->blockingIssues[0]['code']];
@@ -161,7 +212,7 @@ final class EstimateDraftPersistenceService
             || (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.duplicate_work_items', 0) > 0
             || $qualityStatus === 'review_required'
-            || $this->persistableDraftTotal($draft) <= 0
+            || BigDecimal::of($this->persistableDraftTotal($draft))->isLessThanOrEqualTo(BigDecimal::zero())
             || $this->hasNonPersistablePricedWorkItems($draft)
         ) {
             return ['type' => 'prices_require_review'];

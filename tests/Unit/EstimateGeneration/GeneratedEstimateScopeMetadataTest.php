@@ -159,6 +159,46 @@ final class GeneratedEstimateScopeMetadataTest extends TestCase
             ]],
         ], $writer->attributes['metadata']['ai_scope']['arbiter_review']);
     }
+
+    #[Test]
+    public function persistence_rejects_a_stage_five_projection_that_changed_after_planning(): void
+    {
+        $writer = new CapturingScopeGeneratedEstimateWriter(
+            new EstimateDraftPersistenceService(
+                new EstimateGenerationFinalWorkItemGuard,
+                new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter),
+            ),
+            new ScopeGeneratedEstimateNumberAllocator,
+        );
+        $snapshot = str_repeat('a', 64);
+        $source = 'sha256:'.str_repeat('b', 64);
+        $draft = [
+            'input_snapshot_hash' => $snapshot,
+            'scope_identity' => ['source_version' => $source],
+            'technology_identity' => ['version' => 'technology:v1', 'hash' => str_repeat('c', 64), 'run_id' => 11],
+            'rule_identity' => ['version' => 'rules:v1', 'hash' => str_repeat('d', 64), 'run_id' => 12],
+        ];
+        $technology = [
+            'is_current' => true,
+            'input_fingerprint' => $snapshot,
+            'source_version' => $source,
+            'catalog_version' => 'technology:v1',
+            'catalog_hash' => str_repeat('c', 64),
+            'run_id' => 11,
+        ];
+        $completeness = [
+            'is_current' => true,
+            'input_fingerprint' => $snapshot,
+            'source_version' => $source,
+            'rule_catalog_version' => 'rules:v1',
+            'rule_catalog_hash' => str_repeat('d', 64),
+            'run_id' => 12,
+        ];
+
+        self::assertTrue($writer->stageFiveProjectionIsCurrentForTest($draft, $technology, $completeness));
+        $completeness['run_id'] = 13;
+        self::assertFalse($writer->stageFiveProjectionIsCurrentForTest($draft, $technology, $completeness));
+    }
 }
 
 final class ScopeGeneratedEstimateNumberAllocator implements GeneratedEstimateNumberAllocator
@@ -183,6 +223,11 @@ final class CapturingScopeGeneratedEstimateWriter extends LaravelGeneratedEstima
             [],
             $total,
         );
+    }
+
+    public function stageFiveProjectionIsCurrentForTest(array $draft, ?array $technology, ?array $completeness): bool
+    {
+        return $this->stageFiveProjectionIsCurrent($draft, $technology, $completeness);
     }
 
     protected function transactionAttempt(callable $callback): mixed

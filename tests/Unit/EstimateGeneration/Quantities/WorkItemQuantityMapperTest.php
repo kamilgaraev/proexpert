@@ -32,6 +32,34 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
+    public function stage_six_identity_mapping_preserves_proven_formula_operands_instead_of_downgrading_to_estimated(): void
+    {
+        $source = new QuantityData(
+            key: 'floor_area',
+            unit: 'm2',
+            amount: '20',
+            formulaKey: 'floor_area',
+            formulaVersion: '1',
+            formulaInputs: [
+                'operands' => [['fact_id' => 'fact:length', 'value' => '5', 'unit' => 'm']],
+                'snapshot_identity' => ['input_fingerprint' => str_repeat('a', 64)],
+                'rounding_policy' => ['mode' => 'half_up', 'scale' => 2, 'boundary' => 'formula_result'],
+            ],
+            source: QuantitySource::Evidenced,
+            evidenceIds: ['evidence:length'],
+            modelVersion: str_repeat('a', 64),
+        );
+
+        $quantity = (new WorkItemQuantityMapper)->map('finish.floor', ['floor_area' => $source]);
+
+        self::assertNotNull($quantity);
+        self::assertSame(QuantitySource::Evidenced, $quantity->source);
+        self::assertSame($source->formulaInputs, $quantity->formulaInputs);
+        self::assertSame('finish.floor', $quantity->key);
+        self::assertSame('20', $quantity->amount);
+    }
+
+    #[Test]
     public function wall_finishing_uses_residential_wall_area_factor_when_wall_geometry_is_missing(): void
     {
         $mapper = new WorkItemQuantityMapper;
