@@ -277,6 +277,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         Log::warning('[EstimateGeneration Vision] provider HTTP failure', [
                             ...array_diff_key($diagnostics->payload, [
                                 'redacted_preview' => true,
+                                'error_message_preview' => true,
                             ]),
                             'organization_id' => $input->organizationId,
                             'project_id' => $input->projectId,
