@@ -373,10 +373,10 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertSame('invalid_request_error', $diagnostic['error_type']);
         self::assertSame('unsupported_parameter', $diagnostic['error_code']);
         self::assertSame('response_format', $diagnostic['error_param']);
-        self::assertSame(
-            'provider_http_status=400; envelope=openai_error; type=invalid_request_error; code=unsupported_parameter; param=response_format',
-            $diagnostic['diagnostic_summary'],
-        );
+        self::assertStringContainsString('message_code=unsupported_parameter', $diagnostic['diagnostic_summary']);
+        self::assertStringContainsString('message_param=response_format', $diagnostic['diagnostic_summary']);
+        self::assertStringContainsString('message_fingerprint=sha256:', $diagnostic['diagnostic_summary']);
+        self::assertSame('Unsupported parameter: response_format', $diagnostic['error_message_preview']);
         self::assertArrayNotHasKey('error_message', $diagnostic);
         self::assertSame('application/json', $diagnostic['response_content_type']);
         self::assertSame('openai/gpt-5.6-luna', $diagnostic['model']);
@@ -402,8 +402,105 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && ($context['error_param'] ?? null) === 'response_format'
                 && ! str_contains(json_encode($context, JSON_THROW_ON_ERROR), $secret)
                 && ! array_key_exists('redacted_preview', $context)
+                && ! array_key_exists('error_message_preview', $context)
                 && ! array_key_exists('request', $context),
         );
+    }
+
+    #[Test]
+    public function production_openai_error_with_null_identity_keeps_a_bounded_sanitized_message(): void
+    {
+        $message = "Unsupported parameter: 'response_format.json_schema.strict' is not available for this model.";
+        Http::fake(['*' => Http::response([
+            'error' => [
+                'message' => $message,
+                'type' => null,
+                'param' => null,
+                'code' => null,
+            ],
+        ], 400, ['Content-Type' => 'application/json'])]);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Terminal provider rejection was accepted.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_provider_request_rejected', $exception->reason);
+            self::assertArrayNotHasKey('provider_error_type', $exception->safeContext);
+            self::assertArrayNotHasKey('provider_error_code', $exception->safeContext);
+            self::assertArrayNotHasKey('provider_error_param', $exception->safeContext);
+            self::assertArrayNotHasKey('error_message_preview', $exception->safeContext);
+        }
+
+        $diagnostic = $this->physicalAttempts->onlySnapshot()->responsePayload['provider_error'];
+        self::assertSame('unsupported_parameter', $diagnostic['error_message_code']);
+        self::assertSame('Unsupported parameter: response_format.json_schema.strict', $diagnostic['error_message_preview']);
+        self::assertArrayNotHasKey('error_type', $diagnostic);
+        self::assertArrayNotHasKey('error_code', $diagnostic);
+        self::assertArrayNotHasKey('error_param', $diagnostic);
+        self::assertMatchesRegularExpression('/\Asha256:[0-9a-f]{64}\z/', $diagnostic['error_message_fingerprint']);
+        self::assertStringContainsString('message_fingerprint='.$diagnostic['error_message_fingerprint'], $diagnostic['diagnostic_summary']);
+        self::assertLessThanOrEqual(320, strlen($diagnostic['error_message_preview']));
+    }
+
+    #[Test]
+    public function string_null_identity_and_sensitive_or_oversized_message_are_safely_normalized(): void
+    {
+        $secret = 'sk-live-DoNotPersist123456789';
+        $uuid = '976e6171-d8a0-4ba8-8ad3-6148933d931c';
+        $message = "Invalid request for api_key=prodLiveAbc123; s3://confidential-bucket/project/private.pdf; Authorization: Bearer {$secret}; "
+            .'https://storage.example/private.png?X-Amz-Signature=hidden; C:\\private\\drawing.png; /org-38/private/drawing.png; '
+            ."owner@example.test; {$uuid}; data:image/png;base64,".str_repeat('A', 2_000)."; prompt:\n".str_repeat('PRIVATE CUSTOMER TEXT ', 100);
+        Http::fake(['*' => Http::response([
+            'error' => [
+                'message' => $message,
+                'type' => 'None',
+                'param' => ' null ',
+                'code' => 'NONE',
+            ],
+        ], 400, ['Content-Type' => 'application/json'])]);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Terminal provider rejection was accepted.');
+        } catch (VisionProviderException) {
+        }
+
+        $diagnostic = $this->physicalAttempts->onlySnapshot()->responsePayload['provider_error'];
+        $encoded = json_encode($diagnostic, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        self::assertArrayNotHasKey('error_type', $diagnostic);
+        self::assertArrayNotHasKey('error_code', $diagnostic);
+        self::assertArrayNotHasKey('error_param', $diagnostic);
+        self::assertSame('provider_message_unclassified', $diagnostic['error_message_code']);
+        self::assertArrayNotHasKey('error_message_preview', $diagnostic);
+        foreach ([$secret, 'prodLiveAbc123', 'confidential-bucket', 'storage.example', 'X-Amz-Signature', 'C:\\private', '/org-38/', 'owner@example.test', $uuid, 'data:image', 'PRIVATE CUSTOMER TEXT'] as $forbidden) {
+            self::assertStringNotContainsString($forbidden, $encoded);
+        }
+    }
+
+    #[Test]
+    public function null_identity_breaker_ignores_request_ids_and_reflected_customer_text(): void
+    {
+        Http::fakeSequence()
+            ->push(['error' => ['message' => "Unsupported parameter 'response_format' for req-A111 and customer text 'private one'.", 'type' => null, 'param' => null, 'code' => null]], 400)
+            ->push(['error' => ['message' => "Unsupported parameter 'response_format' for req-B222 and customer text 'private two'.", 'type' => null, 'param' => null, 'code' => null]], 400);
+
+        foreach ([1, 2] as $claim) {
+            try {
+                $this->provider()->analyze($this->input(claim: $claim));
+                self::fail('Terminal provider rejection was accepted.');
+            } catch (VisionProviderException) {
+            }
+        }
+
+        $snapshots = $this->physicalAttempts->snapshots();
+        self::assertCount(2, $snapshots);
+        self::assertSame(
+            $snapshots[0]->responsePayload['provider_error']['diagnostic_fingerprint'],
+            $snapshots[1]->responsePayload['provider_error']['diagnostic_fingerprint'],
+        );
+        self::assertSame('Unsupported parameter: response_format', $snapshots[0]->responsePayload['provider_error']['error_message_preview']);
+        self::assertStringNotContainsString('private', json_encode($snapshots, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('req-', json_encode($snapshots, JSON_THROW_ON_ERROR));
     }
 
     #[Test]
@@ -498,7 +595,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertStringNotContainsString('PRIVATE CUSTOMER TEXT', $diagnostic['redacted_preview']);
         self::assertStringNotContainsString('999', $diagnostic['redacted_preview']);
         self::assertStringNotContainsString('storage.example', $diagnostic['redacted_preview']);
-        self::assertStringContainsString('[redacted]', $diagnostic['redacted_preview']);
+        self::assertSame('[redacted-unclassified-body]', $diagnostic['redacted_preview']);
         Log::shouldHaveReceived('warning')->once()->withArgs(
             static fn (string $message, array $context): bool => $message === '[EstimateGeneration Vision] provider HTTP failure'
                 && ! array_key_exists('redacted_preview', $context)
