@@ -1019,6 +1019,46 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function stored_elements_with_nullable_label_round_trip_without_losing_required_shape(): void
+    {
+        $response = $this->response(['elements' => [[
+            'key' => 'wall-1',
+            'type' => 'wall',
+            'label' => null,
+            'polygon' => [[0.1, 0.1], [0.2, 0.1]],
+            'confidence' => 0.9,
+            'evidence_ref' => 'page-1',
+        ]]]);
+        Http::fake(['*' => Http::response($response)]);
+
+        $result = $this->provider()->analyze($this->input());
+        $stored = $result->toArray();
+        unset($stored['elements'][0]['label']);
+        $stored['elements'][] = [
+            'key' => 'window-1',
+            'type' => 'opening',
+            'polygon' => [[0.1, 0.1], [0.2, 0.1]],
+            'confidence' => 0.8,
+            'evidence_ref' => 'page-1',
+            'geometry' => [
+                'wall_key' => 'wall-1',
+                'opening_type' => 'window',
+                'offset' => 0,
+                'width' => 1.2,
+                'height' => 1.5,
+            ],
+        ];
+
+        $replayed = VisionAnalysisData::fromStoredArray($stored);
+        $reserialized = $replayed->toArray();
+
+        self::assertArrayHasKey('label', $reserialized['elements'][0]);
+        self::assertNull($reserialized['elements'][0]['label']);
+        self::assertNull($reserialized['elements'][1]['label']);
+        self::assertSame('wall-1', VisionAnalysisData::fromStoredArray($reserialized)->elements[0]->key);
+    }
+
+    #[Test]
     public function persisted_invalid_json_is_not_retried_with_a_second_charge(): void
     {
         $invalid = $this->response();

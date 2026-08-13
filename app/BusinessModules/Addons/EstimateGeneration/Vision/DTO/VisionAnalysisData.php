@@ -224,7 +224,7 @@ final readonly class VisionAnalysisData
         );
         $elements = array_map(
             static fn (mixed $item): VisionElementData => is_array($item)
-                ? VisionElementData::fromArray($item)
+                ? VisionElementData::fromArray(self::normalizeStoredElement($item))
                 : throw new VisionContractException('invalid_element'),
             $data['elements'],
         );
@@ -262,6 +262,23 @@ final readonly class VisionAnalysisData
             is_array($data['visual_attributes'] ?? null) ? $data['visual_attributes'] : [],
             $projectSheetAnalysis,
         );
+    }
+
+    /** @param array<string, mixed> $element @return array<string, mixed> */
+    private static function normalizeStoredElement(array $element): array
+    {
+        $keys = array_keys($element);
+        sort($keys);
+        $expected = ['confidence', 'evidence_ref', 'key', 'polygon', 'type'];
+        sort($expected);
+        if ($keys === $expected) {
+            return [...$element, 'label' => null];
+        }
+
+        $opening = [...$expected, 'geometry'];
+        sort($opening);
+
+        return $keys === $opening ? [...$element, 'label' => null] : $element;
     }
 
     /**

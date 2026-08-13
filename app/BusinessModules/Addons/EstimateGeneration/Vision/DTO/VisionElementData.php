@@ -80,7 +80,15 @@ final readonly class VisionElementData
     /** @return array<string, mixed> */
     public function toArray(): array
     {
-        return array_filter(['key' => $this->key, 'type' => $this->type, 'label' => $this->label, 'polygon' => $this->polygon, 'confidence' => $this->confidence, 'evidence_ref' => $this->evidenceRef, 'geometry' => $this->geometry], static fn (mixed $value): bool => $value !== null);
+        return [
+            'key' => $this->key,
+            'type' => $this->type,
+            'label' => $this->label,
+            'polygon' => $this->polygon,
+            'confidence' => $this->confidence,
+            'evidence_ref' => $this->evidenceRef,
+            ...($this->geometry === null ? [] : ['geometry' => $this->geometry]),
+        ];
     }
 
     private static function validOpeningGeometry(array $geometry): bool
