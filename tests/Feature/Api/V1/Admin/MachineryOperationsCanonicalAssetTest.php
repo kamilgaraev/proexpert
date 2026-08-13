@@ -24,6 +24,7 @@ use App\Models\User;
 use App\Modules\Core\AccessController;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\MachineryOperationsAssetFactory;
 use Tests\TestCase;
 
 final class MachineryOperationsCanonicalAssetTest extends TestCase
@@ -41,26 +42,22 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
         $this->actingAs($context->user, 'api_admin');
         $this->allowAccess();
 
-        $created = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/machinery-operations/assets', [
+        $asset = MachineryOperationsAssetFactory::create((int) $context->organization->id, [
             'asset_code' => 'CAN-EXC-1',
             'name' => 'Canonical excavator',
             'inventory_number' => 'CAN-INV-1',
             'ownership_type' => 'owned',
             'fuel_type' => 'diesel',
         ]);
-
-        $created->assertCreated()
-            ->assertJsonPath('data.name', 'Canonical excavator')
-            ->assertJsonPath('data.status', 'available');
-        $legacyId = (int) $created->json('data.id');
-        $canonicalId = (int) $created->json('data.organization_asset_id');
+        $legacyId = (int) $asset->id;
+        $canonicalId = (int) $asset->organization_asset_id;
         self::assertGreaterThan(0, $canonicalId);
 
-        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/machinery-operations/assets', [
+        MachineryOperationsAssetFactory::create((int) $context->organization->id, [
             'asset_code' => 'CAN-OTHER-2',
             'name' => 'Other asset',
             'inventory_number' => 'OTHER-INV-2',
-        ])->assertCreated();
+        ]);
         $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/machinery-operations/assets?search=can-inv-1')
             ->assertOk()
@@ -96,7 +93,7 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
         self::assertSame('serviceable', $canonical->metadata['last_control_inspection']['result']);
     }
 
-    public function test_cutover_flags_hide_unlinked_rows_and_disable_legacy_create_endpoint(): void
+    public function test_cutover_flag_hides_unlinked_rows(): void
     {
         $context = AdminApiTestContext::create();
         $this->actingAs($context->user, 'api_admin');
@@ -116,14 +113,20 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
             ->paginate((int) $context->organization->id, 20)
             ->total());
 
-        config()->set('asset_registry.legacy_asset_writes_enabled', false);
+    }
+
+    public function test_legacy_physical_asset_create_route_is_removed(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->actingAs($context->user, 'api_admin');
+        $this->allowAccess();
+
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/machinery-operations/assets', [
-                'asset_code' => 'BLOCKED',
-                'name' => 'Blocked legacy create',
+                'asset_code' => 'REMOVED',
+                'name' => 'Removed legacy create',
             ])
-            ->assertStatus(422)
-            ->assertJsonPath('message', 'Создание физической единицы перенесено в единый складской реестр.');
+            ->assertStatus(405);
     }
 
     public function test_strict_canonical_reads_reject_direct_access_without_a_live_canonical_asset(): void
@@ -139,7 +142,7 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
             'operating_cost_per_hour' => 0,
             'meter_hours' => 0,
         ]);
-        $retired = app(MachineryOperationsService::class)->createAsset($organizationId, [
+        $retired = MachineryOperationsAssetFactory::create($organizationId, [
             'asset_code' => 'STRICT-RETIRED',
             'name' => 'Retired canonical asset',
         ]);
@@ -156,7 +159,7 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
         $context = AdminApiTestContext::create();
         $organizationId = (int) $context->organization->id;
         $project = Project::factory()->create(['organization_id' => $organizationId]);
-        $asset = app(MachineryOperationsService::class)->createAsset($organizationId, [
+        $asset = MachineryOperationsAssetFactory::create($organizationId, [
             'asset_code' => 'STRICT-OPERATIONS',
             'name' => 'Strict operations asset',
             'current_project_id' => $project->id,

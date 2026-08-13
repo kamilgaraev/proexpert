@@ -37,9 +37,6 @@ Route::prefix('api/v1/admin/machinery-operations')
         Route::post('/asset-requests/direct-assign', [MachineryOperationsController::class, 'directAssignAsset'])
             ->middleware('authorize:machinery-operations.direct_assign')
             ->name('asset_requests.direct_assign');
-        Route::post('/assets', [MachineryOperationsController::class, 'storeAsset'])
-            ->middleware('authorize:machinery-operations.create')
-            ->name('assets.store');
         Route::post('/assets/{id}/assign', [MachineryOperationsController::class, 'assignAsset'])
             ->whereNumber('id')
             ->middleware('authorize:machinery-operations.requests.approve')

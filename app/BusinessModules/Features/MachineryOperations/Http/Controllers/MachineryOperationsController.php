@@ -126,28 +126,6 @@ final class MachineryOperationsController extends Controller
         }
     }
 
-    public function storeAsset(Request $request): JsonResponse
-    {
-        try {
-            $validated = $request->validate($this->assetRules());
-
-            return AdminResponse::success(
-                new MachineryAssetResource($this->service->createAsset(
-                    (int) $request->attributes->get('current_organization_id'),
-                    $validated
-                )),
-                trans_message('machinery_operations.messages.asset_created'),
-                201
-            );
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
-        } catch (\Throwable $exception) {
-            return $this->failed($request, $exception, 'assets.store');
-        }
-    }
-
     public function assignAsset(Request $request, int $id): JsonResponse
     {
         try {
@@ -540,24 +518,6 @@ final class MachineryOperationsController extends Controller
         ]);
 
         return AdminResponse::error(trans_message('machinery_operations.errors.action_failed'), 500);
-    }
-
-    private function assetRules(): array
-    {
-        return [
-            'machinery_id' => ['nullable', 'integer'],
-            'current_project_id' => ['nullable', 'integer'],
-            'current_schedule_task_id' => ['nullable', 'integer'],
-            'asset_code' => ['required', 'string', 'max:80'],
-            'name' => ['required', 'string', 'max:255'],
-            'inventory_number' => ['nullable', 'string', 'max:120'],
-            'ownership_type' => ['nullable', 'string', Rule::in(['owned', 'leased', 'subcontractor'])],
-            'operating_cost_per_hour' => ['nullable', 'numeric', 'min:0'],
-            'fuel_type' => ['nullable', 'string', 'max:80'],
-            'fuel_consumption_rate' => ['nullable', 'numeric', 'min:0'],
-            'meter_hours' => ['nullable', 'numeric', 'min:0'],
-            'metadata' => ['nullable', 'array'],
-        ];
     }
 
     private function shiftRules(): array

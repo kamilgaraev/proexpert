@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\MachineryOperations\Services;
 
 use App\BusinessModules\Core\AssetManagement\DTO\AssetPlacementData;
-use App\BusinessModules\Core\AssetManagement\DTO\CreateOrganizationAssetData;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetLifecycleStatus;
-use App\BusinessModules\Core\AssetManagement\Enums\AssetOperationalMode;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Core\AssetManagement\Services\OrganizationAssetService;
@@ -20,7 +18,6 @@ use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenance
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryProductionRecord;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryShiftReport;
 use App\BusinessModules\Features\MachineryOperations\Models\MaintenanceInspection;
-use App\Models\Machinery;
 use App\Models\Project;
 use App\Models\ScheduleTask;
 use DomainException;
@@ -70,64 +67,6 @@ final class MachineryOperationsService
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderByDesc('created_at')
             ->paginate($perPage);
-    }
-
-    public function createAsset(int $organizationId, array $data): MachineryAsset
-    {
-        if (! (bool) config('asset_registry.legacy_asset_writes_enabled')) {
-            throw new DomainException(trans_message('machinery_operations.errors.legacy_asset_writes_disabled'));
-        }
-
-        $this->assertOptionalMachineryBelongsToOrganization($data['machinery_id'] ?? null, $organizationId);
-        $this->assertOptionalProjectBelongsToOrganization($data['current_project_id'] ?? null, $organizationId);
-        $this->assertOptionalScheduleTaskBelongsToOrganization($data['current_schedule_task_id'] ?? null, $organizationId);
-
-        return DB::transaction(function () use ($organizationId, $data): MachineryAsset {
-            $initialStatus = isset($data['current_project_id']) ? 'assigned' : 'available';
-            $legacy = MachineryAsset::query()->create([
-                'organization_id' => $organizationId,
-                'machinery_id' => $data['machinery_id'] ?? null,
-                'current_project_id' => $data['current_project_id'] ?? null,
-                'current_schedule_task_id' => $data['current_schedule_task_id'] ?? null,
-                'asset_code' => $data['asset_code'],
-                'name' => $data['name'],
-                'inventory_number' => $data['inventory_number'] ?? null,
-                'ownership_type' => $data['ownership_type'] ?? 'owned',
-                'status' => $initialStatus,
-                'operating_cost_per_hour' => $data['operating_cost_per_hour'] ?? 0,
-                'fuel_type' => $data['fuel_type'] ?? null,
-                'fuel_consumption_rate' => $data['fuel_consumption_rate'] ?? null,
-                'meter_hours' => $data['meter_hours'] ?? 0,
-                'metadata' => $data['metadata'] ?? null,
-            ]);
-            $canonical = $this->organizationAssets->create($organizationId, new CreateOrganizationAssetData(
-                name: (string) $legacy->name,
-                inventoryNumber: (string) ($legacy->inventory_number ?: $legacy->asset_code),
-                ownershipType: (string) $legacy->ownership_type,
-                machineryId: $legacy->machinery_id !== null ? (int) $legacy->machinery_id : null,
-                placement: $legacy->current_project_id !== null
-                    ? new AssetPlacementData(projectId: (int) $legacy->current_project_id)
-                    : null,
-                metadata: [
-                    ...($data['metadata'] ?? []),
-                    'legacy_source' => ['table' => 'machinery_assets', 'id' => (int) $legacy->id],
-                    'machinery_operation_status' => $initialStatus,
-                ],
-                operationalMode: AssetOperationalMode::ShiftOperation,
-                tracksMeter: true,
-                tracksFuel: $legacy->fuel_type !== null || $legacy->fuel_consumption_rate !== null,
-                tracksProduction: true,
-                maintenanceEnabled: true,
-                meterUnit: 'hour',
-                operatingCostPerHour: (float) $legacy->operating_cost_per_hour,
-                fuelType: $legacy->fuel_type !== null ? (string) $legacy->fuel_type : null,
-                fuelConsumptionRate: $legacy->fuel_consumption_rate !== null ? (float) $legacy->fuel_consumption_rate : null,
-                meterValue: (float) $legacy->meter_hours,
-            ));
-            $legacy->update(['organization_asset_id' => $canonical->id]);
-
-            return $this->assets->find($organizationId, (int) $legacy->id) ?? $legacy;
-        });
     }
 
     public function findAsset(int $organizationId, int $id): ?MachineryAsset
@@ -803,24 +742,6 @@ final class MachineryOperationsService
     {
         if ($projectId !== null) {
             $this->assertProjectBelongsToOrganization((int) $projectId, $organizationId);
-        }
-    }
-
-    private function assertOptionalMachineryBelongsToOrganization(mixed $machineryId, int $organizationId): void
-    {
-        if ($machineryId === null) {
-            return;
-        }
-
-        $exists = Machinery::query()
-            ->where('id', (int) $machineryId)
-            ->where(function ($query) use ($organizationId): void {
-                $query->whereNull('organization_id')->orWhere('organization_id', $organizationId);
-            })
-            ->exists();
-
-        if (! $exists) {
-            throw new DomainException(trans_message('machinery_operations.errors.machinery_not_found'));
         }
     }
 

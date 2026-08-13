@@ -17,6 +17,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\MachineryOperationsAssetFactory;
 use Tests\TestCase;
 
 final class AssetDispatchWorkflowTest extends TestCase
@@ -37,11 +38,11 @@ final class AssetDispatchWorkflowTest extends TestCase
         ]);
         $this->actingAs($context->user, 'api_admin');
         $this->allowAccess();
-        $asset = $this->app->make(MachineryOperationsService::class)->createAsset(
+        $asset = MachineryOperationsAssetFactory::create(
             (int) $context->organization->id,
             ['asset_code' => 'DSP-1', 'name' => 'Dispatcher excavator', 'operating_cost_per_hour' => 1000],
         );
-        $misleadingLegacyAsset = $this->app->make(MachineryOperationsService::class)->createAsset(
+        $misleadingLegacyAsset = MachineryOperationsAssetFactory::create(
             (int) $context->organization->id,
             ['asset_code' => 'DSP-LEGACY-TRAP', 'name' => 'Higher canonical cost', 'operating_cost_per_hour' => 2000],
         );
@@ -106,7 +107,7 @@ final class AssetDispatchWorkflowTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->actingAs($context->user, 'api_admin');
         $this->allowAccess(directAssign: true);
-        $asset = $this->app->make(MachineryOperationsService::class)->createAsset(
+        $asset = MachineryOperationsAssetFactory::create(
             (int) $context->organization->id,
             ['asset_code' => 'DSP-2', 'name' => 'Direct crane'],
         );
@@ -132,7 +133,7 @@ final class AssetDispatchWorkflowTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->actingAs($context->user, 'api_admin');
         $this->allowAccess(directAssign: false);
-        $asset = $this->app->make(MachineryOperationsService::class)->createAsset(
+        $asset = MachineryOperationsAssetFactory::create(
             (int) $context->organization->id,
             ['asset_code' => 'DSP-DENIED', 'name' => 'Denied direct crane'],
         );
@@ -154,8 +155,8 @@ final class AssetDispatchWorkflowTest extends TestCase
         $this->actingAs($context->user, 'api_admin');
         $this->allowAccess();
         $operations = $this->app->make(MachineryOperationsService::class);
-        $faulty = $operations->createAsset((int) $context->organization->id, ['asset_code' => 'DSP-OLD', 'name' => 'Faulty asset']);
-        $replacement = $operations->createAsset((int) $context->organization->id, ['asset_code' => 'DSP-NEW', 'name' => 'Replacement asset']);
+        $faulty = MachineryOperationsAssetFactory::create((int) $context->organization->id, ['asset_code' => 'DSP-OLD', 'name' => 'Faulty asset']);
+        $replacement = MachineryOperationsAssetFactory::create((int) $context->organization->id, ['asset_code' => 'DSP-NEW', 'name' => 'Replacement asset']);
         $start = now()->addDay();
         $end = now()->addDays(2);
 
