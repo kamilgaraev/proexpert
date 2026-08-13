@@ -608,13 +608,125 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         try {
             $this->provider()->analyze($this->input());
             self::fail('Lost pre-wire claim was accepted.');
-        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation) {
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_physical_attempt_persistence_failed', $exception->reason);
+            self::assertSame('vision_physical_attempt_persistence', $exception->safeContext['execution_boundary']);
         }
 
         Http::assertNothingSent();
-        self::assertCount(1, $this->attempts);
-        self::assertSame('connection_failed', $this->attempts[0]->status);
-        self::assertNotSame('ambiguous', $this->attempts[0]->status);
+        self::assertSame([], $this->attempts);
+    }
+
+    #[Test]
+    public function unknown_physical_claim_failure_is_typed_without_http_or_secret_leak(): void
+    {
+        $store = $this->createMock(VisionPhysicalAttemptStore::class);
+        $store->method('claim')->willThrowException(
+            new \RuntimeException('Bearer secret signed URL https://storage.example/private.png'),
+        );
+        $this->app->instance(VisionPhysicalAttemptStore::class, $store);
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        Http::fake();
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Unknown physical claim failure was accepted.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_physical_claim_failed', $exception->reason);
+            self::assertSame('vision_physical_claim', $exception->safeContext['execution_boundary']);
+            self::assertSame('openai/gpt-5.6-luna', $exception->safeContext['requested_model']);
+            self::assertInstanceOf(\RuntimeException::class, $exception->getPrevious());
+            self::assertStringNotContainsString('secret', json_encode($exception->safeContext, JSON_THROW_ON_ERROR));
+            self::assertStringNotContainsString('storage.example', json_encode($exception->safeContext, JSON_THROW_ON_ERROR));
+        }
+
+        Http::assertNothingSent();
+        self::assertSame([], $this->attempts);
+    }
+
+    #[Test]
+    public function response_persistence_failure_keeps_typed_boundary_and_does_not_wire_retry(): void
+    {
+        $store = $this->getMockBuilder(VisionPhysicalAttemptStore::class)->getMock();
+        $store->method('claim')->willReturnCallback(
+            static fn (AiOperationContext $context, string $fingerprint, string $owner, DateTimeImmutable $now, DateTimeImmutable $lease): VisionPhysicalAttemptSnapshot => new VisionPhysicalAttemptSnapshot(
+                true,
+                'pre_wire',
+                ownerToken: $owner,
+                leaseExpiresAt: $lease,
+            ),
+        );
+        $store->method('storeResponse')->willThrowException(new \RuntimeException('database password private path'));
+        $store->method('markAmbiguous')->willThrowException(new \RuntimeException('secondary logging secret'));
+        $this->app->instance(VisionPhysicalAttemptStore::class, $store);
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        Http::fake(['*' => Http::response($this->response())]);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Response persistence failure was accepted.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_physical_attempt_persistence_failed', $exception->reason);
+            self::assertSame('vision_physical_attempt_persistence', $exception->safeContext['execution_boundary']);
+            self::assertSame('timeweb', $exception->safeContext['provider']);
+            self::assertSame('openai/gpt-5.6-luna', $exception->safeContext['requested_model']);
+            self::assertStringNotContainsString('password', json_encode($exception->safeContext, JSON_THROW_ON_ERROR));
+        }
+
+        Http::assertSentCount(1);
+    }
+
+    #[Test]
+    public function usage_marker_persistence_failure_does_not_replace_successful_analysis(): void
+    {
+        $store = $this->getMockBuilder(VisionPhysicalAttemptStore::class)->getMock();
+        $store->method('claim')->willReturnCallback(
+            static fn (AiOperationContext $context, string $fingerprint, string $owner, DateTimeImmutable $now, DateTimeImmutable $lease): VisionPhysicalAttemptSnapshot => new VisionPhysicalAttemptSnapshot(
+                true,
+                'pre_wire',
+                ownerToken: $owner,
+                leaseExpiresAt: $lease,
+            ),
+        );
+        $store->method('markUsageRecorded')->willThrowException(new \RuntimeException('marker storage password'));
+        $this->app->instance(VisionPhysicalAttemptStore::class, $store);
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        Http::fake(['*' => Http::response($this->response())]);
+
+        $analysis = $this->provider()->analyze($this->input());
+
+        self::assertSame('openai/gpt-5.6-luna', $analysis->requestedModel);
+        Http::assertSentCount(1);
+    }
+
+    #[Test]
+    public function unknown_operation_settings_failure_is_typed_without_http_or_secret_leak(): void
+    {
+        $store = new class implements EffectiveSettingsOperationStore
+        {
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                throw new \RuntimeException('postgres password signed path https://storage.example/private.png');
+            }
+        };
+        $this->app->instance(EffectiveSettingsResolver::class, new EffectiveSettingsResolver($store));
+        $this->app->forgetInstance(TimewebVisionProvider::class);
+        Http::fake();
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Unknown operation settings failure was accepted.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_operation_settings_failed', $exception->reason);
+            self::assertSame('vision_operation_settings', $exception->safeContext['execution_boundary']);
+            self::assertSame('openai/gpt-5.6-luna', $exception->safeContext['requested_model']);
+            self::assertInstanceOf(\RuntimeException::class, $exception->getPrevious());
+            self::assertStringNotContainsString('password', json_encode($exception->safeContext, JSON_THROW_ON_ERROR));
+            self::assertStringNotContainsString('storage.example', json_encode($exception->safeContext, JSON_THROW_ON_ERROR));
+        }
+
+        Http::assertNothingSent();
+        self::assertSame([], $this->attempts);
     }
 
     #[Test]

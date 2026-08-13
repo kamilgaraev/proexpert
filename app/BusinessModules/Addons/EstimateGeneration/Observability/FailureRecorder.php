@@ -27,7 +27,7 @@ final readonly class FailureRecorder
             $this->store->record($failure, now()->toDateTimeImmutable());
         } catch (Throwable) {
             try {
-                $this->observer->recordingFailed($failure->code, $failure->fingerprint);
+                $this->observer->recordingFailed($failure);
             } catch (Throwable) {
             }
         }

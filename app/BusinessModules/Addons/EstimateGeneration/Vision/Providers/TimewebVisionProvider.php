@@ -59,44 +59,53 @@ final readonly class TimewebVisionProvider implements VisionProvider
     {
         $apiKey = trim((string) config('estimate-generation.vision.api_key', ''));
         $baseUri = rtrim(trim((string) config('estimate-generation.vision.base_uri', '')), '/');
-        $model = $this->settingsResolver?->visionModelForOperation(
-            $input->operationContext->correlationId,
-            $input->organizationId,
-            $input->sessionId,
-            $input->isTargetedSheetReanalysis() ? $input->primaryAnalysis?->requestedModel : null,
-        ) ?? VisionModelPolicy::assertSupported(trim((string) config('estimate-generation.vision.model', '')));
-        $effective = $this->settingsResolver?->forOperation(
-            $input->operationContext->correlationId,
-            $input->organizationId,
-            $input->sessionId,
-        );
-        if ($effective !== null && $input->pageNumber > $effective->maxPagesPerFile()) {
-            throw new VisionProviderException('vision_page_limit_exceeded');
+        $configuredModel = trim((string) config('estimate-generation.vision.model', ''));
+        try {
+            $model = $this->settingsResolver?->visionModelForOperation(
+                $input->operationContext->correlationId,
+                $input->organizationId,
+                $input->sessionId,
+                $input->isTargetedSheetReanalysis() ? $input->primaryAnalysis?->requestedModel : null,
+            ) ?? VisionModelPolicy::assertSupported($configuredModel);
+            $effective = $this->settingsResolver?->forOperation(
+                $input->operationContext->correlationId,
+                $input->organizationId,
+                $input->sessionId,
+            );
+            if ($effective !== null && $input->pageNumber > $effective->maxPagesPerFile()) {
+                throw new VisionProviderException('vision_page_limit_exceeded');
+            }
+            if ($effective !== null) {
+                $this->documentLimits?->assertWithinTotalPages($input->operationContext, $effective);
+            }
+            $modelVersion = VisionModelPolicy::isLuna($model)
+                ? trim((string) config('estimate-generation.vision.model_version', 'timeweb-gpt-5.6-luna-2026-08-13'))
+                : 'timeweb-legacy-vision-2026-07-14';
+            $maxElements = $input->isTargetedSheetReanalysis()
+                ? min(self::effectiveMaxElements(), self::sheetRoutingLimit('max_elements', 96, 1, 500))
+                : self::effectiveMaxElements();
+            $maxFacts = $input->isTargetedSheetReanalysis()
+                ? min($maxElements, self::sheetRoutingLimit('max_facts', 64, 1, 500))
+                : $maxElements;
+            $contractHash = self::promptHash(
+                $maxElements,
+                $maxFacts,
+                $input->sheetRole,
+                $input->isTargetedSheetReanalysis() && $input->primaryAnalysis !== null,
+            );
+            if ((string) config('estimate-generation.vision.provider', '') !== self::PROVIDER
+                || $apiKey === '' || $baseUri === '' || $model === '' || $modelVersion === ''
+                || preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $model) !== 1) {
+                throw new VisionProviderException('vision_not_configured');
+            }
+        } catch (Throwable $exception) {
+            throw $this->preWireFailure(
+                'vision_operation_settings_failed',
+                'vision_operation_settings',
+                $configuredModel,
+                $exception,
+            );
         }
-        if ($effective !== null) {
-            $this->documentLimits?->assertWithinTotalPages($input->operationContext, $effective);
-        }
-        $modelVersion = VisionModelPolicy::isLuna($model)
-            ? trim((string) config('estimate-generation.vision.model_version', 'timeweb-gpt-5.6-luna-2026-08-13'))
-            : 'timeweb-legacy-vision-2026-07-14';
-        $maxElements = $input->isTargetedSheetReanalysis()
-            ? min(self::effectiveMaxElements(), self::sheetRoutingLimit('max_elements', 96, 1, 500))
-            : self::effectiveMaxElements();
-        $maxFacts = $input->isTargetedSheetReanalysis()
-            ? min($maxElements, self::sheetRoutingLimit('max_facts', 64, 1, 500))
-            : $maxElements;
-        $contractHash = self::promptHash(
-            $maxElements,
-            $maxFacts,
-            $input->sheetRole,
-            $input->isTargetedSheetReanalysis() && $input->primaryAnalysis !== null,
-        );
-        if ((string) config('estimate-generation.vision.provider', '') !== self::PROVIDER
-            || $apiKey === '' || $baseUri === '' || $model === '' || $modelVersion === ''
-            || preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $model) !== 1) {
-            throw new VisionProviderException('vision_not_configured');
-        }
-
         if (count($input->nativeReferences) > self::MAX_NATIVE_REFERENCES) {
             throw new DocumentManifestNeedsReview('document_native_registry_provider_limit_exceeded', [
                 'actual' => count($input->nativeReferences),
@@ -105,20 +114,38 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 'processing_unit_id' => $input->processingUnitId,
             ]);
         }
-        $payload = $this->requestPayload($input, $model, $maxElements, $maxFacts, $contractHash);
-        $endpointKind = 'chat_completions';
-        $payloadShapeFingerprint = $this->payloadShapeFingerprint($payload, $contractHash, $endpointKind);
-        $attempts = $effective !== null
-            ? max(1, $effective->retryAttempts('vision') + 1)
-            : max(1, min(5, (int) config('estimate-generation.vision.retry_attempts', 3)));
+        try {
+            $payload = $this->requestPayload($input, $model, $maxElements, $maxFacts, $contractHash);
+            $endpointKind = 'chat_completions';
+            $payloadShapeFingerprint = $this->payloadShapeFingerprint($payload, $contractHash, $endpointKind);
+            $attempts = $effective !== null
+                ? max(1, $effective->retryAttempts('vision') + 1)
+                : max(1, min(5, (int) config('estimate-generation.vision.retry_attempts', 3)));
+        } catch (Throwable $exception) {
+            throw $this->preWireFailure(
+                'vision_request_preparation_failed',
+                'vision_request_preparation',
+                $model,
+                $exception,
+            );
+        }
         $lastException = null;
         for ($wireAttempt = 1; $wireAttempt <= $attempts; $wireAttempt++) {
-            $physicalContext = $this->physicalContext($input, $model, $wireAttempt, $contractHash);
-            $priceSnapshot = $this->priceResolver?->resolve(
-                $physicalContext,
-                self::PROVIDER,
-                $model,
-            ) ?? AiPriceSnapshot::fromArray([]);
+            try {
+                $physicalContext = $this->physicalContext($input, $model, $wireAttempt, $contractHash);
+                $priceSnapshot = $this->priceResolver?->resolve(
+                    $physicalContext,
+                    self::PROVIDER,
+                    $model,
+                ) ?? AiPriceSnapshot::fromArray([]);
+            } catch (Throwable $exception) {
+                throw $this->preWireFailure(
+                    'vision_physical_claim_failed',
+                    'vision_physical_claim',
+                    $model,
+                    $exception,
+                );
+            }
             $startedAt = hrtime(true);
             $responsePayload = [];
             $status = 'connection_failed';
@@ -137,13 +164,22 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $ownerToken = $this->ownerToken();
             $leaseTtl = max(30, min(900, (int) config('estimate-generation.vision.physical_attempt_lease_seconds', 180)));
             $claimNow = new DateTimeImmutable;
-            $snapshot = $this->physicalAttempts->claim(
-                $physicalContext,
-                $requestFingerprint,
-                $ownerToken,
-                $claimNow,
-                $claimNow->modify('+'.$leaseTtl.' seconds'),
-            );
+            try {
+                $snapshot = $this->physicalAttempts->claim(
+                    $physicalContext,
+                    $requestFingerprint,
+                    $ownerToken,
+                    $claimNow,
+                    $claimNow->modify('+'.$leaseTtl.' seconds'),
+                );
+            } catch (Throwable $exception) {
+                throw $this->preWireFailure(
+                    'vision_physical_claim_failed',
+                    'vision_physical_claim',
+                    $model,
+                    $exception,
+                );
+            }
             if ($snapshot->state === 'ambiguous') {
                 if (! $snapshot->usageRecorded) {
                     $usageRecorded = $this->recordAttempt(
@@ -158,17 +194,26 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         AiPriceSnapshot::fromArray($snapshot->priceSnapshot ?? []),
                     );
                     if ($usageRecorded) {
-                        $this->physicalAttempts->markUsageRecorded($physicalContext->attemptId, $requestFingerprint);
+                        $this->safeMarkUsageRecorded($physicalContext, $requestFingerprint, $input, $model);
                     }
                 }
-                throw new VisionProviderException('vision_wire_outcome_ambiguous');
+                throw new VisionProviderException(
+                    'vision_wire_outcome_ambiguous',
+                    safeContext: $this->boundarySafeContext('vision_physical_claim', $model),
+                );
             }
             if ($snapshot->state === 'reserved') {
-                throw new VisionProviderException('vision_wire_outcome_ambiguous');
+                throw new VisionProviderException(
+                    'vision_wire_outcome_ambiguous',
+                    safeContext: $this->boundarySafeContext('vision_physical_claim', $model),
+                );
             }
             if (in_array($snapshot->state, ['pre_wire', 'wire_started'], true)
                 && $snapshot->ownerToken !== $ownerToken) {
-                throw new VisionProviderException('vision_wire_attempt_busy');
+                throw new VisionProviderException(
+                    'vision_wire_attempt_busy',
+                    safeContext: $this->boundarySafeContext('vision_physical_claim', $model),
+                );
             }
             $replayed = in_array($snapshot->state, ['response_received', 'completed'], true);
             if ($replayed) {
@@ -188,13 +233,17 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         ?? max(1, min(120, (int) config('estimate-generation.vision.timeout_seconds', 60)));
                     $timeoutSeconds = $this->boundedDocumentAttemptTimeout($input, $attempts, $timeoutSeconds);
                     $wireNow = new DateTimeImmutable;
-                    $this->physicalAttempts->markWireStarted(
-                        $physicalContext->attemptId,
-                        $requestFingerprint,
-                        $ownerToken,
-                        $wireNow,
-                        $wireNow->modify('+'.$leaseTtl.' seconds'),
-                    );
+                    try {
+                        $this->physicalAttempts->markWireStarted(
+                            $physicalContext->attemptId,
+                            $requestFingerprint,
+                            $ownerToken,
+                            $wireNow,
+                            $wireNow->modify('+'.$leaseTtl.' seconds'),
+                        );
+                    } catch (Throwable $exception) {
+                        throw $this->physicalPersistenceFailure($model, $exception);
+                    }
                     $wireStarted = true;
                     $response = Http::timeout($timeoutSeconds)
                         ->withOptions(['stream' => true])
@@ -213,10 +262,16 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         );
                         $responsePayload = ['provider_error' => $diagnostics->payload];
                         $status = 'http_failed';
-                        $this->physicalAttempts->storeResponse(
-                            $physicalContext->attemptId, $requestFingerprint, $ownerToken, $responsePayload, $status, $httpCode,
-                            (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), null, $priceSnapshot->toArray(),
-                        );
+                        try {
+                            $this->physicalAttempts->storeResponse(
+                                $physicalContext->attemptId, $requestFingerprint, $ownerToken, $responsePayload, $status, $httpCode,
+                                (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), null, $priceSnapshot->toArray(),
+                            );
+                        } catch (UsageInvariantViolation $exception) {
+                            throw $exception;
+                        } catch (Throwable $exception) {
+                            throw $this->physicalPersistenceFailure($model, $exception);
+                        }
                         $wireStarted = false;
                         $hasPersistedResponse = true;
                         Log::warning('[EstimateGeneration Vision] provider HTTP failure', [
@@ -231,20 +286,26 @@ final readonly class TimewebVisionProvider implements VisionProvider
                             'unit_id' => $input->processingUnitId,
                             'attempt_id' => $physicalContext->attemptId,
                         ]);
-                        $lastException = $this->httpFailureException($httpCode, $responsePayload);
+                        $lastException = $this->httpFailureException($httpCode, $responsePayload, $model);
                     } else {
                         $body = $this->bodyReader->read($response, max(1_024, (int) config('estimate-generation.vision.max_response_bytes', 1_000_000)));
-                        $this->physicalAttempts->storeResponse(
-                            $physicalContext->attemptId, $requestFingerprint, $ownerToken,
-                            ['raw_body_base64' => base64_encode($body)], 'response_received', $httpCode,
-                            (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), null, $priceSnapshot->toArray(),
-                        );
+                        try {
+                            $this->physicalAttempts->storeResponse(
+                                $physicalContext->attemptId, $requestFingerprint, $ownerToken,
+                                ['raw_body_base64' => base64_encode($body)], 'response_received', $httpCode,
+                                (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), null, $priceSnapshot->toArray(),
+                            );
+                        } catch (UsageInvariantViolation $exception) {
+                            throw $exception;
+                        } catch (Throwable $exception) {
+                            throw $this->physicalPersistenceFailure($model, $exception);
+                        }
                         $wireStarted = false;
                         $hasPersistedResponse = true;
                     }
                 }
                 if (($replayed && $status === 'http_failed') || (! $replayed && $status === 'http_failed')) {
-                    $lastException = $this->httpFailureException($httpCode, $responsePayload);
+                    $lastException = $this->httpFailureException($httpCode, $responsePayload, $model);
                 } else {
                     if ($replayed) {
                         $encodedBody = $responsePayload['raw_body_base64'] ?? null;
@@ -340,39 +401,55 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $lastException = $exception;
             } catch (ConnectionException $exception) {
                 $status = 'connection_failed';
-                $lastException = new VisionProviderException('vision_connection_failed', retryable: true, previous: $exception);
+                $lastException = new VisionProviderException(
+                    'vision_connection_failed',
+                    retryable: true,
+                    previous: $exception,
+                    safeContext: $this->boundarySafeContext('vision_http_transport', $model),
+                );
             } catch (UsageInvariantViolation $exception) {
                 $invariantFailure = true;
                 throw $exception;
             } catch (Throwable $exception) {
                 $status = 'connection_failed';
-                $lastException = new VisionProviderException('vision_request_failed', retryable: false, previous: $exception);
+                $lastException = new VisionProviderException(
+                    'vision_request_failed',
+                    retryable: false,
+                    previous: $exception,
+                    safeContext: $this->boundarySafeContext('vision_http_transport', $model),
+                );
             } finally {
                 $durationMs = $replayed
                     ? (int) $snapshot->durationMs
                     : (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000));
                 if ($wireStarted && ! $hasPersistedResponse && ! $invariantFailure) {
-                    $this->physicalAttempts->markAmbiguous(
-                        $physicalContext->attemptId,
+                    $this->safeMarkAmbiguous(
+                        $physicalContext,
                         $requestFingerprint,
                         $ownerToken,
-                        'provider_request_outcome_unknown',
-                        new DateTimeImmutable,
                         $durationMs,
                         $httpCode,
                         $reportedModel,
-                        $priceSnapshot->toArray(),
+                        $priceSnapshot,
+                        $input,
+                        $model,
                     );
                     $status = 'ambiguous';
-                    $lastException = new VisionProviderException('vision_wire_outcome_ambiguous');
+                    if ($lastException?->reason !== 'vision_physical_attempt_persistence_failed') {
+                        $lastException = new VisionProviderException(
+                            'vision_wire_outcome_ambiguous',
+                            safeContext: $this->boundarySafeContext('vision_physical_attempt_persistence', $model),
+                        );
+                    }
                 }
-                if (! $replayed || ! $snapshot->usageRecorded) {
+                if (($replayed || $wireStarted || $hasPersistedResponse || $httpCode !== null)
+                    && (! $replayed || ! $snapshot->usageRecorded)) {
                     $usageRecorded = $this->recordAttempt(
                         $input, $model, $reportedModel, $status, $httpCode, $responsePayload,
                         $durationMs, $physicalContext, $priceSnapshot,
                     );
                     if ($usageRecorded && ($hasPersistedResponse || $status === 'ambiguous')) {
-                        $this->physicalAttempts->markUsageRecorded($physicalContext->attemptId, $requestFingerprint);
+                        $this->safeMarkUsageRecorded($physicalContext, $requestFingerprint, $input, $model);
                     }
                 }
             }
@@ -393,13 +470,128 @@ final readonly class TimewebVisionProvider implements VisionProvider
         throw new VisionProviderException('vision_provider_failed');
     }
 
+    private function preWireFailure(
+        string $safeCode,
+        string $boundary,
+        string $model,
+        Throwable $exception,
+    ): Throwable {
+        if ($exception instanceof DocumentManifestNeedsReview) {
+            return $exception;
+        }
+        if ($exception instanceof VisionProviderException) {
+            return new VisionProviderException(
+                $exception->reason,
+                $exception->httpCode,
+                $exception->retryable,
+                $exception,
+                [...$exception->safeContext, ...$this->boundarySafeContext($boundary, $model)],
+            );
+        }
+
+        return new VisionProviderException(
+            $safeCode,
+            retryable: false,
+            previous: $exception,
+            safeContext: $this->boundarySafeContext($boundary, $model),
+        );
+    }
+
+    /** @return array<string, string> */
+    private function boundarySafeContext(string $boundary, string $model): array
+    {
+        return [
+            'execution_boundary' => $boundary,
+            'provider' => self::PROVIDER,
+            ...(preg_match('/\A[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,79})?\z/', $model) === 1
+                ? ['requested_model' => $model]
+                : []),
+        ];
+    }
+
+    private function physicalPersistenceFailure(string $model, Throwable $exception): VisionProviderException
+    {
+        return new VisionProviderException(
+            'vision_physical_attempt_persistence_failed',
+            retryable: false,
+            previous: $exception,
+            safeContext: $this->boundarySafeContext('vision_physical_attempt_persistence', $model),
+        );
+    }
+
+    private function safeMarkAmbiguous(
+        AiOperationContext $context,
+        string $requestFingerprint,
+        string $ownerToken,
+        int $durationMs,
+        ?int $httpCode,
+        ?string $reportedModel,
+        AiPriceSnapshot $priceSnapshot,
+        VisionDocumentInput $input,
+        string $model,
+    ): void {
+        try {
+            $this->physicalAttempts->markAmbiguous(
+                $context->attemptId,
+                $requestFingerprint,
+                $ownerToken,
+                'provider_request_outcome_unknown',
+                new DateTimeImmutable,
+                $durationMs,
+                $httpCode,
+                $reportedModel,
+                $priceSnapshot->toArray(),
+            );
+        } catch (Throwable) {
+            $this->logPhysicalPersistenceFailure($input, $context, $model, 'mark_ambiguous');
+        }
+    }
+
+    private function safeMarkUsageRecorded(
+        AiOperationContext $context,
+        string $requestFingerprint,
+        VisionDocumentInput $input,
+        string $model,
+    ): void {
+        try {
+            $this->physicalAttempts->markUsageRecorded($context->attemptId, $requestFingerprint);
+        } catch (Throwable) {
+            $this->logPhysicalPersistenceFailure($input, $context, $model, 'mark_usage_recorded');
+        }
+    }
+
+    private function logPhysicalPersistenceFailure(
+        VisionDocumentInput $input,
+        AiOperationContext $context,
+        string $model,
+        string $operation,
+    ): void {
+        try {
+            Log::error('[EstimateGeneration Vision] physical attempt persistence failed', [
+                'failure_code' => 'vision_physical_attempt_persistence_failed',
+                'execution_boundary' => 'vision_physical_attempt_persistence',
+                'operation' => $operation,
+                'organization_id' => $input->organizationId,
+                'project_id' => $input->projectId,
+                'session_id' => $input->sessionId,
+                'document_id' => $input->documentId,
+                'page_id' => $input->pageId,
+                'unit_id' => $input->processingUnitId,
+                'attempt_id' => $context->attemptId,
+                'provider' => self::PROVIDER,
+                'model' => $model,
+            ]);
+        } catch (Throwable) {
+        }
+    }
+
     private function retryableStatus(int $status): bool
     {
         return in_array($status, [408, 409, 429], true) || $status >= 500;
     }
 
     /** @param array<string, mixed> $responsePayload */
-    private function httpFailureException(?int $httpCode, array $responsePayload): VisionProviderException
+    private function httpFailureException(?int $httpCode, array $responsePayload, string $model): VisionProviderException
     {
         $retryable = $httpCode !== null && $this->retryableStatus($httpCode);
         $reason = match (true) {
@@ -410,7 +602,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         $diagnostic = is_array($responsePayload['provider_error'] ?? null)
             ? $responsePayload['provider_error']
             : [];
-        $context = [];
+        $context = $this->boundarySafeContext('vision_provider_response', $model);
         foreach ([
             'provider_http_status', 'provider_error_type', 'provider_error_code', 'provider_error_param',
             'body_fingerprint', 'body_shape_fingerprint', 'endpoint_kind', 'prompt_contract_fingerprint',

@@ -43,10 +43,19 @@ final readonly class FailureNormalizer
 
         $diagnostics = [
             ...$this->diagnostics->forThrowable($error, $this->executionBoundary($context)),
+            ...($context->model === null ? [] : ['requested_model' => $context->model]),
             ...$diagnostics,
+            ...($context->processingAttemptId === null ? [] : ['processing_attempt_id' => $context->processingAttemptId]),
         ];
 
-        return new FailureData($context, $category, $code, $this->sanitizer->sanitize($diagnostics));
+        $safeDiagnostics = $this->sanitizer->sanitize($diagnostics);
+
+        return new FailureData(
+            $this->effectiveProviderContext($context, $safeDiagnostics),
+            $category,
+            $code,
+            $safeDiagnostics,
+        );
     }
 
     /** @return array{FailureCategory, string, array<string, mixed>} */
@@ -94,5 +103,36 @@ final readonly class FailureNormalizer
         return $context->operation === 'process_unit'
             ? 'document_unit_processor'
             : $this->safeKnownCode($context->operation, 'application_operation');
+    }
+
+    /** @param array<string, int|string> $diagnostics */
+    private function effectiveProviderContext(FailureContext $context, array $diagnostics): FailureContext
+    {
+        $provider = is_string($diagnostics['provider'] ?? null) ? $diagnostics['provider'] : $context->provider;
+        $model = is_string($diagnostics['requested_model'] ?? null) ? $diagnostics['requested_model'] : $context->model;
+        if ($provider === $context->provider && $model === $context->model) {
+            return $context;
+        }
+
+        return new FailureContext(
+            organizationId: $context->organizationId,
+            projectId: $context->projectId,
+            sessionId: $context->sessionId,
+            stage: $context->stage,
+            operation: $context->operation,
+            attempt: $context->attempt,
+            correlationId: $context->correlationId,
+            eventId: $context->eventId,
+            expectedSessionStateVersion: $context->expectedSessionStateVersion,
+            expectedSessionStatus: $context->expectedSessionStatus,
+            documentId: $context->documentId,
+            pageId: $context->pageId,
+            unitId: $context->unitId,
+            checkpointId: $context->checkpointId,
+            usageAttemptId: $context->usageAttemptId,
+            provider: $provider,
+            model: $model,
+            processingAttemptId: $context->processingAttemptId,
+        );
     }
 }

@@ -7,6 +7,7 @@ namespace Tests\Unit\EstimateGeneration\Observability;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorderObserver;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage;
@@ -32,6 +33,16 @@ final class FailureProductionIntegrationContractTest extends TestCase
                 self::assertFalse($byType[$dependency]->isDefaultValueAvailable(), $class.' '.$dependency);
             }
         }
+    }
+
+    #[Test]
+    public function production_container_binds_a_non_null_failure_recorder_observer(): void
+    {
+        $provider = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/EstimateGenerationServiceProvider.php');
+
+        self::assertIsString($provider);
+        self::assertStringContainsString(FailureRecorderObserver::class, $provider);
+        self::assertStringContainsString('SafeLogFailureRecorderObserver::class', $provider);
     }
 
     #[Test]

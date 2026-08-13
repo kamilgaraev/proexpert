@@ -14,6 +14,12 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
 
     private const SYSTEMIC_FAILURE_CODES = [
         'document_unit_processing_failed',
+        'document_unit_pre_wire_failed',
+        'vision_operation_settings_failed',
+        'vision_request_preparation_failed',
+        'vision_physical_claim_failed',
+        'vision_physical_attempt_persistence_failed',
+        'vision_provider_response_invalid',
         'unexpected_internal_failure',
         'document_representation_contract_invalid',
         'document_representation_source_mismatch',

@@ -21,6 +21,12 @@ final readonly class ExplicitDocumentRetryEligibility
         'document_unit_processing_failed',
         'vision_provider_request_rejected',
         'vision_http_failed',
+        'document_unit_pre_wire_failed',
+        'vision_operation_settings_failed',
+        'vision_request_preparation_failed',
+        'vision_physical_claim_failed',
+        'vision_physical_attempt_persistence_failed',
+        'vision_provider_response_invalid',
     ];
 
     private const BREAKER_FAILURE_CODES = [

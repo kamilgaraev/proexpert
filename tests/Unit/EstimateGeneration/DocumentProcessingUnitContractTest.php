@@ -475,6 +475,69 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
+    public function persisted_retry_history_records_failure_against_the_new_processing_attempt(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $record = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, 1, 'source'));
+        $record->metadata = [
+            'failure_history' => [[
+                'failure_code' => 'vision_provider_request_rejected',
+                'processing_attempt_id' => '018f4a20-3f4c-7a11-8a22-123456789abc',
+            ]],
+            'processing_attempt_id' => '7d1385db-106e-47ab-993b-322fb5d124af',
+        ];
+        $failures = new class implements FailureStore
+        {
+            public ?FailureData $recorded = null;
+
+            public function record(FailureData $failure, DateTimeImmutable $seenAt): void
+            {
+                $this->recorded = $failure;
+            }
+
+            public function resolve(FailureContext $context, string $fingerprint, string $resolutionCode, DateTimeImmutable $resolvedAt): bool
+            {
+                return false;
+            }
+
+            public function resolveActive(FailureContext $context, string $resolutionCode, DateTimeImmutable $resolvedAt): int
+            {
+                return 0;
+            }
+        };
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                throw new TypedFailureException(
+                    FailureCategory::Terminal,
+                    'vision_operation_settings_failed',
+                    ['execution_boundary' => 'vision_operation_settings'],
+                    new \RuntimeException('Bearer private prompt'),
+                );
+            }
+        };
+        $usecase = new ProcessDocumentUnit(
+            $store,
+            $processor,
+            new class implements DocumentUnitAggregateReconciler
+            {
+                public function reconcile(int $documentId, string $sourceVersion): void {}
+            },
+            new FailureRecorder($failures),
+        );
+
+        self::assertSame(DocumentProcessingUnitClaimStatus::Terminal, $usecase->handle($record->id, 'source')->status);
+        self::assertSame(
+            '7d1385db-106e-47ab-993b-322fb5d124af',
+            $failures->recorded?->safeContext['processing_attempt_id'] ?? null,
+        );
+        self::assertSame('vision_operation_settings', $failures->recorded?->safeContext['execution_boundary'] ?? null);
+        self::assertSame('018f4a20-3f4c-7a11-8a22-123456789abc', $record->metadata['failure_history'][0]['processing_attempt_id']);
+        self::assertStringNotContainsString('private', json_encode($failures->recorded?->safeContext, JSON_THROW_ON_ERROR));
+    }
+
+    #[Test]
     public function repeated_terminal_vision_rejection_never_executes_all_twenty_two_units(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
@@ -514,6 +577,45 @@ final class DocumentProcessingUnitContractTest extends TestCase
         }
         self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($differentContract->id)?->status);
         self::assertSame(0, $store->find($differentContract->id)?->attemptCount);
+    }
+
+    #[Test]
+    public function repeated_physical_persistence_failure_stops_after_two_executions(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $units = [];
+        foreach (range(1, 22) as $index) {
+            $units[] = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, $index, 'source'));
+        }
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public int $calls = 0;
+
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                $this->calls++;
+
+                throw new TypedFailureException(
+                    FailureCategory::Terminal,
+                    'vision_physical_attempt_persistence_failed',
+                    ['diagnostic_fingerprint' => 'sha256:'.str_repeat('d', 64)],
+                );
+            }
+        };
+        $usecase = $this->processUnit($store, $processor, new class implements DocumentUnitAggregateReconciler
+        {
+            public function reconcile(int $documentId, string $sourceVersion): void {}
+        });
+
+        foreach ($units as $unit) {
+            $usecase->handle($unit->id, 'source');
+        }
+
+        self::assertSame(2, $processor->calls);
+        self::assertSame(20, count(array_filter(
+            array_map(static fn ($unit): ?string => $store->find($unit->id)?->failureCode, $units),
+            static fn (?string $code): bool => $code === 'breaker_stopped',
+        )));
     }
 
     #[Test]
@@ -1068,13 +1170,15 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function explicit_document_retry_preserves_rows_and_owns_idempotent_lineage(): void
     {
         $retry = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Application/Documents/RetryEstimateGenerationDocument.php');
+        $resetter = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Application/Documents/ResetDocumentProcessingUnitsForAttempt.php');
         $actions = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Http/Presentation/EstimateGenerationDocumentActionBuilder.php');
 
         self::assertIsString($retry);
+        self::assertIsString($resetter);
         self::assertIsString($actions);
         self::assertStringContainsString("'idempotency_hash' => \$keyHash", $retry);
         self::assertStringContainsString("'explicit_document_retry_history' => \$history", $retry);
-        self::assertStringContainsString("'failure_history' => \$failureHistory", $retry);
+        self::assertStringContainsString("'failure_history' => \$failureHistory", $resetter);
         self::assertStringContainsString("'retry_disposition' => 'explicit_system_failure_retry'", $actions);
         self::assertStringNotContainsString('$lockedDocument->pages()->delete()', $retry);
         self::assertStringNotContainsString('$lockedDocument->processingUnits()->delete()', $retry);

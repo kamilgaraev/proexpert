@@ -40,12 +40,12 @@ final class FailureRecorderTest extends TestCase
         };
         $observer = new class implements FailureRecorderObserver
         {
-            /** @var list<array{string, string}> */
+            /** @var list<FailureData> */
             public array $events = [];
 
-            public function recordingFailed(string $failureCode, string $fingerprint): void
+            public function recordingFailed(FailureData $failure): void
             {
-                $this->events[] = [$failureCode, $fingerprint];
+                $this->events[] = $failure;
             }
         };
         $recorder = new FailureRecorder($store, observer: $observer);
@@ -58,10 +58,48 @@ final class FailureRecorderTest extends TestCase
             self::assertSame($original, $actual);
         }
 
-        self::assertSame('unexpected_internal_failure', $observer->events[0][0]);
-        self::assertMatchesRegularExpression('/^sha256:[0-9a-f]{64}$/', $observer->events[0][1]);
+        self::assertSame('unexpected_internal_failure', $observer->events[0]->code);
+        self::assertSame(1000, $observer->events[0]->context->documentId);
+        self::assertMatchesRegularExpression('/^sha256:[0-9a-f]{64}$/', $observer->events[0]->fingerprint);
         self::assertStringNotContainsString('secret', json_encode($observer->events, JSON_THROW_ON_ERROR));
         self::assertStringNotContainsString('private', json_encode($observer->events, JSON_THROW_ON_ERROR));
+    }
+
+    #[Test]
+    public function observer_failure_never_masks_the_original_throwable(): void
+    {
+        $store = new class implements FailureStore
+        {
+            public function record(FailureData $failure, DateTimeImmutable $seenAt): void
+            {
+                throw new RuntimeException('private database path');
+            }
+
+            public function resolve(FailureContext $context, string $fingerprint, string $resolutionCode, DateTimeImmutable $resolvedAt): bool
+            {
+                return false;
+            }
+
+            public function resolveActive(FailureContext $context, string $resolutionCode, DateTimeImmutable $resolvedAt): int
+            {
+                return 0;
+            }
+        };
+        $observer = new class implements FailureRecorderObserver
+        {
+            public function recordingFailed(FailureData $failure): void
+            {
+                throw new RuntimeException('logging transport secret');
+            }
+        };
+        $original = new RuntimeException('private prompt');
+
+        try {
+            (new FailureRecorder($store, observer: $observer))->captureAndRethrow($original, $this->context());
+            self::fail('Original throwable was not rethrown.');
+        } catch (Throwable $actual) {
+            self::assertSame($original, $actual);
+        }
     }
 
     #[Test]

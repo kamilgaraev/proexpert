@@ -10,7 +10,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadRepre
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProvenance;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ImageDocumentAdapter;
@@ -554,8 +553,9 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         try {
             $processor->process($context);
             self::fail('Geometry failure must be wrapped.');
-        } catch (DocumentUnitProcessingException $exception) {
-            self::assertSame('document_unit_processing_failed', $exception->safeCode);
+        } catch (TypedFailureException $exception) {
+            self::assertSame('document_unit_pre_wire_failed', $exception->safeCode);
+            self::assertSame('document_unit_representation', $exception->safeContext['execution_boundary']);
             self::assertSame($original, $exception->getPrevious());
         }
     }

@@ -27,6 +27,7 @@ final readonly class FailureContext
         public ?string $usageAttemptId = null,
         public ?string $provider = null,
         public ?string $model = null,
+        public ?string $processingAttemptId = null,
     ) {
         foreach ([$organizationId, $projectId, $sessionId, $attempt] as $value) {
             if ($value < 1) {
@@ -47,8 +48,11 @@ final readonly class FailureContext
         if ($provider !== null && (preg_match('/\A[a-z][a-z0-9_]{0,39}\z/', $provider) !== 1 || self::looksSensitive($provider))) {
             throw new InvalidArgumentException('Invalid failure provider.');
         }
-        if ($model !== null && (preg_match('/\A[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}\z/', $model) !== 1 || self::looksSensitive($model))) {
+        if ($model !== null && (! self::isSafeModel($model) || self::looksSensitiveModel($model))) {
             throw new InvalidArgumentException('Invalid failure model.');
+        }
+        if ($processingAttemptId !== null && ! self::isUuid($processingAttemptId)) {
+            throw new InvalidArgumentException('Invalid failure processing attempt identifier.');
         }
         if (($pageId !== null || $unitId !== null) && $documentId === null) {
             throw new InvalidArgumentException('Failure page and unit scopes require a document.');
@@ -69,5 +73,15 @@ final readonly class FailureContext
     private static function looksSensitive(string $value): bool
     {
         return preg_match('/(?:token|secret|password|bearer|api[_-]?key|[\\\\\/]|\.\.|eyJ|sk-|gh[pousr]_)/i', $value) === 1;
+    }
+
+    private static function isSafeModel(string $value): bool
+    {
+        return preg_match('/\A[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,79})?\z/', $value) === 1;
+    }
+
+    private static function looksSensitiveModel(string $value): bool
+    {
+        return preg_match('/(?:token|secret|password|bearer|api[_-]?key|\.\.|eyJ|sk-|gh[pousr]_)/i', $value) === 1;
     }
 }
