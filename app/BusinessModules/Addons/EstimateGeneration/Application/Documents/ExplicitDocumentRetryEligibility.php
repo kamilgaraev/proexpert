@@ -63,6 +63,9 @@ final readonly class ExplicitDocumentRetryEligibility
             $hasCurrentUnits = true;
             $status = $unit->status instanceof BackedEnum ? $unit->status->value : (string) $unit->status;
             $metadata = is_array($unit->metadata) ? $unit->metadata : [];
+            if ($status === DocumentProcessingUnitStatus::Completed->value && (int) $unit->output_count > 0) {
+                continue;
+            }
             if (in_array($status, [
                 DocumentProcessingUnitStatus::Pending->value,
                 DocumentProcessingUnitStatus::Running->value,
@@ -78,9 +81,7 @@ final readonly class ExplicitDocumentRetryEligibility
                 || in_array((string) $unit->failure_code, self::REPAIRABLE_FAILURE_CODES, true);
         }
 
-        return $hasCurrentUnits
-            && $hasRepairableFailure
-            && (int) $document->processed_page_count === 0;
+        return $hasCurrentUnits && $hasRepairableFailure;
     }
 
     /** @param array<string, mixed> $currentRetry @param array<string, mixed> $meta */

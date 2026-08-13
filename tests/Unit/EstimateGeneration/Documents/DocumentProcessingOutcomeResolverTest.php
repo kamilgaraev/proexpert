@@ -25,6 +25,8 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
             'included' => 2,
             'ready' => 2,
             'needs_user_action' => 0,
+            'terminal_system_failed' => 0,
+            'breaker_stopped' => 0,
             'system_failed' => 0,
             'processing' => 0,
             'excluded' => 0,
@@ -68,6 +70,36 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
     }
 
     #[Test]
+    public function production_shaped_partial_failure_separates_executed_failures_from_breaker_stops(): void
+    {
+        $pages = [];
+        $units = [];
+        foreach (range(1, 22) as $index) {
+            $ready = $index <= 2;
+            $breaker = $index >= 6;
+            $pages[] = $this->page($index, $ready ? 'ready' : 'failed');
+            $units[] = $this->unit(
+                $index,
+                $ready ? 'completed' : 'failed',
+                $ready ? 1 : 0,
+                $ready ? null : 'terminal',
+                $breaker ? 'document_systemic_failure' : ($ready ? null : 'invalid_analysis_schema'),
+            );
+        }
+
+        $outcome = (new DocumentProcessingOutcomeResolver)->resolve($pages, $units);
+        $contract = $outcome->toArray();
+
+        self::assertSame(2, $outcome->processedPages);
+        self::assertSame(3, $outcome->counts['terminal_system_failed']);
+        self::assertSame(17, $outcome->counts['breaker_stopped']);
+        self::assertSame(20, $outcome->counts['system_failed']);
+        self::assertSame(100, $contract['execution_progress_percent']);
+        self::assertSame('blocked', $contract['readiness']);
+        self::assertFalse($contract['is_ready']);
+    }
+
+    #[Test]
     public function user_action_and_processing_are_distinct_from_system_failure(): void
     {
         $review = (new DocumentProcessingOutcomeResolver)->resolve(
@@ -86,6 +118,21 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
         self::assertSame('processing', $processing->documentStatus);
         self::assertSame('processing', $processing->type);
         self::assertSame(1, $processing->counts['processing']);
+    }
+
+    #[Test]
+    public function completed_primary_with_bounded_targeted_limitation_is_review_not_ready(): void
+    {
+        $outcome = (new DocumentProcessingOutcomeResolver)->resolve(
+            [$this->page(1, 'needs_review')],
+            [$this->unit(1, 'completed', 1)],
+        );
+
+        self::assertSame('user_action_required', $outcome->type);
+        self::assertSame('needs_review', $outcome->documentStatus);
+        self::assertSame(1, $outcome->counts['needs_user_action']);
+        self::assertSame(0, $outcome->counts['ready']);
+        self::assertSame('review_required', $outcome->toArray()['readiness']);
     }
 
     #[Test]
@@ -109,12 +156,13 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
     }
 
     /** @return array{id: int, status: string, output_count: int, metadata: array<string, string>} */
-    private function unit(int $id, string $status, int $outputCount, ?string $category = null): array
+    private function unit(int $id, string $status, int $outputCount, ?string $category = null, ?string $failureCode = null): array
     {
         return [
             'id' => $id,
             'status' => $status,
             'output_count' => $outputCount,
+            'failure_code' => $failureCode,
             'metadata' => $category === null ? [] : ['failure_category' => $category],
         ];
     }

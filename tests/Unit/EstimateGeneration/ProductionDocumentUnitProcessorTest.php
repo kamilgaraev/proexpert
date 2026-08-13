@@ -42,6 +42,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\RasterPreprocessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionResponseTruncatedException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
 use App\Models\Organization;
@@ -552,7 +553,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function production_conflict_recheck_sends_the_primary_and_real_peer_sheet_evidence(): void
+    public function targeted_truncation_preserves_primary_analysis_as_bounded_review_limitation(): void
     {
         $source = $this->png(12, 8);
         $peerImage = $this->png(5, 7);
@@ -585,7 +586,11 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             {
                 $this->inputs[] = $input;
 
-                return count($this->inputs) === 1 ? $this->primary : $this->targeted;
+                if (count($this->inputs) === 1) {
+                    return $this->primary;
+                }
+
+                throw new VisionResponseTruncatedException('length');
             }
         };
         $peer = new TargetedSheetEvidence(
@@ -633,8 +638,12 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
 
         self::assertCount(2, $vision->inputs);
         self::assertSame(['document:6/sheet:17', 'document:6/sheet:18'], $vision->inputs[1]->recheckScope?->sourceSet);
+        self::assertSame('plan', $vision->inputs[1]->primaryAnalysis?->projectSheetAnalysis?->sheetRole);
         self::assertSame($peerImage, $vision->inputs[1]->supplementalEvidence[0]->imageContent);
-        self::assertSame('succeeded', $output->normalizedPayload['sheet_analysis_routing']['outcome']);
+        self::assertSame('needs_review', $output->normalizedPayload['sheet_analysis_routing']['outcome']);
+        self::assertTrue($output->normalizedPayload['sheet_analysis_routing']['needs_review']);
+        self::assertSame('vision_response_truncated', $output->normalizedPayload['sheet_analysis_routing']['limitation_code']);
+        self::assertSame('plan', $output->normalizedPayload['vision_analysis']['project_sheet_analysis']['role']);
     }
 
     private function cadFailureProcessor(\Throwable $error): ProductionDocumentUnitProcessor

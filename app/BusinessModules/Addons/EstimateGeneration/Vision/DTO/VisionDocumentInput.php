@@ -36,6 +36,7 @@ final readonly class VisionDocumentInput
         public ?string $auxiliaryText = null,
         /** @var array<string, mixed> */
         public array $auxiliaryMetadata = [],
+        public ?VisionAnalysisData $primaryAnalysis = null,
     ) {
         $dimensions = @getimagesizefromstring($imageContent);
         $detectedMime = is_array($dimensions) ? ($dimensions['mime'] ?? null) : null;
@@ -54,6 +55,7 @@ final readonly class VisionDocumentInput
             || ! in_array($imageDetail, ['low', 'high', 'auto'], true)
             || ! in_array($sheetRole, ['plan', 'section', 'facade', 'explication', 'specification', 'unknown'], true)
             || ($recheckScope !== null && $recheckScope->role !== $sheetRole)
+            || ($primaryAnalysis !== null && $recheckScope === null)
             || count($nativeReferences) > 20_000
             || count($nativeReferences) !== count(array_unique($nativeReferences))
             || count($supplementalEvidence) > 1

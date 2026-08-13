@@ -10,9 +10,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProce
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCostCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EloquentEffectiveSettingsOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -25,11 +29,157 @@ use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use RuntimeException;
+use Symfony\Component\Process\Process;
 use Throwable;
 
 #[Group('postgres-contract')]
 final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
 {
+    #[Test]
+    public function vision_model_override_is_pinned_once_and_new_operations_follow_current_precedence(): void
+    {
+        $this->requireEnvironment(false);
+        $fixture = $this->fixture();
+
+        $adminId = DB::table('system_admins')->insertGetId([
+            'name' => 'Contract', 'email' => Str::uuid().'@example.test', 'password' => 'not-used',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $globalSnapshot = $this->settingsSnapshot('gemini/gemini-3.5-flash');
+        $globalHash = SettingsSnapshotHash::calculate($globalSnapshot);
+        $globalId = DB::table('estimate_generation_setting_snapshots')->insertGetId([
+            'scope' => 'global', 'organization_id' => null, 'version' => 1,
+            'snapshot' => json_encode($globalSnapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+            'snapshot_hash' => $globalHash, 'daily_budget' => '100.00', 'monthly_budget' => '1000.00',
+            'currency' => 'RUB', 'created_by_system_admin_id' => $adminId, 'created_at' => now(),
+        ]);
+        DB::table('estimate_generation_setting_snapshot_hashes')->insert([
+            'setting_snapshot_id' => $globalId, 'algorithm' => 'jcs-sha256-v1',
+            'snapshot_hash' => $globalHash, 'created_at' => now(),
+        ]);
+        $store = new EloquentEffectiveSettingsOperationStore(DB::connection());
+        $pinnedCorrelation = (string) Str::uuid();
+
+        self::assertSame('openai/gpt-5.6-luna', $store->pinVision(
+            $pinnedCorrelation, $fixture['organization_id'], $fixture['session_id'],
+            'openai/gpt-5.6-luna', 'openai/gpt-5.6-luna',
+        )->visionModel);
+        self::assertSame('openai/gpt-5.6-luna', $store->pinVision(
+            $pinnedCorrelation, $fixture['organization_id'], $fixture['session_id'],
+            'gemini/gemini-3.1-flash', 'gemini/gemini-3.1-flash',
+        )->visionModel);
+        self::assertSame('gemini/gemini-3.5-flash', $store->pinVision(
+            (string) Str::uuid(), $fixture['organization_id'], $fixture['session_id'],
+            null, 'openai/gpt-5.6-luna',
+        )->visionModel);
+        self::assertSame('openai/gpt-5.6-luna', $store->pinVision(
+            (string) Str::uuid(), $fixture['organization_id'], $fixture['session_id'],
+            'openai/gpt-5.6-luna', 'openai/gpt-5.6-luna',
+        )->visionModel);
+        self::assertSame(3, DB::table('estimate_generation_ai_operations')
+            ->where('session_id', $fixture['session_id'])->count());
+
+        $raceCorrelation = (string) Str::uuid();
+        $processes = [];
+        foreach (['openai/gpt-5.6-luna', 'gemini/gemini-3.1-flash'] as $override) {
+            $process = new Process(
+                [PHP_BINARY, 'tests/Runtime/pin-vision-model-contract-child.php'],
+                dirname(__DIR__, 3),
+                ['ESTIMATE_VISION_PIN_CONTRACT' => json_encode([
+                    'correlation_id' => $raceCorrelation,
+                    'organization_id' => $fixture['organization_id'],
+                    'session_id' => $fixture['session_id'],
+                    'override' => $override,
+                ], JSON_THROW_ON_ERROR)],
+            );
+            $process->start();
+            $processes[] = $process;
+        }
+        $models = [];
+        foreach ($processes as $process) {
+            $process->wait();
+            self::assertTrue($process->isSuccessful(), $process->getErrorOutput());
+            $models[] = trim($process->getOutput());
+        }
+        self::assertCount(1, array_unique($models));
+        self::assertSame(1, DB::table('estimate_generation_ai_operations')
+            ->where('correlation_id', $raceCorrelation)->count());
+    }
+
+    #[Test]
+    public function production_shaped_physical_vision_attempts_are_complete_and_idempotent(): void
+    {
+        $this->requireEnvironment(false);
+        $fixture = $this->fixture();
+        $usage = [
+            [3127, 2459, 'succeeded', []],
+            [2662, 923, 'succeeded', []],
+            [6106, 1030, 'succeeded', []],
+            [6170, 2032, 'malformed_response', $this->targetedContext('specification', 17)],
+            [12477, 2670, 'succeeded', []],
+            [12542, 2032, 'malformed_response', $this->targetedContext('specification', 18)],
+            [10462, 4081, 'malformed_response', []],
+        ];
+        $attemptIds = [];
+        $store = new EloquentAiUsageStore(new AiCostCalculator, DB::connection());
+        try {
+            foreach ($usage as $index => [$input, $output, $status, $requestContext]) {
+                $attemptIds[] = $attemptId = (string) Str::uuid();
+                $data = new AiUsageData(
+                    context: new AiOperationContext(
+                        (string) Str::uuid(),
+                        $attemptId,
+                        $fixture['organization_id'],
+                        $fixture['project_id'],
+                        $fixture['session_id'],
+                        'understand_documents',
+                        'vision',
+                        $index + 1,
+                        $fixture['document_id'],
+                        $fixture['page_id'],
+                        $fixture['unit_id'],
+                    ),
+                    provider: 'timeweb',
+                    requestedModel: 'gemini/gemini-3.5-flash',
+                    reportedModel: 'gemini/gemini-3.5-flash',
+                    status: $status,
+                    durationMs: 1,
+                    usageStatus: 'measured',
+                    inputTokens: $input,
+                    outputTokens: $output,
+                    imageCount: 1,
+                    imageDetail: 'high',
+                    priceSnapshot: AiPriceSnapshot::fromArray([
+                        'input_per_million' => '202.5',
+                        'cached_input_per_million' => '202.5',
+                        'output_per_million' => '1215',
+                        'image_unit' => '0',
+                        'currency' => 'RUB',
+                        'source' => 'contract',
+                        'version' => 'timeweb-2026-07-14',
+                        'effective_at' => '2026-07-14T00:00:00+00:00',
+                    ]),
+                    requestContext: $requestContext,
+                );
+                $store->record($data);
+                $store->record($data);
+            }
+
+            $rows = DB::table('estimate_generation_ai_usage')->whereIn('attempt_id', $attemptIds);
+            self::assertSame(7, $rows->count());
+            self::assertSame(53_546, (int) $rows->sum('input_tokens'));
+            self::assertSame(15_227, (int) $rows->sum('output_tokens'));
+            self::assertSame('29.343870', number_format((float) $rows->sum('cost_amount'), 6, '.', ''));
+            self::assertSame(5, DB::table('estimate_generation_ai_usage')
+                ->whereIn('attempt_id', $attemptIds)
+                ->whereRaw("jsonb_typeof(request_context) = 'object'")
+                ->whereRaw("request_context = '{}'::jsonb")
+                ->count());
+        } finally {
+            $this->cleanup($fixture);
+        }
+    }
+
     public function createApplication()
     {
         $app = require dirname(__DIR__, 3).'/bootstrap/app.php';
@@ -261,9 +411,16 @@ final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
             $otherPage = EstimateGenerationDocumentPage::query()->create(['document_id' => $otherDocument->id, 'organization_id' => $organization->id,
                 'project_id' => $project->id, 'session_id' => $session->id, 'page_number' => 1]);
             $fixture['other_page_id'] = (int) $otherPage->id;
+            $sourceVersion = 'sha256:'.hash('sha256', 'usage-ledger-contract');
+            $artifactHash = hash('sha256', 'usage-ledger-artifact');
             $unit = EstimateGenerationProcessingUnit::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
                 'session_id' => $session->id, 'document_id' => $document->id, 'unit_type' => 'pdf_page', 'unit_index' => 1,
-                'source_version' => 'contract-v1', 'status' => 'pending', 'locator' => [], 'metadata' => []]);
+                'source_version' => $sourceVersion, 'status' => 'pending', 'locator' => [
+                    'source_kind' => 'pdf', 'source_version' => $sourceVersion, 'coordinate_space' => 'pdf_page_pixels',
+                    'artifact_path' => 'org-'.$organization->id.'/estimate-generation/tests/usage-ledger.png',
+                    'artifact_source_version' => 'sha256:'.$artifactHash, 'artifact_version_id' => 'usage-ledger-contract-page-1',
+                    'artifact_bytes' => 1, 'artifact_sha256' => 'sha256:'.$artifactHash, 'content_type' => 'image/png',
+                ], 'metadata' => (object) []]);
             $fixture['unit_id'] = (int) $unit->id;
 
             return $fixture;
@@ -308,5 +465,33 @@ final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
         if (($fixture['user_id'] ?? null) !== null) {
             DB::table('users')->where('id', $fixture['user_id'])->delete();
         }
+    }
+
+    /** @return array<string, mixed> */
+    private function targetedContext(string $role, int $sheetId): array
+    {
+        return [
+            'contract_version' => 'targeted-sheet-recheck:v1',
+            'role' => $role,
+            'reason' => 'sheet_role_insufficient_evidence',
+            'source_set' => ['document:'.$sheetId.'/sheet:'.$sheetId],
+            'entity_key' => 'specification-'.$sheetId,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function settingsSnapshot(string $visionModel): array
+    {
+        return EstimateGenerationSettingsData::fromArray([
+            'scope' => 'global', 'organization_id' => null, 'expected_version' => 0,
+            'idempotency_key' => '01J2X5B8YWFK9YD8Q6V1VZ4H3K',
+            'models' => ['vision' => $visionModel, 'classification' => 'fixture/classification', 'normative_matching' => 'fixture/normative'],
+            'limits' => ['max_files' => 8, 'max_pages_per_file' => 80, 'max_total_pages' => 800],
+            'timeouts' => ['vision' => 81, 'classification' => 82, 'normative_matching' => 83],
+            'retries' => ['vision' => 0, 'classification' => 1, 'normative_matching' => 2],
+            'confidence' => ['classification' => '0.7100', 'geometry' => '0.7200', 'normative_matching' => '0.7300'],
+            'enabled_formats' => ['pdf', 'png'], 'manual_review' => ['low_confidence' => true],
+            'budgets' => ['daily' => '100.00', 'monthly' => '1000.00', 'currency' => 'RUB'],
+        ])->snapshot();
     }
 }

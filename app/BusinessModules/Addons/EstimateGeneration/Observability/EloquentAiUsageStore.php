@@ -52,10 +52,13 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
             'page_count' => $data->pageCount,
             'duration_ms' => $data->durationMs,
             'price_snapshot' => json_encode(
-                ($data->priceSnapshot ?? AiPriceSnapshot::fromArray([]))->toArray(),
+                (($snapshot = ($data->priceSnapshot ?? AiPriceSnapshot::fromArray([]))->toArray()) === [] ? (object) [] : $snapshot),
                 JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES,
             ),
-            'request_context' => json_encode($data->requestContext, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+            'request_context' => json_encode(
+                $data->requestContext === [] ? (object) [] : $data->requestContext,
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES,
+            ),
             'cost_amount' => $cost->amount,
             'currency' => $cost->currency,
             'pricing_status' => $cost->pricingStatus,

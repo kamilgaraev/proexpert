@@ -104,6 +104,8 @@ class EstimateGenerationDocumentResource extends JsonResource
             'included' => $included,
             'ready' => $ready,
             'needs_user_action' => max(0, (int) ($counts['needs_user_action'] ?? ($type === 'user_action_required' ? $included - $ready : 0))),
+            'terminal_system_failed' => max(0, (int) ($counts['terminal_system_failed'] ?? $counts['system_failed'] ?? (in_array($type, ['system_failure', 'temporary_failure'], true) ? $included - $ready : 0))),
+            'breaker_stopped' => max(0, (int) ($counts['breaker_stopped'] ?? 0)),
             'system_failed' => max(0, (int) ($counts['system_failed'] ?? (in_array($type, ['system_failure', 'temporary_failure'], true) ? $included - $ready : 0))),
             'processing' => max(0, (int) ($counts['processing'] ?? ($type === 'processing' ? $included - $ready : 0))),
             'excluded' => max(0, (int) ($counts['excluded'] ?? 0)),
@@ -120,6 +122,14 @@ class EstimateGenerationDocumentResource extends JsonResource
             'type' => $type,
             'counts' => $counts,
             'retry_allowed' => ($stored['retry_allowed'] ?? false) === true,
+            'execution_progress_percent' => max(0, min(100, (int) ($stored['execution_progress_percent'] ?? $document->progress_percent ?? 0))),
+            'readiness' => is_string($stored['readiness'] ?? null) ? $stored['readiness'] : match ($type) {
+                'ready' => 'ready',
+                'processing' => 'processing',
+                'user_action_required' => 'review_required',
+                default => 'blocked',
+            },
+            'is_ready' => ($stored['is_ready'] ?? null) === true || $type === 'ready',
             'message_key' => $messageKey,
             'message' => trans_message($messageKey),
         ];

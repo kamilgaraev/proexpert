@@ -23,6 +23,8 @@ final readonly class DocumentProcessingOutcomeResolver
             'included' => 0,
             'ready' => 0,
             'needs_user_action' => 0,
+            'terminal_system_failed' => 0,
+            'breaker_stopped' => 0,
             'system_failed' => 0,
             'processing' => 0,
             'excluded' => 0,
@@ -51,6 +53,11 @@ final readonly class DocumentProcessingOutcomeResolver
                 $counts['ready']++;
             } else {
                 $counts['system_failed']++;
+                if (($unit['failure_code'] ?? null) === 'document_systemic_failure') {
+                    $counts['breaker_stopped']++;
+                } else {
+                    $counts['terminal_system_failed']++;
+                }
                 if ($category === 'recoverable') {
                     $hasRecoverableSystemFailure = true;
                 } else {

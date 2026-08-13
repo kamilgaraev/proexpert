@@ -360,23 +360,7 @@ final readonly class SessionBuildingModelBridge
     /** @param array<string, mixed> $payload */
     private function vision(array $payload): VisionAnalysisData
     {
-        $usage = is_array($payload['usage'] ?? null) ? $payload['usage'] : [];
-        $core = array_intersect_key($payload, array_flip([
-            'schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings',
-            'visual_attributes',
-        ]));
-
-        return VisionAnalysisData::fromProviderArray(
-            $core,
-            (string) ($payload['provider'] ?? ''),
-            (string) ($payload['requested_model'] ?? ''),
-            (string) ($payload['reported_model'] ?? ''),
-            (string) ($payload['model_version'] ?? ''),
-            (string) ($usage['status'] ?? ''),
-            is_int($usage['input_tokens'] ?? null) ? $usage['input_tokens'] : null,
-            is_int($usage['output_tokens'] ?? null) ? $usage['output_tokens'] : null,
-            500,
-        );
+        return VisionAnalysisData::fromStoredArray($payload);
     }
 
     /** @param array<string, mixed> $payload @return array<string, mixed> */

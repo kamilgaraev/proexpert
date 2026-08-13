@@ -233,12 +233,14 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 || $this->pageHasLineage($page)) {
                 return false;
             }
+            $routing = $output->normalizedPayload['sheet_analysis_routing'] ?? null;
+            $needsReview = is_array($routing) && ($routing['needs_review'] ?? false) === true;
             $page->forceFill(['output_version' => $output->version, 'width' => $output->width, 'height' => $output->height,
                 'rotation' => $output->rotation, 'text' => $output->text,
                 'text_hash' => $output->text !== '' ? hash('sha256', $output->text) : null,
                 'confidence' => $output->confidence, 'normalized_payload' => $output->persistedNormalizedPayload(),
-                'quality_flags' => [],
-                'status' => 'ready',
+                'quality_flags' => $needsReview ? ['targeted_analysis_limited'] : [],
+                'status' => $needsReview ? 'needs_review' : 'ready',
                 'excluded_at' => null,
                 'excluded_reason' => null])->save();
 

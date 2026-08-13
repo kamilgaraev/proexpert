@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions;
 
 use RuntimeException;
 
-final class VisionContractException extends RuntimeException
+class VisionContractException extends RuntimeException
 {
     public function __construct(public readonly string $reason = 'invalid_vision_contract')
     {

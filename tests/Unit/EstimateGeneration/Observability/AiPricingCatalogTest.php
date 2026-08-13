@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Observability;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCostCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPricingCatalog;
 use DateTimeImmutable;
 use DomainException;
@@ -48,5 +50,35 @@ final class AiPricingCatalogTest extends TestCase
         self::assertStringContainsString("'ESTIMATE_GENERATION_RERANK_NANO_PRICE_CURRENCY', 'RUB'", $configuration);
         self::assertStringContainsString("'ESTIMATE_GENERATION_RERANK_NANO_PRICE_VERSION', 'timeweb-ai-gateway-2026-07-20'", $configuration);
         self::assertStringContainsString("'ESTIMATE_GENERATION_RERANK_NANO_PRICE_EFFECTIVE_AT', '2026-07-20T00:00:00+00:00'", $configuration);
+    }
+
+    #[Test]
+    public function luna_reasoning_is_billed_once_inside_completion_at_exact_decimal_rates(): void
+    {
+        $snapshot = AiPriceSnapshot::fromArray([
+            'input_per_million' => '135',
+            'cached_input_per_million' => '135',
+            'output_per_million' => '810',
+            'reasoning_per_million' => '810',
+            'reasoning_mode' => 'included_in_output',
+            'image_unit' => '0',
+            'currency' => 'RUB',
+            'source' => 'contract',
+            'version' => 'timeweb-2026-08-13',
+            'effective_at' => '2026-08-13T00:00:00+00:00',
+        ]);
+
+        $cost = (new AiCostCalculator)->calculate(
+            10_462,
+            0,
+            4_081,
+            3_928,
+            1,
+            0,
+            $snapshot->toArray(),
+        );
+
+        self::assertSame('4.71798000', $cost->amount);
+        self::assertSame('RUB', $cost->currency);
     }
 }

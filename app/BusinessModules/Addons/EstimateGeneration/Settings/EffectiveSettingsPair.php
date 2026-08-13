@@ -9,5 +9,6 @@ final readonly class EffectiveSettingsPair
     public function __construct(
         public EffectiveEstimateGenerationSettings $global,
         public EffectiveEstimateGenerationSettings $effective,
+        public ?string $visionModel = null,
     ) {}
 }

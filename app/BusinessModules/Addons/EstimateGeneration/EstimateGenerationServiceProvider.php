@@ -218,7 +218,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\Shado
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\TargetedPackageRebuildReviewer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOperationStore;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\VisionModelPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader;
@@ -248,7 +250,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOperationStore::class,
             \App\BusinessModules\Addons\EstimateGeneration\Settings\EloquentEffectiveSettingsOperationStore::class,
         );
-        $this->app->singleton(EffectiveSettingsResolver::class);
+        $this->app->singleton(EffectiveSettingsResolver::class, static fn ($app): EffectiveSettingsResolver => new EffectiveSettingsResolver(
+            $app->make(EffectiveSettingsOperationStore::class),
+            is_string(config('estimate-generation.vision.model_override'))
+                ? config('estimate-generation.vision.model_override')
+                : null,
+            (string) config('estimate-generation.vision.model', VisionModelPolicy::LUNA),
+        ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class,
             \App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimitsGuard::class,

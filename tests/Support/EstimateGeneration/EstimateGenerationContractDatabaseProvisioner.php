@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '59826010e5160ba62b204bb826f54a4d48820cfd583423a080f0e306c497e3c7',
-        'training' => 'd8cb457a6b0d9ca50521cb043199d339c1ee1c5ac97ab7f1bbd37f76c0ce2f6c',
-        'pricing' => 'd8cb457a6b0d9ca50521cb043199d339c1ee1c5ac97ab7f1bbd37f76c0ce2f6c',
+        'geometry' => '0b91edf054220f275588aed03de0b6a4e9a95165bd728da1de4a6679239d0474',
+        'training' => '47a496e258535b303396eb80088940334f02743e14630652e16f599e012729a7',
+        'pricing' => '47a496e258535b303396eb80088940334f02743e14630652e16f599e012729a7',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '9b5c66effc7a515a112466ba509b01daf75b111510f9a4bfd756d2f8b086f5bb';
+    private const FRESH_INVENTORY_DIGEST = '6cdcf45b1e6bbf19c834fd9497499c877b666a28a7cea79ef2c0f816a2e7bd1f';
 
     private const SUBJECT = [
         'geometry' => [
@@ -168,6 +168,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000300_create_estimate_generation_sheet_analysis_operations.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000100_pin_effective_vision_model.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000200_expand_sheet_analysis_source_version.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_finalize_terminal_explicit_document_retries.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_03_000100_backfill_document_unit_provenance.php',

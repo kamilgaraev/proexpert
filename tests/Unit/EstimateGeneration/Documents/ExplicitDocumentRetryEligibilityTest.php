@@ -77,6 +77,28 @@ final class ExplicitDocumentRetryEligibilityTest extends TestCase
         self::assertFalse((new ExplicitDocumentRetryEligibility)->allowed($document));
     }
 
+    #[Test]
+    public function partial_success_allows_retry_without_treating_completed_units_as_failures(): void
+    {
+        $document = $this->document('failed', 'document_geometry_processing_failed');
+        $document->forceFill([
+            'page_count' => 22,
+            'processed_page_count' => 2,
+            'error_code' => 'document_processing_system_failed',
+        ]);
+        foreach ($document->processingUnits->take(2) as $unit) {
+            $unit->forceFill([
+                'status' => DocumentProcessingUnitStatus::Completed,
+                'output_count' => 1,
+                'failure_code' => null,
+                'failure_fingerprint' => null,
+                'metadata' => [],
+            ]);
+        }
+
+        self::assertTrue((new ExplicitDocumentRetryEligibility)->allowed($document));
+    }
+
     /** @return iterable<string, array{string}> */
     public static function unsafeFailureCodes(): iterable
     {

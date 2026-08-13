@@ -7,15 +7,36 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Settings;
 use DomainException;
 use Illuminate\Database\Connection;
 
-final readonly class EloquentEffectiveSettingsOperationStore implements EffectiveSettingsOperationStore
+final readonly class EloquentEffectiveSettingsOperationStore implements EffectiveSettingsOperationStore, VisionModelPinningStore
 {
     public function __construct(private Connection $database) {}
 
-    public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
-    {
+    public function pin(
+        string $correlationId,
+        int $organizationId,
+        int $sessionId,
+    ): EffectiveSettingsPair {
+        return $this->pinVision(
+            $correlationId,
+            $organizationId,
+            $sessionId,
+            null,
+            VisionModelPolicy::assertSupported(
+                trim((string) config('estimate-generation.vision.model', VisionModelPolicy::LUNA)),
+            ),
+        );
+    }
+
+    public function pinVision(
+        string $correlationId,
+        int $organizationId,
+        int $sessionId,
+        ?string $visionModelOverride,
+        string $visionModelFallback,
+    ): EffectiveSettingsPair {
         $pinned = $this->database->selectOne(
-            'SELECT * FROM eg_pin_ai_operation_settings(?, ?, ?)',
-            [$correlationId, $organizationId, $sessionId],
+            'SELECT * FROM eg_pin_ai_operation_settings(?, ?, ?, ?, ?)',
+            [$correlationId, $organizationId, $sessionId, $visionModelOverride, $visionModelFallback],
         );
         if (! is_object($pinned)) {
             throw new DomainException('estimate_generation_operation_settings_pin_failed');
@@ -24,6 +45,7 @@ final readonly class EloquentEffectiveSettingsOperationStore implements Effectiv
         return new EffectiveSettingsPair(
             $this->load((int) $pinned->global_snapshot_id, $organizationId),
             $this->load((int) $pinned->effective_snapshot_id, $organizationId),
+            VisionModelPolicy::assertSupported((string) $pinned->vision_model),
         );
     }
 
