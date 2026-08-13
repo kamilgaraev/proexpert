@@ -19,6 +19,11 @@ final readonly class SensitiveDiagnosticSanitizer
         'claim_status' => ['/\A(?:lost|expired|stale|busy)\z/', 7],
         'lineage_code' => ['/\A[a-z][a-z0-9_]*\z/', 80],
         'failure_fingerprint' => ['/\Asha256:[0-9a-f]{64}\z/', 71],
+        'diagnostic_fingerprint' => ['/\Asha256:[0-9a-f]{64}\z/', 71],
+        'exception_chain_fingerprint' => ['/\Asha256:[0-9a-f]{64}\z/', 71],
+        'exception_class' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
+        'root_exception_class' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
+        'execution_boundary' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
     ];
 
     /** @var array<string, array{int, int}> */

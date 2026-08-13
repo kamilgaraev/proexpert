@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '9b5945eda983bfb971dbe7e6ceed3fde05c0971d3be12b8d12eedc775b89fc31',
-        'training' => 'cc3cb4c635a0b15cd99587783d563676206f79dcec921e3175ea5da1e469400e',
-        'pricing' => 'cc3cb4c635a0b15cd99587783d563676206f79dcec921e3175ea5da1e469400e',
+        'geometry' => '59826010e5160ba62b204bb826f54a4d48820cfd583423a080f0e306c497e3c7',
+        'training' => 'd8cb457a6b0d9ca50521cb043199d339c1ee1c5ac97ab7f1bbd37f76c0ce2f6c',
+        'pricing' => 'd8cb457a6b0d9ca50521cb043199d339c1ee1c5ac97ab7f1bbd37f76c0ce2f6c',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '180e85d7a321445ec5f01a3923d0e8f7eba34d0b657d8a7758be8d77520aec2b';
+    private const FRESH_INVENTORY_DIGEST = '9b5c66effc7a515a112466ba509b01daf75b111510f9a4bfd756d2f8b086f5bb';
 
     private const SUBJECT = [
         'geometry' => [
@@ -168,6 +168,8 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000250_bind_project_model_evidence_to_exact_candidate.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000275_bind_project_model_evidence_to_canonical_locator.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000300_create_estimate_generation_sheet_analysis_operations.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000200_expand_sheet_analysis_source_version.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_finalize_terminal_explicit_document_retries.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_03_000100_backfill_document_unit_provenance.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_04_000100_fix_document_unit_provenance_regex_bound.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000100_add_request_context_to_estimate_generation_ai_usage.php',

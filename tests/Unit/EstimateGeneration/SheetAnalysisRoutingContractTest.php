@@ -70,7 +70,7 @@ final class SheetAnalysisRoutingContractTest extends TestCase
         self::assertStringContainsString("->where('lease_token', \$scope->claimToken)", $journal);
         self::assertStringContainsString("'final_routing' => \$routing", $journal);
         self::assertStringContainsString('assertOuterUnitLease', $journal);
-        self::assertStringContainsString("->lockForUpdate()->find(\$scope->unitId)", $journal);
+        self::assertStringContainsString('->lockForUpdate()->find($scope->unitId)', $journal);
         self::assertStringContainsString("->where('lease_expires_at', '>', \$now)", $journal);
         self::assertStringContainsString('eg_sheet_analysis_scope_kind_uq', $migration);
         self::assertStringContainsString('public $withinTransaction = false', $migration);
@@ -90,6 +90,19 @@ final class SheetAnalysisRoutingContractTest extends TestCase
         $processor = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/ProductionDocumentUnitProcessor.php');
         self::assertStringContainsString("\$targetedRouting['outcome'] = 'needs_review'", $processor);
         self::assertStringContainsString("'sheet_analysis_routing' => \$routingPayload", $processor);
+    }
+
+    #[Test]
+    public function applied_char_64_operation_scope_has_a_forward_source_version_repair(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $repair = $root.'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000200_expand_sheet_analysis_source_version.php';
+
+        self::assertFileExists($repair);
+        $migration = (string) file_get_contents($repair);
+        self::assertStringContainsString('estimate_generation_sheet_analysis_operations', $migration);
+        self::assertStringContainsString("char('source_version', 71)->change()", $migration);
+        self::assertStringContainsString('character_maximum_length', $migration);
     }
 
     #[Test]

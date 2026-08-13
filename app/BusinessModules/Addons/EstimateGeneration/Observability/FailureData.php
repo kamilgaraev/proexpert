@@ -30,20 +30,25 @@ final readonly class FailureData
 
     private function buildFingerprint(): string
     {
+        $diagnosticFingerprint = $this->safeContext['diagnostic_fingerprint'] ?? null;
         $fields = [
             (string) $this->context->organizationId,
             (string) $this->context->projectId,
             (string) $this->context->sessionId,
             (string) ($this->context->documentId ?? ''),
-            (string) ($this->context->pageId ?? ''),
-            (string) ($this->context->unitId ?? ''),
             $this->context->stage->value,
             $this->context->operation,
             (string) ($this->context->provider ?? ''),
             (string) ($this->context->model ?? ''),
             $this->category->value,
             $this->code,
+            is_string($diagnosticFingerprint) ? $diagnosticFingerprint : '',
         ];
+
+        if (! is_string($diagnosticFingerprint)) {
+            $fields[] = (string) ($this->context->pageId ?? '');
+            $fields[] = (string) ($this->context->unitId ?? '');
+        }
 
         return 'sha256:'.hash('sha256', implode("\0", $fields));
     }

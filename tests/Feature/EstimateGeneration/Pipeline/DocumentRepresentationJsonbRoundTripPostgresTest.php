@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentation;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
@@ -185,6 +186,7 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             'source_version' => $sourceVersion,
         ]);
         $units = [];
+        $attemptId = 'd173fcc2-5f5c-44b1-91f1-94034f1b0bb5';
         foreach (range(1, 5) as $index) {
             $unit = EstimateGenerationProcessingUnit::query()->create([
                 'organization_id' => $organization->id,
@@ -196,7 +198,7 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
                 'source_version' => $sourceVersion,
                 'status' => 'pending',
                 'locator' => $this->locator($organization->id, $sourceVersion, $index),
-                'metadata' => (object) [],
+                'metadata' => ['processing_attempt_id' => $attemptId],
             ]);
             EstimateGenerationDocumentPage::query()->create([
                 'organization_id' => $organization->id,
@@ -231,6 +233,8 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
         foreach (array_slice($units, 0, 3) as $unit) {
             $claims[] = $store->claim($unit->id, $sourceVersion, $now, $now->modify('+60 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
         }
+        $fourthClaim = $store->claim($units[3]->id, $sourceVersion, $now, $now->modify('+60 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
+        self::assertSame(DocumentProcessingUnitClaimStatus::Busy, $fourthClaim->status);
         $fingerprint = hash('sha256', 'shared-systemic-root');
 
         $processes = [];
@@ -269,6 +273,9 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             $persisted->pluck('failure_code')->all(),
         );
         self::assertSame(['failed', 'failed', 'failed', 'failed', 'failed'], $persisted->pluck('status')->map->value->all());
+        self::assertSame([1, 1, 1, 0, 0], $persisted->map(
+            static fn ($unit): int => (int) ($unit->metadata['actual_execution_count'] ?? -1),
+        )->all());
         self::assertSame(['failed', 'failed', 'failed', 'failed', 'failed'], EstimateGenerationDocumentPage::query()
             ->where('document_id', $document->id)
             ->orderBy('page_number')
@@ -306,6 +313,16 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             'status' => 'processing',
             'processing_stage' => 'preflight',
             'progress_percent' => 30,
+            'meta' => [
+                'processing_attempt_id' => 'd173fcc2-5f5c-44b1-91f1-94034f1b0bb5',
+                'explicit_document_retry' => [
+                    'idempotency_hash' => hash('sha256', 'terminal-replay-key'),
+                    'attempt_id' => 'd173fcc2-5f5c-44b1-91f1-94034f1b0bb5',
+                    'source_version' => $sourceVersion,
+                    'status' => 'processing',
+                    'requested_at' => now()->toISOString(),
+                ],
+            ],
         ]);
         foreach (range(1, 3) as $index) {
             $unit = EstimateGenerationProcessingUnit::query()->create([
@@ -325,6 +342,8 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
                 'locator' => $this->locator($organization->id, $sourceVersion, $index),
                 'metadata' => [
                     'failure_category' => 'terminal',
+                    'processing_attempt_id' => 'd173fcc2-5f5c-44b1-91f1-94034f1b0bb5',
+                    'actual_execution_count' => $index === 1 ? 1 : 0,
                     'resource_usage' => [
                         'duration_ms' => 50 * $index,
                         'peak_memory_bytes' => 1024 * $index,
@@ -361,6 +380,11 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
         self::assertSame('estimate_generation.document_processing_system_failed', $persisted->error_message_key);
         self::assertSame(3, $persisted->facts_summary['processing_outcome']['counts']['system_failed']);
         self::assertSame(0, $persisted->facts_summary['processing_outcome']['counts']['processing']);
+        self::assertSame('failed', $persisted->meta['explicit_document_retry']['status']);
+        self::assertNotNull($persisted->meta['explicit_document_retry']['completed_at']);
+        self::assertSame('system_failure', $persisted->meta['explicit_document_retry']['terminal_reason']);
+        self::assertSame(1, $persisted->meta['explicit_document_retry']['actual_execution_count']);
+        self::assertSame('sha256:'.hash('sha256', 'terminal-root'), $persisted->meta['explicit_document_retry']['diagnostic_fingerprint']);
         self::assertEqualsCanonicalizing([
             'measured_units' => 3,
             'duration_ms_total' => 300,

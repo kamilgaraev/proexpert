@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageExceptio
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
+use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -122,9 +123,43 @@ final class FailureNormalizerTest extends TestCase
         self::assertNotSame($first->fingerprint, $otherStage->fingerprint);
     }
 
+    #[Test]
+    public function diagnostic_identity_is_message_free_and_separates_root_exception_classes(): void
+    {
+        $normalizer = new FailureNormalizer;
+        $first = $normalizer->normalize(
+            new DocumentUnitProcessingException('document_unit_processing_failed', new RuntimeException('private path one')),
+            $this->context(),
+        );
+        $sameClass = $normalizer->normalize(
+            new DocumentUnitProcessingException('document_unit_processing_failed', new RuntimeException('different token and filename')),
+            $this->context(),
+        );
+        $differentClass = $normalizer->normalize(
+            new DocumentUnitProcessingException('document_unit_processing_failed', new LogicException('private path one')),
+            $this->context(),
+        );
+
+        self::assertSame('document_unit_processing_exception', $first->safeContext['exception_class']);
+        self::assertSame('runtime_exception', $first->safeContext['root_exception_class']);
+        self::assertSame('document_unit_processor', $first->safeContext['execution_boundary']);
+        self::assertMatchesRegularExpression('/\Asha256:[0-9a-f]{64}\z/', $first->safeContext['exception_chain_fingerprint']);
+        self::assertSame($first->safeContext['diagnostic_fingerprint'], $sameClass->safeContext['diagnostic_fingerprint']);
+        self::assertNotSame($first->safeContext['diagnostic_fingerprint'], $differentClass->safeContext['diagnostic_fingerprint']);
+        $sameRootOnAnotherUnit = $normalizer->normalize(
+            new DocumentUnitProcessingException('document_unit_processing_failed', new RuntimeException('third private message')),
+            $this->context(pageId: 2002, unitId: 3002),
+        );
+        self::assertSame($first->fingerprint, $sameRootOnAnotherUnit->fingerprint);
+        self::assertStringNotContainsString('private', json_encode($first->safeContext, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('filename', json_encode($sameClass->safeContext, JSON_THROW_ON_ERROR));
+    }
+
     private function context(
         int $organizationId = 1,
         ProcessingStage $stage = ProcessingStage::UnderstandDocuments,
+        ?int $pageId = null,
+        int $unitId = 1001,
     ): FailureContext {
         return new FailureContext(
             organizationId: $organizationId,
@@ -136,7 +171,8 @@ final class FailureNormalizerTest extends TestCase
             correlationId: '018f4a20-3f4c-7a11-8a22-123456789abc',
             eventId: '018f4a20-3f4c-7a11-8a22-123456789abd',
             documentId: 1000,
-            unitId: 1001,
+            pageId: $pageId,
+            unitId: $unitId,
         );
     }
 }

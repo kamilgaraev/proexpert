@@ -117,10 +117,12 @@ final class RetryEstimateGenerationDocument
                             'failure_code' => $unit->failure_code,
                             'failure_fingerprint' => $unit->failure_fingerprint,
                             'failure_category' => $unitMeta['failure_category'] ?? null,
+                            'actual_execution_count' => (int) ($unitMeta['actual_execution_count'] ?? min((int) $unit->attempt_count, 1)),
                             'failed_at' => $unit->failed_at?->toISOString(),
                         ];
                     }
                     unset($unitMeta['failure_category']);
+                    unset($unitMeta['actual_execution_count']);
                     $unit->forceFill([
                         'status' => DocumentProcessingUnitStatus::Pending->value,
                         'attempt_count' => 0,
@@ -226,10 +228,18 @@ final class RetryEstimateGenerationDocument
 
         $lockedSession = $lockedSession->fresh(['documents']) ?? $lockedSession;
 
+        $resultDocument = $lockedDocument->fresh() ?? $lockedDocument;
+        $retryMeta = is_array($resultDocument->meta) && is_array($resultDocument->meta['explicit_document_retry'] ?? null)
+            ? $resultDocument->meta['explicit_document_retry']
+            : [];
+        $messageKey = $disposition === 'replayed' && ($retryMeta['status'] ?? null) !== 'processing'
+            ? 'estimate_generation.document_retry_result_replayed'
+            : 'estimate_generation.document_retry_queued';
+
         return new DocumentActionResult(
-            $lockedDocument->fresh() ?? $lockedDocument,
+            $resultDocument,
             $this->readiness->evaluate($lockedSession)['summary'],
-            'estimate_generation.document_retry_queued',
+            $messageKey,
             $disposition,
             $attemptId,
         );

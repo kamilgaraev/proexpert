@@ -39,7 +39,13 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
     {
         parent::setUp();
         self::assertSame('pgsql', DB::getDriverName());
-        self::assertStringEndsWith('_testing', (string) DB::getDatabaseName());
+        $database = (string) DB::getDatabaseName();
+        self::assertTrue(
+            str_ends_with($database, '_testing')
+                || ($database === 'most_ai_estimator_contract'
+                    && getenv('RUN_ESTIMATE_GENERATION_CONTRACT_PROVISIONER') === '1'),
+            'Explicit retry contract requires an isolated testing database.',
+        );
         $this->createContractTables();
     }
 
@@ -177,6 +183,23 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         self::assertSame(3, EstimateGenerationDocumentPage::query()->where('status', 'queued')->count());
         self::assertSame(1, EstimateGenerationAuditEvent::query()->count());
         self::assertSame(hash('sha256', $key), EstimateGenerationAuditEvent::query()->firstOrFail()->payload['idempotency_hash']);
+
+        $terminalMeta = $document->meta;
+        $terminalMeta['explicit_document_retry'] = [
+            ...$terminalMeta['explicit_document_retry'],
+            'status' => 'failed',
+            'completed_at' => now()->toISOString(),
+            'terminal_reason' => 'system_failure',
+        ];
+        $document->forceFill(['status' => 'failed', 'meta' => $terminalMeta])->save();
+        $terminalReplay = $service->handle($session, $document, $actor, 9, $sourceVersion, $key, null);
+
+        self::assertSame('replayed', $terminalReplay->disposition);
+        self::assertSame($accepted->attemptId, $terminalReplay->attemptId);
+        self::assertSame('failed', $terminalReplay->document->meta['explicit_document_retry']['status']);
+        self::assertSame('estimate_generation.document_retry_result_replayed', $terminalReplay->messageKey);
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 1);
+        self::assertSame(1, EstimateGenerationAuditEvent::query()->count());
     }
 
     public function test_concurrent_different_keys_have_exactly_one_winner_and_one_dispatch(): void
@@ -287,6 +310,98 @@ SQL);
         self::assertCount(1, array_unique(array_column($results, 'attempt_id')));
         self::assertCount(1, EstimateGenerationDocument::query()->findOrFail($document->id)->meta['explicit_document_retry_history']);
         self::assertSame(1, EstimateGenerationAuditEvent::query()->count());
+    }
+
+    public function test_terminal_retry_repair_migration_closes_only_matching_lineage(): void
+    {
+        $sourceVersion = 'sha256:'.hash('sha256', 'terminal-repair');
+        $attemptId = (string) Str::uuid();
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => 38,
+            'project_id' => 52,
+            'user_id' => 7,
+            'status' => 'input_review_required',
+            'processing_stage' => 'input_review_required',
+            'processing_progress' => 100,
+            'state_version' => 9,
+            'input_payload' => [],
+            'problem_flags' => [],
+        ]);
+        $document = EstimateGenerationDocument::query()->create([
+            'session_id' => $session->id,
+            'organization_id' => 38,
+            'project_id' => 52,
+            'user_id' => 7,
+            'filename' => 'terminal.pdf',
+            'storage_path' => 'org-38/terminal.pdf',
+            'status' => 'failed',
+            'processing_stage' => 'completed',
+            'progress_percent' => 100,
+            'source_version' => $sourceVersion,
+            'page_count' => 3,
+            'processed_page_count' => 0,
+            'facts_summary' => [
+                'processing_outcome' => [
+                    'type' => 'system_failure',
+                    'counts' => ['included' => 3, 'ready' => 0, 'system_failed' => 3, 'needs_user_action' => 0],
+                ],
+            ],
+            'meta' => [
+                'processing_attempt_id' => $attemptId,
+                'explicit_document_retry' => [
+                    'attempt_id' => $attemptId,
+                    'source_version' => $sourceVersion,
+                    'status' => 'processing',
+                ],
+            ],
+        ]);
+        $fingerprint = hash('sha256', 'terminal-repair-root');
+        foreach (range(1, 3) as $index) {
+            EstimateGenerationProcessingUnit::query()->create([
+                'organization_id' => 38,
+                'project_id' => 52,
+                'session_id' => $session->id,
+                'document_id' => $document->id,
+                'unit_type' => 'pdf_page',
+                'unit_index' => $index,
+                'source_version' => $sourceVersion,
+                'status' => 'failed',
+                'attempt_count' => 3,
+                'output_count' => 0,
+                'failure_code' => 'document_unit_processing_failed',
+                'failure_fingerprint' => $fingerprint,
+                'locator' => ['page' => $index],
+                'metadata' => ['failure_category' => 'terminal', 'processing_attempt_id' => $attemptId],
+                'started_at' => now()->subSecond(),
+                'failed_at' => now(),
+            ]);
+        }
+        $foreign = $document->replicate()->fill([
+            'meta' => [
+                'processing_attempt_id' => 'different-lineage',
+                'explicit_document_retry' => [
+                    'attempt_id' => 'different-lineage',
+                    'source_version' => $sourceVersion,
+                    'status' => 'processing',
+                ],
+            ],
+        ]);
+        $foreign->save();
+
+        $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_finalize_terminal_explicit_document_retries.php';
+        $migration->up();
+
+        $document->refresh();
+        self::assertSame('failed', $document->meta['explicit_document_retry']['status']);
+        self::assertNotEmpty($document->meta['explicit_document_retry']['completed_at']);
+        self::assertSame('system_failure', $document->meta['explicit_document_retry']['terminal_reason']);
+        self::assertSame(3, $document->meta['explicit_document_retry']['actual_execution_count']);
+        self::assertSame('sha256:'.$fingerprint, $document->meta['explicit_document_retry']['diagnostic_fingerprint']);
+        self::assertSame(3, $document->meta['explicit_document_retry']['counts']['system_failed']);
+        self::assertSame('failed', $document->status);
+        self::assertSame('system_failure', $document->facts_summary['processing_outcome']['type']);
+        self::assertSame('failed', $session->fresh()->status->value);
+        self::assertSame('processing', $foreign->fresh()->meta['explicit_document_retry']['status']);
     }
 
     private function waitForProcessToken($process, $stdout, $stderr, string $token): string
