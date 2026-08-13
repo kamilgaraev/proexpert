@@ -26,7 +26,13 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
             : null;
 
         $systemFailure = in_array($payload['processing_outcome']['type'] ?? null, ['system_failure', 'temporary_failure'], true);
-        $payload['pages'] = $this->whenLoaded('pages', function () use ($document, $systemFailure): array {
+        $payload['pages'] = $this->whenLoaded('pages', function () use ($document, $systemFailure, $payload): array {
+            $units = $document->relationLoaded('processingUnits')
+                ? $document->processingUnits->keyBy(static fn ($unit): int => (int) $unit->id)
+                : collect();
+            $terminal = ($payload['processing_outcome']['counts']['processing'] ?? 0) === 0
+                && (string) $document->processing_stage === 'completed';
+
             return $document->pages->map(static fn ($page): array => [
                 'id' => $page->id,
                 'processing_unit_id' => $page->processing_unit_id,
@@ -39,7 +45,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'text_hash' => $page->text_hash,
                 'confidence' => $page->confidence,
                 'normalized_payload' => $page->normalized_payload ?? [],
-                'status' => self::pageStatus($page),
+                'status' => self::pageStatus($page, $units->get((int) $page->processing_unit_id), $terminal),
                 'excluded' => (string) $page->status === ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED,
                 'excluded_at' => $page->excluded_at?->toISOString(),
                 'excluded_reason' => $page->excluded_reason,
@@ -52,6 +58,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'visual_metrics' => self::visualMetrics($page),
                 'overlay' => self::overlayPayload($page),
                 'quality_flags' => $page->quality_flags ?? [],
+                'semantic_analysis' => self::semanticAnalysis($page),
             ])->all();
         }, []);
 
@@ -137,8 +144,20 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         return $payload;
     }
 
-    private static function pageStatus(mixed $page): string
+    private static function pageStatus(mixed $page, mixed $unit = null, bool $terminal = false): string
     {
+        $unitStatus = $unit?->status?->value;
+        if ($unitStatus === 'failed') {
+            return ManageEstimateGenerationDocumentPages::STATUS_FAILED;
+        }
+        if ($unitStatus === 'completed' && (int) $unit->output_count > 0) {
+            return (string) $page->status === ManageEstimateGenerationDocumentPages::STATUS_NEEDS_REVIEW
+                ? ManageEstimateGenerationDocumentPages::STATUS_NEEDS_REVIEW
+                : ManageEstimateGenerationDocumentPages::STATUS_READY;
+        }
+        if ($terminal && in_array($unitStatus, ['pending', 'running'], true)) {
+            return ManageEstimateGenerationDocumentPages::STATUS_FAILED;
+        }
         if (is_string($page->status) && $page->status !== '') {
             return $page->status;
         }
@@ -146,6 +165,46 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         return $page->output_version !== null || $page->text !== null
             ? ManageEstimateGenerationDocumentPages::STATUS_READY
             : ManageEstimateGenerationDocumentPages::STATUS_QUEUED;
+    }
+
+    /** @return array<string, mixed> */
+    private static function semanticAnalysis(mixed $page): array
+    {
+        $payload = self::normalizedPayload($page);
+        $vision = is_array($payload['vision_analysis'] ?? null) ? $payload['vision_analysis'] : [];
+        $analysis = is_array($vision['project_sheet_analysis'] ?? null) ? $vision['project_sheet_analysis'] : [];
+        $facts = is_array($analysis['facts'] ?? null) ? array_values(array_filter($analysis['facts'], 'is_array')) : [];
+        $elements = is_array($vision['elements'] ?? null) ? array_values(array_filter($vision['elements'], 'is_array')) : [];
+        $quality = is_array($payload['semantic_quality'] ?? null) ? $payload['semantic_quality'] : [];
+
+        return [
+            'role' => is_string($quality['role'] ?? null) ? $quality['role'] : 'unknown',
+            'observations' => array_values(array_map(static fn (array $item): array => [
+                'type' => is_string($item['type'] ?? null) ? $item['type'] : 'unknown',
+                'label' => is_string($item['label'] ?? null) ? $item['label'] : null,
+                'confidence' => is_numeric($item['confidence'] ?? null) ? (float) $item['confidence'] : null,
+                'evidence_ref' => is_string($item['evidence_ref'] ?? null) ? $item['evidence_ref'] : null,
+                'region' => is_array($item['polygon'] ?? null) ? $item['polygon'] : [],
+            ], $elements)),
+            'facts' => $facts,
+            'coverage' => [
+                'checked' => self::stringList($quality['checked'] ?? []),
+                'found' => self::stringList($quality['found'] ?? []),
+                'missing' => self::stringList($quality['missing'] ?? []),
+                'needs_targeted' => self::stringList($quality['needs_targeted'] ?? []),
+            ],
+            'quarantined_items' => is_array($quality['quarantined_items'] ?? null)
+                ? array_values(array_filter($quality['quarantined_items'], 'is_array'))
+                : [],
+            'questions' => array_values(array_filter($facts, static fn (array $fact): bool => ($fact['factType'] ?? null) === 'unresolved_question')),
+            'recommendations' => array_values(array_filter($facts, static fn (array $fact): bool => ($fact['factType'] ?? null) === 'recommendation')),
+        ];
+    }
+
+    /** @return list<string> */
+    private static function stringList(mixed $value): array
+    {
+        return is_array($value) ? array_values(array_filter($value, 'is_string')) : [];
     }
 
     private static function actualExecutionCount(mixed $unit): ?int

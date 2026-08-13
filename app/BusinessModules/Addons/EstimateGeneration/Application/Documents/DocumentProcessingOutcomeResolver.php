@@ -47,10 +47,15 @@ final readonly class DocumentProcessingOutcomeResolver
             if (in_array($pageStatus, ['queued', 'processing'], true)
                 || in_array($unitStatus, ['pending', 'running'], true)) {
                 $counts['processing']++;
-            } elseif ($category === 'user_action_required' || $pageStatus === 'needs_review') {
+            } elseif ($category === 'user_action_required') {
                 $counts['needs_user_action']++;
-            } elseif ($pageStatus === 'ready' && $unitStatus === 'completed' && (int) ($unit['output_count'] ?? 0) > 0) {
+            } elseif ($unitStatus === 'completed'
+                && (int) ($unit['output_count'] ?? 0) > 0
+                && in_array($pageStatus, ['ready', 'needs_review'], true)) {
                 $counts['ready']++;
+                if ($category === 'user_action_required' || $pageStatus === 'needs_review') {
+                    $counts['needs_user_action']++;
+                }
             } else {
                 $counts['system_failed']++;
                 if (in_array($unit['failure_code'] ?? null, ['breaker_stopped', 'document_systemic_failure'], true)) {
@@ -68,8 +73,8 @@ final readonly class DocumentProcessingOutcomeResolver
 
         [$type, $status] = match (true) {
             $counts['processing'] > 0 => ['processing', 'processing'],
-            $counts['system_failed'] > 0 && $hasTerminalSystemFailure => ['system_failure', 'failed'],
-            $counts['system_failed'] > 0 && $hasRecoverableSystemFailure => ['temporary_failure', 'failed'],
+            $counts['system_failed'] > 0 && $hasTerminalSystemFailure => ['system_failure', $counts['ready'] > 0 ? 'needs_review' : 'failed'],
+            $counts['system_failed'] > 0 && $hasRecoverableSystemFailure => ['temporary_failure', $counts['ready'] > 0 ? 'needs_review' : 'failed'],
             $counts['needs_user_action'] > 0, $counts['included'] === 0 => ['user_action_required', 'needs_review'],
             default => ['ready', 'ready'],
         };

@@ -144,14 +144,20 @@ class ConstructionSemanticParser
         $aggregateAreaCandidate = null;
         $nonPrimaryDocuments = [];
         $roofTypes = [];
+        $semanticCandidates = [];
 
         foreach ($documentsPayload as $document) {
             if (! DocumentEvidencePolicy::isTrusted($document)) {
+                $semanticCandidate = $this->partialSemanticCandidate($document);
+                if ($semanticCandidate !== null) {
+                    $semanticCandidates[] = $semanticCandidate;
+                }
                 $reviewRequiredDocuments[] = [
                     'id' => $document['id'] ?? null,
                     'filename' => $document['filename'] ?? 'document',
                     'status' => $document['status'] ?? null,
                     'quality' => $document['quality'] ?? [],
+                    'has_semantic_context' => $semanticCandidate !== null,
                 ];
                 $problemFlags[] = 'document_review_required';
 
@@ -333,10 +339,54 @@ class ConstructionSemanticParser
             'drawing_elements' => $drawingElements,
             'quantity_takeoffs' => $quantityTakeoffs,
             'scope_inferences' => $scopeInferences,
+            'semantic_candidates' => $semanticCandidates,
             'trusted_document_ids' => array_values(array_unique($trustedDocumentIds)),
             'review_required_documents' => $reviewRequiredDocuments,
             'non_primary_documents' => $nonPrimaryDocuments,
             'problem_flags' => array_values(array_unique($problemFlags)),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $document
+     * @return array<string, mixed>|null
+     */
+    private function partialSemanticCandidate(array $document): ?array
+    {
+        $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
+        $outcome = is_array($factsSummary['processing_outcome'] ?? null) ? $factsSummary['processing_outcome'] : [];
+        $counts = is_array($outcome['counts'] ?? null) ? $outcome['counts'] : [];
+        $semantic = is_array($factsSummary['semantic_understanding'] ?? null)
+            ? $factsSummary['semantic_understanding']
+            : [];
+
+        if ((int) ($counts['ready'] ?? 0) < 1 || (int) ($semantic['pages_checked'] ?? 0) < 1) {
+            return null;
+        }
+
+        $boundedItems = static function (mixed $items, int $limit): array {
+            if (! is_array($items)) {
+                return [];
+            }
+
+            return array_slice(array_values(array_filter(
+                $items,
+                static fn (mixed $item): bool => is_array($item),
+            )), 0, $limit);
+        };
+
+        return [
+            'document_id' => $document['id'] ?? null,
+            'pages_checked' => min(512, max(0, (int) ($semantic['pages_checked'] ?? 0))),
+            'roles' => is_array($semantic['roles'] ?? null) ? array_slice($semantic['roles'], 0, 16, true) : [],
+            'facts' => $boundedItems($semantic['facts'] ?? [], 500),
+            'questions' => $boundedItems($semantic['questions'] ?? [], 128),
+            'recommendations' => $boundedItems($semantic['recommendations'] ?? [], 128),
+            'coverage' => $boundedItems($semantic['coverage'] ?? [], 128),
+            'cross_page_connections' => $boundedItems($semantic['cross_page_connections'] ?? [], 128),
+            'quarantined_count' => min(4096, max(0, (int) ($semantic['quarantined_count'] ?? 0))),
+            'truncated' => ($semantic['truncated'] ?? false) === true,
+            'authority' => 'candidate_only',
         ];
     }
 

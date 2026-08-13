@@ -397,6 +397,66 @@ class ConstructionSemanticParserTest extends TestCase
         $this->assertSame(78, $analysis['document_context']['review_required_documents'][0]['id']);
     }
 
+    public function test_partial_document_keeps_bounded_semantic_context_without_promoting_quantities(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse([
+            'description' => 'Дом по архитектурным чертежам',
+        ], [[
+            'id' => 170,
+            'filename' => 'drawings.pdf',
+            'status' => 'needs_review',
+            'quality' => ['level' => null, 'flags' => ['document_unit_attempts_exhausted']],
+            'extracted_text' => 'Площадь 9999 м2',
+            'facts_summary' => [
+                'processing_outcome' => [
+                    'counts' => ['ready' => 13, 'terminal_system_failed' => 2, 'breaker_stopped' => 7],
+                ],
+                'semantic_understanding' => [
+                    'pages_checked' => 13,
+                    'roles' => ['facade' => 1, 'plan' => 12],
+                    'facts' => [[
+                        'factType' => 'material_candidate',
+                        'entityKey' => 'facade.finish.main',
+                        'valueText' => 'Штукатурка или облицовочный кирпич',
+                        'page_number' => 11,
+                        'role' => 'facade',
+                    ]],
+                    'questions' => [[
+                        'factType' => 'unresolved_question',
+                        'valueText' => 'Уточнить материал фасада',
+                        'page_number' => 11,
+                        'role' => 'facade',
+                    ]],
+                    'recommendations' => [],
+                    'coverage' => [[
+                        'page_number' => 11,
+                        'role' => 'facade',
+                        'checked' => ['materials'],
+                        'found' => ['facade_geometry'],
+                        'missing' => ['confirmed_material'],
+                        'needs_targeted' => [],
+                    ]],
+                    'cross_page_connections' => [],
+                    'quarantined_count' => 1,
+                    'truncated' => false,
+                ],
+                'total_area_m2' => 9999.0,
+            ],
+            'facts' => [],
+        ]]);
+
+        self::assertSame(1, count($analysis['document_context']['semantic_candidates']));
+        self::assertSame(13, $analysis['document_context']['semantic_candidates'][0]['pages_checked']);
+        self::assertSame(
+            'facade.finish.main',
+            $analysis['document_context']['semantic_candidates'][0]['facts'][0]['entityKey'],
+        );
+        self::assertNull($analysis['object']['area']);
+        self::assertSame('', $analysis['document_context']['context_text']);
+        self::assertSame([], $analysis['document_context']['trusted_document_ids']);
+        self::assertTrue($analysis['document_context']['review_required_documents'][0]['has_semantic_context']);
+    }
+
     private function housePrompt(): string
     {
         return <<<'TEXT'

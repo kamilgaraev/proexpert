@@ -7,6 +7,7 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadRepresentationPublisher;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSemanticUnderstandingSummarizer;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
@@ -223,6 +224,9 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         ));
 
         self::assertSame('image', $output->normalizedPayload['document_representation']['format']);
+        self::assertSame($unit->index, $output->normalizedPayload['page_number']);
+        $semanticSummary = (new DocumentSemanticUnderstandingSummarizer)->summarize([$output->normalizedPayload]);
+        self::assertSame($unit->index, $semanticSummary['coverage'][0]['page_number']);
         self::assertSame($sourceVersion, $output->normalizedPayload['document_representation']['source_version']);
         self::assertGreaterThan(0, $output->normalizedPayload['document_representation']['resource_usage']['duration_ms']);
         self::assertSame(

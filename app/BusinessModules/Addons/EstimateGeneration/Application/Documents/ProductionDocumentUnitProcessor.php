@@ -244,6 +244,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             confidence: $geometry->unitStatus === 'confirmed' ? 1.0 : 0.7,
             normalizedPayload: [
                 'schema_version' => 1,
+                'page_number' => $context->index,
                 'source_kind' => $provenance->sourceKind,
                 'source' => $provenance->toArray(),
                 'vector_geometry' => $payload,
@@ -690,6 +691,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         return new DocumentUnitOutput(
             version: hash('sha256', json_encode([
                 'vision_analysis' => $payload,
+                'semantic_quality' => $analysis->semanticQuality(),
                 'sheet_analysis_routing' => $routingPayload,
                 'pdf_native_text' => $nativePdfText,
                 'pdf_geometry' => $pdfGeometry,
@@ -702,9 +704,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             confidence: $analysis->warnings === [] ? 1.0 : 0.7,
             normalizedPayload: [
                 'schema_version' => 1,
+                'page_number' => $context->index,
                 'source_kind' => $provenance->sourceKind,
                 'source' => $provenance->toArray(),
                 'vision_analysis' => $payload,
+                'semantic_quality' => $analysis->semanticQuality(),
                 'sheet_analysis_routing' => $routingPayload,
                 'pdf_geometry' => $pdfGeometry,
                 'auxiliary_sources' => [

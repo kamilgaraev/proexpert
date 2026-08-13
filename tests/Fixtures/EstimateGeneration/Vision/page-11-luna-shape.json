@@ -1,0 +1,14 @@
+{
+  "element": {
+    "key": "drawing_scale_text",
+    "type": "text",
+    "label": "1:50",
+    "polygon": [[0.1, 0.1], [0.2, 0.2]],
+    "confidence": 0.98,
+    "evidence_ref": "page-1"
+  },
+  "scale_candidate_evidence_ref": "drawing_scale_text",
+  "sheet_type": "elevation",
+  "semantic_role": "facade",
+  "required_fact_types": ["elevation", "roof_geometry", "opening", "dimension_chain"]
+}

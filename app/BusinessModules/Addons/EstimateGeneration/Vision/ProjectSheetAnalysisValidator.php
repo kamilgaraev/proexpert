@@ -9,12 +9,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContra
 final class ProjectSheetAnalysisValidator
 {
     private const ROLE_FACT_TYPES = [
-        'plan' => ['room', 'wall', 'opening', 'axis', 'dimension_chain', 'sanitary_fixture', 'furniture'],
-        'section' => ['opening', 'dimension_chain', 'structural_element', 'cross_sheet_link'],
-        'facade' => ['opening', 'dimension_chain', 'structural_element', 'cross_sheet_link'],
-        'explication' => ['room', 'table', 'cross_sheet_link'],
-        'specification' => ['table', 'structural_element', 'cross_sheet_link'],
-        'unknown' => [],
+        'plan' => ['room', 'wall', 'opening', 'axis', 'dimension_chain', 'area', 'level', 'material', 'finish_zone', 'engineering_element', 'sanitary_fixture', 'furniture', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
+        'section' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'engineering_element', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
+        'facade' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
+        'explication' => ['room', 'area', 'level', 'material', 'finish_zone', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
+        'specification' => ['table', 'structural_element', 'material', 'equipment', 'quantity', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
+        'unknown' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'engineering_element', 'equipment', 'quantity', 'room', 'wall', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
     ];
 
     /** @param array<string, mixed> $data @param list<string> $evidenceKeys @param list<string> $nativeReferences */
@@ -24,8 +24,7 @@ final class ProjectSheetAnalysisValidator
             || ! self::hasExactKeys($data, ['contractVersion', 'role', 'facts'])
             || ($data['contractVersion'] ?? null) !== ProjectSheetAnalysisData::CONTRACT_VERSION
             || ! is_string($data['role'] ?? null) || ! array_key_exists($data['role'], self::ROLE_FACT_TYPES)
-            || ! is_array($data['facts'] ?? null) || ! array_is_list($data['facts']) || count($data['facts']) > $maxFacts
-            || ($data['role'] === 'unknown' && $data['facts'] !== [])) {
+            || ! is_array($data['facts'] ?? null) || ! array_is_list($data['facts']) || count($data['facts']) > $maxFacts) {
             throw new VisionContractException('invalid_project_sheet_analysis');
         }
 
@@ -35,11 +34,56 @@ final class ProjectSheetAnalysisValidator
                 throw new VisionContractException('invalid_project_sheet_fact');
             }
             self::assertFact($fact, $data['role'], $evidenceKeys, $nativeReferences);
-            $entities[] = $fact['entityKey'];
+            $entities[] = $fact['entityKey']."\0".$fact['factType'];
         }
         if (count($entities) !== count(array_unique($entities))) {
             throw new VisionContractException('duplicate_project_sheet_fact_key');
         }
+    }
+
+    /** @return list<string> */
+    public static function factTypes(string $role): array
+    {
+        return self::ROLE_FACT_TYPES[$role] ?? [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @param  list<string>  $evidenceKeys
+     * @param  list<string>  $nativeReferences
+     * @return array{role: string, facts: list<array<string, mixed>>, quarantined: list<array{section: string, index: int, reason: string}>}
+     */
+    public static function normalizeProvider(array $data, array $evidenceKeys, int $maxFacts = 500, array $nativeReferences = []): array
+    {
+        if ($maxFacts < 1 || $maxFacts > 500
+            || ! self::hasExactKeys($data, ['contractVersion', 'role', 'facts'])
+            || ($data['contractVersion'] ?? null) !== ProjectSheetAnalysisData::CONTRACT_VERSION
+            || ! is_string($data['role'] ?? null) || ! array_key_exists($data['role'], self::ROLE_FACT_TYPES)
+            || ! is_array($data['facts'] ?? null) || ! array_is_list($data['facts']) || count($data['facts']) > $maxFacts) {
+            throw new VisionContractException('invalid_project_sheet_analysis');
+        }
+
+        $facts = [];
+        $quarantined = [];
+        $entities = [];
+        foreach ($data['facts'] as $index => $fact) {
+            try {
+                if (! is_array($fact)) {
+                    throw new VisionContractException('invalid_project_sheet_fact');
+                }
+                self::assertFact($fact, $data['role'], $evidenceKeys, $nativeReferences);
+                $factIdentity = $fact['entityKey']."\0".$fact['factType'];
+                if (isset($entities[$factIdentity])) {
+                    throw new VisionContractException('duplicate_project_sheet_fact_key');
+                }
+                $entities[$factIdentity] = true;
+                $facts[] = $fact;
+            } catch (VisionContractException $exception) {
+                $quarantined[] = ['section' => 'facts', 'index' => $index, 'reason' => $exception->reason];
+            }
+        }
+
+        return ['role' => $data['role'], 'facts' => $facts, 'quarantined' => $quarantined];
     }
 
     /** @param array<string, mixed> $fact @param list<string> $evidenceKeys @param list<string> $nativeReferences */
