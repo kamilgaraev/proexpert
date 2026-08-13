@@ -302,6 +302,21 @@ final class PortfolioHardeningBehaviorTest extends TestCase
     }
 
     #[Test]
+    public function liquidity_gap_lookup_uses_scalar_hash_identity(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4)
+            .'/app/BusinessModules/Features/Budgeting/Reporting/Portfolio/'
+            .'PortfolioLiquiditySourceVersionRecorder.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString("'source_hash' => \$sourceHash", $source);
+        self::assertStringContainsString("'missing_fields' => array_values(\$missingFields),\n        ]));", $source);
+        self::assertStringContainsString("'missing_fields' => array_values(\$missingFields),\n                'observed_at'", $source);
+    }
+
+    #[Test]
     public function unknown_history_gap_uses_stable_sentinel_closed_by_first_real_version(): void
     {
         self::assertSame([0, 73], HoldingAllocationFactProjector::resolvableGapSourceVersions(73));
