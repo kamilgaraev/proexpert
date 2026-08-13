@@ -17,11 +17,12 @@ final readonly class ProjectSheetAnalysisData
 {
     public const CONTRACT_VERSION = 'sheet-analysis:v2';
 
-    /** @param list<array<string, mixed>> $facts */
+    /** @param list<array<string, mixed>> $facts @param list<array{section: string, index: int, reason: string}> $quarantinedItems */
     private function __construct(
         public string $sheetRole,
         public array $facts,
         public SheetAnalysisContract $roleAnalysis,
+        public array $quarantinedItems = [],
     ) {}
 
     /** @param array<string, mixed> $data @param list<string> $evidenceKeys @param list<string> $nativeReferences */
@@ -31,10 +32,10 @@ final readonly class ProjectSheetAnalysisData
         int $maxFacts = 500,
         array $nativeReferences = [],
     ): self {
-        ProjectSheetAnalysisValidator::assertValid($data, $evidenceKeys, $maxFacts, $nativeReferences);
-        $facts = array_map(SheetAnalysisFact::fromValidatedArray(...), $data['facts']);
+        $normalized = ProjectSheetAnalysisValidator::normalizeProvider($data, $evidenceKeys, $maxFacts, $nativeReferences);
+        $facts = array_map(SheetAnalysisFact::fromValidatedArray(...), $normalized['facts']);
 
-        return self::fromTyped($data['role'], $facts);
+        return self::fromTyped($normalized['role'], $facts, $normalized['quarantined']);
     }
 
     /** @param array<string, mixed> $data @param list<string> $evidenceKeys */
@@ -66,6 +67,7 @@ final readonly class ProjectSheetAnalysisData
         return self::fromTyped(
             $this->sheetRole,
             array_map(static fn (SheetAnalysisFact $fact): SheetAnalysisFact => $fact->mapPolygonToSource($transform), $this->roleAnalysis->facts()),
+            $this->quarantinedItems,
         );
     }
 
@@ -75,17 +77,17 @@ final readonly class ProjectSheetAnalysisData
         return ['contractVersion' => self::CONTRACT_VERSION, 'role' => $this->sheetRole, 'facts' => $this->facts];
     }
 
-    /** @param list<SheetAnalysisFact> $facts */
-    private static function fromTyped(string $role, array $facts): self
+    /** @param list<SheetAnalysisFact> $facts @param list<array{section: string, index: int, reason: string}> $quarantinedItems */
+    private static function fromTyped(string $role, array $facts, array $quarantinedItems = []): self
     {
         $typed = match ($role) {
             'plan' => new PlanSheetAnalysis($facts),
             'section' => new SectionSheetAnalysis($facts),
             'facade' => new FacadeSheetAnalysis($facts),
             'explication', 'specification' => new SpecificationSheetAnalysis($role, $facts),
-            'unknown' => new UnknownSheetAnalysis,
+            'unknown' => new UnknownSheetAnalysis($facts),
         };
 
-        return new self($role, array_map(static fn (SheetAnalysisFact $fact): array => $fact->toArray(), $facts), $typed);
+        return new self($role, array_map(static fn (SheetAnalysisFact $fact): array => $fact->toArray(), $facts), $typed, $quarantinedItems);
     }
 }

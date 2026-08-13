@@ -35,6 +35,7 @@ final readonly class VisionAnalysisData
         public ?int $outputTokens,
         public array $visualAttributes = [],
         public ?ProjectSheetAnalysisData $projectSheetAnalysis = null,
+        public array $quarantinedItems = [],
     ) {
         if (! in_array($sheetType, self::SHEET_TYPES, true) || $evidence === [] || count($evidence) > 256 || count($elements) > 500 || count($scaleCandidates) > 32
             || array_diff($warnings, self::WARNINGS) !== [] || count($warnings) !== count(array_unique($warnings))
@@ -129,23 +130,53 @@ final readonly class VisionAnalysisData
         }
         $evidencePayload = self::normalizeEvidencePayload($data['evidence']);
         $evidence = array_map(static fn (mixed $item): VisionEvidenceData => is_array($item) ? VisionEvidenceData::fromArray($item) : throw new VisionContractException('invalid_evidence'), $evidencePayload);
-        $elements = array_map(static fn (mixed $item): VisionElementData => is_array($item) ? VisionElementData::fromArray($item) : throw new VisionContractException('invalid_element'), $data['elements']);
-        $scales = array_map(static fn (mixed $item): VisionScaleCandidateData => is_array($item) ? VisionScaleCandidateData::fromArray($item) : throw new VisionContractException('invalid_scale_candidate'), $data['scale_candidates']);
-        $projectSheetAnalysis = $schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION
-            ? ProjectSheetAnalysisData::fromProviderArray($data['project_sheet_analysis'], array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence), $maxFacts, $nativeReferences)
-            : null;
+        $evidenceKeys = array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence);
+        if (count($evidenceKeys) !== count(array_unique($evidenceKeys))) {
+            throw new VisionContractException('duplicate_keys');
+        }
+        [$elements, $elementQuarantine] = self::providerElements($data['elements'], $evidenceKeys);
+        [$scales, $scaleQuarantine] = self::providerScales($data['scale_candidates'], $evidenceKeys, $elements);
+        $semanticQuarantine = [];
+        $projectSheetAnalysis = null;
+        if ($schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION) {
+            try {
+                $projectSheetAnalysis = ProjectSheetAnalysisData::fromProviderArray($data['project_sheet_analysis'], $evidenceKeys, $maxFacts, $nativeReferences);
+                $semanticQuarantine = $projectSheetAnalysis->quarantinedItems;
+            } catch (VisionContractException $exception) {
+                $projectSheetAnalysis = ProjectSheetAnalysisData::fromProviderArray([
+                    'contractVersion' => ProjectSheetAnalysisData::CONTRACT_VERSION,
+                    'role' => 'unknown',
+                    'facts' => [],
+                ], $evidenceKeys, $maxFacts, $nativeReferences);
+                $semanticQuarantine[] = ['section' => 'project_sheet_analysis', 'index' => 0, 'reason' => $exception->reason];
+            }
+        }
         foreach ($data['warnings'] as $warning) {
             if (! is_string($warning)) {
                 throw new VisionContractException('invalid_warning');
             }
         }
+        $warnings = array_values($data['warnings']);
+        if ($scales === [] && ! in_array('scale_missing', $warnings, true)) {
+            $warnings[] = 'scale_missing';
+        }
+        if (self::hasMaterialScaleConflict($scales) && ! in_array('scale_conflict', $warnings, true)) {
+            $warnings[] = 'scale_conflict';
+        }
+        if (! self::hasMaterialScaleConflict($scales)) {
+            $warnings = array_values(array_diff($warnings, ['scale_conflict']));
+        }
+        [$visualAttributes, $visualQuarantine] = self::providerVisualAttributes(
+            is_array($data['visual_attributes'] ?? null) ? $data['visual_attributes'] : [],
+            $evidenceKeys,
+        );
 
         return new self(
             $data['sheet_type'],
             $evidence,
             $elements,
             $scales,
-            array_values($data['warnings']),
+            $warnings,
             $provider,
             $requestedModel,
             $reportedModel,
@@ -153,8 +184,9 @@ final readonly class VisionAnalysisData
             $usageStatus,
             $inputTokens,
             $outputTokens,
-            is_array($data['visual_attributes'] ?? null) ? $data['visual_attributes'] : [],
+            $visualAttributes,
             $projectSheetAnalysis,
+            [...$elementQuarantine, ...$scaleQuarantine, ...$visualQuarantine, ...$semanticQuarantine],
         );
     }
 
@@ -264,7 +296,7 @@ final readonly class VisionAnalysisData
             self::normalizeEvidencePayload($data['evidence']),
         );
         $allEvidence = [...$primary->evidence, ...$targetedEvidence];
-        $projectSheetAnalysis = ProjectSheetAnalysisData::fromProviderArray(
+        $targetedProjectSheetAnalysis = ProjectSheetAnalysisData::fromProviderArray(
             $data['project_sheet_analysis'],
             array_map(static fn (VisionEvidenceData $item): string => $item->key, $allEvidence),
             $maxFacts,
@@ -274,6 +306,20 @@ final readonly class VisionAnalysisData
             ...$primary->evidence,
             ...array_map(static fn (VisionEvidenceData $item): VisionEvidenceData => $item->toSourceSpace(), $targetedEvidence),
         ];
+        $factsByIdentity = [];
+        foreach ([
+            ...($primary->projectSheetAnalysis?->facts ?? []),
+            ...$targetedProjectSheetAnalysis->facts,
+        ] as $fact) {
+            if (is_string($fact['entityKey'] ?? null) && is_string($fact['factType'] ?? null)) {
+                $factsByIdentity[$fact['entityKey']."\0".$fact['factType']] = $fact;
+            }
+        }
+        $projectSheetAnalysis = ProjectSheetAnalysisData::fromProviderArray([
+            'contractVersion' => ProjectSheetAnalysisData::CONTRACT_VERSION,
+            'role' => $targetedProjectSheetAnalysis->sheetRole,
+            'facts' => array_slice(array_values($factsByIdentity), 0, $maxFacts),
+        ], array_map(static fn (VisionEvidenceData $item): string => $item->key, $mappedEvidence), $maxFacts, $nativeReferences);
 
         return new self(
             $primary->sheetType,
@@ -290,6 +336,11 @@ final readonly class VisionAnalysisData
             $outputTokens,
             $primary->visualAttributes,
             $projectSheetAnalysis,
+            [
+                ...$primary->quarantinedItems,
+                ...$targetedProjectSheetAnalysis->quarantinedItems,
+                ...$projectSheetAnalysis->quarantinedItems,
+            ],
         );
     }
 
@@ -309,6 +360,7 @@ final readonly class VisionAnalysisData
             $this->usageStatus, $this->inputTokens, $this->outputTokens,
             $this->visualAttributes,
             $this->projectSheetAnalysis?->mapPolygonsToSource($transform),
+            $this->quarantinedItems,
         );
     }
 
@@ -349,6 +401,27 @@ final readonly class VisionAnalysisData
         return $payload;
     }
 
+    /** @return array<string, mixed> */
+    public function semanticQuality(): array
+    {
+        $role = $this->projectSheetAnalysis?->sheetRole ?? 'unknown';
+        $factTypes = array_values(array_unique(array_map(
+            static fn (array $fact): string => (string) ($fact['factType'] ?? ''),
+            $this->projectSheetAnalysis?->facts ?? [],
+        )));
+        $checked = self::coverageChecklist($role);
+        $found = array_values(array_intersect($checked, $factTypes));
+
+        return [
+            'role' => $role,
+            'checked' => $checked,
+            'found' => $found,
+            'missing' => array_values(array_diff($checked, $found)),
+            'needs_targeted' => array_values(array_intersect(array_diff($checked, $found), ['material', 'finish_zone', 'note', 'table', 'cross_sheet_link'])),
+            'quarantined_items' => $this->quarantinedItems,
+        ];
+    }
+
     /** @param array<string, mixed> $data @param list<string> $keys */
     private static function hasExactKeys(array $data, array $keys): bool
     {
@@ -382,5 +455,153 @@ final readonly class VisionAnalysisData
         }
 
         return $normalized;
+    }
+
+    /** @param array<mixed> $elements @return array<mixed> */
+    private static function normalizeProviderElementLabels(array $elements): array
+    {
+        return array_map(static function (mixed $element): mixed {
+            if (! is_array($element) || ! is_string($element['label'] ?? null)) {
+                return $element;
+            }
+
+            return [
+                ...$element,
+                'label' => mb_substr($element['label'], 0, VisionElementData::MAX_LABEL_LENGTH),
+            ];
+        }, $elements);
+    }
+
+    /** @param array<mixed> $payload @param list<string> $evidenceKeys @return array{list<VisionElementData>, list<array{section: string, index: int, reason: string}>} */
+    private static function providerElements(array $payload, array $evidenceKeys): array
+    {
+        $items = [];
+        $quarantined = [];
+        $keys = [];
+        $sourceIndexes = [];
+        foreach (self::normalizeProviderElementLabels($payload) as $index => $raw) {
+            try {
+                $item = is_array($raw) ? VisionElementData::fromArray($raw) : throw new VisionContractException('invalid_element');
+                if (! in_array($item->evidenceRef, $evidenceKeys, true)) {
+                    throw new VisionContractException('dangling_evidence');
+                }
+                if (isset($keys[$item->key])) {
+                    throw new VisionContractException('duplicate_keys');
+                }
+                $keys[$item->key] = true;
+                $items[] = $item;
+                $sourceIndexes[] = $index;
+            } catch (VisionContractException $exception) {
+                $quarantined[] = ['section' => 'elements', 'index' => $index, 'reason' => $exception->reason];
+            }
+        }
+
+        $walls = [];
+        foreach ($items as $item) {
+            if ($item->type === 'wall') {
+                $walls[$item->key] = true;
+            }
+        }
+        $validated = [];
+        foreach ($items as $acceptedIndex => $item) {
+            $wallKey = $item->type === 'opening' && is_array($item->geometry)
+                ? ($item->geometry['wall_key'] ?? null)
+                : null;
+            if ($wallKey !== null && ! isset($walls[$wallKey])) {
+                $quarantined[] = [
+                    'section' => 'elements',
+                    'index' => $sourceIndexes[$acceptedIndex],
+                    'reason' => 'dangling_element_reference',
+                ];
+
+                continue;
+            }
+            $validated[] = $item;
+        }
+
+        return [$validated, $quarantined];
+    }
+
+    /** @param array<mixed> $payload @param list<string> $evidenceKeys @param list<VisionElementData> $elements @return array{list<VisionScaleCandidateData>, list<array{section: string, index: int, reason: string}>} */
+    private static function providerScales(array $payload, array $evidenceKeys, array $elements): array
+    {
+        $elementEvidence = [];
+        foreach ($elements as $element) {
+            $elementEvidence[$element->key] = $element->evidenceRef;
+        }
+        $items = [];
+        $quarantined = [];
+        foreach ($payload as $index => $raw) {
+            try {
+                if (! is_array($raw)) {
+                    throw new VisionContractException('invalid_scale_candidate');
+                }
+                $reference = $raw['evidence_ref'] ?? null;
+                if (is_string($reference) && ! in_array($reference, $evidenceKeys, true) && isset($elementEvidence[$reference])) {
+                    $raw['evidence_ref'] = $elementEvidence[$reference];
+                }
+                $item = VisionScaleCandidateData::fromArray($raw);
+                if (! in_array($item->evidenceRef, $evidenceKeys, true)) {
+                    throw new VisionContractException('dangling_evidence');
+                }
+                $items[] = $item;
+            } catch (VisionContractException $exception) {
+                $quarantined[] = ['section' => 'scale_candidates', 'index' => $index, 'reason' => $exception->reason];
+            }
+        }
+
+        return [$items, $quarantined];
+    }
+
+    /** @param array<string, mixed> $payload @param list<string> $evidenceKeys @return array{array<string, mixed>, list<array{section: string, index: int, reason: string}>} */
+    private static function providerVisualAttributes(array $payload, array $evidenceKeys): array
+    {
+        if ($payload === []) {
+            return [[], []];
+        }
+        $roof = $payload['roof_type'] ?? null;
+        if (array_keys($payload) === ['roof_type']
+            && is_array($roof)
+            && array_keys($roof) === ['value', 'confidence', 'evidence_ref']
+            && in_array($roof['value'] ?? null, ['flat', 'pitched', 'gable', 'hip', 'unknown'], true)
+            && (is_float($roof['confidence'] ?? null) || is_int($roof['confidence'] ?? null))
+            && is_finite((float) $roof['confidence'])
+            && (float) $roof['confidence'] >= 0
+            && (float) $roof['confidence'] <= 1
+            && is_string($roof['evidence_ref'] ?? null)
+            && in_array($roof['evidence_ref'], $evidenceKeys, true)) {
+            return [$payload, []];
+        }
+
+        return [[], [['section' => 'visual_attributes', 'index' => 0, 'reason' => 'invalid_visual_attributes']]];
+    }
+
+    /** @return list<string> */
+    private static function coverageChecklist(string $role): array
+    {
+        return match ($role) {
+            'facade' => ['elevation', 'level', 'axis', 'dimension_chain', 'area', 'opening', 'roof_geometry', 'material', 'finish_zone', 'note', 'cross_sheet_link'],
+            'plan' => ['room', 'wall', 'opening', 'axis', 'dimension_chain', 'area', 'level', 'material', 'finish_zone', 'engineering_element', 'note', 'cross_sheet_link'],
+            'section' => ['elevation', 'level', 'axis', 'dimension_chain', 'opening', 'structural_element', 'roof_geometry', 'material', 'engineering_element', 'note', 'cross_sheet_link'],
+            'explication' => ['room', 'area', 'level', 'material', 'finish_zone', 'table', 'note', 'cross_sheet_link'],
+            'specification' => ['table', 'structural_element', 'material', 'equipment', 'quantity', 'note', 'cross_sheet_link'],
+            default => ['opening', 'dimension_chain', 'area', 'material', 'note', 'cross_sheet_link'],
+        };
+    }
+
+    /** @param list<VisionScaleCandidateData> $scales */
+    private static function hasMaterialScaleConflict(array $scales): bool
+    {
+        for ($left = 0; $left < count($scales); $left++) {
+            for ($right = $left + 1; $right < count($scales); $right++) {
+                $a = $scales[$left]->metersPerUnit;
+                $b = $scales[$right]->metersPerUnit;
+                if (abs($a - $b) > max(1.0e-9, 0.02 * min($a, $b))) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

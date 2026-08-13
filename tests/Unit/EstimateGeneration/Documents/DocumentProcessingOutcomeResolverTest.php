@@ -63,7 +63,7 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
             [$this->unit(1, 'completed', 1), $this->unit(2, 'failed', 0, 'terminal')],
         );
 
-        self::assertSame('failed', $outcome->documentStatus);
+        self::assertSame('needs_review', $outcome->documentStatus);
         self::assertSame(1, $outcome->processedPages);
         self::assertSame(1, $outcome->counts['ready']);
         self::assertSame(1, $outcome->counts['system_failed']);
@@ -131,8 +131,44 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
         self::assertSame('user_action_required', $outcome->type);
         self::assertSame('needs_review', $outcome->documentStatus);
         self::assertSame(1, $outcome->counts['needs_user_action']);
-        self::assertSame(0, $outcome->counts['ready']);
+        self::assertSame(1, $outcome->counts['ready']);
+        self::assertSame(1, $outcome->processedPages);
         self::assertSame('review_required', $outcome->toArray()['readiness']);
+    }
+
+    #[Test]
+    public function production_partial_result_preserves_thirteen_completed_outputs_and_terminal_counts(): void
+    {
+        $pages = [];
+        $units = [];
+        foreach (range(1, 22) as $index) {
+            $completed = $index <= 14 && $index !== 11;
+            $needsReview = $completed && $index >= 3;
+            $breakerStopped = in_array($index, [15, 16, 18, 19, 20, 21, 22], true);
+            $pages[] = $this->page(
+                $index,
+                $completed ? ($needsReview ? 'needs_review' : 'ready') : 'failed',
+            );
+            $units[] = $this->unit(
+                $index,
+                $completed ? 'completed' : 'failed',
+                $completed ? 1 : 0,
+                $completed ? null : 'terminal',
+                $breakerStopped ? 'breaker_stopped' : ($completed ? null : 'vision_provider_response_invalid'),
+            );
+        }
+
+        $outcome = (new DocumentProcessingOutcomeResolver)->resolve($pages, $units);
+
+        self::assertSame('system_failure', $outcome->type);
+        self::assertSame('needs_review', $outcome->documentStatus);
+        self::assertSame(13, $outcome->processedPages);
+        self::assertSame(13, $outcome->counts['ready']);
+        self::assertSame(11, $outcome->counts['needs_user_action']);
+        self::assertSame(2, $outcome->counts['terminal_system_failed']);
+        self::assertSame(7, $outcome->counts['breaker_stopped']);
+        self::assertSame(9, $outcome->counts['system_failed']);
+        self::assertSame(100, $outcome->toArray()['execution_progress_percent']);
     }
 
     #[Test]

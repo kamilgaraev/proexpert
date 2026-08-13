@@ -85,13 +85,15 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
             'progress_percent' => 100,
             'checksum_sha256' => $checksum,
             'source_version' => $sourceVersion,
-            'page_count' => 3,
-            'processed_page_count' => 2,
+            'page_count' => 22,
+            'processed_page_count' => 13,
             'error_code' => 'document_processing_system_failed',
             'facts_summary' => ['processing_outcome' => ['type' => 'system_failure']],
             'meta' => ['processing_attempt_id' => 'old-lineage'],
         ]);
-        foreach (range(1, 3) as $index) {
+        foreach (range(1, 22) as $index) {
+            $completed = $index <= 14 && $index !== 11;
+            $breakerStopped = in_array($index, [15, 16, 18, 19, 20, 21, 22], true);
             $unit = EstimateGenerationProcessingUnit::query()->create([
                 'organization_id' => 38,
                 'project_id' => 52,
@@ -100,14 +102,14 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
                 'unit_type' => 'pdf_page',
                 'unit_index' => $index,
                 'source_version' => $sourceVersion,
-                'status' => $index <= 2 ? 'completed' : 'failed',
-                'attempt_count' => $index <= 2 ? 1 : 3,
-                'output_count' => $index <= 2 ? 1 : 0,
-                'failure_code' => $index <= 2 ? null : 'document_geometry_processing_failed',
-                'failure_fingerprint' => $index <= 2 ? null : hash('sha256', 'same-system-root'),
+                'status' => $completed ? 'completed' : 'failed',
+                'attempt_count' => $completed ? 1 : 3,
+                'output_count' => $completed ? 1 : 0,
+                'failure_code' => $completed ? null : ($breakerStopped ? 'breaker_stopped' : 'vision_provider_response_invalid'),
+                'failure_fingerprint' => $completed ? null : hash('sha256', 'same-system-root'),
                 'locator' => ['page' => $index],
-                'metadata' => $index <= 2 ? [] : ['failure_category' => 'terminal'],
-                'failed_at' => $index <= 2 ? null : now(),
+                'metadata' => $completed ? [] : ['failure_category' => 'terminal'],
+                'failed_at' => $completed ? null : now(),
             ]);
             EstimateGenerationDocumentPage::query()->create([
                 'document_id' => $document->id,
@@ -117,7 +119,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
                 'project_id' => 52,
                 'session_id' => $session->id,
                 'page_number' => $index,
-                'status' => $index <= 2 ? 'ready' : 'failed',
+                'status' => $completed ? ($index <= 2 ? 'ready' : 'needs_review') : 'failed',
                 'text' => 'historical output',
             ]);
         }
@@ -155,7 +157,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         } catch (ExplicitDocumentRetryConflict $conflict) {
             self::assertSame('forbidden', $conflict->disposition);
         }
-        $firstUnit = EstimateGenerationProcessingUnit::query()->where('unit_index', 3)->firstOrFail();
+        $firstUnit = EstimateGenerationProcessingUnit::query()->where('unit_index', 11)->firstOrFail();
         $firstUnit->forceFill(['failure_code' => 'document_artifact_integrity_failed'])->save();
         try {
             $service->handle($session, $document, $actor, 9, $sourceVersion, (string) Str::uuid(), null);
@@ -163,7 +165,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         } catch (ExplicitDocumentRetryConflict $conflict) {
             self::assertSame('retry_not_allowed', $conflict->disposition);
         }
-        $firstUnit->forceFill(['failure_code' => 'document_geometry_processing_failed'])->save();
+        $firstUnit->forceFill(['failure_code' => 'vision_provider_response_invalid'])->save();
         Queue::assertNothingPushed();
 
         $accepted = $service->handle($session, $document, $actor, 9, $sourceVersion, $key, null);
@@ -181,12 +183,13 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         self::assertCount(1, $document->meta['explicit_document_retry_history']);
         self::assertSame('old-lineage', $document->meta['explicit_document_retry_history'][0]['old_attempt_id']);
         self::assertSame(hash('sha256', $key), $document->meta['explicit_document_retry_history'][0]['idempotency_hash']);
-        self::assertCount(3, EstimateGenerationProcessingUnit::query()->get());
-        self::assertSame('document_geometry_processing_failed', EstimateGenerationProcessingUnit::query()->where('unit_index', 3)->firstOrFail()->metadata['failure_history'][0]['failure_code']);
-        self::assertSame(1, EstimateGenerationDocumentPage::query()->where('status', 'queued')->count());
+        self::assertCount(22, EstimateGenerationProcessingUnit::query()->get());
+        self::assertSame('vision_provider_response_invalid', EstimateGenerationProcessingUnit::query()->where('unit_index', 11)->firstOrFail()->metadata['failure_history'][0]['failure_code']);
+        self::assertSame(9, EstimateGenerationDocumentPage::query()->where('status', 'queued')->count());
         self::assertSame(2, EstimateGenerationDocumentPage::query()->where('status', 'ready')->count());
-        self::assertSame(2, $document->processed_page_count);
-        self::assertSame(66, $document->progress_percent);
+        self::assertSame(11, EstimateGenerationDocumentPage::query()->where('status', 'needs_review')->count());
+        self::assertSame(13, $document->processed_page_count);
+        self::assertSame(59, $document->progress_percent);
         self::assertSame('processing', $document->facts_summary['processing_outcome']['readiness']);
         self::assertSame(1, EstimateGenerationAuditEvent::query()->count());
         self::assertSame(hash('sha256', $key), EstimateGenerationAuditEvent::query()->firstOrFail()->payload['idempotency_hash']);

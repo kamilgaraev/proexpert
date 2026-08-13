@@ -23,6 +23,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
         private DocumentVisualAttributeSummaryBuilder $visualAttributes = new DocumentVisualAttributeSummaryBuilder,
         private DocumentProcessingOutcomeResolver $outcomes = new DocumentProcessingOutcomeResolver,
         private DocumentResourceUsageSummarizer $resourceUsage = new DocumentResourceUsageSummarizer,
+        private DocumentSemanticUnderstandingSummarizer $semanticUnderstanding = new DocumentSemanticUnderstandingSummarizer,
     ) {}
 
     public function reconcile(int $documentId, string $sourceVersion): void
@@ -90,6 +91,9 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                         'metadata' => is_array($unit->metadata) ? $unit->metadata : [],
                     ])->all(),
                 );
+                $semanticUnderstanding = $this->semanticUnderstanding->summarize(
+                    $includedPages->pluck('normalized_payload')->all(),
+                );
                 $documentMeta = is_array($document->meta) ? $document->meta : [];
                 $explicitRetry = is_array($documentMeta['explicit_document_retry'] ?? null)
                     ? $documentMeta['explicit_document_retry']
@@ -132,6 +136,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     'facts_summary' => [
                         'processing_outcome' => $outcome->toArray(),
                         'resource_usage' => $resourceUsage,
+                        'semantic_understanding' => $semanticUnderstanding,
                         ...($qualitySignals === [] ? [] : ['quality_signals' => $qualitySignals]),
                         ...$visualAttributes,
                     ],

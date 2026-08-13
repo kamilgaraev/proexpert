@@ -147,7 +147,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && str_contains($system, 'schema_version must equal integer 3')
                 && str_contains($system, 'visual_attributes')
                 && str_contains($system, 'floor_plan, elevation, section, detail, site_plan, schedule, sketch, photo, unknown')
-                && str_contains($system, 'PlanSheetAnalysis')
+                && str_contains($system, 'preliminary hint')
                 && str_contains($system, 'entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion')
                 && str_contains($system, 'dimension_text, scale_notation, known_object, manual_reference')
                 && str_contains($system, 'scale_missing, scale_conflict, low_confidence, perspective_confirmation_required, geometry_incomplete, text_uncertain')
@@ -287,12 +287,11 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         $response['choices'][0]['message']['content'] = json_encode($analysis, JSON_THROW_ON_ERROR);
         Http::fake(['*' => Http::response($response)]);
 
-        try {
-            $this->provider()->analyze($this->input());
-            self::fail('Configured fact limit was not enforced.');
-        } catch (VisionContractException) {
-            self::assertSame('malformed_response', $this->attempts[0]->status);
-        }
+        $result = $this->provider()->analyze($this->input());
+
+        self::assertSame([], $result->projectSheetAnalysis?->facts);
+        self::assertSame('invalid_project_sheet_analysis', $result->quarantinedItems[0]['reason']);
+        self::assertSame('succeeded', $this->attempts[0]->status);
     }
 
     #[Test]
@@ -885,6 +884,141 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function luna_scale_candidate_can_reference_an_element_with_direct_evidence(): void
+    {
+        $fixture = json_decode((string) file_get_contents(base_path('tests/Fixtures/EstimateGeneration/Vision/page-11-luna-shape.json')), true, 16, JSON_THROW_ON_ERROR);
+        $response = $this->response();
+        $analysis = json_decode($response['choices'][0]['message']['content'], true, 16, JSON_THROW_ON_ERROR);
+        $analysis['elements'][] = $fixture['element'];
+        $analysis['scale_candidates'][0]['evidence_ref'] = $fixture['scale_candidate_evidence_ref'];
+        $analysis['sheet_type'] = $fixture['sheet_type'];
+        $analysis['project_sheet_analysis'] = [
+            'contractVersion' => 'sheet-analysis:v2',
+            'role' => $fixture['semantic_role'],
+            'facts' => [
+                $this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => 0.0], 'm'),
+                $this->semanticFact('roof-form', 'roof_geometry', ['type' => 'enum', 'data' => 'gable']),
+                $this->semanticFact('opening-window', 'opening', ['type' => 'string', 'data' => 'window']),
+                $this->semanticFact('dimension-main', 'dimension_chain', ['type' => 'number', 'data' => 7300], 'mm'),
+            ],
+        ];
+        $response['choices'][0]['message']['content'] = json_encode($analysis, JSON_THROW_ON_ERROR);
+        Http::fake(['*' => Http::response($response)]);
+
+        $result = $this->provider()->analyze($this->input());
+
+        self::assertSame('page-1', $result->scaleCandidates[0]->evidenceRef);
+        self::assertSame('facade', $result->projectSheetAnalysis?->sheetRole);
+        self::assertSame($fixture['required_fact_types'], array_column($result->projectSheetAnalysis?->facts ?? [], 'factType'));
+        self::assertSame('succeeded', $this->attempts[0]->status);
+    }
+
+    #[Test]
+    public function luna_long_element_label_is_deterministically_bounded(): void
+    {
+        $fixture = json_decode((string) file_get_contents(base_path('tests/Fixtures/EstimateGeneration/Vision/page-17-luna-shape.json')), true, 16, JSON_THROW_ON_ERROR);
+        $response = $this->response();
+        $analysis = json_decode($response['choices'][0]['message']['content'], true, 16, JSON_THROW_ON_ERROR);
+        self::assertSame(183, strlen($fixture['label']));
+        $analysis['elements'][0]['key'] = $fixture['element_key'];
+        $analysis['elements'][0]['label'] = $fixture['label'];
+        $response['choices'][0]['message']['content'] = json_encode($analysis, JSON_THROW_ON_ERROR);
+        Http::fake(['*' => Http::response($response)]);
+
+        $result = $this->provider()->analyze($this->input());
+
+        self::assertSame(160, mb_strlen((string) $result->elements[0]->label));
+        self::assertSame(str_repeat('A', 160), $result->elements[0]->label);
+        self::assertSame('succeeded', $this->attempts[0]->status);
+    }
+
+    #[Test]
+    public function unknown_role_hint_self_classifies_a_facade_and_keeps_semantic_facts(): void
+    {
+        $response = $this->response(['sheet_type' => 'elevation', 'project_sheet_analysis' => [
+            'contractVersion' => 'sheet-analysis:v2',
+            'role' => 'facade',
+            'facts' => [
+                $this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => 0.0], 'm'),
+                $this->semanticFact('roof-form', 'roof_geometry', ['type' => 'enum', 'data' => 'gable']),
+                $this->semanticFact('finish-question', 'unresolved_question', ['type' => 'string', 'data' => 'Уточнить материал отделки фасада']),
+                $this->semanticFact('finish-recommendation', 'recommendation', ['type' => 'string', 'data' => 'Сверить ведомость отделки и узлы фасада']),
+            ],
+        ]]);
+        Http::fake(['*' => Http::response($response)]);
+
+        $result = $this->provider()->analyze($this->input(sheetRole: 'unknown'));
+
+        self::assertSame('facade', $result->projectSheetAnalysis?->sheetRole);
+        self::assertCount(4, $result->projectSheetAnalysis?->facts ?? []);
+        self::assertContains('elevation', $result->semanticQuality()['found']);
+        self::assertContains('roof_geometry', $result->semanticQuality()['found']);
+        Http::assertSent(static fn ($request): bool => str_contains(
+            (string) $request['messages'][0]['content'],
+            'preliminary hint',
+        )
+            && str_contains((string) $request['messages'][0]['content'], 'unresolved_question')
+            && str_contains((string) $request['messages'][0]['content'], 'same explicitly marked entity across'));
+    }
+
+    #[Test]
+    public function invalid_items_are_quarantined_without_losing_valid_page_content(): void
+    {
+        $response = $this->response(['elements' => [
+            ['key' => 'valid-text', 'type' => 'text', 'label' => 'Ось 1', 'polygon' => [[0.1, 0.1], [0.2, 0.2]], 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
+            ['key' => 'invalid-text', 'type' => 'text', 'label' => 'bad', 'polygon' => [[0.1, 0.1]], 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
+        ], 'project_sheet_analysis' => [
+            'contractVersion' => 'sheet-analysis:v2',
+            'role' => 'plan',
+            'facts' => [
+                $this->semanticFact('axis-1', 'axis', ['type' => 'string', 'data' => '1']),
+                [...$this->semanticFact('bad-fact', 'material', ['type' => 'string', 'data' => 'кирпич']), 'evidenceRef' => 'missing'],
+            ],
+        ]]);
+        Http::fake(['*' => Http::response($response)]);
+
+        $result = $this->provider()->analyze($this->input());
+
+        self::assertCount(1, $result->elements);
+        self::assertCount(1, $result->projectSheetAnalysis?->facts ?? []);
+        self::assertSame(['elements', 'facts'], array_column($result->quarantinedItems, 'section'));
+        self::assertSame('succeeded', $this->attempts[0]->status);
+    }
+
+    #[Test]
+    public function multiple_fact_types_share_entity_identity_and_dangling_opening_is_quarantined(): void
+    {
+        $response = $this->response([
+            'elements' => [
+                ['key' => 'wall-1', 'type' => 'wall', 'label' => null, 'polygon' => [[0.1, 0.1]], 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
+                ['key' => 'window-1', 'type' => 'opening', 'label' => 'Окно', 'polygon' => [[0.1, 0.1], [0.2, 0.1]], 'confidence' => 0.9, 'evidence_ref' => 'page-1', 'geometry' => [
+                    'wall_key' => 'wall-1', 'opening_type' => 'window', 'offset' => 0, 'width' => 1.2, 'height' => 1.5,
+                ]],
+            ],
+            'project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'plan',
+                'facts' => [
+                    $this->semanticFact('room-1', 'room', ['type' => 'string', 'data' => 'Гостиная']),
+                    $this->semanticFact('room-1', 'area', ['type' => 'number', 'data' => 24.5], 'm2'),
+                ],
+            ],
+        ]);
+        Http::fake(['*' => Http::response($response)]);
+
+        $result = $this->provider()->analyze($this->input());
+
+        self::assertSame(['room', 'area'], array_column($result->projectSheetAnalysis?->facts ?? [], 'factType'));
+        $replayed = VisionAnalysisData::fromStoredArray($result->toArray());
+        self::assertSame(['room', 'area'], array_column($replayed->projectSheetAnalysis?->facts ?? [], 'factType'));
+        self::assertSame([], $result->elements);
+        self::assertSame(
+            ['invalid_element', 'dangling_element_reference'],
+            array_column($result->quarantinedItems, 'reason'),
+        );
+    }
+
+    #[Test]
     public function persisted_invalid_json_is_not_retried_with_a_second_charge(): void
     {
         $invalid = $this->response();
@@ -905,7 +1039,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function it_fails_closed_for_unknown_keys_bad_geometry_duplicates_dangling_evidence_and_model_mismatch(): void
+    public function it_rejects_envelope_identity_failures_and_quarantines_invalid_items(): void
     {
         $invalid = [
             array_replace_recursive($this->response(), ['model' => 'another/model']),
@@ -921,13 +1055,18 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         Http::fake(function () use (&$invalid) {
             return Http::response(array_shift($invalid));
         });
-        for ($index = 0; $index < 5; $index++) {
+        for ($index = 0; $index < 2; $index++) {
             try {
                 $this->provider()->analyze($this->input(claim: $index + 1));
                 self::fail('Invalid response was accepted.');
             } catch (VisionContractException) {
                 self::assertSame('malformed_response', $this->attempts[$index]->status);
             }
+        }
+        for ($index = 2; $index < 5; $index++) {
+            $analysis = $this->provider()->analyze($this->input(claim: $index + 1));
+            self::assertNotEmpty($analysis->quarantinedItems);
+            self::assertSame('succeeded', $this->attempts[$index]->status);
         }
     }
 
@@ -961,16 +1100,11 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         Http::fake(function () use (&$cases) {
             return Http::response(array_shift($cases));
         });
-        for ($i = 0; $i < 2; $i++) {
-            try {
-                $this->provider()->analyze($this->input(claim: $i + 1));
-                self::fail('Invalid geometry accepted.');
-            } catch (VisionContractException) {
-            }
-        }
-
+        $first = $this->provider()->analyze($this->input(claim: 1));
+        self::assertSame('repeated_polygon_point', $first->quarantinedItems[0]['reason']);
         $this->expectException(VisionContractException::class);
-        new \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionElementData('room-nan', 'room', null, [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]], NAN, 'page-1');
+        $this->provider()->analyze($this->input(claim: 2));
+
     }
 
     #[Test]
@@ -1277,50 +1411,77 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'document:13/sheet:17',
             'document:13/sheet:18',
         );
-        Http::fake(['*' => Http::response($this->response([
+        $targetedResponse = $this->response();
+        $targetedResponse['choices'][0]['message']['content'] = json_encode([
+            'schema_version' => 1,
+            'evidence' => [['key' => 'targeted-page-1', 'locator' => [
+                'page_id' => 17, 'page_number' => 2, 'processing_unit_id' => 19,
+                'source_version' => 'sha256:'.str_repeat('a', 64), 'coordinate_space' => 'normalized_derivative_v1',
+            ]]],
             'project_sheet_analysis' => [
                 'contractVersion' => 'sheet-analysis:v2',
                 'role' => 'facade',
                 'facts' => [[
                     'entityKey' => 'facade-1', 'factType' => 'structural_element',
                     'value' => ['type' => 'unknown', 'data' => null], 'unit' => null,
-                    'evidenceRef' => 'page-1', 'sourcePolygonOrNativeRef' => $this->responsePolygon(),
+                    'evidenceRef' => 'targeted-page-1', 'sourcePolygonOrNativeRef' => $this->responsePolygon(),
                     'confidence' => 0.95, 'contractVersion' => 'sheet-analysis:v2',
                 ]],
             ],
-        ]))]);
+        ], JSON_THROW_ON_ERROR);
+        Http::fake(['*' => Http::response($targetedResponse)]);
 
-        $primary = $this->input();
+        $primaryInput = $this->input();
+        $primaryPayload = json_decode($this->response()['choices'][0]['message']['content'], true, 16, JSON_THROW_ON_ERROR);
+        $primaryPayload['sheet_type'] = 'elevation';
+        $primaryPayload['project_sheet_analysis'] = [
+            'contractVersion' => 'sheet-analysis:v2',
+            'role' => 'facade',
+            'facts' => [$this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => 0.0], 'm')],
+        ];
+        $primaryAnalysis = VisionAnalysisData::fromProviderArray(
+            $primaryPayload,
+            'timeweb',
+            'openai/gpt-5.6-luna',
+            'openai/gpt-5.6-luna',
+            'timeweb-gpt-5.6-luna-2026-08-13',
+            'measured',
+            100,
+            20,
+            96,
+            64,
+        )->mapPolygonsToSource((new ProjectiveTransformFactory)->identity());
         $supplemental = new TargetedSheetEvidence(
             7, 9, 11, 13, 18, 3, 20,
             'sha256:'.str_repeat('b', 64),
-            'sha256:'.hash('sha256', $primary->imageContent),
+            'sha256:'.hash('sha256', $primaryInput->imageContent),
             'image/png',
-            $primary->imageContent,
+            $primaryInput->imageContent,
         );
         $analysis = $this->provider()->analyze($this->input(
             sheetRole: 'facade',
             recheckScope: $scope,
             supplementalEvidence: [$supplemental],
+            primaryAnalysis: $primaryAnalysis,
         ));
 
         self::assertSame('facade', $analysis->projectSheetAnalysis?->sheetRole);
+        self::assertSame(['level-ground', 'facade-1'], array_column($analysis->projectSheetAnalysis?->facts ?? [], 'entityKey'));
         self::assertSame($scope->toSafeUsageContext(), $this->attempts[0]->requestContext);
-        Http::assertSent(function ($request): bool {
-            $system = (string) $request['messages'][0]['content'];
-            $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
-            $images = array_values(array_filter(
-                $request['messages'][1]['content'],
-                static fn (array $item): bool => ($item['type'] ?? null) === 'image_url',
-            ));
+        [$request] = Http::recorded()->first();
+        $system = (string) $request['messages'][0]['content'];
+        $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
+        $images = array_values(array_filter(
+            $request['messages'][1]['content'],
+            static fn (array $item): bool => ($item['type'] ?? null) === 'image_url',
+        ));
 
-            return str_contains($system, 'role facade and contract FacadeSheetAnalysis')
-                && ! str_contains($system, 'PlanSheetAnalysis')
-                && $user['targeted_recheck']['reason'] === 'sheet_role_conflict'
-                && $user['targeted_recheck']['source_set'] === ['document:13/sheet:17', 'document:13/sheet:18']
-                && $user['supplemental_evidence'][0]['page_id'] === 18
-                && count($images) === 2;
-        });
+        self::assertStringContainsString('already accepted construction drawing analysis', $system);
+        self::assertStringContainsString('Role is exactly facade', $system);
+        self::assertSame('sheet_role_conflict', $user['targeted_recheck']['reason']);
+        self::assertSame(['document:13/sheet:17', 'document:13/sheet:18'], $user['targeted_recheck']['source_set']);
+        self::assertSame(18, $user['supplemental_evidence'][0]['page_id']);
+        self::assertCount(2, $images);
     }
 
     #[Test]
@@ -1349,7 +1510,14 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             ],
         ];
         Http::fakeSequence()
-            ->push($this->response())
+            ->push($this->response(['project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'plan',
+                'facts' => [
+                    $this->semanticFact('room-1', 'room', ['type' => 'string', 'data' => 'Комната']),
+                    $this->semanticFact('room-1', 'area', ['type' => 'number', 'data' => 18.4], 'm2'),
+                ],
+            ]]))
             ->push([
                 'model' => 'openai/gpt-5.6-luna',
                 'choices' => [[
@@ -1378,6 +1546,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
 
         self::assertSame($primary->elements[0]->key, $analysis->elements[0]->key);
         self::assertSame('plan', $analysis->projectSheetAnalysis?->sheetRole);
+        self::assertSame(['room', 'area'], array_column($analysis->projectSheetAnalysis?->facts ?? [], 'factType'));
+        self::assertSame(0.95, $analysis->projectSheetAnalysis?->facts[0]['confidence']);
         self::assertSame(1366, $this->attempts[1]->reasoningTokens);
         Http::assertSent(static function ($request): bool {
             $system = (string) $request['messages'][0]['content'];
@@ -1467,6 +1637,21 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'model' => 'openai/gpt-5.6-luna',
             'choices' => [['message' => ['content' => json_encode($analysis, JSON_THROW_ON_ERROR)], 'finish_reason' => 'stop']],
             'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 20, 'total_tokens' => 120],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function semanticFact(string $key, string $type, array $value, ?string $unit = null): array
+    {
+        return [
+            'entityKey' => $key,
+            'factType' => $type,
+            'value' => $value,
+            'unit' => $unit,
+            'evidenceRef' => 'page-1',
+            'sourcePolygonOrNativeRef' => $this->responsePolygon(),
+            'confidence' => 0.9,
+            'contractVersion' => 'sheet-analysis:v2',
         ];
     }
 

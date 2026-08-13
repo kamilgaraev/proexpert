@@ -8,6 +8,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContra
 
 final readonly class VisionElementData
 {
+    public const MAX_LABEL_LENGTH = 160;
+
     private const TYPES = ['room', 'wall', 'opening', 'dimension', 'axis', 'engineering_element', 'text'];
 
     /** @param array<int, array{0: float, 1: float}> $polygon */
@@ -22,7 +24,7 @@ final readonly class VisionElementData
     ) {
         if (preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/', $key) !== 1
             || ! in_array($type, self::TYPES, true) || ! is_finite($confidence) || $confidence < 0.0 || $confidence > 1.0
-            || ($label !== null && (mb_strlen($label) > 160 || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F]/u', $label) === 1))
+            || ($label !== null && (mb_strlen($label) > self::MAX_LABEL_LENGTH || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F]/u', $label) === 1))
             || preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/', $evidenceRef) !== 1
             || count($polygon) < ($type === 'room' ? 3 : 2) || count($polygon) > 64) {
             throw new VisionContractException('invalid_element');
