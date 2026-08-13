@@ -745,7 +745,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 ['role' => 'user', 'content' => $content],
             ],
             'max_tokens' => $this->maxOutputTokens($input),
-            'response_format' => $this->responseFormat($input),
+            'response_format' => $this->responseFormat($input, $model),
         ];
         if (VisionModelPolicy::isLuna($model)) {
             $effort = trim((string) config('estimate-generation.vision.reasoning_effort', 'medium'));
@@ -814,8 +814,12 @@ final readonly class TimewebVisionProvider implements VisionProvider
     }
 
     /** @return array<string, mixed> */
-    private function responseFormat(VisionDocumentInput $input): array
+    private function responseFormat(VisionDocumentInput $input, string $model): array
     {
+        if (VisionModelPolicy::isLuna($model)) {
+            return ['type' => 'json_object'];
+        }
+
         $targeted = $input->isTargetedSheetReanalysis() && $input->primaryAnalysis !== null;
         $evidence = [
             'type' => 'object',
