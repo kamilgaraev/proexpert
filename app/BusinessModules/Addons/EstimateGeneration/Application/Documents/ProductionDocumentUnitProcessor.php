@@ -59,6 +59,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         } catch (DocumentRepresentationMeasurementException $exception) {
             throw $this->processingFailure(
                 $exception->getPrevious() ?? $exception,
+                $context,
                 [
                     'duration_ms' => $exception->measurement->durationMs,
                     'peak_memory_bytes' => $exception->measurement->incrementalPeakMemoryBytes,
@@ -67,23 +68,32 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 ],
             );
         } catch (Throwable $exception) {
-            throw $this->processingFailure($exception);
+            throw $this->processingFailure($exception, $context);
         }
     }
 
     /** @param array<string, mixed> $resourceUsage */
-    private function processingFailure(Throwable $exception, array $resourceUsage = []): Throwable
-    {
+    private function processingFailure(
+        Throwable $exception,
+        DocumentUnitExecutionContext $context,
+        array $resourceUsage = [],
+    ): Throwable {
         return match (true) {
             $exception instanceof DocumentUnitProcessingException => $resourceUsage === []
                 ? $exception
                 : new DocumentUnitProcessingException($exception->safeCode, $exception, $resourceUsage),
             $exception instanceof TypedFailureException => $resourceUsage === []
-                ? $exception
+                ? new TypedFailureException(
+                    $exception->category,
+                    $exception->safeCode,
+                    [...$this->boundaryContext($context), ...$exception->safeContext],
+                    $exception->getPrevious() ?? $exception,
+                    $exception->resourceUsage,
+                )
                 : new TypedFailureException(
                     $exception->category,
                     $exception->safeCode,
-                    $exception->safeContext,
+                    [...$this->boundaryContext($context), ...$exception->safeContext],
                     $exception,
                     $resourceUsage,
                 ),
@@ -106,6 +116,16 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 $exception,
                 $resourceUsage,
             ),
+            $exception instanceof VisionContractException => new TypedFailureException(
+                FailureCategory::Terminal,
+                'vision_provider_response_invalid',
+                [
+                    ...$this->boundaryContext($context),
+                    'execution_boundary' => 'vision_provider_response_parsing',
+                ],
+                $exception,
+                $resourceUsage,
+            ),
             $exception instanceof VisionProviderException => new TypedFailureException(
                 $exception->retryable ? FailureCategory::Recoverable : FailureCategory::Terminal,
                 $exception->reason,
@@ -122,8 +142,25 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 previous: $exception,
                 resourceUsage: $resourceUsage,
             ),
-            default => new DocumentUnitProcessingException('document_unit_processing_failed', $exception, $resourceUsage),
+            default => new TypedFailureException(
+                FailureCategory::Terminal,
+                'document_unit_pre_wire_failed',
+                $this->boundaryContext($context),
+                $exception,
+                $resourceUsage,
+            ),
         };
+    }
+
+    /** @return array<string, string> */
+    private function boundaryContext(DocumentUnitExecutionContext $context): array
+    {
+        return [
+            'execution_boundary' => 'document_unit_representation',
+            ...(preg_match('/\A[0-9a-f-]{36}\z/i', $context->processingAttemptId) === 1
+                ? ['processing_attempt_id' => strtolower($context->processingAttemptId)]
+                : []),
+        ];
     }
 
     private function processMeasured(DocumentUnitExecutionContext $context): DocumentUnitOutput

@@ -81,8 +81,22 @@ final readonly class ProcessDocumentUnit
                 throw new DocumentUnitProcessingException('unit_output_identity_mismatch');
             }
 
-            if (! $this->store->publish($claim, $output, now()->toDateTimeImmutable())) {
-                throw new TypedFailureException(FailureCategory::Recoverable, 'unit_claim_lost');
+            try {
+                $published = $this->store->publish($claim, $output, now()->toDateTimeImmutable());
+            } catch (Throwable $error) {
+                throw new TypedFailureException(
+                    FailureCategory::Recoverable,
+                    'document_unit_output_persistence_failed',
+                    ['execution_boundary' => 'document_unit_output_persistence'],
+                    $error,
+                );
+            }
+            if (! $published) {
+                throw new TypedFailureException(
+                    FailureCategory::Recoverable,
+                    'unit_claim_lost',
+                    ['execution_boundary' => 'document_unit_output_persistence'],
+                );
             }
 
             try {
@@ -95,23 +109,44 @@ final readonly class ProcessDocumentUnit
             $fingerprint = is_string($diagnosticFingerprint)
                 ? substr($diagnosticFingerprint, strlen('sha256:'))
                 : $this->failureFingerprint($error, $failure->code);
-            $persisted = $this->store->fail(
-                $claim,
-                $failure->code,
-                $fingerprint,
-                now()->toDateTimeImmutable(),
-                $failure->category,
-                $failure->category === FailureCategory::Terminal
-                    && in_array($failure->code, [
-                        'document_unit_processing_failed',
-                        'unexpected_internal_failure',
-                        'document_representation_contract_invalid',
-                        'document_representation_source_mismatch',
-                        'vision_provider_request_rejected',
-                        'vision_http_failed',
-                    ], true),
-                $this->resourceUsage($error),
-            );
+            try {
+                $persisted = $this->store->fail(
+                    $claim,
+                    $failure->code,
+                    $fingerprint,
+                    now()->toDateTimeImmutable(),
+                    $failure->category,
+                    $failure->category === FailureCategory::Terminal
+                        && in_array($failure->code, [
+                            'document_unit_processing_failed',
+                            'document_unit_pre_wire_failed',
+                            'vision_operation_settings_failed',
+                            'vision_request_preparation_failed',
+                            'vision_physical_claim_failed',
+                            'vision_physical_attempt_persistence_failed',
+                            'vision_provider_response_invalid',
+                            'unexpected_internal_failure',
+                            'document_representation_contract_invalid',
+                            'document_representation_source_mismatch',
+                            'vision_provider_request_rejected',
+                            'vision_http_failed',
+                        ], true),
+                    $this->resourceUsage($error),
+                );
+            } catch (Throwable $persistenceError) {
+                $persistenceFailure = new TypedFailureException(
+                    FailureCategory::Recoverable,
+                    'document_unit_failure_persistence_failed',
+                    [
+                        'execution_boundary' => 'document_unit_failure_persistence',
+                        'failure_fingerprint' => $failure->fingerprint,
+                    ],
+                    $persistenceError,
+                );
+                $this->failureRecorder->capture($persistenceFailure, $this->failureContext($context));
+
+                throw $persistenceFailure;
+            }
 
             if (! $persisted) {
                 throw new TypedFailureException(FailureCategory::Recoverable, 'unit_claim_lost', previous: $error);
@@ -176,6 +211,14 @@ final readonly class ProcessDocumentUnit
             documentId: $context->documentId,
             pageId: $context->pageId,
             unitId: $context->unitId,
+            processingAttemptId: $this->processingAttemptId($context),
         );
+    }
+
+    private function processingAttemptId(DocumentUnitExecutionContext $context): ?string
+    {
+        return preg_match('/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i', $context->processingAttemptId) === 1
+            ? strtolower($context->processingAttemptId)
+            : null;
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentMutationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ExplicitDocumentRetryEligibility;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ResetDocumentProcessingUnitsForAttempt;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
@@ -32,6 +33,7 @@ $service = new RetryEstimateGenerationDocument(
     $readiness,
     $authorization,
     new ExplicitDocumentRetryEligibility,
+    new ResetDocumentProcessingUnitsForAttempt,
 );
 $actor = new User;
 $actor->forceFill(['id' => 7, 'current_organization_id' => 38]);

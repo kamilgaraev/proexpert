@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use Illuminate\Database\QueryException;
 use InvalidArgumentException;
 use LogicException;
@@ -16,6 +18,9 @@ final readonly class FailureDiagnosticIdentity
 {
     private const CLASS_SLUGS = [
         DocumentUnitProcessingException::class => 'document_unit_processing_exception',
+        TypedFailureException::class => 'typed_failure_exception',
+        VisionProviderException::class => 'vision_provider_exception',
+        VisionContractException::class => 'vision_contract_exception',
         QueryException::class => 'query_exception',
         PDOException::class => 'pdo_exception',
         InvalidArgumentException::class => 'invalid_argument_exception',

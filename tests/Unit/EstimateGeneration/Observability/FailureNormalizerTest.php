@@ -110,6 +110,32 @@ final class FailureNormalizerTest extends TestCase
     }
 
     #[Test]
+    public function pre_wire_diagnostics_keep_new_retry_lineage_and_requested_model_without_private_text(): void
+    {
+        $failure = (new FailureNormalizer)->normalize(
+            new TypedFailureException(
+                FailureCategory::Terminal,
+                'vision_operation_settings_failed',
+                ['execution_boundary' => 'vision_operation_settings'],
+                new RuntimeException('Bearer secret prompt https://signed.example/private.png'),
+            ),
+            $this->context(
+                processingAttemptId: '7d1385db-106e-47ab-993b-322fb5d124af',
+                model: 'openai/gpt-5.6-luna',
+            ),
+        );
+
+        self::assertSame('vision_operation_settings_failed', $failure->code);
+        self::assertSame('vision_operation_settings', $failure->safeContext['execution_boundary']);
+        self::assertSame('7d1385db-106e-47ab-993b-322fb5d124af', $failure->safeContext['processing_attempt_id']);
+        self::assertSame('openai/gpt-5.6-luna', $failure->safeContext['requested_model']);
+        self::assertSame('runtime_exception', $failure->safeContext['root_exception_class']);
+        self::assertMatchesRegularExpression('/\Asha256:[0-9a-f]{64}\z/', $failure->safeContext['exception_chain_fingerprint']);
+        self::assertStringNotContainsString('secret', json_encode($failure->safeContext, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('signed.example', json_encode($failure->safeContext, JSON_THROW_ON_ERROR));
+    }
+
+    #[Test]
     public function fingerprint_ignores_message_but_separates_tenant_stage_and_code(): void
     {
         $normalizer = new FailureNormalizer;
@@ -177,11 +203,31 @@ final class FailureNormalizerTest extends TestCase
         self::assertSame(400, $failure->safeContext['provider_http_status']);
     }
 
+    #[Test]
+    public function immutable_provider_model_overrides_stale_environment_identity(): void
+    {
+        $failure = (new FailureNormalizer)->normalize(new TypedFailureException(
+            FailureCategory::Terminal,
+            'vision_physical_attempt_persistence_failed',
+            [
+                'provider' => 'timeweb',
+                'requested_model' => 'openai/gpt-5.6-luna',
+                'execution_boundary' => 'vision_physical_attempt_persistence',
+            ],
+        ), $this->context(model: 'legacy/model-v1'));
+
+        self::assertSame('timeweb', $failure->context->provider);
+        self::assertSame('openai/gpt-5.6-luna', $failure->context->model);
+        self::assertSame('openai/gpt-5.6-luna', $failure->safeContext['requested_model']);
+    }
+
     private function context(
         int $organizationId = 1,
         ProcessingStage $stage = ProcessingStage::UnderstandDocuments,
         ?int $pageId = null,
         int $unitId = 1001,
+        ?string $processingAttemptId = null,
+        ?string $model = null,
     ): FailureContext {
         return new FailureContext(
             organizationId: $organizationId,
@@ -195,6 +241,8 @@ final class FailureNormalizerTest extends TestCase
             documentId: 1000,
             pageId: $pageId,
             unitId: $unitId,
+            processingAttemptId: $processingAttemptId,
+            model: $model,
         );
     }
 }

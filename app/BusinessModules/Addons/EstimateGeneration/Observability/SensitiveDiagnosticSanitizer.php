@@ -11,6 +11,7 @@ final readonly class SensitiveDiagnosticSanitizer
     /** @var array<string, array{string, int}> */
     private const STRING_DOMAINS = [
         'provider_code' => ['/\A[a-z][a-z0-9._-]*\z/', 80],
+        'provider' => ['/\A[a-z][a-z0-9_]{0,39}\z/', 40],
         'provider_error_type' => ['/\A[a-zA-Z][a-zA-Z0-9._-]*\z/', 80],
         'provider_error_code' => ['/\A[a-zA-Z][a-zA-Z0-9._-]*\z/', 80],
         'provider_error_param' => ['/\A[a-zA-Z][a-zA-Z0-9_.\[\]-]*\z/', 80],
@@ -32,6 +33,8 @@ final readonly class SensitiveDiagnosticSanitizer
         'exception_class' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
         'root_exception_class' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
         'execution_boundary' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
+        'processing_attempt_id' => ['/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i', 36],
+        'requested_model' => ['/\A[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,79})?\z/', 80],
     ];
 
     /** @var array<string, array{int, int}> */
@@ -75,7 +78,7 @@ final readonly class SensitiveDiagnosticSanitizer
             [$pattern, $maximumLength] = self::STRING_DOMAINS[$key];
             if (strlen($value) <= min($maximumLength, $this->maxStringLength)
                 && preg_match($pattern, $value) === 1
-                && ! $this->looksSecret($value)) {
+                && ! $this->looksSecret($key, $value)) {
                 $result[$key] = $value;
             }
         }
@@ -83,9 +86,9 @@ final readonly class SensitiveDiagnosticSanitizer
         return $result;
     }
 
-    private function looksSecret(string $value): bool
+    private function looksSecret(string $key, string $value): bool
     {
-        return str_contains($value, '/')
+        return ($key !== 'requested_model' && str_contains($value, '/'))
             || str_contains($value, '\\')
             || preg_match('/(?:bearer|api[_-]?key|secret|password|token|eyj[a-z0-9_-]{8,}\.|akia[0-9a-z]{12,}|gh[pousr]_[0-9a-z]{12,}|sk-[0-9a-z]{8,})/i', $value) === 1
             || (strlen($value) >= 24 && preg_match('/\A[A-Za-z0-9_-]+\z/', $value) === 1 && preg_match('/[A-Z]/', $value) === 1 && preg_match('/[a-z]/', $value) === 1 && preg_match('/[0-9]/', $value) === 1);
