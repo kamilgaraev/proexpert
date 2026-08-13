@@ -36,7 +36,7 @@ final class RetryEstimateGenerationDocument
         ?string $reason,
     ): DocumentActionResult {
         $keyHash = hash('sha256', $idempotencyKey);
-        [$lockedSession, $lockedDocument, $attemptId, $disposition] = DB::transaction(
+        [$lockedSession, $lockedDocument, $attemptId, $disposition, $terminalReplay] = DB::transaction(
             function () use ($session, $document, $actor, $expectedVersion, $expectedSourceVersion, $keyHash, $reason): array {
                 $lockedSession = EstimateGenerationSession::query()->lockForUpdate()->findOrFail($session->getKey());
                 $lockedDocument = EstimateGenerationDocument::query()
@@ -73,10 +73,26 @@ final class RetryEstimateGenerationDocument
                         throw new ExplicitDocumentRetryConflict('stale_source');
                     }
 
-                    return [$lockedSession, $lockedDocument, (string) ($current['attempt_id'] ?? ''), 'replayed'];
+                    return [
+                        $lockedSession,
+                        $lockedDocument,
+                        (string) ($current['attempt_id'] ?? ''),
+                        'replayed',
+                        ($current['status'] ?? null) !== 'processing',
+                    ];
+                }
+                $historicalAttemptId = $this->historicalAttemptForKey($meta, $keyHash, $expectedSourceVersion);
+                if ($historicalAttemptId !== null) {
+                    return [$lockedSession, $lockedDocument, $historicalAttemptId, 'replayed', true];
                 }
                 if (($current['status'] ?? null) === 'processing') {
-                    return [$lockedSession, $lockedDocument, (string) ($current['attempt_id'] ?? ''), 'already_in_progress'];
+                    return [
+                        $lockedSession,
+                        $lockedDocument,
+                        (string) ($current['attempt_id'] ?? ''),
+                        'already_in_progress',
+                        false,
+                    ];
                 }
 
                 $this->policy->documents($lockedSession, $expectedVersion);
@@ -206,7 +222,7 @@ final class RetryEstimateGenerationDocument
                     'payload' => $audit,
                 ]);
 
-                return [$this->reconciler->changed($lockedSession), $lockedDocument, $attemptId, 'accepted'];
+                return [$this->reconciler->changed($lockedSession), $lockedDocument, $attemptId, 'accepted', false];
             },
             3,
         );
@@ -229,10 +245,7 @@ final class RetryEstimateGenerationDocument
         $lockedSession = $lockedSession->fresh(['documents']) ?? $lockedSession;
 
         $resultDocument = $lockedDocument->fresh() ?? $lockedDocument;
-        $retryMeta = is_array($resultDocument->meta) && is_array($resultDocument->meta['explicit_document_retry'] ?? null)
-            ? $resultDocument->meta['explicit_document_retry']
-            : [];
-        $messageKey = $disposition === 'replayed' && ($retryMeta['status'] ?? null) !== 'processing'
+        $messageKey = $disposition === 'replayed' && $terminalReplay
             ? 'estimate_generation.document_retry_result_replayed'
             : 'estimate_generation.document_retry_queued';
 
@@ -243,5 +256,32 @@ final class RetryEstimateGenerationDocument
             $disposition,
             $attemptId,
         );
+    }
+
+    /** @param array<string, mixed> $meta */
+    private function historicalAttemptForKey(array $meta, string $keyHash, string $sourceVersion): ?string
+    {
+        $history = is_array($meta['explicit_document_retry_history'] ?? null)
+            ? $meta['explicit_document_retry_history']
+            : [];
+
+        foreach ($history as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+
+            $historicalHash = (string) ($entry['idempotency_hash'] ?? '');
+            $historicalSourceVersion = (string) ($entry['source_version'] ?? '');
+            $historicalAttemptId = (string) ($entry['new_attempt_id'] ?? '');
+            if ($historicalHash !== ''
+                && hash_equals($historicalHash, $keyHash)
+                && $historicalSourceVersion !== ''
+                && hash_equals($historicalSourceVersion, $sourceVersion)
+                && $historicalAttemptId !== '') {
+                return $historicalAttemptId;
+            }
+        }
+
+        return null;
     }
 }

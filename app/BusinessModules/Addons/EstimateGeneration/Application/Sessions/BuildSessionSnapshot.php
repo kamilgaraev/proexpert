@@ -83,6 +83,7 @@ final class BuildSessionSnapshot
         $metrics = is_array($readinessSummary['metrics'] ?? null) ? $readinessSummary['metrics'] : [];
         $budgetScope = is_array($draft['budget_scope'] ?? null) ? $draft['budget_scope'] : [];
         $aiEstimateQuota = $session->getAttribute('ai_estimate_quota_snapshot');
+        $nextAction = $this->recommendedNextAction($status, $actions);
 
         return new SessionSnapshotData(
             id: (int) $session->getKey(),
@@ -93,7 +94,7 @@ final class BuildSessionSnapshot
             availableActions: $actions,
             blockingIssues: $blockers,
             warnings: $warnings,
-            nextAction: $this->recommendedNextAction($status, $actions),
+            nextAction: $nextAction,
             readinessEvaluated: $readinessEvaluated,
             documentsSummary: $documentsSummary,
             estimateSummary: is_array($draft['quality_summary'] ?? null) ? $draft['quality_summary'] : [],
@@ -117,6 +118,7 @@ final class BuildSessionSnapshot
                     (string) $session->organization_id,
                     (string) $session->getKey(),
                 )->toArray(),
+            recommendedStep: $this->recommendedStep($session, $status),
         );
     }
 
@@ -222,6 +224,22 @@ final class BuildSessionSnapshot
             if (! in_array($action['action'], ['cancel', 'archive'], true)) {
                 return $action['action'];
             }
+        }
+
+        return null;
+    }
+
+    private function recommendedStep(
+        EstimateGenerationSession $session,
+        EstimateGenerationStatus $status,
+    ): ?string {
+        if ($status === EstimateGenerationStatus::ProcessingDocuments) {
+            return 'documents';
+        }
+
+        if ($status === EstimateGenerationStatus::Failed
+            && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments) {
+            return 'documents';
         }
 
         return null;

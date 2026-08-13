@@ -102,6 +102,19 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
             'source_version' => 'sha256:current',
             'error_code' => 'document_processing_system_failed',
             'error_message_key' => 'estimate_generation.document_processing_system_failed',
+            'meta' => [
+                'processing_attempt_id' => 'attempt-terminal',
+                'explicit_document_retry' => [
+                    'attempt_id' => 'attempt-terminal',
+                    'source_version' => 'sha256:current',
+                    'status' => 'failed',
+                    'terminal_reason' => 'system_failure',
+                ],
+                'explicit_document_retry_history' => [[
+                    'old_attempt_id' => 'attempt-original',
+                    'new_attempt_id' => 'attempt-terminal',
+                ]],
+            ],
             'facts_summary' => [
                 'processing_outcome' => [
                     'type' => 'system_failure',

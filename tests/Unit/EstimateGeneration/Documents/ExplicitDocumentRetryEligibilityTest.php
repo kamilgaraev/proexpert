@@ -36,6 +36,47 @@ final class ExplicitDocumentRetryEligibilityTest extends TestCase
         ));
     }
 
+    #[Test]
+    public function terminal_failed_previous_retry_allows_a_new_user_lineage(): void
+    {
+        $document = $this->document('failed', 'document_geometry_processing_failed');
+        $document->forceFill(['meta' => [
+            'processing_attempt_id' => 'attempt-terminal',
+            'explicit_document_retry' => [
+                'attempt_id' => 'attempt-terminal',
+                'source_version' => 'sha256:current',
+                'status' => 'failed',
+                'terminal_reason' => 'system_failure',
+            ],
+            'explicit_document_retry_history' => [[
+                'old_attempt_id' => 'attempt-original',
+                'new_attempt_id' => 'attempt-terminal',
+            ]],
+        ]]);
+
+        self::assertTrue((new ExplicitDocumentRetryEligibility)->allowed($document));
+    }
+
+    #[Test]
+    public function active_previous_retry_blocks_a_new_user_lineage(): void
+    {
+        $document = $this->document('failed', 'document_geometry_processing_failed');
+        $document->forceFill(['meta' => [
+            'processing_attempt_id' => 'attempt-active',
+            'explicit_document_retry' => [
+                'attempt_id' => 'attempt-active',
+                'source_version' => 'sha256:current',
+                'status' => 'processing',
+            ],
+            'explicit_document_retry_history' => [[
+                'old_attempt_id' => 'attempt-original',
+                'new_attempt_id' => 'attempt-active',
+            ]],
+        ]]);
+
+        self::assertFalse((new ExplicitDocumentRetryEligibility)->allowed($document));
+    }
+
     /** @return iterable<string, array{string}> */
     public static function unsafeFailureCodes(): iterable
     {
