@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Pipeline;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
@@ -379,6 +379,8 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
         self::assertSame('document_processing_system_failed', $persisted->error_code);
         self::assertSame('estimate_generation.document_processing_system_failed', $persisted->error_message_key);
         self::assertSame(3, $persisted->facts_summary['processing_outcome']['counts']['system_failed']);
+        self::assertSame(0, $persisted->facts_summary['processing_outcome']['counts']['terminal_system_failed']);
+        self::assertSame(3, $persisted->facts_summary['processing_outcome']['counts']['breaker_stopped']);
         self::assertSame(0, $persisted->facts_summary['processing_outcome']['counts']['processing']);
         self::assertSame('failed', $persisted->meta['explicit_document_retry']['status']);
         self::assertNotNull($persisted->meta['explicit_document_retry']['completed_at']);

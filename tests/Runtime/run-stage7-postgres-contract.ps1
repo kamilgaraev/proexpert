@@ -1,6 +1,7 @@
 param(
     [string[]] $TestPath = @('tests/Feature/EstimateGeneration/Review/EstimateReviewExceptionsPostgresTest.php'),
-    [string] $Container = 'most-ai-estimator-pg-contract'
+    [string] $Container = 'most-ai-estimator-pg-contract',
+    [string] $TestFilter = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -116,7 +117,11 @@ COMMIT;
         if ($LASTEXITCODE -ne 0) {
             throw 'contract_provision_failed'
         }
-        php vendor/bin/phpunit @resolvedTests
+        $phpunitArguments = @($resolvedTests)
+        if ($TestFilter -ne '') {
+            $phpunitArguments += @('--filter', $TestFilter)
+        }
+        php vendor/bin/phpunit @phpunitArguments
         if ($LASTEXITCODE -ne 0) {
             throw 'contract_tests_failed'
         }

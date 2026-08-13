@@ -24,6 +24,46 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class SessionBuildingModelBridgeTest extends TestCase
 {
     #[Test]
+    public function stored_canonical_schema_three_analysis_is_hydrated_without_provider_schema_reparse(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('f', 64));
+        [$bridge] = $this->bridge();
+        $unit = $this->visionUnit();
+        $payload = $unit->payload;
+        $payload['vision_analysis']['schema_version'] = 3;
+        $payload['vision_analysis']['visual_attributes'] = [
+            'roof_type' => ['value' => 'unknown', 'confidence' => 1.0, 'evidence_ref' => 'vision-page'],
+        ];
+        $payload['vision_analysis']['project_sheet_analysis'] = [
+            'contractVersion' => 'sheet-analysis:v2',
+            'role' => 'plan',
+            'facts' => [[
+                'entityKey' => 'vision-room',
+                'factType' => 'room',
+                'value' => ['type' => 'unknown', 'data' => null],
+                'unit' => null,
+                'evidenceRef' => 'vision-page',
+                'sourcePolygonOrNativeRef' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+                'confidence' => 0.95,
+                'contractVersion' => 'sheet-analysis:v2',
+            ]],
+        ];
+
+        $model = $bridge->store($context, [new SessionBuildingModelUnitData(
+            $unit->unitId,
+            $unit->documentId,
+            $unit->pageId,
+            $unit->type,
+            $unit->index,
+            $unit->sourceVersion,
+            $unit->confidence,
+            $payload,
+        )]);
+
+        self::assertNotNull($model);
+    }
+
+    #[Test]
     public function room_area_annotations_receive_dedicated_extractions_and_produce_internal_floor_area(): void
     {
         $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('f', 64));

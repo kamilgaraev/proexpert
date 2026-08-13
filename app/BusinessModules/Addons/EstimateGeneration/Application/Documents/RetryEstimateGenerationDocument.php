@@ -120,11 +120,23 @@ final class RetryEstimateGenerationDocument
                     'requested_at' => $requestedAt,
                 ];
 
+                $retryUnitIds = [];
+                $preservedReady = 0;
                 foreach ($lockedDocument->processingUnits as $unit) {
                     if (! hash_equals($expectedSourceVersion, (string) $unit->source_version)) {
                         continue;
                     }
                     $unitMeta = is_array($unit->metadata) ? $unit->metadata : [];
+                    $unitStatus = $unit->status instanceof DocumentProcessingUnitStatus
+                        ? $unit->status->value
+                        : (string) $unit->status;
+                    if ($unitStatus === DocumentProcessingUnitStatus::Completed->value && (int) $unit->output_count > 0) {
+                        $unit->forceFill(['metadata' => [...$unitMeta, 'processing_attempt_id' => $attemptId]])->save();
+                        $preservedReady++;
+
+                        continue;
+                    }
+                    $retryUnitIds[] = (int) $unit->getKey();
                     $failureHistory = is_array($unitMeta['failure_history'] ?? null) ? $unitMeta['failure_history'] : [];
                     if ($unit->failure_code !== null || $unit->failure_fingerprint !== null) {
                         $failureHistory[] = [
@@ -166,6 +178,9 @@ final class RetryEstimateGenerationDocument
                     if (! hash_equals($expectedSourceVersion, (string) $page->source_version)) {
                         continue;
                     }
+                    if (! in_array((int) $page->processing_unit_id, $retryUnitIds, true)) {
+                        continue;
+                    }
                     $page->forceFill([
                         'status' => 'queued',
                         'output_version' => null,
@@ -186,16 +201,41 @@ final class RetryEstimateGenerationDocument
                     ? $meta['explicit_document_retry_history']
                     : [];
                 $history[] = $audit;
+                $includedPages = max(0, (int) $lockedDocument->page_count);
+                $executionProgress = $includedPages === 0
+                    ? 0
+                    : (int) floor(($preservedReady / $includedPages) * 100);
+                $factsSummary = is_array($lockedDocument->facts_summary) ? $lockedDocument->facts_summary : [];
                 $lockedDocument->forceFill([
                     'status' => 'queued',
                     'processing_stage' => 'stored',
-                    'progress_percent' => 0,
+                    'progress_percent' => $executionProgress,
                     'ocr_started_at' => null,
                     'ocr_finished_at' => null,
                     'error_code' => null,
                     'error_message_key' => null,
                     'error_context' => null,
-                    'processed_page_count' => 0,
+                    'processed_page_count' => $preservedReady,
+                    'facts_summary' => [
+                        ...$factsSummary,
+                        'processing_outcome' => [
+                            'type' => 'processing',
+                            'counts' => [
+                                'included' => $includedPages,
+                                'ready' => $preservedReady,
+                                'needs_user_action' => 0,
+                                'terminal_system_failed' => 0,
+                                'breaker_stopped' => 0,
+                                'system_failed' => 0,
+                                'processing' => max(0, $includedPages - $preservedReady),
+                                'excluded' => 0,
+                            ],
+                            'retry_allowed' => false,
+                            'execution_progress_percent' => $executionProgress,
+                            'readiness' => 'processing',
+                            'is_ready' => false,
+                        ],
+                    ],
                     'units_finalized_source_version' => null,
                     'units_reconciled_source_version' => null,
                     'units_reconcile_claim_token' => null,

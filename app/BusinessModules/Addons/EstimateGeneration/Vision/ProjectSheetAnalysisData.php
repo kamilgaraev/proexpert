@@ -37,6 +37,30 @@ final readonly class ProjectSheetAnalysisData
         return self::fromTyped($data['role'], $facts);
     }
 
+    /** @param array<string, mixed> $data @param list<string> $evidenceKeys */
+    public static function fromStoredArray(array $data, array $evidenceKeys, int $maxFacts = 500): self
+    {
+        $nativeReferences = [];
+        foreach (($data['facts'] ?? []) as $fact) {
+            $reference = is_array($fact) ? ($fact['sourcePolygonOrNativeRef'] ?? null) : null;
+            if (is_string($reference)) {
+                $nativeReferences[] = $reference;
+            }
+        }
+
+        ProjectSheetAnalysisValidator::assertValid(
+            $data,
+            $evidenceKeys,
+            $maxFacts,
+            array_values(array_unique($nativeReferences)),
+        );
+
+        return self::fromTyped(
+            $data['role'],
+            array_map(SheetAnalysisFact::fromValidatedArray(...), $data['facts']),
+        );
+    }
+
     public function mapPolygonsToSource(ProjectiveTransformData $transform): self
     {
         return self::fromTyped(

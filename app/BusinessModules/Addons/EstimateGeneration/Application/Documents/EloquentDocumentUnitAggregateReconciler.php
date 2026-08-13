@@ -51,7 +51,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
 
             $shouldRebuildBuildingModel = false;
             if ((string) $document->units_finalized_source_version !== $sourceVersion) {
-                $units = (clone $base)->get(['id', 'status', 'attempt_count', 'output_count', 'failure_fingerprint', 'metadata']);
+                $units = (clone $base)->get(['id', 'status', 'attempt_count', 'output_count', 'failure_code', 'failure_fingerprint', 'metadata']);
                 $currentUnitIds = $units->pluck('id');
                 $document->facts()->delete();
                 $document->drawingElements()->delete();
@@ -75,6 +75,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                         'id' => (int) $unit->id,
                         'status' => $unit->status->value,
                         'output_count' => (int) $unit->output_count,
+                        'failure_code' => $unit->failure_code,
                         'metadata' => is_array($unit->metadata) ? $unit->metadata : [],
                     ])->all(),
                 );

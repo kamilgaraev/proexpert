@@ -158,6 +158,141 @@ final readonly class VisionAnalysisData
         );
     }
 
+    /** @param array<string, mixed> $data */
+    public static function fromStoredArray(array $data): self
+    {
+        $schemaVersion = $data['schema_version'] ?? null;
+        $contractKeys = match ($schemaVersion) {
+            self::PROJECT_SHEET_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'provider', 'requested_model', 'reported_model', 'model_version', 'usage', 'visual_attributes', 'project_sheet_analysis'],
+            self::CURRENT_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'provider', 'requested_model', 'reported_model', 'model_version', 'usage', 'visual_attributes'],
+            self::SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'provider', 'requested_model', 'reported_model', 'model_version', 'usage'],
+            default => [],
+        };
+        $usage = $data['usage'] ?? null;
+        if ($contractKeys === [] || ! self::hasExactKeys($data, $contractKeys)
+            || ! is_string($data['sheet_type'] ?? null)
+            || ! is_array($data['evidence'] ?? null)
+            || ! is_array($data['elements'] ?? null)
+            || ! is_array($data['scale_candidates'] ?? null)
+            || ! is_array($data['warnings'] ?? null)
+            || ! is_string($data['provider'] ?? null)
+            || ! is_string($data['requested_model'] ?? null)
+            || ! is_string($data['reported_model'] ?? null)
+            || ! is_string($data['model_version'] ?? null)
+            || ! is_array($usage)
+            || ! self::hasExactKeys($usage, ['status', 'input_tokens', 'output_tokens'])) {
+            throw new VisionContractException('invalid_stored_analysis_schema');
+        }
+
+        $evidence = array_map(
+            static fn (mixed $item): VisionEvidenceData => is_array($item)
+                ? VisionEvidenceData::fromArray($item)
+                : throw new VisionContractException('invalid_evidence'),
+            self::normalizeEvidencePayload($data['evidence']),
+        );
+        $elements = array_map(
+            static fn (mixed $item): VisionElementData => is_array($item)
+                ? VisionElementData::fromArray($item)
+                : throw new VisionContractException('invalid_element'),
+            $data['elements'],
+        );
+        $scales = array_map(
+            static fn (mixed $item): VisionScaleCandidateData => is_array($item)
+                ? VisionScaleCandidateData::fromArray($item)
+                : throw new VisionContractException('invalid_scale_candidate'),
+            $data['scale_candidates'],
+        );
+        foreach ($data['warnings'] as $warning) {
+            if (! is_string($warning)) {
+                throw new VisionContractException('invalid_warning');
+            }
+        }
+        $projectSheetAnalysis = $schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION
+            ? ProjectSheetAnalysisData::fromStoredArray(
+                $data['project_sheet_analysis'],
+                array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence),
+            )
+            : null;
+
+        return new self(
+            $data['sheet_type'],
+            $evidence,
+            $elements,
+            $scales,
+            array_values($data['warnings']),
+            $data['provider'],
+            $data['requested_model'],
+            $data['reported_model'],
+            $data['model_version'],
+            is_string($usage['status'] ?? null) ? $usage['status'] : '',
+            is_int($usage['input_tokens'] ?? null) ? $usage['input_tokens'] : null,
+            is_int($usage['output_tokens'] ?? null) ? $usage['output_tokens'] : null,
+            is_array($data['visual_attributes'] ?? null) ? $data['visual_attributes'] : [],
+            $projectSheetAnalysis,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @param  list<string>  $nativeReferences
+     */
+    public static function fromTargetedProviderArray(
+        array $data,
+        self $primary,
+        string $provider,
+        string $requestedModel,
+        string $reportedModel,
+        string $modelVersion,
+        string $usageStatus,
+        ?int $inputTokens,
+        ?int $outputTokens,
+        int $maxFacts,
+        array $nativeReferences,
+        ProjectiveTransformData $transform,
+    ): self {
+        if (! self::hasExactKeys($data, ['schema_version', 'evidence', 'project_sheet_analysis'])
+            || ($data['schema_version'] ?? null) !== 1
+            || ! is_array($data['evidence'])
+            || ! is_array($data['project_sheet_analysis'])
+            || $maxFacts < 1 || $maxFacts > 500) {
+            throw new VisionContractException('invalid_targeted_analysis_schema');
+        }
+        $targetedEvidence = array_map(
+            static fn (mixed $item): VisionEvidenceData => is_array($item)
+                ? VisionEvidenceData::fromArray($item)
+                : throw new VisionContractException('invalid_evidence'),
+            self::normalizeEvidencePayload($data['evidence']),
+        );
+        $allEvidence = [...$primary->evidence, ...$targetedEvidence];
+        $projectSheetAnalysis = ProjectSheetAnalysisData::fromProviderArray(
+            $data['project_sheet_analysis'],
+            array_map(static fn (VisionEvidenceData $item): string => $item->key, $allEvidence),
+            $maxFacts,
+            $nativeReferences,
+        )->mapPolygonsToSource($transform);
+        $mappedEvidence = [
+            ...$primary->evidence,
+            ...array_map(static fn (VisionEvidenceData $item): VisionEvidenceData => $item->toSourceSpace(), $targetedEvidence),
+        ];
+
+        return new self(
+            $primary->sheetType,
+            $mappedEvidence,
+            $primary->elements,
+            $primary->scaleCandidates,
+            $primary->warnings,
+            $provider,
+            $requestedModel,
+            $reportedModel,
+            $modelVersion,
+            $usageStatus,
+            $inputTokens,
+            $outputTokens,
+            $primary->visualAttributes,
+            $projectSheetAnalysis,
+        );
+    }
+
     public function mapPolygonsToSource(ProjectiveTransformData $transform): self
     {
         $mapped = array_map(static function (VisionElementData $element) use ($transform): VisionElementData {

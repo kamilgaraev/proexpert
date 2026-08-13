@@ -7,19 +7,24 @@ $envValue = static function (string $key, mixed $default = null): mixed {
 
     return $value !== null && $value !== '' ? $value : $default;
 };
+$visionModelOverride = $envValue('ESTIMATE_GENERATION_VISION_MODEL');
+$visionModelDefault = 'openai/gpt-5.6-luna';
 
 return [
     'vision' => [
         'provider' => env('ESTIMATE_GENERATION_VISION_PROVIDER', 'timeweb'),
-        'model' => env('ESTIMATE_GENERATION_VISION_MODEL', 'gemini/gemini-3.1-flash'),
-        'model_version' => env('ESTIMATE_GENERATION_VISION_MODEL_VERSION', '2026-07-11'),
+        'model_override' => $visionModelOverride,
+        'model' => $visionModelOverride ?? $visionModelDefault,
+        'model_version' => env('ESTIMATE_GENERATION_VISION_MODEL_VERSION', 'timeweb-gpt-5.6-luna-2026-08-13'),
+        'reasoning_effort' => env('ESTIMATE_GENERATION_VISION_REASONING_EFFORT', 'medium'),
         'api_key' => $envValue('ESTIMATE_GENERATION_VISION_API_KEY', $envValue('TIMEWEB_AI_API_KEY')),
         'base_uri' => $envValue('ESTIMATE_GENERATION_VISION_BASE_URI', $envValue('TIMEWEB_AI_BASE_URI', 'https://api.timeweb.ai/v1')),
         'timeout_seconds' => (int) env('ESTIMATE_GENERATION_VISION_TIMEOUT', 60),
         'retry_attempts' => (int) env('ESTIMATE_GENERATION_VISION_RETRY_ATTEMPTS', 3),
         'physical_attempt_lease_seconds' => (int) env('ESTIMATE_GENERATION_VISION_ATTEMPT_LEASE_SECONDS', 180),
         'retry_delay_ms' => (int) env('ESTIMATE_GENERATION_VISION_RETRY_DELAY_MS', 250),
-        'max_tokens' => (int) env('ESTIMATE_GENERATION_VISION_MAX_TOKENS', 4096),
+        'primary_max_output_tokens' => (int) env('ESTIMATE_GENERATION_VISION_PRIMARY_MAX_OUTPUT_TOKENS', 8192),
+        'targeted_max_output_tokens' => (int) env('ESTIMATE_GENERATION_VISION_TARGETED_MAX_OUTPUT_TOKENS', 6144),
         'max_input_tokens' => (int) env('ESTIMATE_GENERATION_VISION_MAX_INPUT_TOKENS', 32_768),
         'max_response_bytes' => (int) env('ESTIMATE_GENERATION_VISION_MAX_RESPONSE_BYTES', 1_000_000),
         'max_elements' => (int) env('ESTIMATE_GENERATION_VISION_MAX_ELEMENTS', 500),
@@ -156,15 +161,37 @@ return [
         'max_output_tokens' => (int) env('ESTIMATE_COMPLETENESS_ARBITER_MAX_OUTPUT_TOKENS', 2_000),
     ],
     'ai_pricing_catalog' => [
-        'vision' => ['timeweb' => [(string) env('ESTIMATE_GENERATION_VISION_MODEL', 'gemini/gemini-3.1-flash') => [[
-            'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_INPUT_PER_MILLION', ''),
-            'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_CACHED_INPUT_PER_MILLION', ''),
-            'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_OUTPUT_PER_MILLION', ''),
-            'image_unit' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_IMAGE_UNIT', ''),
-            'currency' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_CURRENCY', ''),
-            'version' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_VERSION', ''),
-            'effective_at' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_EFFECTIVE_AT', ''),
-        ]]]],
+        'vision' => ['timeweb' => [
+            'openai/gpt-5.6-luna' => [[
+                'input_per_million' => '135',
+                'cached_input_per_million' => '135',
+                'output_per_million' => '810',
+                'reasoning_per_million' => '810',
+                'reasoning_mode' => 'included_in_output',
+                'image_unit' => '0',
+                'currency' => 'RUB',
+                'version' => 'timeweb-2026-08-13',
+                'effective_at' => '2026-08-13T00:00:00+00:00',
+            ]],
+            'gemini/gemini-3.5-flash' => [[
+                'input_per_million' => '202.5',
+                'cached_input_per_million' => '202.5',
+                'output_per_million' => '1215',
+                'image_unit' => '0',
+                'currency' => 'RUB',
+                'version' => 'timeweb-2026-07-14',
+                'effective_at' => '2026-07-14T00:00:00+00:00',
+            ]],
+            'gemini/gemini-3.1-flash' => [[
+                'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_INPUT_PER_MILLION', ''),
+                'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_CACHED_INPUT_PER_MILLION', ''),
+                'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_OUTPUT_PER_MILLION', ''),
+                'image_unit' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_IMAGE_UNIT', ''),
+                'currency' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_CURRENCY', ''),
+                'version' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_VERSION', ''),
+                'effective_at' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_EFFECTIVE_AT', ''),
+            ]],
+        ]],
         'ocr' => ['timeweb' => [(string) env('ESTIMATE_GENERATION_OCR_MODEL', 'gemini/gemini-3.1-flash-lite') => [[
             'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_OCR_PRICE_INPUT_PER_MILLION', ''),
             'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_OCR_PRICE_CACHED_INPUT_PER_MILLION', ''),

@@ -21,6 +21,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvide
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckPlanner;
@@ -389,6 +390,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                         : [$targetedPlan->supplementalEvidence],
                     auxiliaryText: $input->auxiliaryText,
                     auxiliaryMetadata: $input->auxiliaryMetadata,
+                    primaryAnalysis: $analysis,
                 );
                 $targetedRun = $this->sheetAnalysisJournal?->run(
                     $targetedOperation,
@@ -416,15 +418,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $targetedRouting['outcome'] = $targetedRun?->outcome ?? 'succeeded';
                     $this->sheetAnalysisJournal?->persistFinalRouting($targetedOperation, $scope, $targetedRouting);
                 }
-            } catch (Throwable $exception) {
-                $noCall = $exception instanceof VisionProviderException && $exception->reason === 'vision_wire_replay_forbidden';
-                if ($noCall) {
-                    $targetedRouting['outcome'] = 'needs_review';
-                    $targetedRouting['needs_review'] = true;
-                }
-                if (! $noCall) {
-                    throw $exception;
-                }
+            } catch (VisionContractException|VisionProviderException $exception) {
+                $targetedRouting['outcome'] = 'needs_review';
+                $targetedRouting['needs_review'] = true;
+                $targetedRouting['limitation_code'] = $exception->reason;
             }
         }
 
