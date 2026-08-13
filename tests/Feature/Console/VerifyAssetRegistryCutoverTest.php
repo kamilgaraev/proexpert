@@ -14,6 +14,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\MachineryOperationsAssetFactory;
 use Tests\TestCase;
 
 final class VerifyAssetRegistryCutoverTest extends TestCase
@@ -30,7 +31,7 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         CarbonImmutable::setTestNow('2026-08-12T00:00:00Z');
         config(['asset_registry.release_sha' => 'release-test-sha']);
         $context = AdminApiTestContext::create();
-        app(MachineryOperationsService::class)->createAsset((int) $context->organization->id, [
+        MachineryOperationsAssetFactory::create((int) $context->organization->id, [
             'asset_code' => 'CUTOVER-READY',
             'name' => 'Готовая единица',
             'inventory_number' => 'CUTOVER-READY',
@@ -62,7 +63,7 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         $service = app(MachineryOperationsService::class);
 
         CarbonImmutable::setTestNow($observationStartedAt->addMinute());
-        $asset = $service->createAsset($organizationId, [
+        $asset = MachineryOperationsAssetFactory::create($organizationId, [
             'asset_code' => 'CUTOVER-CYCLE',
             'name' => 'Единица контрольного цикла',
             'inventory_number' => 'CUTOVER-CYCLE',
@@ -118,7 +119,7 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         $service = app(MachineryOperationsService::class);
 
         CarbonImmutable::setTestNow($observationStartedAt->addMinute());
-        $asset = $service->createAsset($organizationId, [
+        $asset = MachineryOperationsAssetFactory::create($organizationId, [
             'asset_code' => 'CUTOVER-NOT-APPROVED',
             'name' => 'Единица с противоречивым рапортом',
             'inventory_number' => 'CUTOVER-NOT-APPROVED',
@@ -175,7 +176,7 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
         $context = AdminApiTestContext::create();
         $organizationId = (int) $context->organization->id;
         $service = app(MachineryOperationsService::class);
-        $linked = $service->createAsset($organizationId, [
+        $linked = MachineryOperationsAssetFactory::create($organizationId, [
             'asset_code' => 'CUTOVER-DIVERGED',
             'name' => 'Исходное имя',
             'inventory_number' => 'CUTOVER-DIVERGED',
@@ -234,7 +235,7 @@ final class VerifyAssetRegistryCutoverTest extends TestCase
     public function test_command_blocks_cutover_when_operational_profile_diverges_from_legacy_mirror(): void
     {
         $context = AdminApiTestContext::create();
-        $legacy = app(MachineryOperationsService::class)->createAsset((int) $context->organization->id, [
+        $legacy = MachineryOperationsAssetFactory::create((int) $context->organization->id, [
             'asset_code' => 'CUTOVER-ECONOMICS',
             'name' => 'Экскаватор',
             'operating_cost_per_hour' => 1750,

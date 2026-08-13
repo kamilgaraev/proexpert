@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Modules\Core\AccessController;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\MachineryOperationsAssetFactory;
 use Tests\TestCase;
 
 final class MachineryOperationsWorkflowTest extends TestCase
@@ -115,21 +116,21 @@ final class MachineryOperationsWorkflowTest extends TestCase
         $this->actingAs($context->user, 'api_admin');
         $this->allowAccess();
 
-        $assetResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/machinery-operations/assets', [
-                'asset_code' => 'EXC-001',
-                'name' => 'Excavator CAT 320',
-                'ownership_type' => 'owned',
-                'operating_cost_per_hour' => 4500,
-                'fuel_type' => 'diesel',
-                'fuel_consumption_rate' => 18.5,
-            ]);
-
-        $assetResponse->assertCreated()
-            ->assertJsonPath('data.status', 'available')
-            ->assertJsonPath('data.available_actions.0', 'assign')
-            ->assertJsonPath('data.workflow_summary.status', 'available');
-        $assetId = (int) $assetResponse->json('data.id');
+        $asset = MachineryOperationsAssetFactory::create((int) $context->organization->id, [
+            'asset_code' => 'EXC-001',
+            'name' => 'Excavator CAT 320',
+            'ownership_type' => 'owned',
+            'operating_cost_per_hour' => 4500,
+            'fuel_type' => 'diesel',
+            'fuel_consumption_rate' => 18.5,
+        ]);
+        $assetId = (int) $asset->id;
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/machinery-operations/assets?search=EXC-001')
+            ->assertOk()
+            ->assertJsonPath('data.0.status', 'available')
+            ->assertJsonPath('data.0.available_actions.0', 'assign')
+            ->assertJsonPath('data.0.workflow_summary.status', 'available');
 
         $assignResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/machinery-operations/assets/{$assetId}/assign", [
@@ -241,15 +242,12 @@ final class MachineryOperationsWorkflowTest extends TestCase
             ->assertJsonPath('data.fuel_consumption.0.fuel_type', 'diesel')
             ->assertJsonPath('data.operating_cost_by_project.0.cost', static fn (mixed $cost): bool => (float) $cost === 29250.0);
 
-        $reserveAsset = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/machinery-operations/assets', [
-                'asset_code' => 'CRN-001',
-                'name' => 'Tower crane',
-                'ownership_type' => 'owned',
-            ]);
-        $reserveAsset->assertCreated()
-            ->assertJsonPath('data.status', 'available');
-        $reserveAssetId = (int) $reserveAsset->json('data.id');
+        $reserveAsset = MachineryOperationsAssetFactory::create((int) $context->organization->id, [
+            'asset_code' => 'CRN-001',
+            'name' => 'Tower crane',
+            'ownership_type' => 'owned',
+        ]);
+        $reserveAssetId = (int) $reserveAsset->id;
 
         $unavailableAsset = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/machinery-operations/assets/{$reserveAssetId}/unavailable");

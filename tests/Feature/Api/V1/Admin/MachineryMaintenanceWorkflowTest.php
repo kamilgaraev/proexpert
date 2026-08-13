@@ -9,6 +9,7 @@ use App\BusinessModules\Features\MachineryOperations\Models\MaintenanceInspectio
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Models\Project;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\MachineryOperationsAssetFactory;
 use Tests\TestCase;
 
 final class MachineryMaintenanceWorkflowTest extends TestCase
@@ -18,7 +19,7 @@ final class MachineryMaintenanceWorkflowTest extends TestCase
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $service = $this->app->make(MachineryOperationsService::class);
-        $asset = $service->createAsset((int) $context->organization->id, [
+        $asset = MachineryOperationsAssetFactory::create((int) $context->organization->id, [
             'asset_code' => 'DEFECT-1',
             'name' => 'Виброплита',
             'current_project_id' => $project->id,
