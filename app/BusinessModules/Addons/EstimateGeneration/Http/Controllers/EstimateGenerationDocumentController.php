@@ -23,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerat
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineFailureDetails;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -173,7 +174,7 @@ class EstimateGenerationDocumentController extends Controller
             $result = $this->retryDocument->handle(
                 $session,
                 $document,
-                $request->userOrFail(),
+                $request->actor(),
                 (int) $request->validated('state_version'),
                 (string) $request->validated('source_version'),
                 (string) $request->validated('idempotency_key'),
@@ -195,6 +196,8 @@ class EstimateGenerationDocumentController extends Controller
                 null,
                 ['disposition' => $e->disposition],
             );
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {
@@ -202,10 +205,17 @@ class EstimateGenerationDocumentController extends Controller
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
+            $failure = PipelineFailureDetails::from($e);
+            report($e);
             Log::error('[EstimateGeneration] Document retry failed', [
                 'failure_code' => 'document_retry_failed',
+                'project_id' => $project->id,
                 'session_id' => $session->id,
                 'document_id' => $document->id,
+                'exception_class' => $e::class,
+                'failure_fingerprint' => $failure->fingerprint,
+                'previous_chain_fingerprint' => PipelineFailureDetails::previousChainFingerprint($e),
+                'correlation_id' => $request->attributes->get('correlation_id'),
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.documents_upload_error'), 500);
