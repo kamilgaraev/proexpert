@@ -117,6 +117,28 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
                 ],
             ],
         ]);
+        $fingerprint = hash('sha256', 'typed-systemic-root');
+        $document->setRelation('processingUnits', new Collection(array_map(
+            static function (int $index) use ($fingerprint): EstimateGenerationProcessingUnit {
+                $unit = new EstimateGenerationProcessingUnit;
+                $unit->forceFill([
+                    'id' => 500 + $index,
+                    'organization_id' => 7,
+                    'project_id' => 17,
+                    'session_id' => 41,
+                    'document_id' => 91,
+                    'source_version' => 'sha256:current',
+                    'unit_type' => DocumentUnitType::PdfPage,
+                    'unit_index' => $index,
+                    'status' => DocumentProcessingUnitStatus::Failed,
+                    'output_count' => 0,
+                    'failure_code' => 'document_geometry_processing_failed',
+                    'failure_fingerprint' => $fingerprint,
+                ]);
+
+                return $unit;
+            }, range(1, 3),
+        )));
         $request = Request::create('/documents/91');
         $user = $this->user(7);
         $request->setUserResolver(static fn (): User => $user);
@@ -437,7 +459,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         $payload = (new EstimateGenerationDocumentDetailResource($document))->toArray($request);
 
         self::assertSame(9, $payload['state_version']);
-        self::assertSame(['retry_document', 'ignore_document'], array_column($payload['available_actions'], 'action'));
+        self::assertSame(['ignore_document'], array_column($payload['available_actions'], 'action'));
         self::assertSame('https://storage.example/signed-preview', $payload['preview_url']);
         self::assertSame('floor_plan', $payload['pages'][0]['page_role']);
         self::assertSame('geometry_source', $payload['pages'][0]['role_for_estimation']);

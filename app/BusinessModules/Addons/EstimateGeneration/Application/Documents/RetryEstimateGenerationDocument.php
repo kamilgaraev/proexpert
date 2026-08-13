@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationAuditEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
@@ -56,14 +57,6 @@ final class RetryEstimateGenerationDocument
 
                 $meta = is_array($lockedDocument->meta) ? $lockedDocument->meta : [];
                 $current = is_array($meta['explicit_document_retry'] ?? null) ? $meta['explicit_document_retry'] : [];
-                if (($current['idempotency_hash'] ?? null) === $keyHash) {
-                    return [$lockedSession, $lockedDocument, (string) ($current['attempt_id'] ?? ''), 'replayed'];
-                }
-                if (($current['status'] ?? null) === 'processing') {
-                    return [$lockedSession, $lockedDocument, (string) ($current['attempt_id'] ?? ''), 'already_in_progress'];
-                }
-
-                $this->policy->documents($lockedSession, $expectedVersion);
                 if (! hash_equals((string) $lockedDocument->source_version, $expectedSourceVersion)) {
                     throw new ExplicitDocumentRetryConflict('stale_source');
                 }
@@ -75,6 +68,18 @@ final class RetryEstimateGenerationDocument
                 if (! hash_equals($storedSourceVersion, $expectedSourceVersion)) {
                     throw new ExplicitDocumentRetryConflict('stale_source');
                 }
+                if (($current['idempotency_hash'] ?? null) === $keyHash) {
+                    if (! hash_equals((string) ($current['source_version'] ?? ''), $expectedSourceVersion)) {
+                        throw new ExplicitDocumentRetryConflict('stale_source');
+                    }
+
+                    return [$lockedSession, $lockedDocument, (string) ($current['attempt_id'] ?? ''), 'replayed'];
+                }
+                if (($current['status'] ?? null) === 'processing') {
+                    return [$lockedSession, $lockedDocument, (string) ($current['attempt_id'] ?? ''), 'already_in_progress'];
+                }
+
+                $this->policy->documents($lockedSession, $expectedVersion);
                 if (! $this->eligibility->allowed($lockedDocument)) {
                     throw new ExplicitDocumentRetryConflict('retry_not_allowed');
                 }
@@ -191,6 +196,13 @@ final class RetryEstimateGenerationDocument
                         'retry_reason' => is_string($reason) && $reason !== '' ? mb_substr($reason, 0, 500) : null,
                     ],
                 ])->save();
+                EstimateGenerationAuditEvent::query()->create([
+                    'session_id' => (int) $lockedSession->getKey(),
+                    'package_id' => null,
+                    'user_id' => (int) $actor->getKey(),
+                    'event_type' => 'document_explicit_retry_requested',
+                    'payload' => $audit,
+                ]);
 
                 return [$this->reconciler->changed($lockedSession), $lockedDocument, $attemptId, 'accepted'];
             },

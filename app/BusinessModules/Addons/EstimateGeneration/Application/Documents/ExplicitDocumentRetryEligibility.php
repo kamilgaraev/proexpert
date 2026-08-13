@@ -9,14 +9,20 @@ use BackedEnum;
 
 final readonly class ExplicitDocumentRetryEligibility
 {
-    private const FORBIDDEN_FAILURE_MARKERS = [
-        'integrity',
-        'security',
-        'corrupt',
-        'hard_limit',
-        'limit_exceeded',
-        'too_large',
-        'unsupported',
+    private const RETRYABLE_DOCUMENT_STATUSES = [
+        'needs_review',
+        'failed',
+    ];
+
+    private const REPAIRABLE_FAILURE_CODES = [
+        'document_geometry_processing_failed',
+        'document_representation_contract_invalid',
+        'document_representation_measurement_invalid',
+        'document_unit_processing_failed',
+    ];
+
+    private const BREAKER_FAILURE_CODES = [
+        'document_systemic_failure',
     ];
 
     public function __construct(
@@ -26,6 +32,10 @@ final readonly class ExplicitDocumentRetryEligibility
     public function allowed(EstimateGenerationDocument $document): bool
     {
         $meta = is_array($document->meta) ? $document->meta : [];
+        if (! in_array((string) $document->status, self::RETRYABLE_DOCUMENT_STATUSES, true)) {
+            return false;
+        }
+
         if (is_array($meta['explicit_document_retry_history'] ?? null)
             && $meta['explicit_document_retry_history'] !== []) {
             return false;
@@ -37,15 +47,12 @@ final readonly class ExplicitDocumentRetryEligibility
             return false;
         }
 
-        if ($this->forbiddenFailure((string) $document->error_code)) {
+        if (! $document->relationLoaded('processingUnits')) {
             return false;
         }
 
-        if (! $document->relationLoaded('processingUnits')) {
-            return true;
-        }
-
         $hasCurrentUnits = false;
+        $hasRepairableFailure = false;
         foreach ($document->processingUnits as $unit) {
             if (! hash_equals((string) $document->source_version, (string) $unit->source_version)) {
                 continue;
@@ -59,22 +66,18 @@ final readonly class ExplicitDocumentRetryEligibility
                 DocumentProcessingUnitStatus::Running->value,
             ], true)
                 || ($metadata['failure_category'] ?? null) === 'user_action_required'
-                || $this->forbiddenFailure((string) $unit->failure_code)) {
+                || ! in_array((string) $unit->failure_code, [
+                    ...self::REPAIRABLE_FAILURE_CODES,
+                    ...self::BREAKER_FAILURE_CODES,
+                ], true)) {
                 return false;
             }
+            $hasRepairableFailure = $hasRepairableFailure
+                || in_array((string) $unit->failure_code, self::REPAIRABLE_FAILURE_CODES, true);
         }
 
-        return ! $hasCurrentUnits || (int) $document->processed_page_count === 0;
-    }
-
-    private function forbiddenFailure(string $code): bool
-    {
-        foreach (self::FORBIDDEN_FAILURE_MARKERS as $marker) {
-            if (str_contains($code, $marker)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $hasCurrentUnits
+            && $hasRepairableFailure
+            && (int) $document->processed_page_count === 0;
     }
 }

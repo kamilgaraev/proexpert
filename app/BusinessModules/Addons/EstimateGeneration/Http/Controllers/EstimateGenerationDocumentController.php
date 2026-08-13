@@ -88,7 +88,7 @@ class EstimateGenerationDocumentController extends Controller
             $documents = $session->documents()
                 ->with([
                     'session',
-                    'processingUnits:id,organization_id,project_id,session_id,document_id,source_version,status,output_count,failure_fingerprint',
+                    'processingUnits:id,organization_id,project_id,session_id,document_id,source_version,status,output_count,failure_code,failure_fingerprint,metadata',
                 ])
                 ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
                 ->orderBy('id')

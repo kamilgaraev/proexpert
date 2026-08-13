@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Explicit
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationAuditEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
@@ -38,12 +39,14 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
     {
         parent::setUp();
         self::assertSame('pgsql', DB::getDriverName());
-        $this->createTemporaryTables();
+        self::assertStringEndsWith('_testing', (string) DB::getDatabaseName());
+        $this->createContractTables();
     }
 
     protected function tearDown(): void
     {
         Mockery::close();
+        $this->dropContractTables();
         parent::tearDown();
     }
 
@@ -172,19 +175,166 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         self::assertCount(3, EstimateGenerationProcessingUnit::query()->get());
         self::assertSame('document_geometry_processing_failed', EstimateGenerationProcessingUnit::query()->firstOrFail()->metadata['failure_history'][0]['failure_code']);
         self::assertSame(3, EstimateGenerationDocumentPage::query()->where('status', 'queued')->count());
+        self::assertSame(1, EstimateGenerationAuditEvent::query()->count());
+        self::assertSame(hash('sha256', $key), EstimateGenerationAuditEvent::query()->firstOrFail()->payload['idempotency_hash']);
     }
 
-    private function createTemporaryTables(): void
+    public function test_concurrent_different_keys_have_exactly_one_winner_and_one_dispatch(): void
     {
+        $checksum = hash('sha256', 'concurrent-saved-document');
+        $sourceVersion = 'sha256:'.$checksum;
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => 38,
+            'project_id' => 52,
+            'user_id' => 7,
+            'status' => 'draft',
+            'processing_stage' => 'draft',
+            'processing_progress' => 0,
+            'state_version' => 9,
+            'input_payload' => [],
+            'problem_flags' => [],
+        ]);
+        $document = EstimateGenerationDocument::query()->create([
+            'session_id' => $session->id,
+            'organization_id' => 38,
+            'project_id' => 52,
+            'user_id' => 7,
+            'filename' => 'concurrent.pdf',
+            'storage_path' => 'org-38/concurrent.pdf',
+            'status' => 'needs_review',
+            'processing_stage' => 'completed',
+            'progress_percent' => 100,
+            'checksum_sha256' => $checksum,
+            'source_version' => $sourceVersion,
+            'page_count' => 3,
+            'processed_page_count' => 0,
+            'facts_summary' => [],
+            'meta' => ['processing_attempt_id' => 'old-concurrent-lineage'],
+        ]);
+        $fingerprint = hash('sha256', 'concurrent-system-root');
+        foreach (range(1, 3) as $index) {
+            $unit = EstimateGenerationProcessingUnit::query()->create([
+                'organization_id' => 38,
+                'project_id' => 52,
+                'session_id' => $session->id,
+                'document_id' => $document->id,
+                'unit_type' => 'pdf_page',
+                'unit_index' => $index,
+                'source_version' => $sourceVersion,
+                'status' => 'failed',
+                'attempt_count' => 3,
+                'output_count' => 0,
+                'failure_code' => 'document_geometry_processing_failed',
+                'failure_fingerprint' => $fingerprint,
+                'locator' => ['page' => $index],
+                'metadata' => ['failure_category' => 'terminal'],
+                'failed_at' => now(),
+            ]);
+            EstimateGenerationDocumentPage::query()->create([
+                'document_id' => $document->id,
+                'processing_unit_id' => $unit->id,
+                'source_version' => $sourceVersion,
+                'organization_id' => 38,
+                'project_id' => 52,
+                'session_id' => $session->id,
+                'page_number' => $index,
+                'status' => 'failed',
+            ]);
+        }
         DB::unprepared(<<<'SQL'
-CREATE TEMP TABLE estimate_generation_sessions (
+CREATE OR REPLACE FUNCTION explicit_retry_hold_document_lock() RETURNS trigger AS $$
+BEGIN
+    PERFORM pg_sleep(0.75);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER explicit_retry_hold_document_lock
+BEFORE UPDATE ON estimate_generation_documents
+FOR EACH ROW EXECUTE FUNCTION explicit_retry_hold_document_lock();
+SQL);
+
+        $worker = dirname(__DIR__, 3).'/Support/ExplicitDocumentRetryConcurrentWorker.php';
+        $command = [PHP_BINARY, $worker, (string) $session->id, (string) $document->id, $sourceVersion, '9'];
+        $environment = array_replace(getenv(), array_filter(
+            $_ENV,
+            static fn (mixed $value): bool => is_string($value),
+        ));
+        $first = proc_open([...$command, (string) Str::uuid()], [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $firstPipes, dirname(__DIR__, 4), $environment);
+        $second = proc_open([...$command, (string) Str::uuid()], [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $secondPipes, dirname(__DIR__, 4), $environment);
+        self::assertIsResource($first);
+        self::assertIsResource($second);
+        $this->waitForProcessToken($first, $firstPipes[1], $firstPipes[2], 'READY');
+        $this->waitForProcessToken($second, $secondPipes[1], $secondPipes[2], 'READY');
+        fwrite($firstPipes[0], "GO\n");
+        fwrite($secondPipes[0], "GO\n");
+        fclose($firstPipes[0]);
+        fclose($secondPipes[0]);
+        $firstOutput = $this->waitForProcessToken($first, $firstPipes[1], $firstPipes[2], 'RESULT ');
+        $secondOutput = $this->waitForProcessToken($second, $secondPipes[1], $secondPipes[2], 'RESULT ');
+        $firstError = stream_get_contents($firstPipes[2]);
+        $secondError = stream_get_contents($secondPipes[2]);
+        self::assertSame(0, proc_close($first), $firstError);
+        self::assertSame(0, proc_close($second), $secondError);
+        $results = [
+            $this->decodeWorkerResult($firstOutput),
+            $this->decodeWorkerResult($secondOutput),
+        ];
+
+        $dispositions = array_values(array_unique(array_column($results, 'disposition')));
+        sort($dispositions);
+        self::assertSame(['accepted', 'already_in_progress'], $dispositions);
+        self::assertCount(1, array_filter($results, static fn (array $result): bool => $result['dispatches'] === 1));
+        self::assertCount(1, array_unique(array_column($results, 'attempt_id')));
+        self::assertCount(1, EstimateGenerationDocument::query()->findOrFail($document->id)->meta['explicit_document_retry_history']);
+        self::assertSame(1, EstimateGenerationAuditEvent::query()->count());
+    }
+
+    private function waitForProcessToken($process, $stdout, $stderr, string $token): string
+    {
+        stream_set_blocking($stdout, false);
+        $output = '';
+        $deadline = hrtime(true) + 20_000_000_000;
+        do {
+            $chunk = fread($stdout, 8192);
+            if ($chunk !== false) {
+                $output .= $chunk;
+            }
+            if (str_contains($output, $token)) {
+                return $output;
+            }
+            $status = proc_get_status($process);
+            if (! $status['running']) {
+                self::fail(trim((string) stream_get_contents($stderr)) ?: 'Concurrent retry worker stopped before '.$token.'. Output: '.$output);
+            }
+            usleep(10_000);
+        } while (hrtime(true) < $deadline);
+
+        self::fail('Concurrent retry worker timed out before '.$token.'.');
+    }
+
+    /** @return array{disposition: string, attempt_id: string, dispatches: int} */
+    private function decodeWorkerResult(string $output): array
+    {
+        $position = strpos($output, 'RESULT ');
+        self::assertNotFalse($position);
+        $result = json_decode(trim(substr($output, $position + 7)), true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($result);
+
+        return $result;
+    }
+
+    private function createContractTables(): void
+    {
+        $this->dropContractTables();
+        DB::unprepared(<<<'SQL'
+CREATE TABLE estimate_generation_sessions (
  id bigserial PRIMARY KEY, organization_id bigint, project_id bigint, user_id bigint, status varchar(40),
  processing_stage varchar(80), processing_progress integer default 0, input_payload jsonb default '{}',
  analysis_payload jsonb, draft_payload jsonb, problem_flags jsonb default '[]', applied_estimate_id bigint,
  last_error text, failure_code varchar(80), state_version integer default 0, resume_status varchar(40),
  created_at timestamptz, updated_at timestamptz
 );
-CREATE TEMP TABLE estimate_generation_documents (
+CREATE TABLE estimate_generation_documents (
  id bigserial PRIMARY KEY, session_id bigint, organization_id bigint, project_id bigint, user_id bigint,
  filename varchar(255), mime_type varchar(255), storage_path varchar(255), status varchar(40), processing_stage varchar(80),
  progress_percent integer default 0, file_size_bytes bigint, checksum_sha256 varchar(64), source_version varchar(80),
@@ -196,7 +346,7 @@ CREATE TEMP TABLE estimate_generation_documents (
  ignored_at timestamptz, extracted_text text, structured_payload jsonb default '{}', meta jsonb default '{}',
  created_at timestamptz, updated_at timestamptz
 );
-CREATE TEMP TABLE estimate_generation_processing_units (
+CREATE TABLE estimate_generation_processing_units (
  id bigserial PRIMARY KEY, organization_id bigint, project_id bigint, session_id bigint, document_id bigint,
  unit_type varchar(40), unit_index integer, source_version varchar(80), status varchar(20), attempt_count integer default 0,
  claim_token varchar(36), lease_expires_at timestamptz, output_version varchar(80), output_count integer default 0,
@@ -204,13 +354,29 @@ CREATE TEMP TABLE estimate_generation_processing_units (
  failure_code varchar(80), failure_fingerprint varchar(64), locator jsonb default '{}', metadata jsonb default '{}',
  started_at timestamptz, completed_at timestamptz, failed_at timestamptz, created_at timestamptz, updated_at timestamptz
 );
-CREATE TEMP TABLE estimate_generation_document_pages (
+CREATE TABLE estimate_generation_document_pages (
  id bigserial PRIMARY KEY, document_id bigint, processing_unit_id bigint, source_version varchar(80), output_version varchar(80),
  organization_id bigint, project_id bigint, session_id bigint, page_number integer, width integer, height integer,
  rotation integer, language_codes jsonb, text text, text_hash varchar(64), confidence numeric, raw_payload_path varchar(255),
  normalized_payload jsonb, quality_flags jsonb, status varchar(20), excluded_at timestamptz, excluded_reason text,
  retry_attempt_id varchar(36), last_retry_requested_at timestamptz, created_at timestamptz, updated_at timestamptz
 );
+CREATE TABLE estimate_generation_audit_events (
+ id bigserial PRIMARY KEY, session_id bigint, package_id bigint, user_id bigint, event_type varchar(100),
+ payload jsonb default '{}', created_at timestamptz, updated_at timestamptz
+);
+SQL);
+    }
+
+    private function dropContractTables(): void
+    {
+        DB::unprepared(<<<'SQL'
+DROP TABLE IF EXISTS estimate_generation_audit_events CASCADE;
+DROP TABLE IF EXISTS estimate_generation_document_pages CASCADE;
+DROP TABLE IF EXISTS estimate_generation_processing_units CASCADE;
+DROP TABLE IF EXISTS estimate_generation_documents CASCADE;
+DROP TABLE IF EXISTS estimate_generation_sessions CASCADE;
+DROP FUNCTION IF EXISTS explicit_retry_hold_document_lock();
 SQL);
     }
 }
