@@ -23,23 +23,29 @@ final class EstimateGenerationSessionResource extends JsonResource
 
         /** @var EstimateGenerationSession $session */
         $session = $this->resource;
+        $readiness = app(EstimatorReadinessService::class)->evaluate($session);
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $session,
             permissions: EstimateGenerationSessionListResource::permissions($request, $session),
-            readinessSummary: app(EstimatorReadinessService::class)->evaluate($session),
-            documentsSummary: $this->documentsSummary($session),
+            readinessSummary: $readiness,
+            documentsSummary: $this->documentsSummary(
+                $session,
+                (int) ($readiness->metrics['drawing_elements'] ?? 0),
+            ),
         );
 
         return $snapshot->toArray();
     }
 
     /** @return array<string, mixed> */
-    private function documentsSummary(EstimateGenerationSession $session): array
+    private function documentsSummary(EstimateGenerationSession $session, int $drawingElements): array
     {
-        if (!$session->relationLoaded('documents')) {
+        if (! $session->relationLoaded('documents')) {
             return [];
         }
 
-        return app(DocumentGenerationReadinessService::class)->evaluate($session)['summary'] ?? [];
+        $summary = app(DocumentGenerationReadinessService::class)->evaluate($session)['summary'] ?? [];
+
+        return [...$summary, 'drawing_elements' => $drawingElements];
     }
 }

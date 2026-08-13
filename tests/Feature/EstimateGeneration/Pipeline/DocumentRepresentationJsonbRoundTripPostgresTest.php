@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Eloquent
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ResetDocumentProcessingUnitsForAttempt;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
@@ -17,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DocumentReadi
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use DateTimeImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Testing\TestCase;
@@ -184,6 +186,7 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             'filename' => 'unrelated.pdf',
             'mime_type' => 'application/pdf',
             'source_version' => $sourceVersion,
+            'meta' => ['processing_attempt_id' => 'document-fallback-attempt'],
         ]);
         $units = [];
         $attemptId = 'd173fcc2-5f5c-44b1-91f1-94034f1b0bb5';
@@ -259,6 +262,12 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
         foreach (array_slice($units, 0, 2) as $unit) {
             $claims[] = $store->claim($unit->id, $sourceVersion, $now, $now->modify('+60 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
         }
+        CarbonImmutable::setTestNow($now);
+        try {
+            self::assertSame($attemptId, $store->executionContext($claims[0])?->processingAttemptId);
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
         $fingerprint = hash('sha256', 'shared-systemic-root');
 
         $processes = [];
@@ -310,6 +319,48 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
         self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($unrelated->id)->status->value);
         self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($differentLineage->id)->status->value);
         self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($differentContract->id)->status->value);
+
+        $fallbackClaim = $store->claim(
+            $unrelated->id,
+            $sourceVersion,
+            $now,
+            $now->modify('+60 seconds'),
+            ProcessDocumentUnit::MAX_ATTEMPTS,
+        );
+        CarbonImmutable::setTestNow($now);
+        try {
+            self::assertSame('document-fallback-attempt', $store->executionContext($fallbackClaim)?->processingAttemptId);
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
+
+        $newAttemptId = '8db877c2-b97d-453e-af34-c0af97295ed1';
+        self::assertSame(
+            0,
+            (new ResetDocumentProcessingUnitsForAttempt)->handle($document, $sourceVersion, $attemptId, $newAttemptId),
+        );
+        $reset = EstimateGenerationProcessingUnit::query()
+            ->whereIn('id', array_map(static fn ($unit): int => (int) $unit->id, $units))
+            ->orderBy('unit_index')
+            ->get();
+        self::assertSame(['pending', 'pending', 'pending', 'pending', 'pending'], $reset->pluck('status')->map->value->all());
+        self::assertSame([0, 0, 0, 0, 0], $reset->pluck('attempt_count')->all());
+        self::assertSame([$newAttemptId], $reset->pluck('metadata.processing_attempt_id')->unique()->values()->all());
+        self::assertSame($attemptId, $reset[0]->metadata['failure_history'][0]['attempt_id']);
+
+        $newClaim = $store->claim(
+            (int) $reset[0]->id,
+            $sourceVersion,
+            $now,
+            $now->modify('+60 seconds'),
+            ProcessDocumentUnit::MAX_ATTEMPTS,
+        );
+        CarbonImmutable::setTestNow($now);
+        try {
+            self::assertSame($newAttemptId, $store->executionContext($newClaim)?->processingAttemptId);
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
     }
 
     #[Test]

@@ -36,6 +36,7 @@ final readonly class CreateDocumentProcessingUnits
         $document->loadMissing('session');
         $sourceVersion = DocumentSourceVersion::fromDocument($document);
         $previousSourceVersion = (string) $document->source_version;
+        $processingAttemptId = $this->processingAttemptId($document);
 
         if (
             $document->session === null
@@ -57,6 +58,7 @@ final readonly class CreateDocumentProcessingUnits
             ->get();
 
         if ($existing->isNotEmpty()) {
+            $this->synchronizeProcessingAttempt($existing, $processingAttemptId);
             $this->publish($claim, static fn (): bool => true);
             if (in_array((string) $document->status, ['uploaded', 'queued', 'processing'], true)) {
                 $this->ensureQueuedPages($document, $existing, $sourceVersion);
@@ -88,7 +90,7 @@ final readonly class CreateDocumentProcessingUnits
 
             return collect();
         }
-        $models = $this->publish($claim, function () use ($document, $previousSourceVersion, $sourceVersion, $units): Collection {
+        $models = $this->publish($claim, function () use ($document, $previousSourceVersion, $sourceVersion, $processingAttemptId, $units): Collection {
             $models = $this->replacement->commit(
                 (int) $document->organization_id,
                 (int) $document->project_id,
@@ -96,7 +98,7 @@ final readonly class CreateDocumentProcessingUnits
                 (int) $document->id,
                 $previousSourceVersion,
                 $sourceVersion,
-                function () use ($document, $sourceVersion, $units): Collection {
+                function () use ($document, $sourceVersion, $processingAttemptId, $units): Collection {
                     EstimateGenerationProcessingUnit::query()
                         ->where('organization_id', $document->organization_id)
                         ->where('project_id', $document->project_id)
@@ -144,7 +146,10 @@ final readonly class CreateDocumentProcessingUnits
                             'attempt_count' => 0,
                             'output_count' => 0,
                             'locator' => json_encode($unit->locator, JSON_THROW_ON_ERROR),
-                            'metadata' => '{}',
+                            'metadata' => json_encode(
+                                $processingAttemptId === null ? (object) [] : ['processing_attempt_id' => $processingAttemptId],
+                                JSON_THROW_ON_ERROR,
+                            ),
                             'created_at' => now(),
                             'updated_at' => now(),
                         ]);
@@ -178,6 +183,33 @@ final readonly class CreateDocumentProcessingUnits
         });
 
         return $models;
+    }
+
+    private function processingAttemptId(EstimateGenerationDocument $document): ?string
+    {
+        $meta = is_array($document->meta) ? $document->meta : [];
+        $attemptId = $meta['processing_attempt_id'] ?? null;
+
+        return is_string($attemptId) && trim($attemptId) !== '' ? trim($attemptId) : null;
+    }
+
+    /** @param Collection<int, EstimateGenerationProcessingUnit> $units */
+    private function synchronizeProcessingAttempt(Collection $units, ?string $processingAttemptId): void
+    {
+        if ($processingAttemptId === null) {
+            return;
+        }
+
+        foreach ($units as $unit) {
+            $metadata = is_array($unit->metadata) ? $unit->metadata : [];
+            if (($metadata['processing_attempt_id'] ?? null) === $processingAttemptId) {
+                continue;
+            }
+
+            $unit->forceFill([
+                'metadata' => [...$metadata, 'processing_attempt_id' => $processingAttemptId],
+            ])->saveQuietly();
+        }
     }
 
     private function publish(CheckpointClaim $claim, callable $publication): mixed

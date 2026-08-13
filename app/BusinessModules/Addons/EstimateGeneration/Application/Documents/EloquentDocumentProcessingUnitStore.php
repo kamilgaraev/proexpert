@@ -94,8 +94,26 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                         $now->modify(sprintf('+%d seconds', \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisLeasePolicy::UNIT_LEASE_SECONDS)),
                     );
                 },
+                processingAttemptId: $this->processingAttemptId($unit),
             );
         }, 3);
+    }
+
+    private function processingAttemptId(EstimateGenerationProcessingUnit $unit): string
+    {
+        $metadata = is_array($unit->metadata) ? $unit->metadata : [];
+        $attemptId = $metadata['processing_attempt_id'] ?? null;
+
+        if (! is_string($attemptId) || trim($attemptId) === '') {
+            $documentMeta = $unit->document instanceof EstimateGenerationDocument && is_array($unit->document->meta)
+                ? $unit->document->meta
+                : [];
+            $attemptId = $documentMeta['processing_attempt_id'] ?? null;
+        }
+
+        return is_string($attemptId) && trim($attemptId) !== ''
+            ? trim($attemptId)
+            : 'legacy-unit-'.(int) $unit->getKey();
     }
 
     public function claim(int $unitId, string $sourceVersion, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt, int $maxAttempts): DocumentProcessingUnitClaim

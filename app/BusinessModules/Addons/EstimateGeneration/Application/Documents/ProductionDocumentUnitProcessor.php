@@ -273,7 +273,12 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $auxiliaryText = is_string($nativePdfText) ? mb_substr($nativePdfText, 0, 12_000) : null;
         $auxiliaryMetadata = $this->visionAuxiliaryMetadata($auxiliary, $preprocessed, $nativePdfText);
         $correlationId = SheetAnalysisOperationIdentity::primary(
-            $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $preprocessed->derivativeHash,
+            $context->sessionId,
+            $context->documentId,
+            $context->unitId,
+            $context->sourceVersion,
+            $preprocessed->derivativeHash,
+            $context->processingAttemptId,
         );
         $input = new VisionDocumentInput(
             organizationId: $context->organizationId,
@@ -355,6 +360,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $targetedRouting['targeted_scope'] = $targetedPlan->scope->toSafeUsageContext();
             $targetedOperation = SheetAnalysisOperationIdentity::targeted(
                 $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $preprocessed->derivativeHash,
+                $context->processingAttemptId,
                 $targetedRouting,
             );
             try {

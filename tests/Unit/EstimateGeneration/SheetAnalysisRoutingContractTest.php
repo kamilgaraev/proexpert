@@ -23,15 +23,24 @@ final class SheetAnalysisRoutingContractTest extends TestCase
     }
 
     #[Test]
-    public function targeted_operation_identity_is_stable_across_unit_lease_retries_and_changes_for_a_new_target(): void
+    public function operation_identities_are_stable_inside_one_processing_lineage_and_change_for_a_new_explicit_retry(): void
     {
         $routing = ['role' => 'plan', 'reanalysis_reason' => 'sheet_role_insufficient_evidence'];
+        $firstLineage = 'd173fcc2-5f5c-44b1-91f1-94034f1b0bb5';
+        $secondLineage = '51462476-b870-44eb-b31d-1b5d74d511e9';
 
-        $first = SheetAnalysisOperationIdentity::targeted(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), $routing);
-        $retry = SheetAnalysisOperationIdentity::targeted(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), $routing);
-        $changedTarget = SheetAnalysisOperationIdentity::targeted(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), ['role' => 'section', 'reanalysis_reason' => 'sheet_role_conflict']);
+        $primary = SheetAnalysisOperationIdentity::primary(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), $firstLineage);
+        $primaryLeaseReplay = SheetAnalysisOperationIdentity::primary(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), $firstLineage);
+        $primaryExplicitRetry = SheetAnalysisOperationIdentity::primary(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), $secondLineage);
+        $first = SheetAnalysisOperationIdentity::targeted(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), $firstLineage, $routing);
+        $leaseReplay = SheetAnalysisOperationIdentity::targeted(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), $firstLineage, $routing);
+        $explicitRetry = SheetAnalysisOperationIdentity::targeted(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), $secondLineage, $routing);
+        $changedTarget = SheetAnalysisOperationIdentity::targeted(4, 5, 6, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), $firstLineage, ['role' => 'section', 'reanalysis_reason' => 'sheet_role_conflict']);
 
-        self::assertSame($first, $retry);
+        self::assertSame($primary, $primaryLeaseReplay);
+        self::assertNotSame($primary, $primaryExplicitRetry);
+        self::assertSame($first, $leaseReplay);
+        self::assertNotSame($first, $explicitRetry);
         self::assertNotSame($first, $changedTarget);
     }
 

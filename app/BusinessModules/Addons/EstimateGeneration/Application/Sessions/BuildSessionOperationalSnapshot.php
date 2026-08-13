@@ -418,6 +418,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             objectInput: $base->objectInput,
             aiEstimateQuota: $base->aiEstimateQuota,
             recommendedStep: $base->recommendedStep,
+            workflowSteps: $base->workflowSteps,
         );
     }
 
