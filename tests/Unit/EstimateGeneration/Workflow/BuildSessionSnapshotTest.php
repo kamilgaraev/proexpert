@@ -174,6 +174,41 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
+    public function resumable_document_system_failure_recommends_documents_with_zero_ready_pages(): void
+    {
+        $session = $this->makeSession(EstimateGenerationStatus::Failed);
+        $session->forceFill([
+            'resume_status' => EstimateGenerationStatus::ProcessingDocuments,
+            'failure_code' => 'document_processing_system_failed',
+        ]);
+
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session,
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: [
+                'blockers' => [[
+                    'code' => 'document_processing_system_failed',
+                    'message_key' => 'estimate_generation.document_processing_system_failed',
+                    'message' => 'Не удалось обработать документ.',
+                ]],
+                'warnings' => [],
+            ],
+            documentsSummary: [
+                'total' => 22,
+                'ready' => 0,
+                'pending' => 0,
+                'action_required' => 0,
+                'ignored' => 0,
+            ],
+        );
+
+        self::assertSame('documents', $snapshot->recommendedStep);
+        self::assertSame('documents', $snapshot->toArray()['recommended_step']);
+        self::assertFalse($snapshot->canGenerate);
+        self::assertFalse($snapshot->canApply);
+    }
+
+    #[Test]
     public function generating_session_exposes_safe_restart_and_cancel(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
@@ -248,6 +283,7 @@ final class BuildSessionSnapshotTest extends TestCase
             'id', 'status', 'processing_stage', 'processing_progress', 'state_version',
             'object_input',
             'available_actions', 'blocking_issues', 'warnings', 'next_action',
+            'recommended_step',
             'readiness_evaluated',
             'documents_summary', 'estimate_summary', 'review_summary',
             'scope_summary',

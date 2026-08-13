@@ -44,6 +44,7 @@ final readonly class SessionSnapshotData
             'available' => 10,
             'reservation_status' => null,
         ],
+        public ?string $recommendedStep = null,
     ) {}
 
     /** @return array<string, mixed> */
@@ -64,6 +65,7 @@ final readonly class SessionSnapshotData
             'blocking_issues' => $this->blockingIssues,
             'warnings' => $this->warnings,
             'next_action' => $this->nextAction,
+            'recommended_step' => $this->recommendedStep,
             'readiness_evaluated' => $this->readinessEvaluated,
             'documents_summary' => $this->documentsSummary,
             'estimate_summary' => $this->estimateSummary,
@@ -91,6 +93,7 @@ final readonly class SessionSnapshotData
             'blocking_issues' => $this->blockingIssues,
             'warnings' => $this->warnings,
             'next_action' => $this->nextAction,
+            'recommended_step' => $this->recommendedStep,
             'readiness_evaluated' => $this->readinessEvaluated,
             'can_generate' => $this->canGenerate,
             'can_apply' => $this->canApply,

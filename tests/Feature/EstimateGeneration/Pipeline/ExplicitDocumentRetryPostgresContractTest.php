@@ -124,7 +124,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         $authorization->allows('can')->andReturnTrue();
         $policy = new EstimateGenerationMutationPolicy;
         $reconciler = Mockery::mock(DocumentMutationSessionReconciler::class);
-        $reconciler->expects('changed')->once()->andReturn($session);
+        $reconciler->expects('changed')->twice()->andReturn($session);
         $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
         $readiness->allows('evaluate')->andReturn(['summary' => ['pending_count' => 1]]);
         $service = new RetryEstimateGenerationDocument(
@@ -200,6 +200,34 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         self::assertSame('estimate_generation.document_retry_result_replayed', $terminalReplay->messageKey);
         Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 1);
         self::assertSame(1, EstimateGenerationAuditEvent::query()->count());
+
+        EstimateGenerationProcessingUnit::query()->get()->each(function (EstimateGenerationProcessingUnit $unit) use ($accepted): void {
+            $metadata = is_array($unit->metadata) ? $unit->metadata : [];
+            $unit->forceFill([
+                'status' => 'failed',
+                'attempt_count' => 3,
+                'failure_code' => 'document_geometry_processing_failed',
+                'failure_fingerprint' => hash('sha256', 'same-system-root-after-retry'),
+                'metadata' => [
+                    ...$metadata,
+                    'failure_category' => 'terminal',
+                    'processing_attempt_id' => $accepted->attemptId,
+                ],
+                'failed_at' => now(),
+            ])->save();
+        });
+        $newKey = (string) Str::uuid();
+        $nextAttempt = $service->handle($session, $document, $actor, 9, $sourceVersion, $newKey, null);
+
+        self::assertSame('accepted', $nextAttempt->disposition);
+        self::assertNotSame($accepted->attemptId, $nextAttempt->attemptId);
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 2);
+        $document->refresh();
+        self::assertCount(2, $document->meta['explicit_document_retry_history']);
+        self::assertSame($accepted->attemptId, $document->meta['explicit_document_retry_history'][1]['old_attempt_id']);
+        self::assertSame($nextAttempt->attemptId, $document->meta['explicit_document_retry_history'][1]['new_attempt_id']);
+        self::assertSame(0, EstimateGenerationProcessingUnit::query()->max('attempt_count'));
+        self::assertSame(2, EstimateGenerationAuditEvent::query()->count());
     }
 
     public function test_concurrent_different_keys_have_exactly_one_winner_and_one_dispatch(): void

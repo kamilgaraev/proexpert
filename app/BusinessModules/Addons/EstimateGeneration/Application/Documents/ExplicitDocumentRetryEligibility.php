@@ -36,8 +36,10 @@ final readonly class ExplicitDocumentRetryEligibility
             return false;
         }
 
-        if (is_array($meta['explicit_document_retry_history'] ?? null)
-            && $meta['explicit_document_retry_history'] !== []) {
+        $currentRetry = is_array($meta['explicit_document_retry'] ?? null)
+            ? $meta['explicit_document_retry']
+            : [];
+        if (! $this->terminalRetryAllowsNewLineage($currentRetry, $meta, (string) $document->source_version)) {
             return false;
         }
 
@@ -79,5 +81,24 @@ final readonly class ExplicitDocumentRetryEligibility
         return $hasCurrentUnits
             && $hasRepairableFailure
             && (int) $document->processed_page_count === 0;
+    }
+
+    /** @param array<string, mixed> $currentRetry @param array<string, mixed> $meta */
+    private function terminalRetryAllowsNewLineage(array $currentRetry, array $meta, string $sourceVersion): bool
+    {
+        if ($currentRetry === []) {
+            return true;
+        }
+
+        $retrySourceVersion = (string) ($currentRetry['source_version'] ?? '');
+        $retryAttemptId = (string) ($currentRetry['attempt_id'] ?? '');
+        $processingAttemptId = (string) ($meta['processing_attempt_id'] ?? '');
+
+        return $retrySourceVersion !== ''
+            && hash_equals($sourceVersion, $retrySourceVersion)
+            && $retryAttemptId !== ''
+            && hash_equals($processingAttemptId, $retryAttemptId)
+            && ($currentRetry['status'] ?? null) === 'failed'
+            && ($currentRetry['terminal_reason'] ?? null) === 'system_failure';
     }
 }

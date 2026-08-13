@@ -9,8 +9,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Observability\OperationalUsageSummary;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DocumentReadinessClassifier;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessEvaluator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessEvaluator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\OperationalReadinessInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
 use Carbon\CarbonImmutable;
@@ -417,6 +417,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             ],
             objectInput: $base->objectInput,
             aiEstimateQuota: $base->aiEstimateQuota,
+            recommendedStep: $base->recommendedStep,
         );
     }
 
