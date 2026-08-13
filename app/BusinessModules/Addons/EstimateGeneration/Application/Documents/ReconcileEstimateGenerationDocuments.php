@@ -15,7 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecution
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use Illuminate\Support\Str;
 
-final class ReconcileEstimateGenerationDocuments implements EstimateGenerationSessionReconciler
+final class ReconcileEstimateGenerationDocuments implements DocumentMutationSessionReconciler, EstimateGenerationSessionReconciler
 {
     public function __construct(
         private AdvanceEstimateGeneration $advance,

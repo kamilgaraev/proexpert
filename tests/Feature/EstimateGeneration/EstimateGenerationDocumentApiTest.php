@@ -19,11 +19,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProce
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationQuantityTakeoff;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationScopeInference;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
+use Mockery;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Tests\TestCase;
 
@@ -83,8 +86,11 @@ class EstimateGenerationDocumentApiTest extends TestCase
     {
         [$user, $project, $session] = $this->makeSession();
         $document = $this->makeDocument($session, 'needs_review');
+        $checksum = hash('sha256', 'explicit-retry-document');
+        $sourceVersion = 'sha256:'.$checksum;
         $document->forceFill([
-            'source_version' => 'sha256:current',
+            'checksum_sha256' => $checksum,
+            'source_version' => $sourceVersion,
             'page_count' => 3,
             'processed_page_count' => 0,
         ])->save();
@@ -96,7 +102,7 @@ class EstimateGenerationDocumentApiTest extends TestCase
                 'document_id' => $document->id,
                 'unit_type' => 'pdf_page',
                 'unit_index' => $index,
-                'source_version' => 'sha256:current',
+                'source_version' => $sourceVersion,
                 'status' => 'failed',
                 'attempt_count' => 3,
                 'output_count' => 0,
@@ -133,18 +139,63 @@ class EstimateGenerationDocumentApiTest extends TestCase
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         self::assertSame('system_failure', $payload['data']['documents'][0]['processing_outcome']['type']);
-        self::assertSame([], $payload['data']['documents'][0]['available_actions']);
+        self::assertSame(['retry_document', 'ignore_document'], array_column($payload['data']['documents'][0]['available_actions'], 'action'));
         self::assertSame(1, $payload['data']['documents_summary']['system_failure_count']);
         self::assertSame(0, $payload['data']['documents_summary']['action_required_count']);
     }
 
-    public function test_retry_resets_failed_document_and_dispatches_ocr_job(): void
+    public function test_explicit_retry_preserves_failure_history_and_is_idempotent_with_one_dispatch(): void
     {
         Queue::fake();
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturnTrue();
+        $this->app->instance(AuthorizationService::class, $authorization);
 
         [$user, $project, $session] = $this->makeSession();
-        $document = $this->makeDocument($session, 'failed');
-        $request = RetryEstimateGenerationDocumentRequest::create('/retry', 'POST', ['state_version' => $session->state_version, 'reason' => 'Повторить']);
+        $document = $this->makeDocument($session, 'needs_review');
+        $document->forceFill([
+            'source_version' => 'sha256:current',
+            'page_count' => 3,
+            'processed_page_count' => 0,
+            'meta' => ['processing_attempt_id' => 'old-attempt'],
+        ])->save();
+        foreach (range(1, 3) as $index) {
+            $unit = EstimateGenerationProcessingUnit::query()->create([
+                'organization_id' => $document->organization_id,
+                'project_id' => $document->project_id,
+                'session_id' => $document->session_id,
+                'document_id' => $document->id,
+                'unit_type' => 'pdf_page',
+                'unit_index' => $index,
+                'source_version' => $sourceVersion,
+                'status' => 'failed',
+                'attempt_count' => 3,
+                'output_count' => 0,
+                'failure_code' => 'document_geometry_processing_failed',
+                'failure_fingerprint' => hash('sha256', 'same-root'),
+                'failed_at' => now(),
+                'locator' => ['page' => $index],
+                'metadata' => ['failure_category' => 'terminal'],
+            ]);
+            EstimateGenerationDocumentPage::query()->create([
+                'document_id' => $document->id,
+                'processing_unit_id' => $unit->id,
+                'source_version' => 'sha256:current',
+                'organization_id' => $session->organization_id,
+                'project_id' => $session->project_id,
+                'session_id' => $session->id,
+                'page_number' => $index,
+                'text' => 'Старый результат',
+                'status' => 'failed',
+            ]);
+        }
+        $idempotencyKey = (string) Str::uuid();
+        $request = RetryEstimateGenerationDocumentRequest::create('/retry', 'POST', [
+            'state_version' => $session->state_version,
+            'source_version' => $sourceVersion,
+            'idempotency_key' => $idempotencyKey,
+            'reason' => 'Системная причина устранена',
+        ]);
         $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setUserResolver(static fn (): User => $user);
 
@@ -154,17 +205,29 @@ class EstimateGenerationDocumentApiTest extends TestCase
         $this->assertTrue($payload['success']);
         $this->assertSame('queued', $payload['data']['document']['status']);
         $this->assertSame('stored', $payload['data']['document']['processing_stage']);
+        $this->assertSame('accepted', $payload['data']['retry']['disposition']);
         $this->assertSame(1, $payload['data']['documents_summary']['pending_count']);
-        $this->assertDatabaseHas('estimate_generation_documents', [
-            'id' => $document->id,
-            'status' => 'queued',
-            'processing_stage' => 'stored',
-        ]);
+        $attemptId = $payload['data']['retry']['attempt_id'];
+        $document->refresh();
+        $this->assertSame('old-attempt', $document->meta['explicit_document_retry_history'][0]['old_attempt_id']);
+        $this->assertSame($attemptId, $document->meta['explicit_document_retry_history'][0]['new_attempt_id']);
+        $this->assertSame(hash('sha256', $idempotencyKey), $document->meta['explicit_document_retry_history'][0]['idempotency_hash']);
+        $this->assertCount(1, $document->meta['explicit_document_retry_history']);
+        $unit = EstimateGenerationProcessingUnit::query()->where('document_id', $document->id)->firstOrFail();
+        $this->assertSame('document_geometry_processing_failed', $unit->metadata['failure_history'][0]['failure_code']);
+        $this->assertSame($attemptId, $unit->metadata['processing_attempt_id']);
+
+        $replay = app(EstimateGenerationDocumentController::class)->retry($request, $project, $session, $document);
+        $replayPayload = json_decode($replay->getContent(), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('replayed', $replayPayload['data']['retry']['disposition']);
+        $this->assertSame($attemptId, $replayPayload['data']['retry']['attempt_id']);
+        $this->assertCount(1, $document->fresh()->meta['explicit_document_retry_history']);
         Queue::assertPushed(
             ProcessEstimateGenerationDocumentJob::class,
             static fn (ProcessEstimateGenerationDocumentJob $job): bool => $job->queue === ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE
                 && $job->connection === ProcessEstimateGenerationDocumentJob::CONNECTION
         );
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 1);
     }
 
     public function test_retry_selected_pages_resets_only_selected_units_and_page_lineage(): void
@@ -334,23 +397,27 @@ class EstimateGenerationDocumentApiTest extends TestCase
         $this->assertStringNotContainsString('РЎС‚СЂР°РЅРёС†Р° 2', (string) $document->extracted_text);
     }
 
-    public function test_retry_is_allowed_for_ready_document(): void
+    public function test_retry_is_forbidden_for_ready_document(): void
     {
         Queue::fake();
 
         [$user, $project, $session] = $this->makeSession();
         $document = $this->makeDocument($session, 'ready');
-        $request = RetryEstimateGenerationDocumentRequest::create('/retry', 'POST', ['state_version' => $session->state_version, 'reason' => 'Повторить']);
+        $request = RetryEstimateGenerationDocumentRequest::create('/retry', 'POST', [
+            'state_version' => $session->state_version,
+            'source_version' => 'sha256:missing',
+            'idempotency_key' => (string) Str::uuid(),
+            'reason' => 'Повторить',
+        ]);
         $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setUserResolver(static fn (): User => $user);
 
         $response = app(EstimateGenerationDocumentController::class)->retry($request, $project, $session, $document);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
-        $this->assertTrue($payload['success']);
-        $this->assertSame('queued', $payload['data']['document']['status']);
-        $this->assertSame(1, $payload['data']['documents_summary']['pending_count']);
-        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class);
+        $this->assertFalse($payload['success']);
+        $this->assertSame(409, $response->getStatusCode());
+        Queue::assertNothingPushed();
     }
 
     public function test_ignore_is_allowed_for_ready_failed_or_review_documents(): void

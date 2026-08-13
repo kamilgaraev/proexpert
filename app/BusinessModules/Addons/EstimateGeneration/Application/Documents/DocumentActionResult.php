@@ -13,5 +13,7 @@ final readonly class DocumentActionResult
         public EstimateGenerationDocument $document,
         public array $summary,
         public string $messageKey,
+        public string $disposition = 'accepted',
+        public ?string $attemptId = null,
     ) {}
 }

@@ -46,7 +46,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
     }
 
     #[Test]
-    public function failed_document_exposes_typed_retry_and_ignore_actions_from_review_permission(): void
+    public function generic_failed_document_exposes_only_ignore_action_from_review_permission(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->expects('can')->once()->withArgs(static fn (User $user, string $permission, array $context): bool => $user->id === 5
@@ -59,13 +59,12 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
             $this->user(7),
         );
 
-        self::assertSame(['retry_document', 'ignore_document'], array_column($actions, 'action'));
-        self::assertSame([9, 9], array_column($actions, 'state_version'));
+        self::assertSame(['ignore_document'], array_column($actions, 'action'));
+        self::assertSame([9], array_column($actions, 'state_version'));
         self::assertSame([
-            '/api/v1/admin/projects/17/estimate-generation/sessions/41/documents/91/retry',
             '/api/v1/admin/projects/17/estimate-generation/sessions/41/documents/91/ignore',
         ], array_column($actions, 'endpoint'));
-        self::assertTrue($actions[1]['requires_confirmation']);
+        self::assertTrue($actions[0]['requires_confirmation']);
     }
 
     #[Test]
@@ -84,11 +83,11 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         $payload = (new EstimateGenerationDocumentResource($this->document('failed')))->toArray($request);
 
         self::assertSame('user_action_required', $payload['processing_outcome']['type']);
-        self::assertSame(['retry_document', 'ignore_document'], array_column($payload['available_actions'], 'action'));
+        self::assertSame(['ignore_document'], array_column($payload['available_actions'], 'action'));
     }
 
     #[Test]
-    public function systemic_document_failure_exposes_one_safe_outcome_and_no_retry_action(): void
+    public function systemic_document_failure_exposes_explicit_retry_capability_and_source_fence(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->allows('can')->andReturnTrue();
@@ -100,6 +99,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         $document->forceFill([
             'page_count' => 22,
             'processed_page_count' => 0,
+            'source_version' => 'sha256:current',
             'error_code' => 'document_processing_system_failed',
             'error_message_key' => 'estimate_generation.document_processing_system_failed',
             'facts_summary' => [
@@ -127,11 +127,14 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         self::assertSame(22, $payload['processing_outcome']['counts']['system_failed']);
         self::assertSame(0, $payload['processing_outcome']['counts']['processing']);
         self::assertSame('Сервис не смог обработать документ. Файл сохранён, повторная загрузка не требуется.', $payload['processing_outcome']['message']);
-        self::assertSame([], $payload['available_actions']);
+        self::assertSame(['retry_document', 'ignore_document'], array_column($payload['available_actions'], 'action'));
+        self::assertSame('explicit_system_failure_retry', $payload['available_actions'][0]['retry_disposition']);
+        self::assertSame('sha256:current', $payload['available_actions'][0]['source_version']);
+        self::assertTrue($payload['available_actions'][0]['requires_confirmation']);
     }
 
     #[Test]
-    public function temporary_document_failure_keeps_safe_retry_action(): void
+    public function temporary_document_failure_does_not_expose_explicit_system_failure_retry(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->allows('can')->andReturnTrue();
@@ -168,11 +171,11 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
 
         self::assertSame('temporary_failure', $payload['processing_outcome']['type']);
         self::assertTrue($payload['processing_outcome']['retry_allowed']);
-        self::assertSame(['retry_document', 'ignore_document'], array_column($payload['available_actions'], 'action'));
+        self::assertSame(['ignore_document'], array_column($payload['available_actions'], 'action'));
     }
 
     #[Test]
-    public function legacy_identical_unit_failures_are_presented_as_one_system_failure_without_retry(): void
+    public function legacy_identical_unit_failures_expose_one_explicit_document_retry(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->allows('can')->andReturnTrue();
@@ -234,7 +237,8 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         self::assertSame('system_failure', $payload['processing_outcome']['type']);
         self::assertSame(22, $payload['processing_outcome']['counts']['system_failed']);
         self::assertSame(0, $payload['processing_outcome']['counts']['needs_user_action']);
-        self::assertSame([], $payload['available_actions']);
+        self::assertSame(['retry_document', 'ignore_document'], array_column($payload['available_actions'], 'action'));
+        self::assertSame('explicit_system_failure_retry', $payload['available_actions'][0]['retry_disposition']);
     }
 
     #[Test]
@@ -303,7 +307,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
     }
 
     #[Test]
-    public function ignored_document_can_only_be_retried(): void
+    public function ignored_document_has_no_retry_action(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->allows('can')->andReturnTrue();
@@ -313,7 +317,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
             $this->user(7),
         );
 
-        self::assertSame(['retry_document'], array_column($actions, 'action'));
+        self::assertSame([], $actions);
     }
 
     #[Test]
