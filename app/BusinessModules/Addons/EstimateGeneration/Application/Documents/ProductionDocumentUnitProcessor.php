@@ -109,7 +109,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $exception instanceof VisionProviderException => new TypedFailureException(
                 $exception->retryable ? FailureCategory::Recoverable : FailureCategory::Terminal,
                 $exception->reason,
-                $exception->httpCode === null ? [] : ['http_status' => $exception->httpCode],
+                [
+                    ...$exception->safeContext,
+                    ...($exception->httpCode === null ? [] : ['http_status' => $exception->httpCode]),
+                ],
                 $exception,
                 $resourceUsage,
             ),

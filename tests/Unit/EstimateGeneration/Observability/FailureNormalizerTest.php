@@ -155,6 +155,28 @@ final class FailureNormalizerTest extends TestCase
         self::assertStringNotContainsString('filename', json_encode($sameClass->safeContext, JSON_THROW_ON_ERROR));
     }
 
+    #[Test]
+    public function typed_provider_diagnostic_identity_overrides_the_generic_exception_chain(): void
+    {
+        $fingerprint = 'sha256:'.str_repeat('b', 64);
+        $failure = (new FailureNormalizer)->normalize(new TypedFailureException(
+            FailureCategory::Terminal,
+            'vision_provider_request_rejected',
+            [
+                'provider_http_status' => 400,
+                'provider_error_type' => 'invalid_request_error',
+                'provider_error_code' => 'unsupported_parameter',
+                'provider_error_param' => 'response_format',
+                'payload_shape_fingerprint' => 'sha256:'.str_repeat('a', 64),
+                'diagnostic_fingerprint' => $fingerprint,
+            ],
+        ), $this->context());
+
+        self::assertSame($fingerprint, $failure->safeContext['diagnostic_fingerprint']);
+        self::assertSame('response_format', $failure->safeContext['provider_error_param']);
+        self::assertSame(400, $failure->safeContext['provider_http_status']);
+    }
+
     private function context(
         int $organizationId = 1,
         ProcessingStage $stage = ProcessingStage::UnderstandDocuments,

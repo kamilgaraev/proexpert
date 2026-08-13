@@ -34,7 +34,7 @@ final readonly class DocumentSystemFailureDetector
                 && (int) $unit->document_id === (int) $document->getKey()
                 && hash_equals((string) $document->source_version, (string) $unit->source_version),
         );
-        if ($units->count() < 3) {
+        if ($units->count() < 2) {
             return false;
         }
 

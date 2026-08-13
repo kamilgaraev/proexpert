@@ -19,10 +19,13 @@ final readonly class ExplicitDocumentRetryEligibility
         'document_representation_contract_invalid',
         'document_representation_measurement_invalid',
         'document_unit_processing_failed',
+        'vision_provider_request_rejected',
+        'vision_http_failed',
     ];
 
     private const BREAKER_FAILURE_CODES = [
         'document_systemic_failure',
+        'breaker_stopped',
     ];
 
     public function __construct(

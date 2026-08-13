@@ -17,7 +17,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsPair
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
@@ -26,12 +25,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionRespon
 use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Support\DatabaseLessTestCase;
@@ -53,7 +52,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'api_key' => 'secret', 'base_uri' => 'https://vision.test/v1', 'timeout_seconds' => 10,
             'retry_attempts' => 3, 'retry_delay_ms' => 0,
             'primary_max_output_tokens' => 8192, 'targeted_max_output_tokens' => 6144,
-            'max_response_bytes' => 100_000, 'max_elements' => 100, 'max_depth' => 12,
+            'max_response_bytes' => 100_000, 'max_error_response_bytes' => 16_384,
+            'max_elements' => 100, 'max_depth' => 12,
             'image_detail' => 'high',
         ]);
         $this->app->instance(AiUsageStore::class, new class($this->attempts) implements AiUsageStore
@@ -312,7 +312,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     #[Test]
     public function it_retries_only_retryable_physical_calls_without_model_fallback(): void
     {
-        Http::fakeSequence()->pushStatus(429)->pushStatus(503)->push($this->response());
+        Http::fakeSequence()->pushStatus(409)->pushStatus(429)->push($this->response());
 
         $this->provider()->analyze($this->input());
 
@@ -322,22 +322,11 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function oversized_or_malformed_retryable_error_bodies_are_never_decoded_and_still_retry(): void
+    public function retryable_error_bodies_are_bounded_and_still_retry(): void
     {
-        $reader = new class implements VisionResponseBodyReader
-        {
-            public int $calls = 0;
-
-            public function read(\Illuminate\Http\Client\Response $response, int $maxBytes): string
-            {
-                $this->calls++;
-
-                return (new BoundedVisionResponseBodyReader)->read($response, $maxBytes);
-            }
-        };
-        $this->app->instance(VisionResponseBodyReader::class, $reader);
+        config()->set('estimate-generation.vision.max_error_response_bytes', 256);
         Http::fakeSequence()
-            ->push(str_repeat('x', 200_000), 429)
+            ->push(str_repeat('x', 20_000), 429, ['Content-Type' => 'text/plain'])
             ->push('{malformed', 503)
             ->push($this->response());
 
@@ -345,7 +334,176 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
 
         self::assertSame(['http_failed', 'http_failed', 'succeeded'], array_map(fn (AiUsageData $row): string => $row->status, $this->attempts));
         self::assertSame([429, 503, 200], array_map(fn (AiUsageData $row): ?int => $row->httpCode, $this->attempts));
-        self::assertSame(1, $reader->calls);
+        self::assertTrue($this->physicalAttempts->snapshots()[0]->responsePayload['provider_error']['body_truncated']);
+        self::assertLessThanOrEqual(256, strlen($this->physicalAttempts->snapshots()[0]->responsePayload['provider_error']['redacted_preview']));
+    }
+
+    #[Test]
+    public function standard_openai_error_is_captured_safely_and_terminal_400_is_not_wire_retried(): void
+    {
+        $secret = 'sk-live-DoNotPersist123456789';
+        Log::spy();
+        Http::fake(['*' => Http::response([
+            'error' => [
+                'message' => "Unsupported parameter: 'response_format'. Authorization: Bearer {$secret}",
+                'type' => 'invalid_request_error',
+                'param' => 'response_format',
+                'code' => 'unsupported_parameter',
+            ],
+        ], 400, ['Content-Type' => 'application/json; charset=utf-8'])]);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Terminal provider rejection was accepted.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_provider_request_rejected', $exception->reason);
+            self::assertFalse($exception->retryable);
+            self::assertSame('response_format', $exception->safeContext['provider_error_param']);
+            self::assertMatchesRegularExpression('/\Asha256:[0-9a-f]{64}\z/', $exception->safeContext['diagnostic_fingerprint']);
+        }
+
+        Http::assertSentCount(1);
+        self::assertCount(1, $this->attempts);
+        self::assertSame('unavailable', $this->attempts[0]->usageStatus);
+        self::assertSame(0, $this->attempts[0]->inputTokens);
+        self::assertSame(0, $this->attempts[0]->outputTokens);
+        self::assertSame(0, $this->attempts[0]->reasoningTokens);
+        $diagnostic = $this->physicalAttempts->onlySnapshot()->responsePayload['provider_error'];
+        self::assertSame(400, $diagnostic['provider_http_status']);
+        self::assertSame('invalid_request_error', $diagnostic['error_type']);
+        self::assertSame('unsupported_parameter', $diagnostic['error_code']);
+        self::assertSame('response_format', $diagnostic['error_param']);
+        self::assertSame(
+            'provider_http_status=400; envelope=openai_error; type=invalid_request_error; code=unsupported_parameter; param=response_format',
+            $diagnostic['diagnostic_summary'],
+        );
+        self::assertArrayNotHasKey('error_message', $diagnostic);
+        self::assertSame('application/json', $diagnostic['response_content_type']);
+        self::assertSame('openai/gpt-5.6-luna', $diagnostic['model']);
+        self::assertSame('chat_completions', $diagnostic['endpoint_kind']);
+        self::assertMatchesRegularExpression('/\Asha256:[0-9a-f]{64}\z/', $diagnostic['body_fingerprint']);
+        self::assertMatchesRegularExpression('/\Asha256:[0-9a-f]{64}\z/', $diagnostic['payload_shape_fingerprint']);
+        self::assertStringNotContainsString($secret, json_encode($diagnostic, JSON_THROW_ON_ERROR));
+        self::assertArrayNotHasKey('raw_body', $diagnostic);
+        self::assertArrayNotHasKey('request', $diagnostic);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Durable terminal provider rejection was accepted on replay.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_provider_request_rejected', $exception->reason);
+            self::assertSame($diagnostic['diagnostic_fingerprint'], $exception->safeContext['diagnostic_fingerprint']);
+        }
+
+        Http::assertSentCount(1);
+        self::assertCount(1, $this->attempts);
+        Log::shouldHaveReceived('warning')->once()->withArgs(
+            static fn (string $message, array $context): bool => $message === '[EstimateGeneration Vision] provider HTTP failure'
+                && ($context['error_param'] ?? null) === 'response_format'
+                && ! str_contains(json_encode($context, JSON_THROW_ON_ERROR), $secret)
+                && ! array_key_exists('redacted_preview', $context)
+                && ! array_key_exists('request', $context),
+        );
+    }
+
+    #[Test]
+    public function production_shaped_unknown_oversized_400_keeps_only_a_redacted_bounded_preview_and_hash(): void
+    {
+        config()->set('estimate-generation.vision.max_error_response_bytes', 384);
+        $secret = 'sk-live-DoNotPersist123456789';
+        $signedUrl = 'https://storage.example/private.png?X-Amz-Signature=secret';
+        $body = json_encode([
+            'status' => 400,
+            'detail' => "Gateway rejected request. Authorization: Bearer {$secret}. image={$signedUrl}. ".str_repeat('Ошибка ', 1_000),
+            'request_dump' => 'data:image/png;base64,'.str_repeat('A', 10_000),
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        Http::fake(['*' => Http::response($body, 400, ['Content-Type' => 'application/problem+json'])]);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Unknown terminal provider rejection was accepted.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_provider_request_rejected', $exception->reason);
+        }
+
+        Http::assertSentCount(1);
+        $diagnostic = $this->physicalAttempts->onlySnapshot()->responsePayload['provider_error'];
+        self::assertSame('unknown', $diagnostic['envelope_kind']);
+        self::assertTrue($diagnostic['body_truncated']);
+        self::assertLessThanOrEqual(384, strlen($diagnostic['redacted_preview']));
+        self::assertStringNotContainsString($secret, $diagnostic['redacted_preview']);
+        self::assertStringNotContainsString('X-Amz-Signature', $diagnostic['redacted_preview']);
+        self::assertStringNotContainsString('data:image', $diagnostic['redacted_preview']);
+        self::assertMatchesRegularExpression('/\Asha256:[0-9a-f]{64}\z/', $diagnostic['body_fingerprint']);
+    }
+
+    #[Test]
+    public function typed_error_breaker_identity_ignores_variable_provider_message_and_request_id(): void
+    {
+        Http::fakeSequence()
+            ->push(['error' => [
+                'message' => "Unsupported parameter for request req-first and customer text 'private one'.",
+                'type' => 'invalid_request_error',
+                'param' => 'response_format',
+                'code' => 'unsupported_parameter',
+            ]], 400)
+            ->push(['error' => [
+                'message' => "Unsupported parameter for request req-second and customer text 'private two'.",
+                'type' => 'invalid_request_error',
+                'param' => 'response_format',
+                'code' => 'unsupported_parameter',
+            ]], 400);
+
+        foreach ([1, 2] as $claim) {
+            try {
+                $this->provider()->analyze($this->input(claim: $claim));
+                self::fail('Terminal provider rejection was accepted.');
+            } catch (VisionProviderException) {
+            }
+        }
+
+        $snapshots = $this->physicalAttempts->snapshots();
+        self::assertCount(2, $snapshots);
+        self::assertNotSame(
+            $snapshots[0]->responsePayload['provider_error']['body_fingerprint'],
+            $snapshots[1]->responsePayload['provider_error']['body_fingerprint'],
+        );
+        self::assertSame(
+            $snapshots[0]->responsePayload['provider_error']['diagnostic_fingerprint'],
+            $snapshots[1]->responsePayload['provider_error']['diagnostic_fingerprint'],
+        );
+        self::assertStringNotContainsString('private', json_encode($snapshots, JSON_THROW_ON_ERROR));
+    }
+
+    #[Test]
+    public function unknown_json_recursively_redacts_nested_request_content_and_keeps_preview_out_of_logs(): void
+    {
+        Log::spy();
+        Http::fake(['*' => Http::response([
+            'status' => 400,
+            'detail' => 'Gateway rejected request for +7 (999) 123-45-67.',
+            'request' => [
+                'messages' => [['role' => 'user', 'content' => 'PRIVATE CUSTOMER TEXT']],
+                'image_url' => ['url' => 'https://storage.example/private.png?signature=secret'],
+            ],
+        ], 400, ['Content-Type' => 'application/problem+json'])]);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Unknown terminal provider rejection was accepted.');
+        } catch (VisionProviderException) {
+        }
+
+        $diagnostic = $this->physicalAttempts->onlySnapshot()->responsePayload['provider_error'];
+        self::assertStringNotContainsString('PRIVATE CUSTOMER TEXT', $diagnostic['redacted_preview']);
+        self::assertStringNotContainsString('999', $diagnostic['redacted_preview']);
+        self::assertStringNotContainsString('storage.example', $diagnostic['redacted_preview']);
+        self::assertStringContainsString('[redacted]', $diagnostic['redacted_preview']);
+        Log::shouldHaveReceived('warning')->once()->withArgs(
+            static fn (string $message, array $context): bool => $message === '[EstimateGeneration Vision] provider HTTP failure'
+                && ! array_key_exists('redacted_preview', $context)
+                && ! str_contains(json_encode($context, JSON_THROW_ON_ERROR), 'PRIVATE CUSTOMER TEXT'),
+        );
     }
 
     #[Test]
@@ -473,6 +631,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             }
         }
         self::assertCount(4, $this->attempts);
+        Http::assertSentCount(4);
     }
 
     #[Test]
@@ -1105,6 +1264,15 @@ final class InMemoryVisionPhysicalAttemptStore implements VisionPhysicalAttemptS
         }
 
         return array_values($this->attempts)[0]['snapshot'];
+    }
+
+    /** @return list<VisionPhysicalAttemptSnapshot> */
+    public function snapshots(): array
+    {
+        return array_values(array_map(
+            static fn (array $attempt): VisionPhysicalAttemptSnapshot => $attempt['snapshot'],
+            $this->attempts,
+        ));
     }
 
     public function claim(AiOperationContext $context, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): VisionPhysicalAttemptSnapshot

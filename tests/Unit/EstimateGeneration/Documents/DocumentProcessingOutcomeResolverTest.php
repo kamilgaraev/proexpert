@@ -83,7 +83,7 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
                 $ready ? 'completed' : 'failed',
                 $ready ? 1 : 0,
                 $ready ? null : 'terminal',
-                $breaker ? 'document_systemic_failure' : ($ready ? null : 'invalid_analysis_schema'),
+                $breaker ? 'breaker_stopped' : ($ready ? null : 'invalid_analysis_schema'),
             );
         }
 

@@ -237,8 +237,11 @@ final class AdvanceEstimateGeneration
             : $this->workflow->transition($session, $event, $attributes);
     }
 
-    public function failed(EstimateGenerationSession $session, string $failureCode): EstimateGenerationSession
-    {
+    public function failed(
+        EstimateGenerationSession $session,
+        string $failureCode,
+        ?EstimateGenerationStatus $resumeStatus = null,
+    ): EstimateGenerationSession {
         if (preg_match('/\A[a-z][a-z0-9_]{0,79}\z/', $failureCode) !== 1) {
             throw new \InvalidArgumentException('Invalid estimate generation failure code.');
         }
@@ -248,10 +251,10 @@ final class AdvanceEstimateGeneration
 
         return $this->workflow->transition($session, EstimateGenerationEvent::Failed, [
             'processing_stage' => 'failed',
-            'processing_progress' => 0,
+            'processing_progress' => $resumeStatus === EstimateGenerationStatus::ProcessingDocuments ? 100 : 0,
             'last_error' => null,
             'failure_code' => $failureCode,
-        ]);
+        ], $resumeStatus);
     }
 
     /** @param array<string, mixed> $attributes */

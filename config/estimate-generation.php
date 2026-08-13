@@ -27,6 +27,7 @@ return [
         'targeted_max_output_tokens' => (int) env('ESTIMATE_GENERATION_VISION_TARGETED_MAX_OUTPUT_TOKENS', 6144),
         'max_input_tokens' => (int) env('ESTIMATE_GENERATION_VISION_MAX_INPUT_TOKENS', 32_768),
         'max_response_bytes' => (int) env('ESTIMATE_GENERATION_VISION_MAX_RESPONSE_BYTES', 1_000_000),
+        'max_error_response_bytes' => (int) env('ESTIMATE_GENERATION_VISION_MAX_ERROR_RESPONSE_BYTES', 16_384),
         'max_elements' => (int) env('ESTIMATE_GENERATION_VISION_MAX_ELEMENTS', 500),
         'max_depth' => (int) env('ESTIMATE_GENERATION_VISION_MAX_DEPTH', 16),
         'image_detail' => env('ESTIMATE_GENERATION_VISION_IMAGE_DETAIL', 'high'),

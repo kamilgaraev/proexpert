@@ -46,7 +46,7 @@ EXISTS (
       AND systemic_units.document_id = estimate_generation_documents.id
       AND systemic_units.source_version = estimate_generation_documents.source_version
     GROUP BY systemic_units.failure_fingerprint
-    HAVING COUNT(*) >= 3
+    HAVING COUNT(*) >= 2
        AND COUNT(*) = (
            SELECT COUNT(*)
            FROM estimate_generation_processing_units AS current_units
