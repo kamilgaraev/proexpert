@@ -652,10 +652,9 @@ final class MachineryOperationsService
                 ->groupByRaw('coalesce(fuel_type_code, fuel_type)')
                 ->get()
                 ->all(),
-            'operating_cost_by_project' => MachineryShiftReport::query()
+            'operating_cost_by_project' => MachineryShiftReport::forOrganization($organizationId)
                 ->leftJoin('asset_operation_profiles', 'machinery_shift_reports.organization_asset_id', '=', 'asset_operation_profiles.organization_asset_id')
                 ->selectRaw('machinery_shift_reports.project_id, sum(machinery_shift_reports.actual_hours * coalesce(machinery_shift_reports.hourly_rate_snapshot, asset_operation_profiles.operating_cost_per_hour, 0)) as cost')
-                ->where('machinery_shift_reports.organization_id', $organizationId)
                 ->where('machinery_shift_reports.status', 'approved')
                 ->where('machinery_shift_reports.report_date', '<=', now()->toDateString())
                 ->when($projectId !== null, fn ($query) => $query->where('machinery_shift_reports.project_id', $projectId))

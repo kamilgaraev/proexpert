@@ -7,6 +7,13 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryDefect;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryDowntime;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryFuelIssue;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenanceOrder;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryProductionRecord;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryShiftReport;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetReadRepository;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -142,6 +149,114 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
 
         self::assertNull($repository->find($organizationId, (int) $unlinked->id));
         self::assertNull($repository->find($organizationId, (int) $retired->id));
+    }
+
+    public function test_strict_canonical_reads_hide_orphaned_operational_records_from_scopes_and_reports(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $project = Project::factory()->create(['organization_id' => $organizationId]);
+        $asset = app(MachineryOperationsService::class)->createAsset($organizationId, [
+            'asset_code' => 'STRICT-OPERATIONS',
+            'name' => 'Strict operations asset',
+            'current_project_id' => $project->id,
+        ]);
+        $canonicalId = (int) $asset->organization_asset_id;
+
+        MachineryAssignment::query()->create([
+            'organization_id' => $organizationId,
+            'organization_asset_id' => $canonicalId,
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'status' => 'active',
+            'planned_start_at' => now()->subHour(),
+        ]);
+        $shift = MachineryShiftReport::query()->create([
+            'organization_id' => $organizationId,
+            'organization_asset_id' => $canonicalId,
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'report_date' => now()->toDateString(),
+            'status' => 'approved',
+            'planned_hours' => 2,
+            'actual_hours' => 3,
+            'fuel_consumed' => 4,
+            'hourly_rate_snapshot' => 100,
+            'approved_at' => now(),
+        ]);
+        MachineryDowntime::query()->create([
+            'organization_id' => $organizationId,
+            'organization_asset_id' => $canonicalId,
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'shift_report_id' => $shift->id,
+            'reason' => 'repair',
+            'started_at' => now()->subHour(),
+            'duration_minutes' => 60,
+        ]);
+        MachineryFuelIssue::query()->create([
+            'organization_id' => $organizationId,
+            'organization_asset_id' => $canonicalId,
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'issued_at' => now(),
+            'fuel_type' => 'diesel',
+            'quantity' => 10,
+            'unit' => 'l',
+            'cost' => 500,
+        ]);
+        MachineryMaintenanceOrder::query()->create([
+            'organization_id' => $organizationId,
+            'organization_asset_id' => $canonicalId,
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'order_number' => 'STRICT-MO-1',
+            'title' => 'Overdue maintenance',
+            'status' => 'open',
+            'planned_at' => now()->subDay(),
+        ]);
+        MachineryProductionRecord::query()->create([
+            'organization_id' => $organizationId,
+            'organization_asset_id' => $canonicalId,
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'shift_report_id' => $shift->id,
+            'recorded_at' => now(),
+            'quantity' => 1,
+            'unit' => 'unit',
+        ]);
+        MachineryDefect::query()->create([
+            'organization_id' => $organizationId,
+            'organization_asset_id' => $canonicalId,
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'defect_code' => 'STRICT-DEFECT',
+            'severity' => 'minor',
+            'status' => 'open',
+            'description' => 'Orphaned defect',
+            'reported_at' => now(),
+        ]);
+
+        $asset->organizationAsset()->firstOrFail()->delete();
+        config()->set('asset_registry.strict_canonical_reads', true);
+
+        foreach ([
+            MachineryAsset::class,
+            MachineryAssignment::class,
+            MachineryShiftReport::class,
+            MachineryDowntime::class,
+            MachineryFuelIssue::class,
+            MachineryMaintenanceOrder::class,
+            MachineryProductionRecord::class,
+            MachineryDefect::class,
+        ] as $model) {
+            self::assertSame(0, $model::forOrganization($organizationId)->count(), $model);
+        }
+
+        $operations = app(MachineryOperationsService::class);
+        self::assertSame(0, $operations->paginateShifts($organizationId)->total());
+        self::assertNull($operations->findShift($organizationId, (int) $shift->id));
+        self::assertSame([], $operations->reports($organizationId)['operating_cost_by_project']);
     }
 
     private function allowAccess(): void

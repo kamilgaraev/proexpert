@@ -54,6 +54,10 @@ final class MachineryDowntime extends Model
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder
     {
-        return $query->where('organization_id', $organizationId);
+        return $query->where('organization_id', $organizationId)
+            ->when(
+                (bool) config('asset_registry.strict_canonical_reads'),
+                fn (Builder $query): Builder => $query->whereHas('organizationAsset'),
+            );
     }
 }

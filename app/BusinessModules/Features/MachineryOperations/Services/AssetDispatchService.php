@@ -12,6 +12,9 @@ use App\BusinessModules\Features\MachineryOperations\DTO\AssignmentData;
 use App\BusinessModules\Features\MachineryOperations\Models\AssetRequest;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryDowntime;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenanceOrder;
+use App\BusinessModules\Features\MachineryOperations\Models\MachineryShiftReport;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\ScheduleTask;
@@ -72,10 +75,10 @@ final readonly class AssetDispatchService
     public function overview(int $organizationId): array
     {
         return [
-            'open_downtimes' => DB::table('machinery_downtimes')->where('organization_id', $organizationId)->whereNull('ended_at')->count(),
+            'open_downtimes' => MachineryDowntime::forOrganization($organizationId)->whereNull('ended_at')->count(),
             'pending_requests' => DB::table('asset_requests')->where('organization_id', $organizationId)->whereIn('status', ['pending', 'approved'])->whereNull('deleted_at')->count(),
-            'shift_variances' => DB::table('machinery_shift_reports')->where('organization_id', $organizationId)->where('status', 'submitted')->whereColumn('actual_hours', '<>', 'planned_hours')->whereNull('deleted_at')->count(),
-            'overdue_maintenance' => DB::table('machinery_maintenance_orders')->where('organization_id', $organizationId)->whereIn('status', ['open', 'in_progress'])->where('planned_at', '<', now())->whereNull('deleted_at')->count(),
+            'shift_variances' => MachineryShiftReport::forOrganization($organizationId)->where('status', 'submitted')->whereColumn('actual_hours', '<>', 'planned_hours')->count(),
+            'overdue_maintenance' => MachineryMaintenanceOrder::forOrganization($organizationId)->whereIn('status', ['open', 'in_progress'])->where('planned_at', '<', now())->count(),
         ];
     }
 
