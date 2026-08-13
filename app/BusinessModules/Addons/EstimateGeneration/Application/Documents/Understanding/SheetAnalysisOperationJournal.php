@@ -72,7 +72,9 @@ final class SheetAnalysisOperationJournal
                 'operation_id' => $operationId, 'kind' => $kind, ...$scope->attributes(),
                 'status' => 'queued', 'lease_token' => null,
                 'lease_expires_at' => null, 'attempt_count' => 0,
-                'initial_routing' => $routing, 'final_routing' => [], 'analysis_payload' => [],
+                'initial_routing' => $routing,
+                'final_routing' => ['status' => 'pending'],
+                'analysis_payload' => ['status' => 'pending'],
             ]);
         } catch (QueryException $exception) {
             if ((string) ($exception->errorInfo[0] ?? $exception->getCode()) !== '23505') {

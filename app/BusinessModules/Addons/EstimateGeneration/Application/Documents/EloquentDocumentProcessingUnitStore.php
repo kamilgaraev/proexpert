@@ -132,6 +132,43 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Exhausted);
             }
 
+            $attemptId = is_string(((array) $unit->metadata)['processing_attempt_id'] ?? null)
+                ? ((array) $unit->metadata)['processing_attempt_id']
+                : null;
+            $scopeQuery = $this->query()
+                ->where('organization_id', $unit->organization_id)
+                ->where('project_id', $unit->project_id)
+                ->where('session_id', $unit->session_id)
+                ->where('document_id', $unit->document_id)
+                ->where('source_version', $unit->source_version)
+                ->where($this->attemptLineagePredicate($attemptId));
+            $runningCount = (clone $scopeQuery)
+                ->where('status', DocumentProcessingUnitStatus::Running->value)
+                ->where('lease_expires_at', '>', $now)
+                ->count();
+            $systemicFailureCount = (int) ((clone $scopeQuery)
+                ->where('status', DocumentProcessingUnitStatus::Failed->value)
+                ->whereIn('failure_code', [
+                    'document_unit_processing_failed',
+                    'unexpected_internal_failure',
+                    'document_representation_contract_invalid',
+                    'document_representation_source_mismatch',
+                ])
+                ->selectRaw('count(*) as aggregate')
+                ->groupBy('failure_fingerprint')
+                ->orderByDesc('aggregate')
+                ->value('aggregate') ?? 0);
+            if ($systemicFailureCount >= 3) {
+                return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Exhausted);
+            }
+            if ($systemicFailureCount + $runningCount >= 3) {
+                return new DocumentProcessingUnitClaim(
+                    $unitId,
+                    DocumentProcessingUnitClaimStatus::Busy,
+                    busyUntil: $now->modify('+5 seconds'),
+                );
+            }
+
             $token = (string) Str::uuid();
             $unit->forceFill([
                 'status' => DocumentProcessingUnitStatus::Running,
@@ -279,6 +316,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 'metadata' => [
                     ...(array) $unit->metadata,
                     'failure_category' => $category->value,
+                    'actual_execution_count' => (int) $unit->attempt_count,
                     ...($resourceUsage === [] ? [] : ['resource_usage' => $resourceUsage]),
                 ],
             ];
@@ -303,8 +341,12 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                     ]);
             }
 
-            if ($updated && $circuitBreaking && $this->systemicFailureCount($claim, $fingerprint) >= 3) {
+            $attemptId = is_string(((array) $unit->metadata)['processing_attempt_id'] ?? null)
+                ? ((array) $unit->metadata)['processing_attempt_id']
+                : null;
+            if ($updated && $circuitBreaking && $this->systemicFailureCount($claim, $fingerprint, $attemptId) >= 3) {
                 $pendingIds = $this->scopedUnitQuery($claim)
+                    ->where($this->attemptLineagePredicate($attemptId))
                     ->where('status', DocumentProcessingUnitStatus::Pending->value)
                     ->lockForUpdate()
                     ->pluck('id');
@@ -371,7 +413,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
 
     private function terminalFailureMetadataExpression(): \Illuminate\Database\Query\Expression
     {
-        return $this->database->raw("COALESCE(metadata, '{}'::jsonb) || '{\"failure_category\":\"terminal\"}'::jsonb");
+        return $this->database->raw("COALESCE(metadata, '{}'::jsonb) || '{\"failure_category\":\"terminal\",\"actual_execution_count\":0}'::jsonb");
     }
 
     /** @return Builder<EstimateGenerationProcessingUnit> */
@@ -483,11 +525,25 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             ->where('source_version', $claim->sourceVersion);
     }
 
-    private function systemicFailureCount(DocumentProcessingUnitClaim $claim, string $fingerprint): int
+    private function systemicFailureCount(DocumentProcessingUnitClaim $claim, string $fingerprint, ?string $attemptId): int
     {
         return $this->scopedUnitQuery($claim)
+            ->where($this->attemptLineagePredicate($attemptId))
             ->where('status', DocumentProcessingUnitStatus::Failed->value)
             ->where('failure_fingerprint', $fingerprint)
             ->count();
+    }
+
+    private function attemptLineagePredicate(?string $attemptId): \Closure
+    {
+        return static function (Builder $query) use ($attemptId): void {
+            if ($attemptId === null) {
+                $query->whereRaw("metadata->>'processing_attempt_id' IS NULL");
+
+                return;
+            }
+
+            $query->whereRaw("metadata->>'processing_attempt_id' = ?", [$attemptId]);
+        };
     }
 }

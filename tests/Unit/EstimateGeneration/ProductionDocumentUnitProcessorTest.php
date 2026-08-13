@@ -52,6 +52,80 @@ use Tests\Support\DatabaseLessTestCase;
 final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
 {
     #[Test]
+    public function production_representative_pdf_renders_reach_deterministic_vision_boundary(): void
+    {
+        $renderDirectory = getenv('MOST_PRODUCTION_PDF_RENDER_DIR');
+        if (! is_string($renderDirectory) || ! is_dir($renderDirectory)) {
+            self::markTestSkipped('Requires explicit production-representative PDF render fixture directory.');
+        }
+        $paths = glob(rtrim($renderDirectory, '/\\').'/*.png') ?: [];
+        natsort($paths);
+        $paths = array_values($paths);
+        self::assertCount(22, $paths);
+        $sourceVersion = 'sha256:'.str_repeat('a', 64);
+        $objects = [];
+        foreach ($paths as $offset => $path) {
+            $body = (string) file_get_contents($path);
+            $objects['org-38/incident/page-'.($offset + 1).'.png'] = ['body' => $body, 'content_type' => 'image/png'];
+        }
+        $files = $this->createMock(FileService::class);
+        $files->method('describeCurrent')->willReturnCallback(static function (string $path) use (&$objects): array {
+            $object = $objects[$path];
+
+            return ['path' => $path, 'body' => $object['body'], 'content_type' => $object['content_type'],
+                'size' => strlen($object['body']), 'sha256' => hash('sha256', $object['body']), 'etag' => hash('md5', $object['body'])];
+        });
+        $files->method('putImmutable')->willReturnCallback(static function (string $path, string $body, string $contentType) use (&$objects): array {
+            $objects[$path] = ['body' => $body, 'content_type' => $contentType];
+
+            return ['path' => $path, 'body' => $body, 'content_type' => $contentType, 'size' => strlen($body),
+                'sha256' => hash('sha256', $body), 'etag' => hash('md5', $body), 'created' => true];
+        });
+        $vision = new class($this->sheetAnalysis('floor_plan')) implements VisionProvider
+        {
+            /** @var list<VisionDocumentInput> */
+            public array $inputs = [];
+
+            public function __construct(private VisionAnalysisData $analysis) {}
+
+            public function analyze(VisionDocumentInput $input): VisionAnalysisData
+            {
+                $this->inputs[] = $input;
+
+                return $this->analysis;
+            }
+        };
+        $reader = new BoundedVersionedS3ObjectReader($files);
+        $processor = new ProductionDocumentUnitProcessor(
+            new OcrDocumentUnitProcessor($this->createMock(DocumentUnitContentReader::class), $this->createMock(OcrClientInterface::class)),
+            $vision,
+            $this->createMock(CadGeometryProvider::class),
+            new RasterPreprocessor($files, $reader),
+            $reader,
+        );
+        foreach ($paths as $offset => $path) {
+            $index = $offset + 1;
+            $body = (string) file_get_contents($path);
+            $artifactVersion = 'sha256:'.hash('sha256', $body);
+            $processor->process(new DocumentUnitExecutionContext(
+                2000 + $index, 38, 52, 66, 168, DocumentUnitType::PdfPage, $index, $sourceVersion,
+                ['source_kind' => 'pdf', 'source_version' => $sourceVersion, 'coordinate_space' => 'pdf_page_pixels',
+                    'artifact_path' => 'org-38/incident/page-'.$index.'.png', 'artifact_source_version' => $artifactVersion,
+                    'artifact_bytes' => strlen($body), 'artifact_sha256' => $artifactVersion, 'content_type' => 'image/png'],
+                'org-38/incident/source.pdf', 'application/pdf', 'incident.pdf', 'claim-'.$index, 1, 1,
+                'processing_documents', 17, static fn (): bool => true,
+            ));
+        }
+
+        self::assertCount(22, $vision->inputs);
+        foreach ($vision->inputs as $input) {
+            self::assertSame('image/png', $input->contentType);
+            self::assertSame('high', $input->imageDetail);
+            self::assertSame([2382, 1684], array_slice(getimagesizefromstring($input->imageContent), 0, 2));
+        }
+    }
+
+    #[Test]
     public function png_runs_detector_representation_and_production_processor_as_one_path(): void
     {
         $source = $this->png(12, 8);

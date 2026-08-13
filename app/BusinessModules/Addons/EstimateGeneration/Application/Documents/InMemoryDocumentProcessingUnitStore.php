@@ -171,6 +171,7 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         $record->metadata = [
             ...$record->metadata,
             'failure_category' => $category->value,
+            'actual_execution_count' => $record->attemptCount,
             ...($resourceUsage === [] ? [] : ['resource_usage' => $resourceUsage]),
         ];
         $record->claimToken = null;
@@ -180,12 +181,14 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         }
 
         if ($circuitBreaking && $this->matchingTerminalFailures($record, $fingerprint) >= 3) {
+            $attemptId = $record->metadata['processing_attempt_id'] ?? null;
             foreach ($this->records as $candidate) {
                 if ($candidate->organizationId !== $record->organizationId
                     || $candidate->projectId !== $record->projectId
                     || $candidate->sessionId !== $record->sessionId
                     || $candidate->documentId !== $record->documentId
                     || $candidate->unit->sourceVersion !== $record->unit->sourceVersion
+                    || ($candidate->metadata['processing_attempt_id'] ?? null) !== $attemptId
                     || $candidate->status !== DocumentProcessingUnitStatus::Pending) {
                     continue;
                 }
@@ -195,6 +198,11 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
                 $candidate->failureCode = 'document_systemic_failure';
                 $candidate->failureFingerprint = $fingerprint;
                 $candidate->failureCategory = FailureCategory::Terminal;
+                $candidate->metadata = [
+                    ...$candidate->metadata,
+                    'failure_category' => FailureCategory::Terminal->value,
+                    'actual_execution_count' => 0,
+                ];
             }
         }
 
@@ -203,6 +211,8 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
 
     private function matchingTerminalFailures(DocumentProcessingUnitRecord $failed, string $fingerprint): int
     {
+        $attemptId = $failed->metadata['processing_attempt_id'] ?? null;
+
         return count(array_filter(
             $this->records,
             static fn (DocumentProcessingUnitRecord $candidate): bool => $candidate->organizationId === $failed->organizationId
@@ -210,6 +220,7 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
                 && $candidate->sessionId === $failed->sessionId
                 && $candidate->documentId === $failed->documentId
                 && $candidate->unit->sourceVersion === $failed->unit->sourceVersion
+                && ($candidate->metadata['processing_attempt_id'] ?? null) === $attemptId
                 && $candidate->status === DocumentProcessingUnitStatus::Failed
                 && $candidate->failureFingerprint === $fingerprint,
         ));

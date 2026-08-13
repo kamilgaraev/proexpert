@@ -91,7 +91,10 @@ final readonly class ProcessDocumentUnit
             }
         } catch (Throwable $error) {
             $failure = $this->failureRecorder->capture($error, $this->failureContext($context));
-            $fingerprint = $this->failureFingerprint($error, $failure->code);
+            $diagnosticFingerprint = $failure->safeContext['diagnostic_fingerprint'] ?? null;
+            $fingerprint = is_string($diagnosticFingerprint)
+                ? substr($diagnosticFingerprint, strlen('sha256:'))
+                : $this->failureFingerprint($error, $failure->code);
             $persisted = $this->store->fail(
                 $claim,
                 $failure->code,
@@ -100,6 +103,8 @@ final readonly class ProcessDocumentUnit
                 $failure->category,
                 $failure->category === FailureCategory::Terminal
                     && in_array($failure->code, [
+                        'document_unit_processing_failed',
+                        'unexpected_internal_failure',
                         'document_representation_contract_invalid',
                         'document_representation_source_mismatch',
                     ], true),

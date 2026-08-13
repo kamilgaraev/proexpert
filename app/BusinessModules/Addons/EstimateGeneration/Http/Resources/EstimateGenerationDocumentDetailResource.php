@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
-use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ManageEstimateGenerationDocumentPages;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -25,7 +25,8 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
             ? app(EstimateGenerationDocumentPreviewService::class)->forDocument($document, $user)
             : null;
 
-        $payload['pages'] = $this->whenLoaded('pages', function () use ($document): array {
+        $systemFailure = in_array($payload['processing_outcome']['type'] ?? null, ['system_failure', 'temporary_failure'], true);
+        $payload['pages'] = $this->whenLoaded('pages', function () use ($document, $systemFailure): array {
             return $document->pages->map(static fn ($page): array => [
                 'id' => $page->id,
                 'processing_unit_id' => $page->processing_unit_id,
@@ -46,7 +47,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'last_retry_requested_at' => $page->last_retry_requested_at?->toISOString(),
                 'page_role' => self::pageRole($page),
                 'role_for_estimation' => self::roleForEstimation($page),
-                'review' => self::reviewPayload($page),
+                'review' => $systemFailure ? ['required' => false, 'reasons' => []] : self::reviewPayload($page),
                 'geometry' => self::geometryPayload($page),
                 'visual_metrics' => self::visualMetrics($page),
                 'overlay' => self::overlayPayload($page),
@@ -61,6 +62,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'unit_index' => $unit->unit_index,
                 'status' => $unit->status->value,
                 'attempt_count' => $unit->attempt_count,
+                'actual_execution_count' => self::actualExecutionCount($unit),
                 'output_count' => $unit->output_count,
                 'failure_code' => $unit->failure_code,
             ])->all();
@@ -144,6 +146,16 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         return $page->output_version !== null || $page->text !== null
             ? ManageEstimateGenerationDocumentPages::STATUS_READY
             : ManageEstimateGenerationDocumentPages::STATUS_QUEUED;
+    }
+
+    private static function actualExecutionCount(mixed $unit): ?int
+    {
+        $metadata = is_array($unit->metadata) ? $unit->metadata : [];
+        if (is_int($metadata['actual_execution_count'] ?? null)) {
+            return max(0, $metadata['actual_execution_count']);
+        }
+
+        return $unit->status->value === 'failed' ? null : max(0, (int) $unit->attempt_count);
     }
 
     /**

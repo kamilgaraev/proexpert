@@ -14,7 +14,10 @@ use Throwable;
 
 final readonly class FailureNormalizer
 {
-    public function __construct(private SensitiveDiagnosticSanitizer $sanitizer = new SensitiveDiagnosticSanitizer) {}
+    public function __construct(
+        private SensitiveDiagnosticSanitizer $sanitizer = new SensitiveDiagnosticSanitizer,
+        private FailureDiagnosticIdentity $diagnostics = new FailureDiagnosticIdentity,
+    ) {}
 
     public function normalize(Throwable $error, FailureContext $context): FailureData
     {
@@ -37,6 +40,11 @@ final readonly class FailureNormalizer
             $error instanceof StaleEstimateGenerationState => [FailureCategory::Recoverable, 'stale_session_state', []],
             default => [FailureCategory::Terminal, 'unexpected_internal_failure', []],
         };
+
+        $diagnostics = [
+            ...$diagnostics,
+            ...$this->diagnostics->forThrowable($error, $this->executionBoundary($context)),
+        ];
 
         return new FailureData($context, $category, $code, $this->sanitizer->sanitize($diagnostics));
     }
@@ -79,5 +87,12 @@ final readonly class FailureNormalizer
     private function safeKnownCode(string $candidate, string $fallback): string
     {
         return preg_match('/\A[a-z][a-z0-9_]{0,79}\z/', $candidate) === 1 ? $candidate : $fallback;
+    }
+
+    private function executionBoundary(FailureContext $context): string
+    {
+        return $context->operation === 'process_unit'
+            ? 'document_unit_processor'
+            : $this->safeKnownCode($context->operation, 'application_operation');
     }
 }

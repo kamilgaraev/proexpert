@@ -51,7 +51,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
 
             $shouldRebuildBuildingModel = false;
             if ((string) $document->units_finalized_source_version !== $sourceVersion) {
-                $units = (clone $base)->get(['id', 'status', 'attempt_count', 'output_count', 'metadata']);
+                $units = (clone $base)->get(['id', 'status', 'attempt_count', 'output_count', 'failure_fingerprint', 'metadata']);
                 $currentUnitIds = $units->pluck('id');
                 $document->facts()->delete();
                 $document->drawingElements()->delete();
@@ -89,6 +89,24 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                         'metadata' => is_array($unit->metadata) ? $unit->metadata : [],
                     ])->all(),
                 );
+                $documentMeta = is_array($document->meta) ? $document->meta : [];
+                $explicitRetry = is_array($documentMeta['explicit_document_retry'] ?? null)
+                    ? $documentMeta['explicit_document_retry']
+                    : [];
+                if (($explicitRetry['status'] ?? null) === 'processing'
+                    && hash_equals((string) ($explicitRetry['source_version'] ?? ''), $sourceVersion)
+                    && hash_equals((string) ($explicitRetry['attempt_id'] ?? ''), (string) ($documentMeta['processing_attempt_id'] ?? ''))) {
+                    $explicitRetry = [
+                        ...$explicitRetry,
+                        'status' => in_array($outcome->type, ['system_failure', 'temporary_failure'], true) ? 'failed' : 'completed',
+                        'completed_at' => now()->toISOString(),
+                        'counts' => $outcome->counts,
+                        'actual_execution_count' => $units->sum(static fn ($unit): int => max(0, (int) ((is_array($unit->metadata) ? $unit->metadata : [])['actual_execution_count'] ?? 0))),
+                        'terminal_reason' => $outcome->type,
+                        'diagnostic_fingerprint' => $this->commonFailureFingerprint($units),
+                    ];
+                    $documentMeta['explicit_document_retry'] = $explicitRetry;
+                }
                 $document->forceFill([
                     'extracted_text' => $includedPages->pluck('text')->filter()->implode("\n\n"),
                     'structured_payload' => [
@@ -120,6 +138,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     'error_message_key' => $outcome->errorMessageKey,
                     'error_context' => $outcome->errorCode === null ? null : ['counts' => $outcome->counts],
                     'ocr_finished_at' => now(),
+                    'meta' => $documentMeta,
                 ]);
             } else {
                 $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
@@ -176,6 +195,23 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
 
             throw $error;
         }
+    }
+
+    private function commonFailureFingerprint(\Illuminate\Support\Collection $units): ?string
+    {
+        $fingerprints = $units
+            ->pluck('failure_fingerprint')
+            ->filter(static fn (mixed $value): bool => is_string($value) && preg_match('/\A(?:sha256:)?[0-9a-f]{64}\z/', $value) === 1)
+            ->unique()
+            ->values();
+
+        if ($fingerprints->count() !== 1) {
+            return null;
+        }
+
+        $fingerprint = (string) $fingerprints->first();
+
+        return str_starts_with($fingerprint, 'sha256:') ? $fingerprint : 'sha256:'.$fingerprint;
     }
 
     /**

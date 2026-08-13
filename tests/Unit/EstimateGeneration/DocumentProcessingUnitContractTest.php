@@ -37,6 +37,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureDiagnosticIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
@@ -349,7 +350,13 @@ final class DocumentProcessingUnitContractTest extends TestCase
             'limitations' => [],
         ], $store->find($unit->id)?->metadata['resource_usage']);
         self::assertSame(
-            hash('sha256', DocumentUnitProcessingException::class.'|'.InvalidArgumentException::class.'|document_representation_contract_invalid'),
+            substr((new FailureDiagnosticIdentity)->forThrowable(
+                new DocumentUnitProcessingException(
+                    'document_representation_contract_invalid',
+                    new InvalidArgumentException('private'),
+                ),
+                'document_unit_processor',
+            )['diagnostic_fingerprint'], strlen('sha256:')),
             $store->find($unit->id)?->failureFingerprint,
         );
     }
@@ -430,6 +437,40 @@ final class DocumentProcessingUnitContractTest extends TestCase
             self::assertSame(DocumentProcessingUnitStatus::Failed, $record?->status);
             self::assertSame(ProcessDocumentUnit::MAX_ATTEMPTS, $record?->attemptCount);
             self::assertSame('document_systemic_failure', $record?->failureCode);
+        }
+    }
+
+    #[Test]
+    public function third_identical_unexpected_terminal_failure_stops_remaining_document_units(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $units = [];
+        foreach (range(1, 6) as $index) {
+            $units[] = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, $index, 'source'));
+        }
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public int $calls = 0;
+
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                $this->calls++;
+
+                throw new RuntimeException('page-specific private database detail');
+            }
+        };
+        $usecase = $this->processUnit($store, $processor, new class implements DocumentUnitAggregateReconciler
+        {
+            public function reconcile(int $documentId, string $sourceVersion): void {}
+        });
+
+        foreach ($units as $unit) {
+            $usecase->handle($unit->id, 'source');
+        }
+
+        self::assertSame(3, $processor->calls);
+        foreach (array_slice($units, 3) as $unit) {
+            self::assertSame('document_systemic_failure', $store->find($unit->id)?->failureCode);
         }
     }
 
@@ -592,7 +633,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             new SpreadsheetDocumentAdapter($storage, $spreadsheet),
         );
 
-        $units = $detector->detect($document, 'sha256:source');
+        $units = $detector->detect($document, 'sha256:'.hash('sha256', 'source'));
 
         self::assertCount(200, $units);
         self::assertSame(1, $storage->reads);
@@ -675,7 +716,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         );
         $document = new EstimateGenerationDocument(['filename' => 'scan.pdf', 'mime_type' => 'application/pdf', 'page_count' => 30]);
 
-        $units = $detector->detect($document, 'sha256:scan');
+        $units = $detector->detect($document, 'sha256:'.hash('sha256', 'scan'));
 
         self::assertCount(1, $units);
         self::assertSame('image/png', $units[0]->locator['content_type']);
