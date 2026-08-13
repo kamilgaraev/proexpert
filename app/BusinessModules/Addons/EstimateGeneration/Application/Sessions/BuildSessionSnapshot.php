@@ -84,6 +84,7 @@ final class BuildSessionSnapshot
         $budgetScope = is_array($draft['budget_scope'] ?? null) ? $draft['budget_scope'] : [];
         $aiEstimateQuota = $session->getAttribute('ai_estimate_quota_snapshot');
         $nextAction = $this->recommendedNextAction($status, $actions);
+        $recommendedStep = $this->recommendedStep($session, $status, $documentsSummary);
 
         return new SessionSnapshotData(
             id: (int) $session->getKey(),
@@ -118,7 +119,8 @@ final class BuildSessionSnapshot
                     (string) $session->organization_id,
                     (string) $session->getKey(),
                 )->toArray(),
-            recommendedStep: $this->recommendedStep($session, $status),
+            recommendedStep: $recommendedStep,
+            workflowSteps: $this->workflowSteps($session, $status, $documentsSummary, $recommendedStep),
         );
     }
 
@@ -232,6 +234,7 @@ final class BuildSessionSnapshot
     private function recommendedStep(
         EstimateGenerationSession $session,
         EstimateGenerationStatus $status,
+        array $documentsSummary,
     ): ?string {
         if ($status === EstimateGenerationStatus::ProcessingDocuments) {
             return 'documents';
@@ -242,7 +245,71 @@ final class BuildSessionSnapshot
             return 'documents';
         }
 
+        if ($status === EstimateGenerationStatus::InputReviewRequired
+            && $this->usableDocumentResults($documentsSummary) > 0
+            && $this->hasGeometryEvidence($documentsSummary)
+            && $this->documentsTerminal($documentsSummary)) {
+            return 'geometry';
+        }
+
         return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $documentsSummary
+     * @return list<array{id: string, available: bool, recommended: bool}>
+     */
+    private function workflowSteps(
+        EstimateGenerationSession $session,
+        EstimateGenerationStatus $status,
+        array $documentsSummary,
+        ?string $recommendedStep,
+    ): array {
+        $usable = $this->usableDocumentResults($documentsSummary);
+        $total = max(0, (int) ($documentsSummary['total'] ?? $documentsSummary['total_count'] ?? 0));
+        $ignored = max(0, (int) ($documentsSummary['ignored'] ?? $documentsSummary['ignored_count'] ?? 0));
+        $requiresDocumentRecovery = $status === EstimateGenerationStatus::ProcessingDocuments
+            || ($status === EstimateGenerationStatus::Failed
+                && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments);
+        $complete = $total > 0 && $this->documentsTerminal($documentsSummary) && ($usable + $ignored) >= $total;
+
+        $available = [
+            'object' => true,
+            'documents' => true,
+            'geometry' => $usable > 0 && $this->hasGeometryEvidence($documentsSummary),
+            'building' => $complete && ! $requiresDocumentRecovery,
+            'draft' => $complete && ! $requiresDocumentRecovery,
+            'review' => $complete && ! $requiresDocumentRecovery,
+            'summary' => $complete && ! $requiresDocumentRecovery,
+        ];
+
+        return array_map(
+            static fn (string $id): array => [
+                'id' => $id,
+                'available' => $available[$id],
+                'recommended' => $id === $recommendedStep,
+            ],
+            array_keys($available),
+        );
+    }
+
+    /** @param array<string, mixed> $documentsSummary */
+    private function usableDocumentResults(array $documentsSummary): int
+    {
+        return max(0, (int) ($documentsSummary['ready'] ?? $documentsSummary['ready_count'] ?? 0));
+    }
+
+    /** @param array<string, mixed> $documentsSummary */
+    private function documentsTerminal(array $documentsSummary): bool
+    {
+        return (int) ($documentsSummary['pending'] ?? $documentsSummary['pending_count'] ?? 0) === 0
+            && (int) ($documentsSummary['action_required'] ?? $documentsSummary['action_required_count'] ?? 0) === 0;
+    }
+
+    /** @param array<string, mixed> $documentsSummary */
+    private function hasGeometryEvidence(array $documentsSummary): bool
+    {
+        return (int) ($documentsSummary['drawing_elements'] ?? 0) > 0;
     }
 
     /** @return list<array<string, mixed>> */

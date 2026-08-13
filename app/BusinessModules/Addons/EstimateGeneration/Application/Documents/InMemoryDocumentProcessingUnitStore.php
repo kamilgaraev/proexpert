@@ -82,7 +82,17 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
                     $now->modify(sprintf('+%d seconds', \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisLeasePolicy::UNIT_LEASE_SECONDS)),
                 );
             },
+            processingAttemptId: $this->processingAttemptId($record),
         );
+    }
+
+    private function processingAttemptId(DocumentProcessingUnitRecord $record): string
+    {
+        $attemptId = $record->metadata['processing_attempt_id'] ?? null;
+
+        return is_string($attemptId) && trim($attemptId) !== ''
+            ? trim($attemptId)
+            : 'legacy-unit-'.$record->id;
     }
 
     public function claim(int $unitId, string $sourceVersion, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt, int $maxAttempts): DocumentProcessingUnitClaim

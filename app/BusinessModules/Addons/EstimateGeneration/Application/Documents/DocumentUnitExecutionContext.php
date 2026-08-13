@@ -28,6 +28,7 @@ final readonly class DocumentUnitExecutionContext
         public string $sessionStatus,
         public ?int $pageId = null,
         public ?\Closure $renewLease = null,
+        public string $processingAttemptId = '',
     ) {}
 
     public function renewLeaseOrFail(): void

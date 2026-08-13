@@ -199,13 +199,118 @@ final class BuildSessionSnapshotTest extends TestCase
                 'pending' => 0,
                 'action_required' => 0,
                 'ignored' => 0,
+                'drawing_elements' => 0,
             ],
         );
 
         self::assertSame('documents', $snapshot->recommendedStep);
         self::assertSame('documents', $snapshot->toArray()['recommended_step']);
+        self::assertSame([
+            ['id' => 'object', 'available' => true, 'recommended' => false],
+            ['id' => 'documents', 'available' => true, 'recommended' => true],
+            ['id' => 'geometry', 'available' => false, 'recommended' => false],
+            ['id' => 'building', 'available' => false, 'recommended' => false],
+            ['id' => 'draft', 'available' => false, 'recommended' => false],
+            ['id' => 'review', 'available' => false, 'recommended' => false],
+            ['id' => 'summary', 'available' => false, 'recommended' => false],
+        ], $snapshot->workflowSteps);
         self::assertFalse($snapshot->canGenerate);
         self::assertFalse($snapshot->canApply);
+    }
+
+    #[Test]
+    public function partial_document_success_keeps_geometry_available_but_recommends_recovery(): void
+    {
+        $session = $this->makeSession(EstimateGenerationStatus::Failed);
+        $session->forceFill([
+            'resume_status' => EstimateGenerationStatus::ProcessingDocuments,
+            'failure_code' => 'document_processing_system_failed',
+        ]);
+
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session,
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+            documentsSummary: [
+                'total' => 22,
+                'ready' => 7,
+                'pending' => 0,
+                'action_required' => 0,
+                'ignored' => 0,
+                'drawing_elements' => 12,
+            ],
+        );
+
+        self::assertSame('documents', $snapshot->recommendedStep);
+        self::assertTrue($snapshot->workflowSteps[2]['available']);
+        self::assertFalse($snapshot->workflowSteps[3]['available']);
+        self::assertFalse($snapshot->workflowSteps[6]['available']);
+    }
+
+    #[Test]
+    public function successful_recovery_recommends_geometry_and_unlocks_downstream_steps(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
+            permissions: ['estimate_generation.review'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+            documentsSummary: [
+                'total' => 22,
+                'ready' => 22,
+                'pending' => 0,
+                'action_required' => 0,
+                'ignored' => 0,
+                'drawing_elements' => 24,
+            ],
+        );
+
+        self::assertSame('geometry', $snapshot->recommendedStep);
+        self::assertTrue($snapshot->workflowSteps[2]['recommended']);
+        self::assertTrue($snapshot->workflowSteps[6]['available']);
+    }
+
+    #[Test]
+    public function ignored_documents_count_as_terminal_without_hiding_usable_geometry(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
+            permissions: ['estimate_generation.review'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+            documentsSummary: [
+                'total' => 2,
+                'ready' => 1,
+                'pending' => 0,
+                'action_required' => 0,
+                'ignored' => 1,
+                'drawing_elements' => 4,
+            ],
+        );
+
+        self::assertSame('geometry', $snapshot->recommendedStep);
+        self::assertTrue($snapshot->workflowSteps[2]['available']);
+        self::assertTrue($snapshot->workflowSteps[6]['available']);
+    }
+
+    #[Test]
+    public function ready_documents_without_geometry_evidence_do_not_expose_geometry_review(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
+            permissions: ['estimate_generation.review'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+            documentsSummary: [
+                'total' => 2,
+                'ready' => 2,
+                'pending' => 0,
+                'action_required' => 0,
+                'ignored' => 0,
+                'drawing_elements' => 0,
+            ],
+        );
+
+        self::assertNull($snapshot->recommendedStep);
+        self::assertFalse($snapshot->workflowSteps[2]['available']);
+        self::assertTrue($snapshot->workflowSteps[3]['available']);
     }
 
     #[Test]
@@ -284,6 +389,7 @@ final class BuildSessionSnapshotTest extends TestCase
             'object_input',
             'available_actions', 'blocking_issues', 'warnings', 'next_action',
             'recommended_step',
+            'workflow_steps',
             'readiness_evaluated',
             'documents_summary', 'estimate_summary', 'review_summary',
             'scope_summary',

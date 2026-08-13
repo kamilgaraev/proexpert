@@ -70,6 +70,35 @@ final class EstimateGenerationMutationAtomicityTest extends TestCase
     }
 
     #[Test]
+    public function document_retry_lineage_is_propagated_before_units_are_dispatched(): void
+    {
+        $dispatcher = $this->source('Application/Sessions/LaravelEstimateGenerationRetryDispatcher.php');
+        $creator = $this->source('Application/Documents/CreateDocumentProcessingUnits.php');
+
+        self::assertStringContainsString("'processing_attempt_id' => \$attemptId", $dispatcher);
+        self::assertStringContainsString('$this->resetter->handle(', $dispatcher);
+        self::assertStringContainsString("'attempt_count' => 0", $this->source('Application/Documents/ResetDocumentProcessingUnitsForAttempt.php'));
+        self::assertStringContainsString("'processing_attempt_id' => \$processingAttemptId", $creator);
+        self::assertLessThan(
+            strpos($dispatcher, 'ProcessEstimateGenerationDocumentJob::dispatch('),
+            strpos($dispatcher, '$this->resetter->handle('),
+        );
+    }
+
+    #[Test]
+    public function ordinary_session_resource_uses_readiness_geometry_evidence_for_workflow_gating(): void
+    {
+        $resource = $this->source('Http/Resources/EstimateGenerationSessionResource.php');
+
+        self::assertStringContainsString("\$readiness->metrics['drawing_elements']", $resource);
+        self::assertStringContainsString("'drawing_elements' => \$drawingElements", $resource);
+        self::assertLessThan(
+            strpos($resource, 'documentsSummary('),
+            strpos($resource, '$readiness = app(EstimatorReadinessService::class)->evaluate($session)'),
+        );
+    }
+
+    #[Test]
     public function geometry_confirmation_starts_generation_through_the_quota_aware_workflow(): void
     {
         $source = $this->source('Application/Geometry/ConfirmBuildingGeometry.php');
