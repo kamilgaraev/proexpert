@@ -228,6 +228,124 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         self::assertSame($nextAttempt->attemptId, $document->meta['explicit_document_retry_history'][1]['new_attempt_id']);
         self::assertSame(0, EstimateGenerationProcessingUnit::query()->max('attempt_count'));
         self::assertSame(2, EstimateGenerationAuditEvent::query()->count());
+
+        $secondTerminalMeta = $document->meta;
+        $secondTerminalMeta['explicit_document_retry'] = [
+            ...$secondTerminalMeta['explicit_document_retry'],
+            'status' => 'failed',
+            'completed_at' => now()->toISOString(),
+            'terminal_reason' => 'system_failure',
+        ];
+        $document->forceFill(['status' => 'failed', 'meta' => $secondTerminalMeta])->save();
+        $historicalReplay = $service->handle($session, $document, $actor, 9, $sourceVersion, $key, null);
+
+        self::assertSame('replayed', $historicalReplay->disposition);
+        self::assertSame($accepted->attemptId, $historicalReplay->attemptId);
+        self::assertSame('estimate_generation.document_retry_result_replayed', $historicalReplay->messageKey);
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 2);
+        self::assertCount(2, $historicalReplay->document->meta['explicit_document_retry_history']);
+        self::assertSame(2, EstimateGenerationAuditEvent::query()->count());
+    }
+
+    public function test_accepted_retry_resumes_failed_document_session_with_real_workflow(): void
+    {
+        Queue::fake();
+        $checksum = hash('sha256', 'resumable-failed-document');
+        $sourceVersion = 'sha256:'.$checksum;
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => 38,
+            'project_id' => 52,
+            'user_id' => 7,
+            'status' => 'failed',
+            'processing_stage' => 'failed',
+            'processing_progress' => 100,
+            'state_version' => 4,
+            'resume_status' => 'processing_documents',
+            'failure_code' => 'document_processing_system_failed',
+            'input_payload' => [],
+            'problem_flags' => [],
+        ]);
+        $document = EstimateGenerationDocument::query()->create([
+            'session_id' => $session->id,
+            'organization_id' => 38,
+            'project_id' => 52,
+            'user_id' => 7,
+            'filename' => 'resumable.pdf',
+            'storage_path' => 'org-38/resumable.pdf',
+            'status' => 'failed',
+            'processing_stage' => 'completed',
+            'progress_percent' => 100,
+            'checksum_sha256' => $checksum,
+            'source_version' => $sourceVersion,
+            'page_count' => 1,
+            'processed_page_count' => 0,
+            'error_code' => 'document_processing_system_failed',
+            'facts_summary' => [],
+            'meta' => ['processing_attempt_id' => 'failed-lineage'],
+        ]);
+        $unit = EstimateGenerationProcessingUnit::query()->create([
+            'organization_id' => 38,
+            'project_id' => 52,
+            'session_id' => $session->id,
+            'document_id' => $document->id,
+            'unit_type' => 'pdf_page',
+            'unit_index' => 1,
+            'source_version' => $sourceVersion,
+            'status' => 'failed',
+            'attempt_count' => 3,
+            'output_count' => 0,
+            'failure_code' => 'document_geometry_processing_failed',
+            'failure_fingerprint' => hash('sha256', 'resumable-system-root'),
+            'locator' => ['page' => 1],
+            'metadata' => ['failure_category' => 'terminal'],
+            'failed_at' => now(),
+        ]);
+        EstimateGenerationDocumentPage::query()->create([
+            'document_id' => $document->id,
+            'processing_unit_id' => $unit->id,
+            'source_version' => $sourceVersion,
+            'organization_id' => 38,
+            'project_id' => 52,
+            'session_id' => $session->id,
+            'page_number' => 1,
+            'status' => 'failed',
+        ]);
+
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturnTrue();
+        $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
+        $readiness->allows('evaluate')->andReturn(['summary' => ['pending_count' => 1]]);
+        $service = new RetryEstimateGenerationDocument(
+            new EstimateGenerationMutationPolicy,
+            app(DocumentMutationSessionReconciler::class),
+            $readiness,
+            $authorization,
+            new ExplicitDocumentRetryEligibility,
+        );
+        $actor = new User;
+        $actor->forceFill(['id' => 7, 'current_organization_id' => 38]);
+
+        $result = $service->handle(
+            $session,
+            $document,
+            $actor,
+            4,
+            $sourceVersion,
+            (string) Str::uuid(),
+            null,
+        );
+
+        self::assertSame('accepted', $result->disposition);
+        $session->refresh();
+        $document->refresh();
+        self::assertSame('processing_documents', $session->status->value);
+        self::assertSame('processing_documents', $session->processing_stage);
+        self::assertSame(5, $session->state_version);
+        self::assertNull($session->resume_status);
+        self::assertNull($session->failure_code);
+        self::assertSame('queued', $document->status);
+        self::assertSame('stored', $document->processing_stage);
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 1);
     }
 
     public function test_concurrent_different_keys_have_exactly_one_winner_and_one_dispatch(): void
