@@ -55,6 +55,7 @@ final class BuildingModelAssembler
         $engineering = [];
         $roomKeys = [];
         $wallKeys = [];
+        $modelKeys = [];
         $clarifications = [];
         $floorEvidence = [];
         $modelElements = [];
@@ -67,6 +68,10 @@ final class BuildingModelAssembler
             }
             $modelElements[] = $element;
         }
+        $modelKeys = $this->buildingModelKeys(
+            array_map(static fn (FusedGeometryElementData $element): string => $element->key, $modelElements),
+            $input->floorKey,
+        );
         foreach ($modelElements as $element) {
             if ($element->type === 'room') {
                 $roomKeys[$element->key] = true;
@@ -84,10 +89,10 @@ final class BuildingModelAssembler
             }
             $floorEvidence = [...$floorEvidence, ...$evidenceIds];
             if ($element->type === 'room') {
-                $rooms[] = new RoomData($element->key, $element->label, $confirmed ? $this->metricPolygon($element, $input->scale->metersPerUnit) : null, $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown');
+                $rooms[] = new RoomData($modelKeys[$element->key], $element->label, $confirmed ? $this->metricPolygon($element, $input->scale->metersPerUnit) : null, $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown');
             } elseif ($element->type === 'wall') {
                 $walls[] = new WallData(
-                    $element->key,
+                    $modelKeys[$element->key],
                     $confirmed ? $this->metricPoint($element->geometry['start'], $input->scale->metersPerUnit) : null,
                     $confirmed ? $this->metricPoint($element->geometry['end'], $input->scale->metersPerUnit) : null,
                     $confirmed ? $this->metricValue($element->geometry['thickness'], $input->scale->metersPerUnit) : null,
@@ -101,7 +106,7 @@ final class BuildingModelAssembler
                     continue;
                 }
                 $openings[] = new OpeningData(
-                    $element->key, $element->geometry['wall_key'], $element->geometry['opening_type'],
+                    $modelKeys[$element->key], $modelKeys[$element->geometry['wall_key']], $element->geometry['opening_type'],
                     $confirmed ? $this->metricValue($element->geometry['offset'], $input->scale->metersPerUnit) : null,
                     $confirmed ? $this->metricValue($element->geometry['width'], $input->scale->metersPerUnit) : null,
                     $confirmed ? $this->metricValue($element->geometry['height'], $input->scale->metersPerUnit) : null,
@@ -114,9 +119,10 @@ final class BuildingModelAssembler
                     continue;
                 }
                 $engineering[] = new EngineeringElementData(
-                    $element->key, $element->geometry['engineering_type'],
+                    $modelKeys[$element->key], $element->geometry['engineering_type'],
                     $confirmed ? $this->metricPoint($element->geometry['location'], $input->scale->metersPerUnit) : null,
-                    $element->geometry['room_key'], $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown',
+                    $element->geometry['room_key'] === null ? null : $modelKeys[$element->geometry['room_key']],
+                    $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown',
                     $confirmed && is_array($element->geometry['path'] ?? null)
                         ? $this->metricValue(hypot(
                             (float) $element->geometry['path'][1][0] - (float) $element->geometry['path'][0][0],
@@ -360,6 +366,51 @@ final class BuildingModelAssembler
         }
 
         return min(array_map(static fn (FusedGeometryElementData $element): float => $element->confidence, $elements));
+    }
+
+    private function buildingModelKey(string $sourceKey): string
+    {
+        if (preg_match('/^[a-z][a-z0-9_-]{0,127}$/', $sourceKey) === 1) {
+            return $sourceKey;
+        }
+
+        $normalized = preg_replace('/[^a-z0-9_-]+/', '_', strtolower($sourceKey)) ?? '';
+        $normalized = trim($normalized, '_-');
+        $normalized = $normalized === '' ? 'element' : $normalized;
+
+        return 'vision_'.substr($normalized, 0, 100).'_'.substr(hash('sha256', $sourceKey), 0, 12);
+    }
+
+    /** @param list<string> $sourceKeys @return array<string, string> */
+    private function buildingModelKeys(array $sourceKeys, string $floorKey): array
+    {
+        sort($sourceKeys, SORT_STRING);
+        $sourceKeys = array_values(array_unique($sourceKeys));
+        $used = [$floorKey => true];
+        $mapping = [];
+
+        foreach ($sourceKeys as $sourceKey) {
+            if ($sourceKey !== $floorKey && preg_match('/^[a-z][a-z0-9_-]{0,127}$/', $sourceKey) === 1) {
+                $mapping[$sourceKey] = $sourceKey;
+                $used[$sourceKey] = true;
+            }
+        }
+
+        foreach ($sourceKeys as $sourceKey) {
+            if (isset($mapping[$sourceKey])) {
+                continue;
+            }
+            $targetKey = $this->buildingModelKey($sourceKey);
+            $attempt = 0;
+            while (isset($used[$targetKey])) {
+                $attempt++;
+                $targetKey = 'vision_element_'.substr(hash('sha256', $sourceKey."\0".$attempt), 0, 24);
+            }
+            $mapping[$sourceKey] = $targetKey;
+            $used[$targetKey] = true;
+        }
+
+        return $mapping;
     }
 
     private function matchesScaleContext(FusedGeometryElementData $element, ?ScaleContextData $context): bool
