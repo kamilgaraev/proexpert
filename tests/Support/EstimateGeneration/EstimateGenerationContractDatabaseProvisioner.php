@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '0b91edf054220f275588aed03de0b6a4e9a95165bd728da1de4a6679239d0474',
-        'training' => '47a496e258535b303396eb80088940334f02743e14630652e16f599e012729a7',
-        'pricing' => '47a496e258535b303396eb80088940334f02743e14630652e16f599e012729a7',
+        'geometry' => '15188f630c48197a18659725d9f8d493acf44147894659812a3e21065bfabf3e',
+        'training' => '4a167aa891c13d44b15e73e96deeb2b4b68cf6f773dab692870b6218fd419374',
+        'pricing' => '4a167aa891c13d44b15e73e96deeb2b4b68cf6f773dab692870b6218fd419374',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '6cdcf45b1e6bbf19c834fd9497499c877b666a28a7cea79ef2c0f816a2e7bd1f';
+    private const FRESH_INVENTORY_DIGEST = '28b1b798e18a64c87125bbb64fb910ec3ef975d5b7bd5aad2b10f931c0308fd3';
 
     private const SUBJECT = [
         'geometry' => [
@@ -171,6 +171,8 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000100_pin_effective_vision_model.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000200_expand_sheet_analysis_source_version.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_finalize_terminal_explicit_document_retries.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_allow_sheet_analysis_retry_lineages.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000220_expand_failure_diagnostics_contract.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_03_000100_backfill_document_unit_provenance.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_04_000100_fix_document_unit_provenance_regex_bound.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000100_add_request_context_to_estimate_generation_ai_usage.php',

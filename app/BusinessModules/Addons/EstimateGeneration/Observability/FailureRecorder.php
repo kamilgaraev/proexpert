@@ -25,9 +25,12 @@ final readonly class FailureRecorder
 
         try {
             $this->store->record($failure, now()->toDateTimeImmutable());
-        } catch (Throwable) {
+        } catch (Throwable $persistenceError) {
             try {
-                $this->observer->recordingFailed($failure);
+                $this->observer->recordingFailed(
+                    $failure,
+                    FailurePersistenceDiagnostic::fromThrowable($persistenceError),
+                );
             } catch (Throwable) {
             }
         }

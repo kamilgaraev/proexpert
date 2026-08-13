@@ -8,8 +8,10 @@ use Illuminate\Support\Facades\Log;
 
 final class SafeLogFailureRecorderObserver implements FailureRecorderObserver
 {
-    public function recordingFailed(FailureData $failure): void
-    {
+    public function recordingFailed(
+        FailureData $failure,
+        FailurePersistenceDiagnostic $persistenceFailure,
+    ): void {
         Log::error('[EstimateGeneration] failure observability persistence failed', [
             'failure_code' => $failure->code,
             'failure_category' => $failure->category->value,
@@ -25,6 +27,13 @@ final class SafeLogFailureRecorderObserver implements FailureRecorderObserver
             'provider' => $failure->context->provider,
             'model' => $failure->context->model,
             'safe_context' => $failure->safeContext,
+            'persistence_failure' => [
+                'code' => $persistenceFailure->code,
+                'exception_class' => $persistenceFailure->exceptionClass,
+                'root_exception_class' => $persistenceFailure->rootExceptionClass,
+                'exception_chain_fingerprint' => $persistenceFailure->chainFingerprint,
+                'diagnostic_fingerprint' => $persistenceFailure->fingerprint,
+            ],
         ]);
     }
 }
