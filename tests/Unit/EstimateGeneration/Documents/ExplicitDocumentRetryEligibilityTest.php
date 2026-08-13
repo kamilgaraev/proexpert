@@ -99,6 +99,17 @@ final class ExplicitDocumentRetryEligibilityTest extends TestCase
         self::assertTrue((new ExplicitDocumentRetryEligibility)->allowed($document));
     }
 
+    #[Test]
+    public function vision_request_rejection_with_breaker_stops_allows_one_explicit_document_retry(): void
+    {
+        $document = $this->document('failed', 'vision_provider_request_rejected');
+        foreach ($document->processingUnits->skip(2) as $unit) {
+            $unit->forceFill(['failure_code' => 'breaker_stopped']);
+        }
+
+        self::assertTrue((new ExplicitDocumentRetryEligibility)->allowed($document));
+    }
+
     /** @return iterable<string, array{string}> */
     public static function unsafeFailureCodes(): iterable
     {

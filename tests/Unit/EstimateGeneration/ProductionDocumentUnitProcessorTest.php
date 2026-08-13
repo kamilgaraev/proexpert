@@ -524,7 +524,13 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
     #[Test]
     public function retryable_vision_failure_preserves_recoverable_category(): void
     {
-        $original = new VisionProviderException('vision_provider_unavailable', 503, true);
+        $fingerprint = 'sha256:'.str_repeat('c', 64);
+        $original = new VisionProviderException(
+            'vision_provider_unavailable',
+            503,
+            true,
+            safeContext: ['diagnostic_fingerprint' => $fingerprint, 'provider_http_status' => 503],
+        );
 
         try {
             $this->visionFailureProcessor($original)->process($this->rasterContext());
@@ -532,6 +538,8 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         } catch (TypedFailureException $exception) {
             self::assertSame(FailureCategory::Recoverable, $exception->category);
             self::assertSame('vision_provider_unavailable', $exception->safeCode);
+            self::assertSame($fingerprint, $exception->safeContext['diagnostic_fingerprint']);
+            self::assertSame(503, $exception->safeContext['provider_http_status']);
             self::assertSame($original, $exception->getPrevious());
         }
     }

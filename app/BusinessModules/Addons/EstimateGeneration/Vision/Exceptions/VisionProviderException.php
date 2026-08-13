@@ -14,6 +14,8 @@ final class VisionProviderException extends RuntimeException
         public readonly ?int $httpCode = null,
         public readonly bool $retryable = false,
         ?Throwable $previous = null,
+        /** @var array<string, int|string> */
+        public readonly array $safeContext = [],
     ) {
         parent::__construct($reason, 0, $previous);
     }

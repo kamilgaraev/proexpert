@@ -42,8 +42,8 @@ final readonly class FailureNormalizer
         };
 
         $diagnostics = [
-            ...$diagnostics,
             ...$this->diagnostics->forThrowable($error, $this->executionBoundary($context)),
+            ...$diagnostics,
         ];
 
         return new FailureData($context, $category, $code, $this->sanitizer->sanitize($diagnostics));

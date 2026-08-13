@@ -107,6 +107,8 @@ final readonly class ProcessDocumentUnit
                         'unexpected_internal_failure',
                         'document_representation_contract_invalid',
                         'document_representation_source_mismatch',
+                        'vision_provider_request_rejected',
+                        'vision_http_failed',
                     ], true),
                 $this->resourceUsage($error),
             );

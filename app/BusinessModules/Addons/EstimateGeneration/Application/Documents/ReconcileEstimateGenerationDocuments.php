@@ -68,7 +68,10 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
     public function reconcile(EstimateGenerationSession $session): EstimateGenerationSession
     {
         $session = $session->fresh(['documents.processingUnits']) ?? $session;
-        if ($session->status !== EstimateGenerationStatus::ProcessingDocuments) {
+        if (! in_array($session->status, [
+            EstimateGenerationStatus::ProcessingDocuments,
+            EstimateGenerationStatus::InputReviewRequired,
+        ], true)) {
             return $session;
         }
 
@@ -86,7 +89,11 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
                     )
                         ? 'document_processing_system_failed'
                         : 'document_processing_temporarily_unavailable',
+                    EstimateGenerationStatus::ProcessingDocuments,
                 );
+            }
+            if ($session->status === EstimateGenerationStatus::InputReviewRequired) {
+                return $session;
             }
             if ((int) ($readiness['summary']['pending_count'] ?? 0) === 0
                 && (int) ($readiness['summary']['action_required_count'] ?? 0) > 0) {

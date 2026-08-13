@@ -16,6 +16,8 @@ use Illuminate\Support\Str;
 
 final readonly class EloquentDocumentProcessingUnitStore implements DocumentProcessingUnitStore
 {
+    private const SYSTEMIC_FAILURE_THRESHOLD = 2;
+
     public function __construct(private Connection $database) {}
 
     public function create(int $organizationId, int $projectId, int $sessionId, int $documentId, DocumentUnitData $unit): DocumentProcessingUnitRecord
@@ -141,7 +143,8 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 ->where('session_id', $unit->session_id)
                 ->where('document_id', $unit->document_id)
                 ->where('source_version', $unit->source_version)
-                ->where($this->attemptLineagePredicate($attemptId));
+                ->where($this->attemptLineagePredicate($attemptId))
+                ->where($this->processingRoutePredicate($unit));
             $runningCount = (clone $scopeQuery)
                 ->where('status', DocumentProcessingUnitStatus::Running->value)
                 ->where('lease_expires_at', '>', $now)
@@ -153,15 +156,17 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                     'unexpected_internal_failure',
                     'document_representation_contract_invalid',
                     'document_representation_source_mismatch',
+                    'vision_provider_request_rejected',
+                    'vision_http_failed',
                 ])
                 ->selectRaw('count(*) as aggregate')
                 ->groupBy('failure_fingerprint')
                 ->orderByDesc('aggregate')
                 ->value('aggregate') ?? 0);
-            if ($systemicFailureCount >= 3) {
+            if ($systemicFailureCount >= self::SYSTEMIC_FAILURE_THRESHOLD) {
                 return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Exhausted);
             }
-            if ($systemicFailureCount + $runningCount >= 3) {
+            if ($systemicFailureCount + $runningCount >= self::SYSTEMIC_FAILURE_THRESHOLD) {
                 return new DocumentProcessingUnitClaim(
                     $unitId,
                     DocumentProcessingUnitClaimStatus::Busy,
@@ -346,9 +351,11 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             $attemptId = is_string(((array) $unit->metadata)['processing_attempt_id'] ?? null)
                 ? ((array) $unit->metadata)['processing_attempt_id']
                 : null;
-            if ($updated && $circuitBreaking && $this->systemicFailureCount($claim, $fingerprint, $attemptId) >= 3) {
+            if ($updated && $circuitBreaking
+                && $this->systemicFailureCount($claim, $unit, $fingerprint, $attemptId) >= self::SYSTEMIC_FAILURE_THRESHOLD) {
                 $pendingIds = $this->scopedUnitQuery($claim)
                     ->where($this->attemptLineagePredicate($attemptId))
+                    ->where($this->processingRoutePredicate($unit))
                     ->where('status', DocumentProcessingUnitStatus::Pending->value)
                     ->lockForUpdate()
                     ->pluck('id');
@@ -362,7 +369,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                             'claim_token' => null,
                             'lease_expires_at' => null,
                             'next_dispatch_at' => null,
-                            'failure_code' => 'document_systemic_failure',
+                            'failure_code' => 'breaker_stopped',
                             'failure_fingerprint' => $fingerprint,
                             'metadata' => $this->terminalFailureMetadataExpression(),
                             'failed_at' => $now,
@@ -527,10 +534,15 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             ->where('source_version', $claim->sourceVersion);
     }
 
-    private function systemicFailureCount(DocumentProcessingUnitClaim $claim, string $fingerprint, ?string $attemptId): int
-    {
+    private function systemicFailureCount(
+        DocumentProcessingUnitClaim $claim,
+        EstimateGenerationProcessingUnit $unit,
+        string $fingerprint,
+        ?string $attemptId,
+    ): int {
         return $this->scopedUnitQuery($claim)
             ->where($this->attemptLineagePredicate($attemptId))
+            ->where($this->processingRoutePredicate($unit))
             ->where('status', DocumentProcessingUnitStatus::Failed->value)
             ->where('failure_fingerprint', $fingerprint)
             ->count();
@@ -546,6 +558,26 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             }
 
             $query->whereRaw("metadata->>'processing_attempt_id' = ?", [$attemptId]);
+        };
+    }
+
+    private function processingRoutePredicate(EstimateGenerationProcessingUnit $unit): \Closure
+    {
+        $unitType = $unit->unit_type->value;
+        $contentType = is_string(((array) $unit->locator)['content_type'] ?? null)
+            ? ((array) $unit->locator)['content_type']
+            : null;
+
+        return static function (Builder $query) use ($unitType, $contentType): void {
+            $query->where('unit_type', $unitType);
+            if ($unitType === DocumentUnitType::PdfPage->value) {
+                if ($contentType === null) {
+                    $query->whereRaw("locator->>'content_type' IS NULL");
+
+                    return;
+                }
+                $query->whereRaw("locator->>'content_type' = ?", [$contentType]);
+            }
         };
     }
 }

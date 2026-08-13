@@ -52,6 +52,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         private ?EffectiveSettingsResolver $settingsResolver = null,
         private ?AiPriceSnapshotResolver $priceResolver = null,
         private ?DocumentRuntimeLimits $documentLimits = null,
+        private TimewebProviderErrorInspector $errorInspector = new TimewebProviderErrorInspector,
     ) {}
 
     public function analyze(VisionDocumentInput $input): VisionAnalysisData
@@ -105,6 +106,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
             ]);
         }
         $payload = $this->requestPayload($input, $model, $maxElements, $maxFacts, $contractHash);
+        $endpointKind = 'chat_completions';
+        $payloadShapeFingerprint = $this->payloadShapeFingerprint($payload, $contractHash, $endpointKind);
         $attempts = $effective !== null
             ? max(1, $effective->retryAttempts('vision') + 1)
             : max(1, min(5, (int) config('estimate-generation.vision.retry_attempts', 3)));
@@ -199,17 +202,36 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         ->post($baseUri.'/chat/completions', $payload);
                     $httpCode = $response->status();
                     if (! $response->successful()) {
-                        $response->toPsrResponse()->getBody()->close();
+                        $diagnostics = $this->errorInspector->inspect(
+                            $response,
+                            $httpCode,
+                            $model,
+                            $endpointKind,
+                            $contractHash,
+                            $payloadShapeFingerprint,
+                            (int) config('estimate-generation.vision.max_error_response_bytes', 16_384),
+                        );
+                        $responsePayload = ['provider_error' => $diagnostics->payload];
                         $status = 'http_failed';
                         $this->physicalAttempts->storeResponse(
-                            $physicalContext->attemptId, $requestFingerprint, $ownerToken, [], $status, $httpCode,
+                            $physicalContext->attemptId, $requestFingerprint, $ownerToken, $responsePayload, $status, $httpCode,
                             (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), null, $priceSnapshot->toArray(),
                         );
                         $wireStarted = false;
                         $hasPersistedResponse = true;
-                        $lastException = new VisionProviderException(
-                            'vision_http_failed', $httpCode, $this->retryableStatus($httpCode),
-                        );
+                        Log::warning('[EstimateGeneration Vision] provider HTTP failure', [
+                            ...array_diff_key($diagnostics->payload, [
+                                'redacted_preview' => true,
+                            ]),
+                            'organization_id' => $input->organizationId,
+                            'project_id' => $input->projectId,
+                            'session_id' => $input->sessionId,
+                            'document_id' => $input->documentId,
+                            'page_id' => $input->pageId,
+                            'unit_id' => $input->processingUnitId,
+                            'attempt_id' => $physicalContext->attemptId,
+                        ]);
+                        $lastException = $this->httpFailureException($httpCode, $responsePayload);
                     } else {
                         $body = $this->bodyReader->read($response, max(1_024, (int) config('estimate-generation.vision.max_response_bytes', 1_000_000)));
                         $this->physicalAttempts->storeResponse(
@@ -222,9 +244,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     }
                 }
                 if (($replayed && $status === 'http_failed') || (! $replayed && $status === 'http_failed')) {
-                    $lastException = new VisionProviderException(
-                        'vision_http_failed', $httpCode, $httpCode !== null && $this->retryableStatus($httpCode),
-                    );
+                    $lastException = $this->httpFailureException($httpCode, $responsePayload);
                 } else {
                     if ($replayed) {
                         $encodedBody = $responsePayload['raw_body_base64'] ?? null;
@@ -375,7 +395,87 @@ final readonly class TimewebVisionProvider implements VisionProvider
 
     private function retryableStatus(int $status): bool
     {
-        return in_array($status, [408, 429], true) || $status >= 500;
+        return in_array($status, [408, 409, 429], true) || $status >= 500;
+    }
+
+    /** @param array<string, mixed> $responsePayload */
+    private function httpFailureException(?int $httpCode, array $responsePayload): VisionProviderException
+    {
+        $retryable = $httpCode !== null && $this->retryableStatus($httpCode);
+        $reason = match (true) {
+            $retryable => 'vision_provider_unavailable',
+            $httpCode !== null && $httpCode >= 400 && $httpCode < 500 => 'vision_provider_request_rejected',
+            default => 'vision_provider_http_failed',
+        };
+        $diagnostic = is_array($responsePayload['provider_error'] ?? null)
+            ? $responsePayload['provider_error']
+            : [];
+        $context = [];
+        foreach ([
+            'provider_http_status', 'provider_error_type', 'provider_error_code', 'provider_error_param',
+            'body_fingerprint', 'body_shape_fingerprint', 'endpoint_kind', 'prompt_contract_fingerprint',
+            'payload_shape_fingerprint', 'diagnostic_fingerprint',
+        ] as $key) {
+            $sourceKey = match ($key) {
+                'provider_error_type' => 'error_type',
+                'provider_error_code' => 'error_code',
+                'provider_error_param' => 'error_param',
+                default => $key,
+            };
+            $value = $diagnostic[$sourceKey] ?? null;
+            if (is_int($value) || is_string($value)) {
+                $context[$key] = $value;
+            }
+        }
+
+        return new VisionProviderException($reason, $httpCode, $retryable, safeContext: $context);
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function payloadShapeFingerprint(array $payload, string $contractHash, string $endpointKind): string
+    {
+        $topLevelKeys = array_keys($payload);
+        sort($topLevelKeys, SORT_STRING);
+        $messages = is_array($payload['messages'] ?? null) ? $payload['messages'] : [];
+        $messageShape = [];
+        foreach ($messages as $message) {
+            if (! is_array($message)) {
+                continue;
+            }
+            $content = $message['content'] ?? null;
+            $contentTypes = [];
+            if (is_array($content)) {
+                foreach ($content as $part) {
+                    if (is_array($part) && is_string($part['type'] ?? null)) {
+                        $contentTypes[] = $part['type'];
+                    }
+                }
+            } elseif (is_string($content)) {
+                $contentTypes[] = 'text';
+            }
+            $messageShape[] = [
+                'role' => is_string($message['role'] ?? null) ? $message['role'] : 'unknown',
+                'content_types' => $contentTypes,
+            ];
+        }
+        $schema = Arr::get($payload, 'response_format.json_schema.schema');
+
+        return 'sha256:'.hash('sha256', json_encode([
+            'endpoint_kind' => $endpointKind,
+            'model' => $payload['model'] ?? null,
+            'top_level_keys' => $topLevelKeys,
+            'messages' => $messageShape,
+            'token_budget_key' => array_key_exists('max_completion_tokens', $payload)
+                ? 'max_completion_tokens'
+                : (array_key_exists('max_tokens', $payload) ? 'max_tokens' : null),
+            'reasoning_effort' => array_key_exists('reasoning_effort', $payload),
+            'response_format' => Arr::get($payload, 'response_format.type'),
+            'strict_schema' => Arr::get($payload, 'response_format.json_schema.strict') === true,
+            'schema_fingerprint' => is_array($schema)
+                ? 'sha256:'.hash('sha256', json_encode($schema, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES))
+                : null,
+            'prompt_contract_fingerprint' => $contractHash,
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
     }
 
     private function boundedDocumentAttemptTimeout(VisionDocumentInput $input, int $attempts, int $configuredTimeout): int

@@ -53,7 +53,7 @@ final readonly class DocumentProcessingOutcomeResolver
                 $counts['ready']++;
             } else {
                 $counts['system_failed']++;
-                if (($unit['failure_code'] ?? null) === 'document_systemic_failure') {
+                if (in_array($unit['failure_code'] ?? null, ['breaker_stopped', 'document_systemic_failure'], true)) {
                     $counts['breaker_stopped']++;
                 } else {
                     $counts['terminal_system_failed']++;

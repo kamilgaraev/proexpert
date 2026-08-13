@@ -10,6 +10,17 @@ use Illuminate\Support\Str;
 
 final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUnitStore
 {
+    private const SYSTEMIC_FAILURE_THRESHOLD = 2;
+
+    private const SYSTEMIC_FAILURE_CODES = [
+        'document_unit_processing_failed',
+        'unexpected_internal_failure',
+        'document_representation_contract_invalid',
+        'document_representation_source_mismatch',
+        'vision_provider_request_rejected',
+        'vision_http_failed',
+    ];
+
     /** @var array<int, DocumentProcessingUnitRecord> */
     private array $records = [];
 
@@ -92,6 +103,18 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
 
         if ($record->attemptCount >= $maxAttempts || $leaseExpiresAt <= $now) {
             return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Exhausted);
+        }
+
+        $systemicFailureCount = $this->largestSystemicFailureGroup($record);
+        if ($systemicFailureCount >= self::SYSTEMIC_FAILURE_THRESHOLD) {
+            return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Exhausted);
+        }
+        if ($systemicFailureCount + $this->runningCount($record, $now) >= self::SYSTEMIC_FAILURE_THRESHOLD) {
+            return new DocumentProcessingUnitClaim(
+                $unitId,
+                DocumentProcessingUnitClaimStatus::Busy,
+                busyUntil: $now->modify('+5 seconds'),
+            );
         }
 
         $record->status = DocumentProcessingUnitStatus::Running;
@@ -180,14 +203,10 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
             $record->attemptCount = ProcessDocumentUnit::MAX_ATTEMPTS;
         }
 
-        if ($circuitBreaking && $this->matchingTerminalFailures($record, $fingerprint) >= 3) {
+        if ($circuitBreaking && $this->matchingTerminalFailures($record, $fingerprint) >= self::SYSTEMIC_FAILURE_THRESHOLD) {
             $attemptId = $record->metadata['processing_attempt_id'] ?? null;
             foreach ($this->records as $candidate) {
-                if ($candidate->organizationId !== $record->organizationId
-                    || $candidate->projectId !== $record->projectId
-                    || $candidate->sessionId !== $record->sessionId
-                    || $candidate->documentId !== $record->documentId
-                    || $candidate->unit->sourceVersion !== $record->unit->sourceVersion
+                if (! $this->sameScope($candidate, $record)
                     || ($candidate->metadata['processing_attempt_id'] ?? null) !== $attemptId
                     || $candidate->status !== DocumentProcessingUnitStatus::Pending) {
                     continue;
@@ -195,7 +214,7 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
 
                 $candidate->status = DocumentProcessingUnitStatus::Failed;
                 $candidate->attemptCount = ProcessDocumentUnit::MAX_ATTEMPTS;
-                $candidate->failureCode = 'document_systemic_failure';
+                $candidate->failureCode = 'breaker_stopped';
                 $candidate->failureFingerprint = $fingerprint;
                 $candidate->failureCategory = FailureCategory::Terminal;
                 $candidate->metadata = [
@@ -224,6 +243,46 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
                 && $candidate->status === DocumentProcessingUnitStatus::Failed
                 && $candidate->failureFingerprint === $fingerprint,
         ));
+    }
+
+    private function largestSystemicFailureGroup(DocumentProcessingUnitRecord $scope): int
+    {
+        $groups = [];
+        foreach ($this->records as $candidate) {
+            if (! $this->sameScope($candidate, $scope)
+                || $candidate->status !== DocumentProcessingUnitStatus::Failed
+                || ! in_array($candidate->failureCode, self::SYSTEMIC_FAILURE_CODES, true)
+                || $candidate->failureFingerprint === null) {
+                continue;
+            }
+
+            $groups[$candidate->failureFingerprint] = ($groups[$candidate->failureFingerprint] ?? 0) + 1;
+        }
+
+        return $groups === [] ? 0 : max($groups);
+    }
+
+    private function runningCount(DocumentProcessingUnitRecord $scope, DateTimeImmutable $now): int
+    {
+        return count(array_filter(
+            $this->records,
+            fn (DocumentProcessingUnitRecord $candidate): bool => $this->sameScope($candidate, $scope)
+                && $candidate->status === DocumentProcessingUnitStatus::Running
+                && $candidate->leaseExpiresAt !== null
+                && $candidate->leaseExpiresAt > $now,
+        ));
+    }
+
+    private function sameScope(DocumentProcessingUnitRecord $candidate, DocumentProcessingUnitRecord $scope): bool
+    {
+        return $candidate->organizationId === $scope->organizationId
+            && $candidate->projectId === $scope->projectId
+            && $candidate->sessionId === $scope->sessionId
+            && $candidate->documentId === $scope->documentId
+            && $candidate->unit->sourceVersion === $scope->unit->sourceVersion
+            && $candidate->unit->type === $scope->unit->type
+            && ($candidate->unit->locator['content_type'] ?? null) === ($scope->unit->locator['content_type'] ?? null)
+            && ($candidate->metadata['processing_attempt_id'] ?? null) === ($scope->metadata['processing_attempt_id'] ?? null);
     }
 
     public function supersedeDocumentSource(int $documentId, string $currentSourceVersion): void

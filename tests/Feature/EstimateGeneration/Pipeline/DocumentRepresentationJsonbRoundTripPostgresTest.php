@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Pipeline;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitAggregateReconciler;
@@ -22,6 +21,7 @@ use DateTimeImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use Symfony\Component\Process\Process;
@@ -227,14 +227,38 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             'locator' => $this->locator($organization->id, $sourceVersion, 99),
             'metadata' => (object) [],
         ]);
+        $differentLineage = EstimateGenerationProcessingUnit::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'session_id' => $session->id,
+            'document_id' => $document->id,
+            'unit_type' => 'pdf_page',
+            'unit_index' => 6,
+            'source_version' => $sourceVersion,
+            'status' => 'pending',
+            'locator' => $this->locator($organization->id, $sourceVersion, 100),
+            'metadata' => ['processing_attempt_id' => '51462476-b870-44eb-b31d-1b5d74d511e9'],
+        ]);
+        $differentContractLocator = $this->locator($organization->id, $sourceVersion, 101);
+        $differentContractLocator['content_type'] = 'application/pdf';
+        $differentContract = EstimateGenerationProcessingUnit::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'session_id' => $session->id,
+            'document_id' => $document->id,
+            'unit_type' => 'pdf_page',
+            'unit_index' => 7,
+            'source_version' => $sourceVersion,
+            'status' => 'pending',
+            'locator' => $differentContractLocator,
+            'metadata' => ['processing_attempt_id' => $attemptId],
+        ]);
         $store = new EloquentDocumentProcessingUnitStore(DB::connection());
         $now = new DateTimeImmutable('2026-08-13T00:00:00+00:00');
         $claims = [];
-        foreach (array_slice($units, 0, 3) as $unit) {
+        foreach (array_slice($units, 0, 2) as $unit) {
             $claims[] = $store->claim($unit->id, $sourceVersion, $now, $now->modify('+60 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
         }
-        $fourthClaim = $store->claim($units[3]->id, $sourceVersion, $now, $now->modify('+60 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
-        self::assertSame(DocumentProcessingUnitClaimStatus::Busy, $fourthClaim->status);
         $fingerprint = hash('sha256', 'shared-systemic-root');
 
         $processes = [];
@@ -265,15 +289,17 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
 
         $persisted = EstimateGenerationProcessingUnit::query()
             ->where('document_id', $document->id)
+            ->where('metadata->processing_attempt_id', $attemptId)
+            ->where('locator->content_type', 'image/png')
             ->orderBy('unit_index')
             ->get();
         self::assertSame([3, 3, 3, 3, 3], $persisted->pluck('attempt_count')->all());
         self::assertSame(
-            ['document_representation_contract_invalid', 'document_representation_contract_invalid', 'document_representation_contract_invalid', 'document_systemic_failure', 'document_systemic_failure'],
+            ['document_representation_contract_invalid', 'document_representation_contract_invalid', 'breaker_stopped', 'breaker_stopped', 'breaker_stopped'],
             $persisted->pluck('failure_code')->all(),
         );
         self::assertSame(['failed', 'failed', 'failed', 'failed', 'failed'], $persisted->pluck('status')->map->value->all());
-        self::assertSame([1, 1, 1, 0, 0], $persisted->map(
+        self::assertSame([1, 1, 0, 0, 0], $persisted->map(
             static fn ($unit): int => (int) ($unit->metadata['actual_execution_count'] ?? -1),
         )->all());
         self::assertSame(['failed', 'failed', 'failed', 'failed', 'failed'], EstimateGenerationDocumentPage::query()
@@ -282,6 +308,8 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             ->pluck('status')
             ->all());
         self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($unrelated->id)->status->value);
+        self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($differentLineage->id)->status->value);
+        self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($differentContract->id)->status->value);
     }
 
     #[Test]
@@ -465,7 +493,8 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
     }
 
     #[Test]
-    public function legacy_systemic_units_transition_processing_session_to_resumable_system_failure(): void
+    #[DataProvider('documentProcessingSessionStatuses')]
+    public function legacy_systemic_units_transition_session_to_resumable_system_failure(string $initialStatus): void
     {
         $this->requireEnvironment();
         DB::beginTransaction();
@@ -478,9 +507,9 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
                 'organization_id' => $organization->id,
                 'project_id' => $project->id,
                 'user_id' => $user->id,
-                'status' => 'processing_documents',
-                'processing_stage' => 'processing_documents',
-                'processing_progress' => 30,
+                'status' => $initialStatus,
+                'processing_stage' => $initialStatus === 'input_review_required' ? 'input_review_required' : 'processing_documents',
+                'processing_progress' => 100,
                 'input_payload' => [],
                 'state_version' => 0,
             ]);
@@ -527,6 +556,13 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
         } finally {
             DB::rollBack();
         }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function documentProcessingSessionStatuses(): iterable
+    {
+        yield 'processing documents' => ['processing_documents'];
+        yield 'premature input review' => ['input_review_required'];
     }
 
     private function requireEnvironment(): void

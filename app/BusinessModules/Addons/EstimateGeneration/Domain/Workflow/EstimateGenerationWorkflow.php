@@ -20,6 +20,7 @@ final class EstimateGenerationWorkflow
         EstimateGenerationSession $session,
         EstimateGenerationEvent $event,
         array $attributes = [],
+        ?EstimateGenerationStatus $failureResumeStatus = null,
     ): EstimateGenerationSession {
         $currentStatus = $session->status;
         $targetStatus = $this->transitionMap->resolve($currentStatus, $event, $session->resume_status);
@@ -28,7 +29,7 @@ final class EstimateGenerationWorkflow
         $attributes['resume_status'] = null;
 
         if ($event === EstimateGenerationEvent::Failed) {
-            $attributes['resume_status'] = $currentStatus->value;
+            $attributes['resume_status'] = ($failureResumeStatus ?? $currentStatus)->value;
         }
 
         $expectedVersion = $session->state_version;

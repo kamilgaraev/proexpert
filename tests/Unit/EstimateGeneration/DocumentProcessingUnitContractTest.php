@@ -400,7 +400,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
-    public function third_identical_systemic_terminal_failure_stops_remaining_document_units(): void
+    public function second_identical_systemic_terminal_failure_stops_remaining_document_units(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
         $units = [];
@@ -427,21 +427,21 @@ final class DocumentProcessingUnitContractTest extends TestCase
         };
         $usecase = $this->processUnit($store, $processor, $reconciler);
 
-        foreach (array_slice($units, 0, 3) as $unit) {
+        foreach (array_slice($units, 0, 2) as $unit) {
             self::assertSame(DocumentProcessingUnitClaimStatus::Terminal, $usecase->handle($unit->id, 'source')->status);
         }
 
-        self::assertSame(3, $processor->calls);
-        foreach (array_slice($units, 3) as $unit) {
+        self::assertSame(2, $processor->calls);
+        foreach (array_slice($units, 2) as $unit) {
             $record = $store->find($unit->id);
             self::assertSame(DocumentProcessingUnitStatus::Failed, $record?->status);
             self::assertSame(ProcessDocumentUnit::MAX_ATTEMPTS, $record?->attemptCount);
-            self::assertSame('document_systemic_failure', $record?->failureCode);
+            self::assertSame('breaker_stopped', $record?->failureCode);
         }
     }
 
     #[Test]
-    public function third_identical_unexpected_terminal_failure_stops_remaining_document_units(): void
+    public function second_identical_unexpected_terminal_failure_stops_remaining_document_units(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
         $units = [];
@@ -468,10 +468,73 @@ final class DocumentProcessingUnitContractTest extends TestCase
             $usecase->handle($unit->id, 'source');
         }
 
-        self::assertSame(3, $processor->calls);
-        foreach (array_slice($units, 3) as $unit) {
-            self::assertSame('document_systemic_failure', $store->find($unit->id)?->failureCode);
+        self::assertSame(2, $processor->calls);
+        foreach (array_slice($units, 2) as $unit) {
+            self::assertSame('breaker_stopped', $store->find($unit->id)?->failureCode);
         }
+    }
+
+    #[Test]
+    public function repeated_terminal_vision_rejection_never_executes_all_twenty_two_units(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $units = [];
+        foreach (range(1, 22) as $index) {
+            $units[] = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, $index, 'source'));
+        }
+        $differentContract = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::CadDrawing, 1, 'source'));
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public int $calls = 0;
+
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                $this->calls++;
+
+                throw new TypedFailureException(
+                    FailureCategory::Terminal,
+                    'vision_provider_request_rejected',
+                    ['diagnostic_fingerprint' => 'sha256:'.str_repeat('a', 64)],
+                );
+            }
+        };
+        $usecase = $this->processUnit($store, $processor, new class implements DocumentUnitAggregateReconciler
+        {
+            public function reconcile(int $documentId, string $sourceVersion): void {}
+        });
+
+        foreach ($units as $unit) {
+            $usecase->handle($unit->id, 'source');
+        }
+
+        self::assertSame(2, $processor->calls);
+        foreach (array_slice($units, 2) as $unit) {
+            self::assertSame('breaker_stopped', $store->find($unit->id)?->failureCode);
+            self::assertSame(0, $store->find($unit->id)?->metadata['actual_execution_count']);
+        }
+        self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($differentContract->id)?->status);
+        self::assertSame(0, $store->find($differentContract->id)?->attemptCount);
+    }
+
+    #[Test]
+    public function pre_wire_claim_guard_allows_only_two_concurrent_units_in_the_same_scope(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $units = [];
+        foreach (range(1, 4) as $index) {
+            $units[] = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, $index, 'source'));
+        }
+        $now = new DateTimeImmutable('2026-08-13T00:00:00+00:00');
+        $lease = $now->modify('+60 seconds');
+
+        self::assertTrue($store->claim($units[0]->id, 'source', $now, $lease, ProcessDocumentUnit::MAX_ATTEMPTS)->acquired());
+        self::assertTrue($store->claim($units[1]->id, 'source', $now, $lease, ProcessDocumentUnit::MAX_ATTEMPTS)->acquired());
+        self::assertSame(
+            DocumentProcessingUnitClaimStatus::Busy,
+            $store->claim($units[2]->id, 'source', $now, $lease, ProcessDocumentUnit::MAX_ATTEMPTS)->status,
+        );
+        self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($units[2]->id)?->status);
+        self::assertSame(0, $store->find($units[2]->id)?->attemptCount);
     }
 
     #[Test]

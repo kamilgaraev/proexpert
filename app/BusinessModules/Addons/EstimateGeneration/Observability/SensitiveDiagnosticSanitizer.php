@@ -11,6 +11,14 @@ final readonly class SensitiveDiagnosticSanitizer
     /** @var array<string, array{string, int}> */
     private const STRING_DOMAINS = [
         'provider_code' => ['/\A[a-z][a-z0-9._-]*\z/', 80],
+        'provider_error_type' => ['/\A[a-zA-Z][a-zA-Z0-9._-]*\z/', 80],
+        'provider_error_code' => ['/\A[a-zA-Z][a-zA-Z0-9._-]*\z/', 80],
+        'provider_error_param' => ['/\A[a-zA-Z][a-zA-Z0-9_.\[\]-]*\z/', 80],
+        'endpoint_kind' => ['/\A[a-z][a-z0-9_]*\z/', 40],
+        'body_fingerprint' => ['/\Asha256:[0-9a-f]{64}\z/', 71],
+        'body_shape_fingerprint' => ['/\Asha256:[0-9a-f]{64}\z/', 71],
+        'prompt_contract_fingerprint' => ['/\Asha256:[0-9a-f]{64}\z/', 71],
+        'payload_shape_fingerprint' => ['/\Asha256:[0-9a-f]{64}\z/', 71],
         'http_class' => ['/\A[1-5]xx\z/', 3],
         'status' => ['/\A[a-z][a-z0-9_]*\z/', 40],
         'safe_code' => ['/\A[a-z][a-z0-9_]*\z/', 80],
@@ -29,6 +37,7 @@ final readonly class SensitiveDiagnosticSanitizer
     /** @var array<string, array{int, int}> */
     private const INTEGER_DOMAINS = [
         'http_code' => [100, 599],
+        'provider_http_status' => [100, 599],
         'retry_after_seconds' => [0, 86400],
         'attempt' => [1, 1000],
     ];

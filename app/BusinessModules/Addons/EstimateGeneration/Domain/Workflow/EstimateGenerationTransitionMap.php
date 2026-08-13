@@ -22,6 +22,7 @@ final class EstimateGenerationTransitionMap
             'input_confirmed' => 'ready_to_generate',
             'retried' => 'processing_documents',
             'documents_changed' => 'processing_documents',
+            'failed' => 'failed',
             'cancelled' => 'cancelled',
         ],
         'ready_to_generate' => [
