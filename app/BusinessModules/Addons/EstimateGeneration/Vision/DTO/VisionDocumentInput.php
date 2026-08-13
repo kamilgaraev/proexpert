@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Vision\DTO;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
+use Closure;
 use InvalidArgumentException;
 use JsonException;
 
@@ -37,6 +38,7 @@ final readonly class VisionDocumentInput
         /** @var array<string, mixed> */
         public array $auxiliaryMetadata = [],
         public ?VisionAnalysisData $primaryAnalysis = null,
+        public ?Closure $onPhysicalAttemptReserved = null,
     ) {
         $dimensions = @getimagesizefromstring($imageContent);
         $detectedMime = is_array($dimensions) ? ($dimensions['mime'] ?? null) : null;

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\DocumentSheetOperationScope;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationJournal;
@@ -45,6 +47,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private ?TargetedSheetEvidenceResolver $targetedEvidenceResolver = null,
         private TargetedSheetRecheckPlanner $targetedRecheckPlanner = new TargetedSheetRecheckPlanner,
         private DocumentRepresentationResourceMeter $resourceMeter = new SystemDocumentRepresentationResourceMeter,
+        private ?RunIndependentObservers $independentObservers = null,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -349,6 +352,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             auxiliaryText: $auxiliaryText,
             auxiliaryMetadata: $auxiliaryMetadata,
         );
+        $observerResults = $this->independentObservers?->run($input) ?? [];
         $scope = new DocumentSheetOperationScope($context->organizationId, $context->projectId, $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $context->claimToken);
         $primaryRouting = ['role' => 'unknown', 'needs_review' => false, 'outcome' => 'not_applicable'];
         $primaryRun = $this->sheetAnalysisJournal?->run($correlationId, 'primary', $scope, $primaryRouting,
@@ -393,6 +397,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $targetedRouting,
                     $provenance,
                     $routing,
+                    $observerResults,
                 );
             }
             $targetedRouting['targeted_scope'] = $targetedPlan->scope->toSafeUsageContext();
@@ -481,6 +486,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $targetedRouting,
             $provenance,
             $routing,
+            $observerResults,
         );
     }
 
@@ -646,6 +652,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
      *     geometry_status: string
      * } $auxiliary
      * @param  array<string, mixed>|null  $targetedRouting
+     * @param  array<string, AiRoleRunResult>  $observerResults
      */
     private function rasterOutput(
         DocumentUnitExecutionContext $context,
@@ -656,6 +663,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         ?array $targetedRouting,
         DocumentUnitProvenance $provenance,
         ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRoutingResult $routing,
+        array $observerResults,
     ): DocumentUnitOutput {
         $payload = $analysis->toArray();
         $rasterRepresentation = null;
@@ -696,6 +704,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'pdf_native_text' => $nativePdfText,
                 'pdf_geometry' => $pdfGeometry,
                 'auxiliary_sources' => [$auxiliary['representation_status'], $auxiliary['geometry_status']],
+                'independent_observations' => array_map(
+                    static fn (AiRoleRunResult $result): array => $result->payload,
+                    $observerResults,
+                ),
             ], JSON_THROW_ON_ERROR)),
             text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
                 static fn (array $element): string => trim((string) ($element['label'] ?? '')),
@@ -715,6 +727,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     'document_representation' => ['status' => $auxiliary['representation_status']],
                     'pdf_geometry' => ['status' => $auxiliary['geometry_status']],
                 ],
+                'independent_observations' => array_map(
+                    static fn (AiRoleRunResult $result): array => $result->payload,
+                    $observerResults,
+                ),
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,
                     'derivative_hash' => $preprocessed->derivativeHash,

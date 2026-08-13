@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Providers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPhysicalAttemptIdentity;
@@ -62,12 +63,16 @@ final readonly class TimewebVisionProvider implements VisionProvider
         $baseUri = rtrim(trim((string) config('estimate-generation.vision.base_uri', '')), '/');
         $configuredModel = trim((string) config('estimate-generation.vision.model', ''));
         try {
+            $observerProfile = $this->observerProfile($input);
             $model = $this->settingsResolver?->visionModelForOperation(
                 $input->operationContext->correlationId,
                 $input->organizationId,
                 $input->sessionId,
                 $input->isTargetedSheetReanalysis() ? $input->primaryAnalysis?->requestedModel : null,
             ) ?? VisionModelPolicy::assertSupported($configuredModel);
+            if ($observerProfile !== null && $model !== VisionModelPolicy::assertSupported($configuredModel)) {
+                throw new VisionProviderException('vision_observer_model_mismatch');
+            }
             $effective = $this->settingsResolver?->forOperation(
                 $input->operationContext->correlationId,
                 $input->organizationId,
@@ -82,18 +87,30 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $modelVersion = VisionModelPolicy::isLuna($model)
                 ? trim((string) config('estimate-generation.vision.model_version', 'timeweb-gpt-5.6-luna-2026-08-13'))
                 : 'timeweb-legacy-vision-2026-07-14';
-            $maxElements = $input->isTargetedSheetReanalysis()
+            $maxElements = $observerProfile !== null
+                ? min(self::effectiveMaxElements(), 64)
+                : ($input->isTargetedSheetReanalysis()
                 ? min(self::effectiveMaxElements(), self::sheetRoutingLimit('max_elements', 96, 1, 500))
-                : self::effectiveMaxElements();
-            $maxFacts = $input->isTargetedSheetReanalysis()
+                : self::effectiveMaxElements());
+            $maxFacts = $observerProfile !== null
+                ? min($maxElements, 64)
+                : ($input->isTargetedSheetReanalysis()
                 ? min($maxElements, self::sheetRoutingLimit('max_facts', 64, 1, 500))
-                : $maxElements;
-            $contractHash = self::promptHash(
-                $maxElements,
-                $maxFacts,
-                $input->sheetRole,
-                $input->isTargetedSheetReanalysis() && $input->primaryAnalysis !== null,
-            );
+                : $maxElements);
+            $contractHash = $observerProfile === null
+                ? self::promptHash(
+                    $maxElements,
+                    $maxFacts,
+                    $input->sheetRole,
+                    $input->isTargetedSheetReanalysis() && $input->primaryAnalysis !== null,
+                )
+                : hash('sha256', implode('|', [
+                    self::PROMPT_VERSION,
+                    self::promptHash($maxElements, $maxFacts, 'unknown'),
+                    $observerProfile->promptContractVersion(),
+                    $observerProfile->promptHash(),
+                    $observerProfile->composition(),
+                ]));
             if ((string) config('estimate-generation.vision.provider', '') !== self::PROVIDER
                 || $apiKey === '' || $baseUri === '' || $model === '' || $modelVersion === ''
                 || preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $model) !== 1) {
@@ -180,6 +197,18 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     $model,
                     $exception,
                 );
+            }
+            if ($wireAttempt === 1 && $input->onPhysicalAttemptReserved !== null) {
+                try {
+                    ($input->onPhysicalAttemptReserved)($physicalContext->attemptId);
+                } catch (Throwable $exception) {
+                    throw new VisionProviderException(
+                        'vision_role_run_persistence_failed',
+                        retryable: false,
+                        previous: $exception,
+                        safeContext: $this->boundarySafeContext('vision_role_run_persistence', $model),
+                    );
+                }
             }
             if ($snapshot->state === 'ambiguous') {
                 if (! $snapshot->usageRecorded) {
@@ -392,6 +421,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                                 $analysis->visualAttributes,
                                 $analysis->projectSheetAnalysis,
                                 $analysis->quarantinedItems,
+                                $analysis->rawObserverFacts,
                             );
                         }
                     }
@@ -697,10 +727,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
     /** @return array<string, mixed> */
     private function requestPayload(VisionDocumentInput $input, string $model, int $maxElements, int $maxFacts, string $contractHash): array
     {
+        $observerProfile = $this->observerProfile($input);
         $content = [
             ['type' => 'text', 'text' => json_encode([
                 'instruction' => 'Analyze the construction drawing as visual evidence and return the exact JSON contract.',
-                'contract_version' => self::PROMPT_VERSION,
+                'contract_version' => $observerProfile?->promptContractVersion() ?? self::PROMPT_VERSION,
                 'contract_sha256' => $contractHash,
                 'evidence_locator' => [
                     'page_id' => $input->pageId,
@@ -726,6 +757,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         $input->primaryAnalysis->evidence,
                     ),
                 ],
+                ...($observerProfile === null ? [] : [
+                    'observer_profile' => $observerProfile->value,
+                    'observer_role' => $observerProfile->role()->value,
+                    'observer_composition' => $observerProfile->composition(),
+                ]),
             ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)],
             ['type' => 'image_url', 'image_url' => [
                 'url' => sprintf('data:%s;base64,%s', $input->contentType, base64_encode($input->imageContent)),
@@ -744,7 +780,9 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'messages' => [
                 ['role' => 'system', 'content' => $input->isTargetedSheetReanalysis() && $input->primaryAnalysis !== null
                     ? self::targetedSystemPrompt($maxFacts, $input->sheetRole)
-                    : self::systemPrompt($maxElements, $maxFacts, $input->sheetRole)],
+                    : ($observerProfile === null
+                        ? self::systemPrompt($maxElements, $maxFacts, $input->sheetRole)
+                        : self::observerSystemPrompt($observerProfile, $maxElements, $maxFacts))],
                 ['role' => 'user', 'content' => $content],
             ],
             'max_tokens' => $this->maxOutputTokens($input),
@@ -761,6 +799,41 @@ final readonly class TimewebVisionProvider implements VisionProvider
         }
 
         return $payload;
+    }
+
+    private static function observerSystemPrompt(ObserverProfile $profile, int $maxElements, int $maxFacts): string
+    {
+        return implode("\n", [
+            self::systemPrompt($maxElements, $maxFacts, 'unknown'),
+            'This is one isolated observer. You have no access to any other observer output.',
+            'Observer contract: '.$profile->promptContractVersion().'.',
+            'Deterministic page composition: '.$profile->composition().'.',
+            $profile->prompt(),
+        ]);
+    }
+
+    private function observerProfile(VisionDocumentInput $input): ?ObserverProfile
+    {
+        $metadata = $input->auxiliaryMetadata['observer'] ?? null;
+        if ($metadata === null) {
+            return null;
+        }
+        if (! is_array($metadata)) {
+            throw new VisionProviderException('vision_observer_contract_invalid');
+        }
+        $profileValue = $metadata['profile'] ?? null;
+        $profile = is_string($profileValue) ? ObserverProfile::tryFrom($profileValue) : null;
+        if ($profile === null
+            || ($metadata['role'] ?? null) !== $profile->role()->value
+            || ($metadata['prompt_contract'] ?? null) !== $profile->promptContractVersion()
+            || ($metadata['prompt_sha256'] ?? null) !== $profile->promptHash()
+            || ($metadata['composition'] ?? null) !== $profile->composition()
+            || ($metadata['max_claims'] ?? null) !== 64
+            || ($metadata['max_evidence'] ?? null) !== 128) {
+            throw new VisionProviderException('vision_observer_contract_invalid');
+        }
+
+        return $profile;
     }
 
     private static function systemPrompt(int $maxElements, ?int $maxFacts = null, string $sheetRole = 'unknown'): string

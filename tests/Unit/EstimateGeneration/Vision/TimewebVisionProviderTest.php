@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
@@ -121,7 +123,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     #[Test]
     public function it_returns_strict_typed_analysis_and_records_one_physical_attempt(): void
     {
-        Http::fake(['*' => Http::response($this->response())]);
+        Http::fake(fn () => Http::response($this->response()));
 
         $analysis = $this->provider()->analyze($this->input(nativeReferences: ['cad:object:2F']));
 
@@ -163,6 +165,96 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && ! array_key_exists('native_reference_registry_truncated', $user)
                 && $user['evidence_locator']['processing_unit_id'] === 19;
         });
+    }
+
+    #[Test]
+    public function independent_observers_use_distinct_prompts_contexts_and_physical_attempts_on_one_model(): void
+    {
+        Http::fake(fn () => Http::response($this->response()));
+        $builder = new ObserverInputBuilder;
+        $reserved = [];
+
+        foreach (ObserverProfile::cases() as $index => $profile) {
+            try {
+                $this->provider()->analyze($builder->build(
+                    $this->input(claim: $index + 20),
+                    $profile,
+                    static function (string $attemptId) use (&$reserved): void {
+                        $reserved[] = $attemptId;
+                    },
+                ));
+            } catch (VisionProviderException $exception) {
+                self::fail($profile->value.': '.$exception->reason);
+            }
+        }
+
+        $requests = Http::recorded()->all();
+        self::assertCount(3, $requests);
+        self::assertCount(3, array_unique($reserved));
+        self::assertSame(['openai/gpt-5.6-luna'], array_values(array_unique(array_map(
+            static fn (array $pair): string => (string) $pair[0]['model'],
+            $requests,
+        ))));
+        $systems = [];
+        $contracts = [];
+        foreach ($requests as [$request]) {
+            $systems[] = hash('sha256', (string) $request['messages'][0]['content']);
+            $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
+            $contracts[] = $user['contract_sha256'];
+            self::assertArrayHasKey('observer_profile', $user);
+            self::assertArrayNotHasKey('observer_outputs', $user);
+            self::assertArrayNotHasKey('peer_result', $user);
+        }
+        self::assertCount(3, array_unique($systems));
+        self::assertCount(3, array_unique($contracts));
+    }
+
+    #[Test]
+    public function independent_observer_rejects_an_effective_model_that_differs_from_authoritative_config(): void
+    {
+        config()->set('estimate-generation.vision.model', 'gemini/gemini-3.5-flash');
+        Http::fake();
+
+        try {
+            $this->provider()->analyze((new ObserverInputBuilder)->build(
+                $this->input(claim: 30),
+                ObserverProfile::Literal,
+                static function (): void {},
+            ));
+            self::fail('Observer must not use a model override or fallback.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_observer_model_mismatch', $exception->reason);
+        }
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function independent_observer_preserves_an_unknown_professional_fact_for_arbitration(): void
+    {
+        $response = $this->response([
+            'project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'unknown',
+                'facts' => [[
+                    ...$this->semanticFact(
+                        'junction-1',
+                        'unregistered_professional_type',
+                        ['type' => 'string', 'data' => 'Нестандартный узел примыкания'],
+                    ),
+                ]],
+            ],
+        ]);
+        Http::fake(fn () => Http::response($response));
+
+        $analysis = $this->provider()->analyze((new ObserverInputBuilder)->build(
+            $this->input(claim: 31),
+            ObserverProfile::Construction,
+            static function (): void {},
+        ));
+
+        self::assertSame([], $analysis->projectSheetAnalysis?->facts);
+        self::assertSame('unregistered_professional_type', $analysis->rawObserverFacts[0]['factType']);
+        self::assertSame('Нестандартный узел примыкания', $analysis->rawObserverFacts[0]['value']['data']);
     }
 
     #[Test]

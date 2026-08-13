@@ -6,6 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateNumberAllocator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateNumberAllocator;
@@ -632,6 +634,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(AiRoleRunRepository::class, static fn ($app): AiRoleRunRepository => new EloquentAiRoleRunRepository(
             $app->make('db')->connection(),
             (int) config('estimate-generation.generation.ai_role_run_lease_seconds', 180),
+        ));
+        $this->app->singleton(ObserverInputBuilder::class);
+        $this->app->singleton(RunIndependentObservers::class, static fn ($app): RunIndependentObservers => new RunIndependentObservers(
+            $app->make(AiRoleRunRepository::class),
+            $app->make(VisionProvider::class),
+            $app->make(ObserverInputBuilder::class),
+            (string) config('estimate-generation.vision.model'),
         ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
