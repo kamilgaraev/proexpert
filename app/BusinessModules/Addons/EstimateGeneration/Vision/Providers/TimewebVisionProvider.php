@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Providers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
@@ -64,14 +65,18 @@ final readonly class TimewebVisionProvider implements VisionProvider
         $configuredModel = trim((string) config('estimate-generation.vision.model', ''));
         try {
             $observerProfile = $this->observerProfile($input);
+            $arbitration = $this->isArbitrationInput($input);
             $model = $this->settingsResolver?->visionModelForOperation(
                 $input->operationContext->correlationId,
                 $input->organizationId,
                 $input->sessionId,
                 $input->isTargetedSheetReanalysis() ? $input->primaryAnalysis?->requestedModel : null,
             ) ?? VisionModelPolicy::assertSupported($configuredModel);
-            if ($observerProfile !== null && $model !== VisionModelPolicy::assertSupported($configuredModel)) {
+            if (($observerProfile !== null || $arbitration) && $model !== VisionModelPolicy::assertSupported($configuredModel)) {
                 throw new VisionProviderException('vision_observer_model_mismatch');
+            }
+            if ($arbitration && ! VisionModelPolicy::isLuna($model)) {
+                throw new VisionProviderException('vision_arbitration_model_unsupported');
             }
             $effective = $this->settingsResolver?->forOperation(
                 $input->operationContext->correlationId,
@@ -87,17 +92,19 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $modelVersion = VisionModelPolicy::isLuna($model)
                 ? trim((string) config('estimate-generation.vision.model_version', 'timeweb-gpt-5.6-luna-2026-08-13'))
                 : 'timeweb-legacy-vision-2026-07-14';
-            $maxElements = $observerProfile !== null
+            $maxElements = ($observerProfile !== null || $arbitration)
                 ? min(self::effectiveMaxElements(), 64)
                 : ($input->isTargetedSheetReanalysis()
                 ? min(self::effectiveMaxElements(), self::sheetRoutingLimit('max_elements', 96, 1, 500))
                 : self::effectiveMaxElements());
-            $maxFacts = $observerProfile !== null
+            $maxFacts = ($observerProfile !== null || $arbitration)
                 ? min($maxElements, 64)
                 : ($input->isTargetedSheetReanalysis()
                 ? min($maxElements, self::sheetRoutingLimit('max_facts', 64, 1, 500))
                 : $maxElements);
-            $contractHash = $observerProfile === null
+            $contractHash = $arbitration
+                ? 'sha256:'.hash('sha256', self::arbitrationSystemPrompt().'|'.ArbitrationInputBuilder::PROMPT_CONTRACT)
+                : ($observerProfile === null
                 ? self::promptHash(
                     $maxElements,
                     $maxFacts,
@@ -110,7 +117,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     $observerProfile->promptContractVersion(),
                     $observerProfile->promptHash(),
                     $observerProfile->composition(),
-                ]));
+                ])));
             if ((string) config('estimate-generation.vision.provider', '') !== self::PROVIDER
                 || $apiKey === '' || $baseUri === '' || $model === '' || $modelVersion === ''
                 || preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $model) !== 1) {
@@ -728,10 +735,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
     private function requestPayload(VisionDocumentInput $input, string $model, int $maxElements, int $maxFacts, string $contractHash): array
     {
         $observerProfile = $this->observerProfile($input);
+        $arbitration = $this->isArbitrationInput($input);
         $content = [
             ['type' => 'text', 'text' => json_encode([
                 'instruction' => 'Analyze the construction drawing as visual evidence and return the exact JSON contract.',
-                'contract_version' => $observerProfile?->promptContractVersion() ?? self::PROMPT_VERSION,
+                'contract_version' => $arbitration ? ArbitrationInputBuilder::PROMPT_CONTRACT : ($observerProfile?->promptContractVersion() ?? self::PROMPT_VERSION),
                 'contract_sha256' => $contractHash,
                 'evidence_locator' => [
                     'page_id' => $input->pageId,
@@ -778,11 +786,13 @@ final readonly class TimewebVisionProvider implements VisionProvider
         $payload = [
             'model' => $model,
             'messages' => [
-                ['role' => 'system', 'content' => $input->isTargetedSheetReanalysis() && $input->primaryAnalysis !== null
+                ['role' => 'system', 'content' => $arbitration
+                    ? self::arbitrationSystemPrompt()
+                    : ($input->isTargetedSheetReanalysis() && $input->primaryAnalysis !== null
                     ? self::targetedSystemPrompt($maxFacts, $input->sheetRole)
                     : ($observerProfile === null
                         ? self::systemPrompt($maxElements, $maxFacts, $input->sheetRole)
-                        : self::observerSystemPrompt($observerProfile, $maxElements, $maxFacts))],
+                        : self::observerSystemPrompt($observerProfile, $maxElements, $maxFacts)))],
                 ['role' => 'user', 'content' => $content],
             ],
             'max_tokens' => $this->maxOutputTokens($input),
@@ -810,6 +820,41 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'Deterministic page composition: '.$profile->composition().'.',
             $profile->prompt(),
         ]);
+    }
+
+    private static function arbitrationSystemPrompt(): string
+    {
+        return implode("\n", [
+            'You are the independent evidence arbiter for a construction estimate.',
+            'Inspect the original image yourself and compare all three observer claims supplied in auxiliary_metadata.arbitration.claims.',
+            'Agreement is only a signal. Check minority evidence and prefer an explicit dimension, table cell or native note over unsupported visual similarity.',
+            'Never accept a claim without an allowlisted evidence_ref. Preserve a unique professional observation as candidate when it is plausible but not conclusive.',
+            'Return the normal vision schema_version 3 envelope with at least one exact page evidence locator and no elements or scale candidates.',
+            'Put decision intents only in project_sheet_analysis.facts. Each intent has exactly claim_id, status, supporting_claim_ids, evidence_refs, reason_code and optional question.',
+            'status is accepted, candidate or unresolved. Use only claim and evidence identifiers from the supplied allowlist.',
+            'For unresolved, question has exactly code, reason, impact, recommendation, choices and source_locator. Questions must be concrete Russian business text, never generic clarification wording.',
+            'project_sheet_analysis contractVersion is sheet-analysis:v2 and role is unknown. Do not return prices, quantities without evidence, confidence percentages or provider terminology.',
+        ]);
+    }
+
+    private function isArbitrationInput(VisionDocumentInput $input): bool
+    {
+        $metadata = $input->auxiliaryMetadata['arbitration'] ?? null;
+        if ($metadata === null) {
+            return false;
+        }
+        if (! is_array($metadata)
+            || ($metadata['contract'] ?? null) !== ArbitrationInputBuilder::PROMPT_CONTRACT
+            || ($metadata['source_version'] ?? null) !== $input->sourceVersion
+            || ($metadata['minority_evidence_required'] ?? null) !== true
+            || ! is_array($metadata['claims'] ?? null)
+            || ! array_is_list($metadata['claims'])
+            || $metadata['claims'] === []
+            || count($metadata['claims']) > 192) {
+            throw new VisionProviderException('vision_arbitration_contract_invalid');
+        }
+
+        return true;
     }
 
     private function observerProfile(VisionDocumentInput $input): ?ObserverProfile

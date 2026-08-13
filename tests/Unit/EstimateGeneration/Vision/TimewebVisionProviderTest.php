@@ -258,6 +258,50 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function arbitration_call_uses_original_image_and_returns_allowlisted_decision_intent(): void
+    {
+        $intent = [
+            'claim_id' => 'risk:1',
+            'status' => 'accepted',
+            'supporting_claim_ids' => ['risk:1'],
+            'evidence_refs' => ['risk:note-1'],
+            'reason_code' => 'explicit_note_over_visual_similarity',
+        ];
+        Http::fake(['*' => Http::response($this->response([
+            'project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'unknown',
+                'facts' => [$intent],
+            ],
+        ]))]);
+
+        $analysis = $this->provider()->analyze($this->input(auxiliaryMetadata: [
+            'arbitration' => [
+                'contract' => \App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder::PROMPT_CONTRACT,
+                'source_version' => 'sha256:'.str_repeat('a', 64),
+                'minority_evidence_required' => true,
+                'claims' => [[
+                    'id' => 'risk:1', 'role' => 'observer_risk', 'entity_key' => 'foundation-1',
+                    'fact_type' => 'foundation_type', 'value' => ['type' => 'string', 'data' => 'условный'],
+                    'unit' => null, 'evidence_ref' => 'risk:note-1', 'explicit_evidence' => true,
+                    'locator' => ['page_number' => 2, 'source_version' => 'sha256:'.str_repeat('a', 64)],
+                ]],
+            ],
+        ]));
+
+        self::assertSame([$intent], $analysis->rawObserverFacts);
+        Http::assertSent(static function ($request): bool {
+            $system = (string) $request['messages'][0]['content'];
+            $user = (string) $request['messages'][1]['content'][0]['text'];
+
+            return str_contains($system, 'Check minority evidence')
+                && str_contains($system, 'Agreement is only a signal')
+                && str_contains($user, 'risk:note-1')
+                && $request['response_format'] === ['type' => 'json_object'];
+        });
+    }
+
+    #[Test]
     public function luna_uses_json_object_mode_and_keeps_local_strict_validation(): void
     {
         $invalid = $this->response();

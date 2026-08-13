@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\DocumentSheetOperationScope;
@@ -48,6 +49,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private TargetedSheetRecheckPlanner $targetedRecheckPlanner = new TargetedSheetRecheckPlanner,
         private DocumentRepresentationResourceMeter $resourceMeter = new SystemDocumentRepresentationResourceMeter,
         private ?RunIndependentObservers $independentObservers = null,
+        private ?RunDocumentArbitration $documentArbitration = null,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -353,6 +355,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             auxiliaryMetadata: $auxiliaryMetadata,
         );
         $observerResults = $this->independentObservers?->run($input) ?? [];
+        $arbitrationResult = $observerResults === [] ? null : $this->documentArbitration?->run($input, $observerResults);
         $scope = new DocumentSheetOperationScope($context->organizationId, $context->projectId, $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $context->claimToken);
         $primaryRouting = ['role' => 'unknown', 'needs_review' => false, 'outcome' => 'not_applicable'];
         $primaryRun = $this->sheetAnalysisJournal?->run($correlationId, 'primary', $scope, $primaryRouting,
@@ -398,6 +401,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $provenance,
                     $routing,
                     $observerResults,
+                    $arbitrationResult,
                 );
             }
             $targetedRouting['targeted_scope'] = $targetedPlan->scope->toSafeUsageContext();
@@ -487,6 +491,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $provenance,
             $routing,
             $observerResults,
+            $arbitrationResult,
         );
     }
 
@@ -664,6 +669,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         DocumentUnitProvenance $provenance,
         ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRoutingResult $routing,
         array $observerResults,
+        ?AiRoleRunResult $arbitrationResult,
     ): DocumentUnitOutput {
         $payload = $analysis->toArray();
         $rasterRepresentation = null;
@@ -708,6 +714,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     static fn (AiRoleRunResult $result): array => $result->payload,
                     $observerResults,
                 ),
+                'document_arbitration' => $arbitrationResult?->payload,
             ], JSON_THROW_ON_ERROR)),
             text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
                 static fn (array $element): string => trim((string) ($element['label'] ?? '')),
@@ -731,6 +738,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     static fn (AiRoleRunResult $result): array => $result->payload,
                     $observerResults,
                 ),
+                'document_arbitration' => $arbitrationResult?->payload,
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,
                     'derivative_hash' => $preprocessed->derivativeHash,

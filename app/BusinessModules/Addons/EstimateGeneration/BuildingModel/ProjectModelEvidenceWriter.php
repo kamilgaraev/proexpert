@@ -4,14 +4,20 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DecimalValue;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceNode;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceProducer;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use InvalidArgumentException;
 
 final readonly class ProjectModelEvidenceWriter
@@ -20,6 +26,108 @@ final readonly class ProjectModelEvidenceWriter
         private ProjectModelRepository $models,
         private EvidenceRepository $evidence,
     ) {}
+
+    /** @param list<ObservationClaim> $claims @param list<ArbitrationDecision> $decisions */
+    public function writeArbitration(array $claims, array $decisions, int $documentId, int $pageNumber): void
+    {
+        if ($claims === [] || $decisions === []) {
+            throw new InvalidArgumentException('Arbitration projection cannot be empty.');
+        }
+        $byId = [];
+        foreach ($claims as $claim) {
+            $byId[$claim->id] = $claim;
+        }
+        $scope = $claims[0];
+        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope): void {
+            $entities = [];
+            $facts = [];
+            $domainEvidence = [];
+            foreach ($decisions as $decision) {
+                $claim = $byId[$decision->claimId] ?? throw new InvalidArgumentException('Arbitration claim is absent.');
+                if ($claim->organizationId !== $scope->organizationId || $claim->projectId !== $scope->projectId
+                    || $claim->sessionId !== $scope->sessionId || $claim->sourceVersion !== $scope->sourceVersion) {
+                    throw new InvalidArgumentException('Arbitration claims do not share an exact scope.');
+                }
+                $hash = hash('sha256', $claim->id.'|'.$claim->sourceVersion.'|'.$claim->evidenceRef);
+                $node = $this->evidence->insertOrGet(new EvidenceData(
+                    $scope->organizationId,
+                    $scope->projectId,
+                    $scope->sessionId,
+                    EvidenceType::SourceFact,
+                    EvidenceSourceType::Document,
+                    'document:'.$documentId,
+                    $scope->sourceVersion,
+                    ['document_id' => $documentId, 'page' => $pageNumber, 'element_key' => 'element:'.$hash],
+                    [
+                        'fact_key' => 'material_code',
+                        'fact_value' => $this->evidenceScalar($claim),
+                    ],
+                    $decision->status === 'accepted' ? 1.0 : 0.0,
+                    EvidenceProducer::DrawingAnalyzer->value,
+                    'sha256:'.hash('sha256', 'document-arbitration:v1'),
+                ));
+                $evidenceId = 'evidence:'.$node->id;
+                $domainEvidence[$evidenceId] = $this->domainEvidence($node);
+                $entityId = 'entity:'.hash('sha256', $claim->entityKey);
+                $entities[$entityId] = new Entity(
+                    $entityId,
+                    $scope->organizationId,
+                    $scope->projectId,
+                    $scope->sessionId,
+                    $scope->sourceVersion,
+                    $this->entityType($claim),
+                    $entityId,
+                    ['source_key' => $claim->entityKey],
+                );
+                $factId = 'fact:'.hash('sha256', $claim->id.'|'.$decision->status.'|'.$scope->sourceVersion);
+                $facts[$factId] = new Fact(
+                    $factId,
+                    $scope->organizationId,
+                    $scope->projectId,
+                    $scope->sessionId,
+                    $scope->sourceVersion,
+                    $entityId,
+                    mb_substr($claim->factType, 0, 120),
+                    $claim->value['data'],
+                    $claim->unit,
+                    $decision->status === 'accepted' ? 1.0 : 0.0,
+                    $decision->status === 'unresolved' ? 'unresolved' : 'document',
+                    match ($decision->status) {
+                        'accepted' => 'confirmed',
+                        'candidate' => 'candidate',
+                        'unresolved' => 'unresolved',
+                    },
+                    [$evidenceId],
+                );
+            }
+            $this->models->saveSourceModel(array_values($entities), array_values($facts), array_values($domainEvidence));
+        });
+    }
+
+    private function evidenceScalar(ObservationClaim $claim): string|int|float|bool
+    {
+        $value = $claim->value['data'];
+        if (is_int($value) || is_float($value) || is_bool($value)) {
+            return $value;
+        }
+
+        return 'material:'.hash('sha256', json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+    }
+
+    private function entityType(ObservationClaim $claim): string
+    {
+        $haystack = mb_strtolower($claim->entityKey.' '.$claim->factType);
+
+        return match (true) {
+            str_contains($haystack, 'room') || str_contains($haystack, 'помещ') => 'room',
+            str_contains($haystack, 'wall') || str_contains($haystack, 'стен') => 'wall',
+            str_contains($haystack, 'opening') || str_contains($haystack, 'проем') || str_contains($haystack, 'проём') => 'opening',
+            str_contains($haystack, 'equipment') || str_contains($haystack, 'оборуд') => 'equipment',
+            str_contains($haystack, 'dimension') || str_contains($haystack, 'размер') => 'dimension',
+            str_contains($haystack, 'quantity') || str_contains($haystack, 'колич') => 'quantity',
+            default => 'material',
+        };
+    }
 
     public function write(StoredBuildingModel $stored, array $units, array $evidenceIds): void
     {

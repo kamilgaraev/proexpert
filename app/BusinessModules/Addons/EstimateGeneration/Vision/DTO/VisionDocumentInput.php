@@ -65,7 +65,7 @@ final readonly class VisionDocumentInput
             || ($recheckScope?->entityKey !== null && $supplementalEvidence !== [])
             || ($recheckScope !== null && $recheckScope->entityKey === null && count($supplementalEvidence) !== 1)
             || ($auxiliaryText !== null && (mb_strlen($auxiliaryText) > 12_000 || str_contains($auxiliaryText, "\0")))
-            || $auxiliaryMetadataBytes > 20_000
+            || $auxiliaryMetadataBytes > (array_key_exists('arbitration', $auxiliaryMetadata) ? 196_608 : 20_000)
             || $operationContext->organizationId !== $organizationId
             || $operationContext->projectId !== $projectId
             || $operationContext->sessionId !== $sessionId

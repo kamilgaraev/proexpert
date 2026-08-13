@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
@@ -636,11 +638,19 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (int) config('estimate-generation.generation.ai_role_run_lease_seconds', 180),
         ));
         $this->app->singleton(ObserverInputBuilder::class);
+        $this->app->singleton(ArbitrationInputBuilder::class);
         $this->app->singleton(RunIndependentObservers::class, static fn ($app): RunIndependentObservers => new RunIndependentObservers(
             $app->make(AiRoleRunRepository::class),
             $app->make(VisionProvider::class),
             $app->make(ObserverInputBuilder::class),
             (string) config('estimate-generation.vision.model'),
+        ));
+        $this->app->singleton(RunDocumentArbitration::class, static fn ($app): RunDocumentArbitration => new RunDocumentArbitration(
+            $app->make(AiRoleRunRepository::class),
+            $app->make(VisionProvider::class),
+            $app->make(ArbitrationInputBuilder::class),
+            (string) config('estimate-generation.vision.model'),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class),
         ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
