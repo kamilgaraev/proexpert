@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentPageActionResult;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ExplicitDocumentRetryConflict;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\IgnoreEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ManageEstimateGenerationDocumentPages;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
@@ -87,7 +88,7 @@ class EstimateGenerationDocumentController extends Controller
             $documents = $session->documents()
                 ->with([
                     'session',
-                    'processingUnits:id,organization_id,project_id,session_id,document_id,source_version,status,output_count,failure_fingerprint',
+                    'processingUnits:id,organization_id,project_id,session_id,document_id,source_version,status,output_count,failure_code,failure_fingerprint,metadata',
                 ])
                 ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
                 ->orderBy('id')
@@ -172,14 +173,28 @@ class EstimateGenerationDocumentController extends Controller
             $result = $this->retryDocument->handle(
                 $session,
                 $document,
+                $request->userOrFail(),
                 (int) $request->validated('state_version'),
+                (string) $request->validated('source_version'),
+                (string) $request->validated('idempotency_key'),
                 $request->validated('reason'),
             );
 
             return AdminResponse::success([
                 'document' => (new EstimateGenerationDocumentResource($result->document->setRelation('session', $session)))->resolve(),
                 'documents_summary' => $result->summary,
+                'retry' => [
+                    'disposition' => $result->disposition,
+                    'attempt_id' => $result->attemptId,
+                ],
             ], trans_message($result->messageKey));
+        } catch (ExplicitDocumentRetryConflict $e) {
+            return AdminResponse::error(
+                trans_message('estimate_generation.document_retry_conflict'),
+                409,
+                null,
+                ['disposition' => $e->disposition],
+            );
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {

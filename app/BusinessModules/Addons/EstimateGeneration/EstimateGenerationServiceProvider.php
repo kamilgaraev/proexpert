@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEst
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateNumberAllocator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentMutationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentationResourceMeter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
@@ -719,6 +720,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(RetryableEstimateGenerationSessionRepository::class, EloquentRetryableEstimateGenerationSessionRepository::class);
         $this->app->singleton(EstimateGenerationRetryDispatcher::class, LaravelEstimateGenerationRetryDispatcher::class);
         $this->app->singleton(EstimateGenerationSessionReconciler::class, ReconcileEstimateGenerationDocuments::class);
+        $this->app->singleton(DocumentMutationSessionReconciler::class, ReconcileEstimateGenerationDocuments::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Operations\AdminSessionOperationAuthorizer::class,
             \App\BusinessModules\Addons\EstimateGeneration\Operations\SystemAdminSessionOperationAuthorizer::class,

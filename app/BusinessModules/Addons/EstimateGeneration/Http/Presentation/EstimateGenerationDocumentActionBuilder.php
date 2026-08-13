@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSystemFailureDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ExplicitDocumentRetryEligibility;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -15,16 +15,14 @@ use function trans_message;
 
 final readonly class EstimateGenerationDocumentActionBuilder
 {
-    private const RETRY_STATUSES = ['queued', 'processing', 'ready', 'failed', 'needs_review', 'ignored'];
-
     private const IGNORE_STATUSES = ['ready', 'failed', 'needs_review'];
 
     public function __construct(
         private AuthorizationService $authorization,
-        private DocumentSystemFailureDetector $systemFailures = new DocumentSystemFailureDetector,
+        private ExplicitDocumentRetryEligibility $explicitRetry = new ExplicitDocumentRetryEligibility,
     ) {}
 
-    /** @return list<array{action: string, label: string, method: string, endpoint: string, requires_confirmation: bool, state_version: int}> */
+    /** @return list<array<string, mixed>> */
     public function forDocument(EstimateGenerationDocument $document, User $user): array
     {
         $session = $document->relationLoaded('session') ? $document->session : null;
@@ -44,12 +42,13 @@ final readonly class EstimateGenerationDocumentActionBuilder
         }
 
         $status = (string) $document->status;
-        if ($this->systemFailures->detected($document) && ! $this->systemFailures->temporary($document)) {
-            return [];
-        }
         $actions = [];
-        if (in_array($status, self::RETRY_STATUSES, true)) {
-            $actions[] = $this->action($document, $session, 'retry_document', 'retry', false);
+        if ($this->explicitRetry->allowed($document)) {
+            $actions[] = [
+                ...$this->action($document, $session, 'retry_document', 'retry', true),
+                'source_version' => (string) $document->source_version,
+                'retry_disposition' => 'explicit_system_failure_retry',
+            ];
         }
         if (in_array($status, self::IGNORE_STATUSES, true)) {
             $actions[] = $this->action($document, $session, 'ignore_document', 'ignore', true);
@@ -69,7 +68,7 @@ final readonly class EstimateGenerationDocumentActionBuilder
             && (int) $session->getKey() === (int) $document->session_id;
     }
 
-    /** @return array{action: string, label: string, method: string, endpoint: string, requires_confirmation: bool, state_version: int} */
+    /** @return array<string, mixed> */
     private function action(
         EstimateGenerationDocument $document,
         EstimateGenerationSession $session,

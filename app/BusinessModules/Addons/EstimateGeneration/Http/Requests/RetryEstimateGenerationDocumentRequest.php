@@ -23,6 +23,8 @@ class RetryEstimateGenerationDocumentRequest extends FormRequest
     {
         return [
             'state_version' => ['required', 'integer', 'min:0'],
+            'source_version' => ['required', 'string', 'max:80'],
+            'idempotency_key' => ['required', 'uuid'],
             'reason' => ['nullable', 'string', 'max:500'],
         ];
     }
