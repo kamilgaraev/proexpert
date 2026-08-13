@@ -6,5 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Observability;
 
 interface FailureRecorderObserver
 {
-    public function recordingFailed(FailureData $failure): void;
+    public function recordingFailed(
+        FailureData $failure,
+        FailurePersistenceDiagnostic $persistenceFailure,
+    ): void;
 }

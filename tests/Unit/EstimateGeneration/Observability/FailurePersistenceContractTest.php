@@ -51,6 +51,36 @@ final class FailurePersistenceContractTest extends TestCase
     }
 
     #[Test]
+    public function diagnostic_expansion_keeps_a_closed_bounded_postgres_contract(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 4)
+            .'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000220_expand_failure_diagnostics_contract.php');
+
+        self::assertIsString($source);
+        foreach ([
+            'diagnostic_fingerprint',
+            'exception_chain_fingerprint',
+            'root_exception_class',
+            'execution_boundary',
+            'processing_attempt_id',
+            'requested_model',
+            'jsonb_path_exists',
+            'NOT VALID',
+            'VALIDATE CONSTRAINT',
+            'RENAME CONSTRAINT',
+            'public $withinTransaction = false',
+            'failure_diagnostics_contract_is_irreversible',
+            "SET lock_timeout TO '5s'",
+            "SET statement_timeout TO '120s'",
+            'LOCK TABLE public.estimate_generation_failure_events, public.estimate_generation_failure_identities',
+            "set_config('lock_timeout'",
+        ] as $required) {
+            self::assertStringContainsString($required, $source);
+        }
+        self::assertStringContainsString('eg_failure_events_safe_context_size_ck', $this->migrationSource());
+    }
+
+    #[Test]
     public function model_and_store_are_module_owned_and_store_implements_contract(): void
     {
         self::assertSame('estimate_generation_failures', (new EstimateGenerationFailure)->getTable());

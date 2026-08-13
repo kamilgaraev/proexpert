@@ -8,8 +8,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentFailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\Models\Organization;
 use App\Models\Project;
@@ -278,6 +280,62 @@ final class EstimateGenerationFailureLedgerPostgresTest extends TestCase
         }
     }
 
+    #[Test]
+    public function postgres_persists_bounded_pre_wire_diagnostics_for_the_pinned_provider_model(): void
+    {
+        $this->requireEnvironment(false);
+        $fixture = $this->fixture();
+        $eventId = (string) Str::uuid();
+        $processingAttemptId = (string) Str::uuid();
+
+        try {
+            $failure = (new FailureNormalizer)->normalize(
+                new TypedFailureException(
+                    FailureCategory::Terminal,
+                    'document_unit_pre_wire_failed',
+                    [
+                        'execution_boundary' => 'document_unit_representation',
+                        'processing_attempt_id' => $processingAttemptId,
+                    ],
+                    new \LogicException('private object path and signed URL'),
+                ),
+                new FailureContext(
+                    organizationId: $fixture['organization_id'],
+                    projectId: $fixture['project_id'],
+                    sessionId: $fixture['session_id'],
+                    stage: ProcessingStage::UnderstandDocuments,
+                    operation: 'process_unit',
+                    attempt: 1,
+                    correlationId: $eventId,
+                    eventId: $eventId,
+                    documentId: $fixture['document_id'],
+                    unitId: $fixture['unit_id'],
+                    provider: 'timeweb',
+                    model: 'openai/gpt-5.6-luna',
+                    processingAttemptId: $processingAttemptId,
+                ),
+            );
+
+            (new EloquentFailureStore(DB::connection()))->record(
+                $failure,
+                new \DateTimeImmutable('2026-08-13T18:27:12+00:00'),
+            );
+
+            $event = DB::table('estimate_generation_failure_events')->where('event_id', $eventId)->first();
+            self::assertNotNull($event);
+            $safeContext = json_decode((string) $event->safe_context, true, 16, JSON_THROW_ON_ERROR);
+            self::assertSame('logic_exception', $safeContext['root_exception_class']);
+            self::assertSame('document_unit_representation', $safeContext['execution_boundary']);
+            self::assertSame($processingAttemptId, $safeContext['processing_attempt_id']);
+            self::assertSame('openai/gpt-5.6-luna', DB::table('estimate_generation_failure_identities')
+                ->where('fingerprint', $failure->fingerprint)->value('model'));
+            self::assertStringNotContainsString('private', json_encode($safeContext, JSON_THROW_ON_ERROR));
+            self::assertStringNotContainsString('path', json_encode($safeContext, JSON_THROW_ON_ERROR));
+        } finally {
+            $this->cleanup($fixture);
+        }
+    }
+
     private function failure(array $fixture, string $eventId): \App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData
     {
         return (new FailureNormalizer)->normalize(new RuntimeException('private document'), new FailureContext(
@@ -375,9 +433,20 @@ final class EstimateGenerationFailureLedgerPostgresTest extends TestCase
             $document = EstimateGenerationDocument::query()->create(['session_id' => $session->id, 'organization_id' => $organization->id,
                 'project_id' => $project->id, 'user_id' => $user->id, 'filename' => 'contract.pdf', 'mime_type' => 'application/pdf']);
             $fixture['document_id'] = (int) $document->id;
+            $sourceVersion = 'sha256:'.str_repeat('a', 64);
             $unit = EstimateGenerationProcessingUnit::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
                 'session_id' => $session->id, 'document_id' => $document->id, 'unit_type' => 'pdf_page', 'unit_index' => 1,
-                'source_version' => 'contract-v1', 'status' => 'pending', 'locator' => [], 'metadata' => []]);
+                'source_version' => $sourceVersion, 'status' => 'pending', 'locator' => [
+                    'source_kind' => 'pdf',
+                    'source_version' => $sourceVersion,
+                    'coordinate_space' => 'pdf_page_pixels',
+                    'artifact_path' => 'org-'.$organization->id.'/estimate-generation/contracts/page-1.png',
+                    'artifact_source_version' => $sourceVersion,
+                    'artifact_version_id' => 'failure-contract-page-1',
+                    'artifact_bytes' => 1,
+                    'artifact_sha256' => $sourceVersion,
+                    'content_type' => 'image/png',
+                ], 'metadata' => (object) []]);
             $fixture['unit_id'] = (int) $unit->id;
 
             return $fixture;

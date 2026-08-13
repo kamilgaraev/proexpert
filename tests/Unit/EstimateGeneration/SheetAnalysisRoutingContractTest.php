@@ -115,6 +115,19 @@ final class SheetAnalysisRoutingContractTest extends TestCase
     }
 
     #[Test]
+    public function explicit_retry_lineages_are_not_rejected_by_the_legacy_scope_unique_constraint(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $migration = (string) file_get_contents($root
+            .'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_allow_sheet_analysis_retry_lineages.php');
+
+        self::assertStringContainsString('DROP CONSTRAINT IF EXISTS eg_sheet_analysis_scope_kind_uq', $migration);
+        self::assertStringContainsString('CREATE INDEX CONCURRENTLY IF NOT EXISTS eg_sheet_analysis_scope_kind_idx', $migration);
+        self::assertStringNotContainsString('CREATE UNIQUE INDEX', $migration);
+        self::assertStringContainsString('sheet_analysis_retry_lineages_are_irreversible', $migration);
+    }
+
+    #[Test]
     public function document_vision_runtime_cannot_outlive_its_journal_or_unit_lease(): void
     {
         $root = dirname(__DIR__, 3);

@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailurePersistenceDiagnostic;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorderObserver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
@@ -43,9 +44,13 @@ final class FailureRecorderTest extends TestCase
             /** @var list<FailureData> */
             public array $events = [];
 
-            public function recordingFailed(FailureData $failure): void
+            /** @var list<FailurePersistenceDiagnostic> */
+            public array $persistenceFailures = [];
+
+            public function recordingFailed(FailureData $failure, FailurePersistenceDiagnostic $persistenceFailure): void
             {
                 $this->events[] = $failure;
+                $this->persistenceFailures[] = $persistenceFailure;
             }
         };
         $recorder = new FailureRecorder($store, observer: $observer);
@@ -61,8 +66,12 @@ final class FailureRecorderTest extends TestCase
         self::assertSame('unexpected_internal_failure', $observer->events[0]->code);
         self::assertSame(1000, $observer->events[0]->context->documentId);
         self::assertMatchesRegularExpression('/^sha256:[0-9a-f]{64}$/', $observer->events[0]->fingerprint);
+        self::assertSame('failure_observability_persistence_failed', $observer->persistenceFailures[0]->code);
+        self::assertSame('runtime_exception', $observer->persistenceFailures[0]->exceptionClass);
+        self::assertMatchesRegularExpression('/^sha256:[0-9a-f]{64}$/', $observer->persistenceFailures[0]->fingerprint);
         self::assertStringNotContainsString('secret', json_encode($observer->events, JSON_THROW_ON_ERROR));
         self::assertStringNotContainsString('private', json_encode($observer->events, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('secret', json_encode($observer->persistenceFailures, JSON_THROW_ON_ERROR));
     }
 
     #[Test]
@@ -87,7 +96,7 @@ final class FailureRecorderTest extends TestCase
         };
         $observer = new class implements FailureRecorderObserver
         {
-            public function recordingFailed(FailureData $failure): void
+            public function recordingFailed(FailureData $failure, FailurePersistenceDiagnostic $persistenceFailure): void
             {
                 throw new RuntimeException('logging transport secret');
             }
