@@ -28,16 +28,16 @@ class SentryScopeService
 
     public function __construct(private ?GlitchTipReportPolicy $reportPolicy = null)
     {
-        $this->reportPolicy ??= new GlitchTipReportPolicy();
+        $this->reportPolicy ??= new GlitchTipReportPolicy;
     }
 
     public function captureException(Throwable $exception, ?Request $request = null): void
     {
-        if (!app()->bound('sentry')) {
+        if (! app()->bound('sentry')) {
             return;
         }
 
-        if (!$this->reportPolicy->shouldCapture($exception)) {
+        if (! $this->reportPolicy->shouldCapture($exception)) {
             return;
         }
 
@@ -69,7 +69,8 @@ class SentryScopeService
         $route = $request->route();
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id');
-        $correlationId = $request->header('X-Correlation-ID')
+        $correlationId = $request->attributes->get('correlation_id')
+            ?? $request->header('X-Correlation-ID')
             ?? $request->header('X-Request-ID')
             ?? $request->header('X-Trace-ID');
         $interface = $this->detectInterface($request);
@@ -78,7 +79,7 @@ class SentryScopeService
         $scope->setTag('interface', $interface);
         $scope->setTag('module', $module);
         $scope->setTag('request_method', $request->method());
-        $scope->setTag('request_path', '/' . ltrim($request->path(), '/'));
+        $scope->setTag('request_path', '/'.ltrim($request->path(), '/'));
         $scope->setTag('route_name', $route?->getName() ?? 'unknown');
 
         if ($organizationId !== null) {
@@ -97,7 +98,7 @@ class SentryScopeService
 
         $scope->setContext('request', [
             'method' => $request->method(),
-            'path' => '/' . ltrim($request->path(), '/'),
+            'path' => '/'.ltrim($request->path(), '/'),
             'route_name' => $route?->getName(),
             'route_action' => $route?->getActionName(),
             'query' => $this->sanitizeValues($request->query()),
@@ -132,16 +133,19 @@ class SentryScopeService
 
             if (in_array($normalizedKey, self::SENSITIVE_KEYS, true)) {
                 $sanitized[$key] = '[Filtered]';
+
                 continue;
             }
 
             if (is_array($value)) {
                 $sanitized[$key] = $this->sanitizeValues($value);
+
                 continue;
             }
 
             if (is_object($value)) {
                 $sanitized[$key] = '[Object]';
+
                 continue;
             }
 

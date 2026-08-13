@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineFailureDetails;
+use LogicException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -38,5 +39,25 @@ final class PipelineFailureDetailsTest extends TestCase
         $second = PipelineFailureDetails::from(new RuntimeException('second private document', 503));
 
         self::assertSame($first->fingerprint, $second->fingerprint);
+    }
+
+    #[Test]
+    public function previous_chain_fingerprint_is_deterministic_and_contains_no_messages(): void
+    {
+        $firstPrevious = new LogicException('first private document', 41);
+        $secondPrevious = new RuntimeException('second private document', 73, $firstPrevious);
+        $error = new RuntimeException('outer private document', 500, $secondPrevious);
+
+        $fingerprint = PipelineFailureDetails::previousChainFingerprint($error);
+
+        self::assertSame(
+            hash('sha256', implode("\0", [
+                PipelineFailureDetails::from($secondPrevious)->fingerprint,
+                PipelineFailureDetails::from($firstPrevious)->fingerprint,
+            ])),
+            $fingerprint,
+        );
+        self::assertStringNotContainsString('private document', (string) $fingerprint);
+        self::assertNull(PipelineFailureDetails::previousChainFingerprint(new RuntimeException('no previous')));
     }
 }

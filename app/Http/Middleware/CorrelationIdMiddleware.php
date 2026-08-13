@@ -2,12 +2,12 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\Logging\Context\RequestContext;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
-use App\Services\Logging\Context\RequestContext;
 
 class CorrelationIdMiddleware
 {
@@ -18,7 +18,8 @@ class CorrelationIdMiddleware
     {
         // Получить или сгенерировать correlation ID
         $correlationId = $this->getOrGenerateCorrelationId($request);
-        
+        $request->attributes->set('correlation_id', $correlationId);
+
         // Установить correlation ID в контексте логирования
         if (App::bound(RequestContext::class)) {
             $requestContext = App::make(RequestContext::class);
@@ -28,7 +29,7 @@ class CorrelationIdMiddleware
 
         // Добавить correlation ID в заголовки ответа
         $response = $next($request);
-        
+
         if ($response instanceof Response) {
             $response->headers->set('X-Correlation-ID', $correlationId);
         }
@@ -42,12 +43,12 @@ class CorrelationIdMiddleware
     protected function getOrGenerateCorrelationId(Request $request): string
     {
         // Проверить заголовки запроса
-        $correlationId = $request->header('X-Correlation-ID') 
+        $correlationId = $request->header('X-Correlation-ID')
             ?? $request->header('X-Request-ID')
             ?? $request->header('X-Trace-ID');
 
         // Если не найден, сгенерировать новый
-        if (!$correlationId || !$this->isValidCorrelationId($correlationId)) {
+        if (! $correlationId || ! $this->isValidCorrelationId($correlationId)) {
             $correlationId = $this->generateCorrelationId($request);
         }
 
@@ -65,7 +66,7 @@ class CorrelationIdMiddleware
         }
 
         // Только допустимые символы
-        if (!preg_match('/^[a-zA-Z0-9_\-]+$/', $correlationId)) {
+        if (! preg_match('/^[a-zA-Z0-9_\-]+$/', $correlationId)) {
             return false;
         }
 
@@ -80,7 +81,7 @@ class CorrelationIdMiddleware
         $interface = $this->detectInterface($request);
         $timestamp = now()->format('Ymd-His');
         $random = Str::random(8);
-        
+
         return "req_{$interface}_{$timestamp}_{$random}";
     }
 
@@ -90,7 +91,7 @@ class CorrelationIdMiddleware
     protected function detectInterface(Request $request): string
     {
         $path = $request->path();
-        
+
         if (str_contains($path, 'api/v1/admin')) {
             return 'admin';
         } elseif (str_contains($path, 'api/mobile') || str_contains($path, 'api/v1/mobile')) {
