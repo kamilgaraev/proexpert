@@ -241,6 +241,73 @@ final class BuildingModelAssemblerTest extends TestCase
     }
 
     #[Test]
+    public function vision_keys_are_mapped_deterministically_with_internal_references_preserved(): void
+    {
+        $elements = [
+            self::sourceRoom('room.living_area', 'e1', [[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]]),
+            self::sourceElement('wall.outer:main', 'wall', 'e2', ['start' => [0.0, 0.0], 'end' => [100.0, 0.0], 'thickness' => 10.0, 'height' => 280.0]),
+            self::sourceElement('opening.window:1', 'opening', 'e3', ['wall_key' => 'wall.outer:main', 'opening_type' => 'window', 'offset' => 10.0, 'width' => 20.0, 'height' => 140.0]),
+            self::sourceElement('engineering.socket:1', 'engineering_element', 'e4', ['engineering_type' => 'outlet', 'location' => [10.0, 10.0], 'room_key' => 'room.living_area']),
+        ];
+        $input = new VisionBuildingModelInputData(
+            new ScaleResolutionData('confirmed', 0.01, ['e1'], null, self::scaleContext()),
+            (new GeometryFusionService)->fuse($elements),
+            [],
+            [],
+            ['e1' => 11, 'e2' => 12, 'e3' => 13, 'e4' => 14],
+            'vision-fusion:v1',
+            'floor-1',
+        );
+        $assembler = new BuildingModelAssembler;
+
+        $first = $assembler->assembleVision($input)->model->floors[0];
+        $second = $assembler->assembleVision($input)->model->floors[0];
+
+        self::assertMatchesRegularExpression('/^[a-z][a-z0-9_-]{0,127}$/', $first->rooms[0]->key);
+        self::assertMatchesRegularExpression('/^[a-z][a-z0-9_-]{0,127}$/', $first->walls[0]->key);
+        self::assertMatchesRegularExpression('/^[a-z][a-z0-9_-]{0,127}$/', $first->openings[0]->key);
+        self::assertMatchesRegularExpression('/^[a-z][a-z0-9_-]{0,127}$/', $first->engineeringElements[0]->key);
+        self::assertSame($first->walls[0]->key, $first->openings[0]->wallKey);
+        self::assertSame($first->rooms[0]->key, $first->engineeringElements[0]->roomKey);
+        self::assertSame($first->toArray(), $second->toArray());
+    }
+
+    #[Test]
+    public function vision_key_mapping_resolves_generated_and_floor_key_collisions(): void
+    {
+        $generatedCollision = 'vision_room_a_'.substr(hash('sha256', 'room.a'), 0, 12);
+        $elements = [
+            self::sourceRoom('room.a', 'e1', [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]),
+            self::sourceRoom($generatedCollision, 'e2', [[20.0, 0.0], [30.0, 0.0], [30.0, 10.0]]),
+            self::sourceRoom('floor-1', 'e3', [[40.0, 0.0], [50.0, 0.0], [50.0, 10.0]]),
+        ];
+        $result = (new BuildingModelAssembler)->assembleVision(new VisionBuildingModelInputData(
+            new ScaleResolutionData('confirmed', 0.01, ['e1'], null, self::scaleContext()),
+            (new GeometryFusionService)->fuse($elements),
+            [],
+            [],
+            ['e1' => 11, 'e2' => 12, 'e3' => 13],
+            'vision-fusion:v1',
+            'floor-1',
+        ));
+        $roomKeys = array_map(static fn (RoomData $room): string => $room->key, $result->model->floors[0]->rooms);
+
+        self::assertCount(3, array_unique($roomKeys));
+        self::assertNotContains('floor-1', $roomKeys);
+        self::assertContains($generatedCollision, $roomKeys);
+        self::assertSame([11, 12, 13], $result->model->floors[0]->evidenceIds);
+        self::assertSame($result->toArray(), (new BuildingModelAssembler)->assembleVision(new VisionBuildingModelInputData(
+            new ScaleResolutionData('confirmed', 0.01, ['e1'], null, self::scaleContext()),
+            (new GeometryFusionService)->fuse(array_reverse($elements)),
+            [],
+            [],
+            ['e1' => 11, 'e2' => 12, 'e3' => 13],
+            'vision-fusion:v1',
+            'floor-1',
+        ))->toArray());
+    }
+
+    #[Test]
     public function all_eight_questions_keep_business_order_separate_from_geometry_clarifications(): void
     {
         $questions = array_map(static fn (string $key): SketchQuestionData => new SketchQuestionData($key), SketchQuestionData::KEYS);

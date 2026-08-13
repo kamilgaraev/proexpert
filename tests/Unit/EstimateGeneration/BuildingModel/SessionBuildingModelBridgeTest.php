@@ -24,6 +24,30 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class SessionBuildingModelBridgeTest extends TestCase
 {
     #[Test]
+    public function persisted_vision_key_with_dot_is_mapped_before_building_model_validation(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('f', 64));
+        [$bridge] = $this->bridge();
+        $unit = $this->visionUnit();
+        $payload = $unit->payload;
+        $payload['vision_analysis']['elements'][0]['key'] = 'room.living_area';
+
+        $model = $bridge->store($context, [new SessionBuildingModelUnitData(
+            $unit->unitId,
+            $unit->documentId,
+            $unit->pageId,
+            $unit->type,
+            $unit->index,
+            $unit->sourceVersion,
+            $unit->confidence,
+            $payload,
+        )]);
+
+        self::assertNotNull($model);
+        self::assertMatchesRegularExpression('/^[a-z][a-z0-9_-]{0,127}$/', $model->floors[0]->rooms[0]->key);
+    }
+
+    #[Test]
     public function stored_canonical_schema_three_analysis_is_hydrated_without_provider_schema_reparse(): void
     {
         $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('f', 64));
