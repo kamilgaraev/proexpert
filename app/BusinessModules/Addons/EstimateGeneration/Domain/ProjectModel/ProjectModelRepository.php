@@ -51,6 +51,15 @@ interface ProjectModelRepository
         int $limit = 200,
     ): array;
 
+    /** @return list<string> */
+    public function currentDerivedQuantityLogicalIdsByFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $formulaVersion,
+    ): array;
+
     /** @return list<DerivedQuantity> */
     public function derivedQuantityHistory(
         int $organizationId,

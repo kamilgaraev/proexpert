@@ -9,6 +9,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\Arbitrati
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\RunGeometryExpert;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\VisionGeometryExpertModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
@@ -650,6 +653,14 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class),
         ));
         $this->app->alias(RunDocumentArbitration::class, DocumentArbitrator::class);
+        $this->app->singleton(GeometryExpertModel::class, VisionGeometryExpertModel::class);
+        $this->app->singleton(RunGeometryExpert::class, static fn ($app): RunGeometryExpert => new RunGeometryExpert(
+            $app->make(AiRoleRunRepository::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+            $app->make(GeometryExpertModel::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator::class),
+            (string) config('estimate-generation.vision.model'),
+        ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore::class,

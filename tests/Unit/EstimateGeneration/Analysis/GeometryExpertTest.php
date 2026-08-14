@@ -1,0 +1,439 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\EstimateGeneration\Analysis;
+
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\RunGeometryExpert;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\VisionGeometryExpertModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionEvidenceData;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
+
+final class GeometryExpertTest extends TestCase
+{
+    #[Test]
+    public function plan_dimensions_are_multiplied_as_exact_decimals_with_formula_and_evidence_lineage(): void
+    {
+        if (! class_exists(DeterministicGeometryCalculator::class) || ! class_exists(GeometryExpertInput::class)) {
+            self::fail('Geometry expert contract is not implemented.');
+        }
+
+        $result = $this->calculator()->calculate(new GeometryExpertInput(
+            organizationId: 7,
+            projectId: 9,
+            sessionId: 11,
+            sourceVersion: 'sha256:'.str_repeat('a', 64),
+            sheets: [[
+                'sheet_id' => 'page:17',
+                'sheet_role' => 'plan',
+                'page_number' => 4,
+                'interpretations' => [[
+                    'quantity_id' => 'floor:1:area',
+                    'entity_id' => 'floor:1',
+                    'formula_id' => 'floor_area',
+                    'output_unit' => 'm2',
+                    'rounding_scale' => 6,
+                    'operands' => [
+                        ['name' => 'length', 'value' => '12.50', 'unit' => 'm', 'evidence_id' => 'evidence:101', 'physical_locator' => 'page:17:dimension:length'],
+                        ['name' => 'width', 'value' => '8.40', 'unit' => 'm', 'evidence_id' => 'evidence:102', 'physical_locator' => 'page:17:dimension:width'],
+                    ],
+                ]],
+            ]],
+        ));
+
+        self::assertCount(1, $result->quantities);
+        self::assertSame('105', $result->quantities[0]['value']);
+        self::assertSame('geometry-formulas:v1', $result->quantities[0]['formula_version']);
+        self::assertSame(['evidence:101', 'evidence:102'], $result->quantities[0]['evidence_ids']);
+        self::assertSame([], $result->questions);
+    }
+
+    #[Test]
+    public function wall_and_roof_formulas_subtract_openings_without_float_arithmetic(): void
+    {
+        $result = $this->calculator()->calculate($this->input([
+            $this->sheet('section', 5, [
+                $this->interpretation('wall:1:net_area', 'wall:1', 'wall_net_area', 'm2', [
+                    $this->operand('wall_length', '10', 'm', '201', 'wall:length'),
+                    $this->operand('wall_height', '3', 'm', '202', 'wall:height'),
+                    $this->operand('opening_width', '2', 'm', '203', 'opening:1:width'),
+                    $this->operand('opening_height', '1', 'm', '204', 'opening:1:height'),
+                    $this->operand('opening_width', '1.5', 'm', '205', 'opening:2:width'),
+                    $this->operand('opening_height', '1.2', 'm', '206', 'opening:2:height'),
+                ]),
+            ]),
+            $this->sheet('roof', 6, [
+                $this->interpretation('roof:1:area', 'roof:1', 'sloped_roof_area', 'm2', [
+                    $this->operand('plan_area', '100', 'm2', '207', 'roof:plan'),
+                    $this->operand('slope_rise', '3', 'm', '208', 'roof:rise'),
+                    $this->operand('slope_run', '4', 'm', '209', 'roof:run'),
+                    $this->operand('roof_opening_area', '5', 'm2', '210', 'roof:opening'),
+                ]),
+            ]),
+        ]));
+
+        self::assertSame(['26.2', '120'], array_column($result->quantities, 'value'));
+        self::assertSame(['wall_net_area', 'sloped_roof_area'], array_column($result->quantities, 'formula_id'));
+    }
+
+    #[Test]
+    public function partial_opening_is_left_unresolved_instead_of_silently_ignored_or_crashing_the_role(): void
+    {
+        $result = $this->calculator()->calculate($this->input([
+            $this->sheet('section', 5, [
+                $this->interpretation('wall:1:net_area', 'wall:1', 'wall_net_area', 'm2', [
+                    $this->operand('wall_length', '10', 'm', '211', 'wall:length'),
+                    $this->operand('wall_height', '3', 'm', '212', 'wall:height'),
+                    $this->operand('opening_width', '2', 'm', '213', 'opening:1:width'),
+                ]),
+            ]),
+        ]));
+
+        self::assertSame([], $result->quantities);
+        self::assertSame('partial_opening_geometry', $result->conflicts[0]['code']);
+        self::assertSame('Не определена высота одного из проёмов', $result->questions[0]['subject']);
+        self::assertSame(5, $result->questions[0]['source_locator']['page_number']);
+    }
+
+    #[Test]
+    public function decimal_boundary_is_rounded_once_after_exact_formula_evaluation(): void
+    {
+        $result = $this->calculator()->calculate($this->input([
+            $this->sheet('plan', 4, [
+                $this->interpretation('floor:decimal:area', 'floor:decimal', 'floor_area', 'm2', [
+                    $this->operand('length', '0.333333333333', 'm', '221', 'decimal:length'),
+                    $this->operand('width', '3', 'm', '222', 'decimal:width'),
+                ]),
+            ]),
+        ]));
+
+        self::assertSame('1', $result->quantities[0]['value']);
+        self::assertSame(6, $result->quantities[0]['rounding_scale']);
+    }
+
+    #[Test]
+    public function duplicated_physical_locator_is_not_counted_twice_and_creates_a_concrete_question(): void
+    {
+        $result = $this->calculator()->calculate($this->input([
+            $this->sheet('plan', 4, [
+                $this->interpretation('floor:1:area', 'floor:1', 'floor_area', 'm2', [
+                    $this->operand('length', '10', 'm', '301', 'dimension:same'),
+                    $this->operand('width', '8', 'm', '302', 'dimension:same'),
+                ]),
+            ]),
+        ]));
+
+        self::assertSame([], $result->quantities);
+        self::assertSame('duplicate_physical_locator', $result->conflicts[0]['code']);
+        self::assertSame('Повторно использован один и тот же размер', $result->questions[0]['subject']);
+        self::assertSame(4, $result->questions[0]['source_locator']['page_number']);
+    }
+
+    #[Test]
+    public function non_geometry_sheet_is_skipped_without_interpreting_or_calculating_it(): void
+    {
+        $result = $this->calculator()->calculate($this->input([
+            $this->sheet('note', 7, [[
+                'this_payload_must_not_be_read' => new \stdClass,
+            ]]),
+        ]));
+
+        self::assertSame([], $result->quantities);
+        self::assertSame(['page:7'], $result->skippedSheets);
+        self::assertSame([], $result->questions);
+    }
+
+    #[Test]
+    public function cross_sheet_quantity_disagreement_stays_unresolved_with_both_sources(): void
+    {
+        $result = $this->calculator()->calculate($this->input([
+            $this->sheet('plan', 4, [
+                $this->interpretation('floor:1:area', 'floor:1', 'floor_area', 'm2', [
+                    $this->operand('length', '10', 'm', '401', 'plan:length'),
+                    $this->operand('width', '8', 'm', '402', 'plan:width'),
+                ]),
+            ]),
+            $this->sheet('explication', 9, [
+                $this->interpretation('floor:1:area', 'floor:1', 'floor_area', 'm2', [
+                    $this->operand('length', '10', 'm', '403', 'explication:length'),
+                    $this->operand('width', '8.2', 'm', '404', 'explication:width'),
+                ]),
+            ]),
+        ]));
+
+        self::assertSame([], $result->quantities);
+        self::assertSame('cross_sheet_geometry_conflict', $result->conflicts[0]['code']);
+        self::assertSame([4, 9], $result->questions[0]['source_locator']['page_numbers']);
+        self::assertSame('Площадь этажа различается между листами', $result->questions[0]['subject']);
+    }
+
+    #[Test]
+    public function geometry_role_is_persisted_once_and_exact_replay_does_not_call_the_model_again(): void
+    {
+        if (! class_exists(RunGeometryExpert::class) || ! interface_exists(GeometryExpertModel::class)) {
+            self::fail('Persisted geometry role is not implemented.');
+        }
+        $runs = new GeometryRoleRunMemoryRepository;
+        $models = new InMemoryProjectModelRepository;
+        $this->seedGeometrySources($models);
+        $model = new RecordedGeometryExpertModel([
+            $this->sheet('plan', 4, [
+                $this->interpretation('floor:1:area', 'floor:1', 'floor_area', 'm2', [
+                    $this->operand('length', '10', 'm', '501', 'plan:length'),
+                    $this->operand('width', '8', 'm', '502', 'plan:width'),
+                ]),
+            ]),
+        ]);
+        $service = new RunGeometryExpert($runs, $models, $model, $this->calculator(), 'openai/gpt-5.6-luna');
+        $input = $this->input([$this->sheet('plan', 4, [])]);
+
+        $first = $service->run($input);
+        $second = $service->run($input);
+
+        self::assertSame($first->quantities, $second->quantities);
+        self::assertSame(1, $model->calls);
+        self::assertSame(AiAnalysisRole::GeometryExpert, $runs->inputs[0]->role);
+        self::assertSame('geometry-expert:v1', $runs->inputs[0]->promptContractVersion);
+        self::assertSame('80', $first->quantities[0]['value']);
+        self::assertCount(1, $models->currentDerivedQuantities(7, 9, 11, 'sha256:'.str_repeat('a', 64)));
+    }
+
+    #[Test]
+    public function vision_geometry_model_reads_applicable_original_sheets_and_preserves_arbitration_context(): void
+    {
+        if (! class_exists(VisionGeometryExpertModel::class)) {
+            self::fail('Vision geometry model is not implemented.');
+        }
+        $provider = new RecordedGeometryVisionProvider([
+            $this->interpretation('floor:1:area', 'floor:1', 'floor_area', 'm2', [
+                $this->operand('length', '10', 'm', '601', 'plan:length'),
+                $this->operand('width', '8', 'm', '602', 'plan:width'),
+            ]),
+        ]);
+        $source = $this->visionInput();
+        $input = $this->input([[
+            'sheet_id' => 'page:17',
+            'sheet_role' => 'plan',
+            'page_number' => 4,
+            'source' => $source,
+            'arbitration' => ['fingerprint' => str_repeat('b', 64), 'decisions' => [['claim_id' => 'literal:1']]],
+        ], $this->sheet('note', 7, [])]);
+        $reserved = [];
+
+        $sheets = (new VisionGeometryExpertModel($provider))->interpret(
+            $input,
+            static function (string $attemptId) use (&$reserved): void {
+                $reserved[] = $attemptId;
+            },
+        );
+
+        self::assertCount(1, $provider->inputs);
+        self::assertSame($source->imageContent, $provider->inputs[0]->imageContent);
+        self::assertSame('geometry-expert:v1', $provider->inputs[0]->auxiliaryMetadata['geometry_expert']['contract']);
+        self::assertSame(str_repeat('b', 64), $provider->inputs[0]->auxiliaryMetadata['geometry_expert']['arbitration']['fingerprint']);
+        self::assertSame('floor_area', $sheets[0]['interpretations'][0]['formula_id']);
+        self::assertSame(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'], $reserved);
+    }
+
+    /** @param list<array<string,mixed>> $sheets */
+    private function input(array $sheets): GeometryExpertInput
+    {
+        return new GeometryExpertInput(7, 9, 11, 'sha256:'.str_repeat('a', 64), $sheets);
+    }
+
+    /** @param list<array<string,mixed>> $interpretations @return array<string,mixed> */
+    private function sheet(string $role, int $page, array $interpretations): array
+    {
+        return [
+            'sheet_id' => 'page:'.$page,
+            'sheet_role' => $role,
+            'page_number' => $page,
+            'interpretations' => $interpretations,
+        ];
+    }
+
+    /** @param list<array<string,string>> $operands @return array<string,mixed> */
+    private function interpretation(string $quantityId, string $entityId, string $formulaId, string $unit, array $operands): array
+    {
+        return [
+            'quantity_id' => $quantityId,
+            'entity_id' => $entityId,
+            'formula_id' => $formulaId,
+            'output_unit' => $unit,
+            'rounding_scale' => 6,
+            'operands' => $operands,
+        ];
+    }
+
+    /** @return array<string,string> */
+    private function operand(string $name, string $value, string $unit, string $evidence, string $locator): array
+    {
+        return [
+            'name' => $name,
+            'fact_id' => 'fact:'.$evidence,
+            'projection_version' => 1,
+            'value' => $value,
+            'unit' => $unit,
+            'evidence_id' => 'evidence:'.$evidence,
+            'physical_locator' => $locator,
+        ];
+    }
+
+    private function visionInput(): VisionDocumentInput
+    {
+        $image = imagecreatetruecolor(2, 2);
+        imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
+        ob_start();
+        imagepng($image);
+        $content = ob_get_clean();
+        $content = is_string($content) ? $content : '';
+
+        return new VisionDocumentInput(
+            7, 9, 11, 13, 17, 4, 19,
+            'sha256:'.str_repeat('a', 64),
+            'sha256:'.hash('sha256', $content),
+            'image/png',
+            $content,
+            'high',
+            new AiOperationContext(
+                '11111111-1111-5111-8111-111111111111',
+                '22222222-2222-5222-8222-222222222222',
+                7, 9, 11, 'checking_geometry', 'vision', 1, 13, 17, 19,
+            ),
+            (new ProjectiveTransformFactory)->identity(),
+            sheetRole: 'plan',
+        );
+    }
+
+    private function seedGeometrySources(InMemoryProjectModelRepository $models): void
+    {
+        $sourceVersion = 'sha256:'.str_repeat('a', 64);
+        $evidence = [
+            new Evidence('evidence:501', 7, 9, 11, $sourceVersion, 'artifact:17', 'drawing', 4, nativeReference: 'plan:length'),
+            new Evidence('evidence:502', 7, 9, 11, $sourceVersion, 'artifact:17', 'drawing', 4, nativeReference: 'plan:width'),
+        ];
+        $models->saveSourceModel(
+            [new Entity('floor:1', 7, 9, 11, $sourceVersion, 'quantity', 'floor:1')],
+            [
+                new Fact('fact:501', 7, 9, 11, $sourceVersion, 'floor:1', 'length', '10', 'm', 1.0, 'document', 'confirmed', ['evidence:501']),
+                new Fact('fact:502', 7, 9, 11, $sourceVersion, 'floor:1', 'width', '8', 'm', 1.0, 'document', 'confirmed', ['evidence:502']),
+            ],
+            $evidence,
+        );
+    }
+
+    private function calculator(): DeterministicGeometryCalculator
+    {
+        $messages = require dirname(__DIR__, 4).'/lang/ru/estimate_generation.php';
+
+        return new DeterministicGeometryCalculator(static function (string $key) use ($messages): string {
+            $value = $messages;
+            foreach (array_slice(explode('.', $key), 1) as $segment) {
+                $value = is_array($value) ? ($value[$segment] ?? null) : null;
+            }
+
+            return is_string($value) ? $value : $key;
+        });
+    }
+}
+
+final class RecordedGeometryExpertModel implements GeometryExpertModel
+{
+    public int $calls = 0;
+
+    public function __construct(private readonly array $sheets) {}
+
+    public function interpret(GeometryExpertInput $input, callable $onPhysicalAttemptReserved): array
+    {
+        $this->calls++;
+        $onPhysicalAttemptReserved('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+
+        return $this->sheets;
+    }
+}
+
+final class GeometryRoleRunMemoryRepository implements AiRoleRunRepository
+{
+    /** @var list<AiRoleRunInput> */
+    public array $inputs = [];
+
+    private ?AiRoleRunResult $result = null;
+
+    public function claim(AiRoleRunInput $input, string $ownerUuid): AiRoleRunClaim
+    {
+        $this->inputs[] = $input;
+
+        return $this->result === null
+            ? new AiRoleRunClaim(1, 'owned', $ownerUuid)
+            : new AiRoleRunClaim(1, 'replay', result: $this->result);
+    }
+
+    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId): void {}
+
+    public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
+    {
+        $this->result = $result;
+    }
+
+    public function fail(int $runId, string $ownerUuid, AiRoleRunFailure $failure): void {}
+
+    public function loadCurrent(AiRoleRunInput $input): ?AiRoleRunClaim
+    {
+        return null;
+    }
+}
+
+final class RecordedGeometryVisionProvider implements VisionProvider
+{
+    /** @var list<VisionDocumentInput> */
+    public array $inputs = [];
+
+    public function __construct(private readonly array $interpretations) {}
+
+    public function analyze(VisionDocumentInput $input): VisionAnalysisData
+    {
+        $this->inputs[] = $input;
+        ($input->onPhysicalAttemptReserved)('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+
+        return new VisionAnalysisData(
+            'floor_plan',
+            [VisionEvidenceData::fromArray(['key' => 'page', 'locator' => [
+                'page_id' => 17,
+                'page_number' => 4,
+                'processing_unit_id' => 19,
+                'source_version' => 'sha256:'.str_repeat('a', 64),
+                'coordinate_space' => 'normalized_derivative_v1',
+            ]])],
+            [],
+            [],
+            ['scale_missing'],
+            'timeweb',
+            'openai/gpt-5.6-luna',
+            'openai/gpt-5.6-luna',
+            'model:v1',
+            'measured',
+            1,
+            1,
+            rawObserverFacts: $this->interpretations,
+        );
+    }
+}

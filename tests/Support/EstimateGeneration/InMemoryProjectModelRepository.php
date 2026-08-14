@@ -289,6 +289,29 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         return array_slice($items, 0, $limit);
     }
 
+    public function currentDerivedQuantityLogicalIdsByFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $formulaVersion,
+    ): array {
+        $items = array_values(array_filter(
+            $this->currentQuantities,
+            static fn (DerivedQuantity $quantity): bool => [
+                $quantity->organizationId,
+                $quantity->projectId,
+                $quantity->sessionId,
+                $quantity->sourceVersion,
+                $quantity->formulaVersion,
+            ] === [$organizationId, $projectId, $sessionId, $sourceVersion, $formulaVersion],
+        ));
+        $logicalIds = array_map(static fn (DerivedQuantity $quantity): string => (string) $quantity->logicalId, $items);
+        sort($logicalIds, SORT_STRING);
+
+        return $logicalIds;
+    }
+
     public function deactivateDerivedQuantityProjectionScope(
         int $organizationId,
         int $projectId,

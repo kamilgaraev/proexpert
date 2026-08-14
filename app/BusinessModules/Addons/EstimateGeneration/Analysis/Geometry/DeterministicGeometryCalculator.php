@@ -1,0 +1,361 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry;
+
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
+use Closure;
+use InvalidArgumentException;
+
+use function trans_message;
+
+final class DeterministicGeometryCalculator
+{
+    public const FORMULA_VERSION = 'geometry-formulas:v1';
+
+    private readonly Closure $translator;
+
+    public function __construct(?callable $translator = null)
+    {
+        $this->translator = $translator === null
+            ? static fn (string $key): string => trans_message($key)
+            : Closure::fromCallable($translator);
+    }
+
+    public function calculate(GeometryExpertInput $input): GeometryExpertResult
+    {
+        $quantities = [];
+        $conflicts = [];
+        $questions = [];
+        $skippedSheets = [];
+        foreach ($input->sheets as $sheet) {
+            if (! is_array($sheet) || ! in_array($sheet['sheet_role'] ?? null, [
+                'plan', 'section', 'facade', 'roof', 'explication', 'specification',
+            ], true)) {
+                $skippedSheets[] = is_array($sheet) && is_string($sheet['sheet_id'] ?? null)
+                    ? $sheet['sheet_id'] : 'unknown';
+
+                continue;
+            }
+            foreach ($this->interpretations($sheet) as $interpretation) {
+                $locators = array_column(is_array($interpretation['operands'] ?? null) ? $interpretation['operands'] : [], 'physical_locator');
+                if (count($locators) !== count(array_unique($locators))) {
+                    $conflicts[] = [
+                        'code' => 'duplicate_physical_locator',
+                        'quantity_id' => $interpretation['quantity_id'] ?? null,
+                        'physical_locators' => array_values(array_unique($locators)),
+                    ];
+                    $questions[] = [
+                        'code' => 'duplicate_geometry_source',
+                        'subject' => $this->text('estimate_generation.geometry_expert.duplicate.subject'),
+                        'reason' => $this->text('estimate_generation.geometry_expert.duplicate.reason'),
+                        'impact' => $this->text('estimate_generation.geometry_expert.duplicate.impact'),
+                        'recommendation' => $this->text('estimate_generation.geometry_expert.duplicate.recommendation'),
+                        'choices' => [
+                            $this->text('estimate_generation.geometry_expert.duplicate.choice_once'),
+                            $this->text('estimate_generation.geometry_expert.duplicate.choice_other'),
+                        ],
+                        'source_locator' => [
+                            'page_number' => $sheet['page_number'] ?? null,
+                            'physical_locators' => array_values(array_unique($locators)),
+                        ],
+                    ];
+
+                    continue;
+                }
+                $partialOpening = $this->partialOpening($interpretation);
+                if ($partialOpening !== null) {
+                    $conflicts[] = [
+                        'code' => 'partial_opening_geometry',
+                        'quantity_id' => $interpretation['quantity_id'] ?? null,
+                        'missing_operand' => $partialOpening,
+                    ];
+                    $questions[] = [
+                        'code' => 'partial_opening_geometry',
+                        'subject' => $this->text($partialOpening === 'opening_height'
+                            ? 'estimate_generation.geometry_expert.partial_opening.missing_height'
+                            : 'estimate_generation.geometry_expert.partial_opening.missing_width'),
+                        'reason' => $this->text('estimate_generation.geometry_expert.partial_opening.reason'),
+                        'impact' => $this->text('estimate_generation.geometry_expert.partial_opening.impact'),
+                        'recommendation' => $this->text('estimate_generation.geometry_expert.partial_opening.recommendation'),
+                        'choices' => [
+                            $this->text('estimate_generation.geometry_expert.partial_opening.choice_specify'),
+                            $this->text('estimate_generation.geometry_expert.partial_opening.choice_ignore'),
+                        ],
+                        'source_locator' => [
+                            'page_number' => $sheet['page_number'] ?? null,
+                            'physical_locators' => array_values(array_unique($locators)),
+                        ],
+                    ];
+
+                    continue;
+                }
+                $quantities[] = [
+                    'quantity' => $this->quantity($interpretation),
+                    'page_number' => $sheet['page_number'] ?? null,
+                ];
+            }
+        }
+
+        [$quantities, $crossSheetConflicts, $crossSheetQuestions] = $this->reconcile($quantities);
+        $conflicts = [...$conflicts, ...$crossSheetConflicts];
+        $questions = [...$questions, ...$crossSheetQuestions];
+
+        return new GeometryExpertResult($quantities, $conflicts, $questions, $skippedSheets);
+    }
+
+    /** @return list<DerivedQuantity> */
+    public function domainQuantities(GeometryExpertInput $input, GeometryExpertResult $result): array
+    {
+        return array_map(function (array $quantity) use ($input): DerivedQuantity {
+            $operands = array_map(static function (array $operand): array {
+                return [
+                    ...$operand,
+                    'fact_id' => (string) ($operand['fact_id'] ?? ''),
+                    'projection_version' => (int) ($operand['projection_version'] ?? 0),
+                    'status' => 'confirmed',
+                    'current' => true,
+                    'value' => (string) ($operand['value'] ?? ''),
+                    'unit' => (string) ($operand['unit'] ?? ''),
+                    'evidence_ids' => [(string) ($operand['evidence_id'] ?? '')],
+                    'decision_id' => null,
+                ];
+            }, $quantity['operands']);
+            $base = new DerivedQuantity(
+                id: (string) $quantity['quantity_id'],
+                organizationId: $input->organizationId,
+                projectId: $input->projectId,
+                sessionId: $input->sessionId,
+                sourceVersion: $input->sourceVersion,
+                entityId: (string) $quantity['entity_id'],
+                formula: $quantity['formula_id'].':'.$quantity['formula_version'],
+                operands: $operands,
+                value: (string) $quantity['value'],
+                unit: (string) $quantity['unit'],
+                roundingMode: (string) $quantity['rounding_mode'],
+                roundingScale: (int) $quantity['rounding_scale'],
+                evidenceIds: $quantity['evidence_ids'],
+                status: 'confirmed',
+                formulaIdentity: (string) $quantity['formula_id'],
+                formulaVersion: (string) $quantity['formula_version'],
+                roundingBoundary: $quantity['formula_id'] === 'sloped_roof_area'
+                    ? 'irrational_operation_then_formula_result' : 'formula_result',
+                unitCompatibility: 'exact',
+                snapshotIdentity: ['source_version' => $input->sourceVersion],
+                logicalId: (string) $quantity['quantity_id'],
+            );
+            $identity = DerivedQuantityIdentity::for($base);
+
+            return new DerivedQuantity(
+                id: 'quantityv:'.$identity,
+                organizationId: $base->organizationId,
+                projectId: $base->projectId,
+                sessionId: $base->sessionId,
+                sourceVersion: $base->sourceVersion,
+                entityId: $base->entityId,
+                formula: $base->formula,
+                operands: $base->operands,
+                value: $base->value,
+                unit: $base->unit,
+                roundingMode: $base->roundingMode,
+                roundingScale: $base->roundingScale,
+                evidenceIds: $base->evidenceIds,
+                status: $base->status,
+                formulaIdentity: $base->formulaIdentity,
+                formulaVersion: $base->formulaVersion,
+                roundingBoundary: $base->roundingBoundary,
+                unitCompatibility: $base->unitCompatibility,
+                snapshotIdentity: $base->snapshotIdentity,
+                logicalId: $base->logicalId,
+                exactIdentity: $identity,
+            );
+        }, $result->quantities);
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function interpretations(mixed $sheet): array
+    {
+        $items = is_array($sheet) ? ($sheet['interpretations'] ?? null) : null;
+        if (! is_array($items) || ! array_is_list($items) || count($items) > 256) {
+            throw new InvalidArgumentException('geometry_interpretations_invalid');
+        }
+
+        return $items;
+    }
+
+    /** @param array<string,mixed> $interpretation @return array<string,mixed> */
+    private function quantity(array $interpretation): array
+    {
+        $formulaId = $interpretation['formula_id'] ?? null;
+        $operands = $interpretation['operands'] ?? null;
+        $scale = $interpretation['rounding_scale'] ?? null;
+        if (! in_array($formulaId, ['floor_area', 'wall_net_area', 'sloped_roof_area'], true)
+            || ! is_array($operands) || ! array_is_list($operands) || $operands === []
+            || ! is_int($scale) || $scale < 0 || $scale > 12) {
+            throw new InvalidArgumentException('geometry_formula_invalid');
+        }
+        $values = [];
+        $evidence = [];
+        foreach ($operands as $operand) {
+            if (! is_array($operand) || ! is_string($operand['value'] ?? null)
+                || ! is_string($operand['evidence_id'] ?? null)) {
+                throw new InvalidArgumentException('geometry_operand_invalid');
+            }
+            $values[(string) ($operand['name'] ?? '')][] = BigDecimal::of($operand['value']);
+            $evidence[] = $operand['evidence_id'];
+        }
+        $value = $this->formula($formulaId, $values)->toScale($scale, RoundingMode::HalfUp);
+        if ($value->isLessThanOrEqualTo(0)) {
+            throw new InvalidArgumentException('geometry_result_invalid');
+        }
+
+        return [
+            'quantity_id' => (string) ($interpretation['quantity_id'] ?? ''),
+            'entity_id' => (string) ($interpretation['entity_id'] ?? ''),
+            'formula_id' => $formulaId,
+            'formula_version' => self::FORMULA_VERSION,
+            'operands' => $operands,
+            'value' => $value->isZero() ? '0' : (string) $value->strippedOfTrailingZeros(),
+            'unit' => (string) ($interpretation['output_unit'] ?? ''),
+            'rounding_mode' => 'half_up',
+            'rounding_scale' => $scale,
+            'evidence_ids' => array_values(array_unique($evidence)),
+        ];
+    }
+
+    /** @param array<string,list<BigDecimal>> $values */
+    private function formula(string $formulaId, array $values): BigDecimal
+    {
+        return match ($formulaId) {
+            'floor_area' => $this->single($values, 'length')->multipliedBy($this->single($values, 'width')),
+            'wall_net_area' => $this->wallNetArea($values),
+            'sloped_roof_area' => $this->slopedRoofArea($values),
+            default => throw new InvalidArgumentException('geometry_formula_invalid'),
+        };
+    }
+
+    /** @param array<string,list<BigDecimal>> $values */
+    private function wallNetArea(array $values): BigDecimal
+    {
+        $widths = $values['opening_width'] ?? [];
+        $heights = $values['opening_height'] ?? [];
+        if (count($widths) !== count($heights)) {
+            throw new InvalidArgumentException('geometry_opening_operands_invalid');
+        }
+        $area = $this->single($values, 'wall_length')->multipliedBy($this->single($values, 'wall_height'));
+        foreach ($widths as $index => $width) {
+            $area = $area->minus($width->multipliedBy($heights[$index]));
+        }
+
+        return $area;
+    }
+
+    /** @param array<string,mixed> $interpretation */
+    private function partialOpening(array $interpretation): ?string
+    {
+        if (($interpretation['formula_id'] ?? null) !== 'wall_net_area'
+            || ! is_array($interpretation['operands'] ?? null)) {
+            return null;
+        }
+        $names = array_column($interpretation['operands'], 'name');
+        $widthCount = count(array_filter($names, static fn (mixed $name): bool => $name === 'opening_width'));
+        $heightCount = count(array_filter($names, static fn (mixed $name): bool => $name === 'opening_height'));
+
+        return match (true) {
+            $widthCount > $heightCount => 'opening_height',
+            $heightCount > $widthCount => 'opening_width',
+            default => null,
+        };
+    }
+
+    /** @param array<string,list<BigDecimal>> $values */
+    private function slopedRoofArea(array $values): BigDecimal
+    {
+        $rise = $this->single($values, 'slope_rise');
+        $run = $this->single($values, 'slope_run');
+        if ($run->isZero()) {
+            throw new InvalidArgumentException('geometry_roof_run_invalid');
+        }
+        $slopeLength = $rise->power(2)->plus($run->power(2))->sqrt(12, RoundingMode::HalfUp);
+        $area = $this->single($values, 'plan_area')
+            ->multipliedBy($slopeLength->dividedBy($run, 12, RoundingMode::HalfUp));
+        foreach ($values['roof_opening_area'] ?? [] as $openingArea) {
+            $area = $area->minus($openingArea);
+        }
+
+        return $area;
+    }
+
+    /** @param array<string,list<BigDecimal>> $values */
+    private function single(array $values, string $name): BigDecimal
+    {
+        $items = $values[$name] ?? [];
+        if (count($items) !== 1) {
+            throw new InvalidArgumentException('geometry_operand_invalid');
+        }
+
+        return $items[0];
+    }
+
+    /**
+     * @param  list<array{quantity:array<string,mixed>,page_number:mixed}>  $candidates
+     * @return array{list<array<string,mixed>>,list<array<string,mixed>>,list<array<string,mixed>>}
+     */
+    private function reconcile(array $candidates): array
+    {
+        $groups = [];
+        foreach ($candidates as $candidate) {
+            $groups[$candidate['quantity']['quantity_id']][] = $candidate;
+        }
+        $quantities = [];
+        $conflicts = [];
+        $questions = [];
+        foreach ($groups as $quantityId => $group) {
+            $values = array_values(array_unique(array_column(array_column($group, 'quantity'), 'value')));
+            if (count($values) === 1) {
+                $quantity = $group[0]['quantity'];
+                foreach (array_slice($group, 1) as $candidate) {
+                    $quantity['evidence_ids'] = array_values(array_unique([
+                        ...$quantity['evidence_ids'], ...$candidate['quantity']['evidence_ids'],
+                    ]));
+                }
+                $quantities[] = $quantity;
+
+                continue;
+            }
+            $pages = array_values(array_unique(array_filter(
+                array_column($group, 'page_number'),
+                static fn (mixed $page): bool => is_int($page),
+            )));
+            sort($pages, SORT_NUMERIC);
+            $conflicts[] = [
+                'code' => 'cross_sheet_geometry_conflict',
+                'quantity_id' => $quantityId,
+                'values' => $values,
+                'page_numbers' => $pages,
+            ];
+            $questions[] = [
+                'code' => 'cross_sheet_geometry_conflict',
+                'subject' => $this->text($group[0]['quantity']['formula_id'] === 'floor_area'
+                    ? 'estimate_generation.geometry_expert.cross_sheet.floor_subject'
+                    : 'estimate_generation.geometry_expert.cross_sheet.geometry_subject'),
+                'reason' => $this->text('estimate_generation.geometry_expert.cross_sheet.reason'),
+                'impact' => $this->text('estimate_generation.geometry_expert.cross_sheet.impact'),
+                'recommendation' => $this->text('estimate_generation.geometry_expert.cross_sheet.recommendation'),
+                'choices' => $values,
+                'source_locator' => ['page_numbers' => $pages],
+            ];
+        }
+
+        return [$quantities, $conflicts, $questions];
+    }
+
+    private function text(string $key): string
+    {
+        return ($this->translator)($key);
+    }
+}

@@ -687,6 +687,26 @@ SQL, [
         return $rows->map(fn (object $row): DerivedQuantity => $this->derivedQuantityFromRow($row))->all();
     }
 
+    public function currentDerivedQuantityLogicalIdsByFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $formulaVersion,
+    ): array {
+        return $this->database->table('estimate_generation_project_model_derived_quantity_projections as projection')
+            ->join('estimate_generation_project_model_derived_quantities as quantity', 'quantity.id', '=', 'projection.derived_quantity_id')
+            ->where('projection.organization_id', $organizationId)
+            ->where('projection.project_id', $projectId)
+            ->where('projection.session_id', $sessionId)
+            ->where('projection.source_version', $sourceVersion)
+            ->where('quantity.formula_version', $formulaVersion)
+            ->orderBy('projection.logical_key')
+            ->pluck('projection.logical_key')
+            ->map(static fn (mixed $logicalId): string => (string) $logicalId)
+            ->all();
+    }
+
     public function deactivateDerivedQuantityProjectionScope(
         int $organizationId,
         int $projectId,

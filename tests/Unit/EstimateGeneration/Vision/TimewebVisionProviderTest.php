@@ -301,6 +301,52 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function geometry_expert_call_uses_pinned_model_original_image_and_formula_intent_contract(): void
+    {
+        $intent = [
+            'quantity_id' => 'floor:1:area',
+            'entity_id' => 'floor:1',
+            'formula_id' => 'floor_area',
+            'output_unit' => 'm2',
+            'rounding_scale' => 6,
+            'operands' => [[
+                'name' => 'length', 'value' => '10', 'unit' => 'm',
+                'evidence_id' => 'evidence:601', 'physical_locator' => 'page:17:length',
+            ], [
+                'name' => 'width', 'value' => '8', 'unit' => 'm',
+                'evidence_id' => 'evidence:602', 'physical_locator' => 'page:17:width',
+            ]],
+        ];
+        Http::fake(['*' => Http::response($this->response([
+            'project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'unknown',
+                'facts' => [$intent],
+            ],
+        ]))]);
+
+        $analysis = $this->provider()->analyze($this->input(auxiliaryMetadata: [
+            'geometry_expert' => [
+                'contract' => 'geometry-expert:v1',
+                'source_version' => 'sha256:'.str_repeat('a', 64),
+                'arbitration' => ['fingerprint' => str_repeat('b', 64), 'decisions' => [['claim_id' => 'literal:1']]],
+            ],
+        ]));
+
+        self::assertSame($intent, $analysis->rawObserverFacts[0]);
+        Http::assertSent(static function ($request): bool {
+            $system = (string) $request['messages'][0]['content'];
+            $user = $request['messages'][1]['content'];
+
+            return $request['model'] === 'openai/gpt-5.6-luna'
+                && str_contains($system, 'geometry expert')
+                && str_contains($system, 'BigDecimal')
+                && is_array($user)
+                && ($user[1]['type'] ?? null) === 'image_url';
+        });
+    }
+
+    #[Test]
     public function luna_uses_json_object_mode_and_keeps_local_strict_validation(): void
     {
         $invalid = $this->response();

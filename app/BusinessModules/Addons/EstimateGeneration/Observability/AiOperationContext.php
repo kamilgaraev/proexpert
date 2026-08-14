@@ -37,6 +37,7 @@ final readonly class AiOperationContext
             }
         }
         $valid = ($stage === 'understand_documents' && in_array($operation, ['ocr', 'vision'], true))
+            || ($stage === 'checking_geometry' && $operation === 'vision')
             || ($stage === 'match_normatives' && $operation === 'rerank')
             || ($stage === 'validate_draft' && $operation === 'completeness_review');
         if (! $valid) {

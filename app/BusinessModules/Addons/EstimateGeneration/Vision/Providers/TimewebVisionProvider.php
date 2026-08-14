@@ -66,16 +66,17 @@ final readonly class TimewebVisionProvider implements VisionProvider
         try {
             $observerProfile = $this->observerProfile($input);
             $arbitration = $this->isArbitrationInput($input);
+            $geometryExpert = $this->isGeometryExpertInput($input);
             $model = $this->settingsResolver?->visionModelForOperation(
                 $input->operationContext->correlationId,
                 $input->organizationId,
                 $input->sessionId,
                 null,
             ) ?? VisionModelPolicy::assertSupported($configuredModel);
-            if (($observerProfile !== null || $arbitration) && $model !== VisionModelPolicy::assertSupported($configuredModel)) {
+            if (($observerProfile !== null || $arbitration || $geometryExpert) && $model !== VisionModelPolicy::assertSupported($configuredModel)) {
                 throw new VisionProviderException('vision_observer_model_mismatch');
             }
-            if ($arbitration && ! VisionModelPolicy::isLuna($model)) {
+            if (($arbitration || $geometryExpert) && ! VisionModelPolicy::isLuna($model)) {
                 throw new VisionProviderException('vision_arbitration_model_unsupported');
             }
             $effective = $this->settingsResolver?->forOperation(
@@ -92,25 +93,29 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $modelVersion = VisionModelPolicy::isLuna($model)
                 ? trim((string) config('estimate-generation.vision.model_version', 'timeweb-gpt-5.6-luna-2026-08-13'))
                 : 'timeweb-legacy-vision-2026-07-14';
-            $maxElements = ($observerProfile !== null || $arbitration)
+            $maxElements = ($observerProfile !== null || $arbitration || $geometryExpert)
                 ? min(self::effectiveMaxElements(), 64)
                 : self::effectiveMaxElements();
-            $maxFacts = ($observerProfile !== null || $arbitration) ? min($maxElements, 64) : $maxElements;
-            $contractHash = $arbitration
-                ? 'sha256:'.hash('sha256', self::arbitrationSystemPrompt().'|'.ArbitrationInputBuilder::PROMPT_CONTRACT)
-                : ($observerProfile === null
-                ? self::promptHash(
+            $maxFacts = ($observerProfile !== null || $arbitration || $geometryExpert) ? min($maxElements, 64) : $maxElements;
+            if ($arbitration) {
+                $contractHash = 'sha256:'.hash('sha256', self::arbitrationSystemPrompt().'|'.ArbitrationInputBuilder::PROMPT_CONTRACT);
+            } elseif ($geometryExpert) {
+                $contractHash = 'sha256:'.hash('sha256', self::geometryExpertSystemPrompt().'|geometry-expert:v1');
+            } elseif ($observerProfile === null) {
+                $contractHash = self::promptHash(
                     $maxElements,
                     $maxFacts,
                     $input->sheetRole,
-                )
-                : hash('sha256', implode('|', [
+                );
+            } else {
+                $contractHash = hash('sha256', implode('|', [
                     self::PROMPT_VERSION,
                     self::promptHash($maxElements, $maxFacts, 'unknown'),
                     $observerProfile->promptContractVersion(),
                     $observerProfile->promptHash(),
                     $observerProfile->composition(),
-                ])));
+                ]));
+            }
             if ((string) config('estimate-generation.vision.provider', '') !== self::PROVIDER
                 || $apiKey === '' || $baseUri === '' || $model === '' || $modelVersion === ''
                 || preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $model) !== 1) {
@@ -710,10 +715,13 @@ final readonly class TimewebVisionProvider implements VisionProvider
     {
         $observerProfile = $this->observerProfile($input);
         $arbitration = $this->isArbitrationInput($input);
+        $geometryExpert = $this->isGeometryExpertInput($input);
         $content = [
             ['type' => 'text', 'text' => json_encode([
                 'instruction' => 'Analyze the construction drawing as visual evidence and return the exact JSON contract.',
-                'contract_version' => $arbitration ? ArbitrationInputBuilder::PROMPT_CONTRACT : ($observerProfile?->promptContractVersion() ?? self::PROMPT_VERSION),
+                'contract_version' => $arbitration
+                    ? ArbitrationInputBuilder::PROMPT_CONTRACT
+                    : ($geometryExpert ? 'geometry-expert:v1' : ($observerProfile?->promptContractVersion() ?? self::PROMPT_VERSION)),
                 'contract_sha256' => $contractHash,
                 'evidence_locator' => [
                     'page_id' => $input->pageId,
@@ -743,9 +751,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'messages' => [
                 ['role' => 'system', 'content' => $arbitration
                     ? self::arbitrationSystemPrompt()
-                    : ($observerProfile === null
+                    : ($geometryExpert
+                        ? self::geometryExpertSystemPrompt()
+                        : ($observerProfile === null
                         ? self::systemPrompt($maxElements, $maxFacts, $input->sheetRole)
-                        : self::observerSystemPrompt($observerProfile, $maxElements, $maxFacts))],
+                        : self::observerSystemPrompt($observerProfile, $maxElements, $maxFacts)))],
                 ['role' => 'user', 'content' => $content],
             ],
             'max_tokens' => $this->maxOutputTokens($input),
@@ -790,6 +800,19 @@ final readonly class TimewebVisionProvider implements VisionProvider
         ]);
     }
 
+    private static function geometryExpertSystemPrompt(): string
+    {
+        return implode("\n", [
+            'You are the independent geometry expert for a construction estimate.',
+            'Inspect the original image and the arbitrated facts in auxiliary_metadata.geometry_expert.arbitration.',
+            'Interpret dimension chains, scales, areas, openings, roof slopes and cross-sheet identities. AI selects semantic operands and formula IDs; deterministic BigDecimal code performs every arithmetic operation.',
+            'Return the normal vision schema_version 3 envelope with exact page evidence. Put geometry intents only in project_sheet_analysis.facts and use role unknown.',
+            'Each intent has exactly quantity_id, entity_id, formula_id, output_unit, rounding_scale and operands.',
+            'formula_id is floor_area, wall_net_area or sloped_roof_area. Each operand has exactly name, fact_id, projection_version, decimal string value, unit, evidence_id and physical_locator. fact_id and projection_version must bind the current arbitrated fact used as that operand.',
+            'Never return prices, monetary values, computed totals, unsupported dimensions or duplicate physical locators.',
+        ]);
+    }
+
     private function isArbitrationInput(VisionDocumentInput $input): bool
     {
         $metadata = $input->auxiliaryMetadata['arbitration'] ?? null;
@@ -805,6 +828,27 @@ final readonly class TimewebVisionProvider implements VisionProvider
             || $metadata['claims'] === []
             || count($metadata['claims']) > 192) {
             throw new VisionProviderException('vision_arbitration_contract_invalid');
+        }
+
+        return true;
+    }
+
+    private function isGeometryExpertInput(VisionDocumentInput $input): bool
+    {
+        $metadata = $input->auxiliaryMetadata['geometry_expert'] ?? null;
+        if ($metadata === null) {
+            return false;
+        }
+        $arbitration = is_array($metadata) ? ($metadata['arbitration'] ?? null) : null;
+        if (! is_array($metadata)
+            || ($metadata['contract'] ?? null) !== 'geometry-expert:v1'
+            || ($metadata['source_version'] ?? null) !== $input->sourceVersion
+            || ! is_array($arbitration)
+            || preg_match('/^[a-f0-9]{64}$/D', (string) ($arbitration['fingerprint'] ?? '')) !== 1
+            || ! is_array($arbitration['decisions'] ?? null)
+            || ! array_is_list($arbitration['decisions'])
+            || count($arbitration['decisions']) > 192) {
+            throw new VisionProviderException('vision_geometry_expert_contract_invalid');
         }
 
         return true;
