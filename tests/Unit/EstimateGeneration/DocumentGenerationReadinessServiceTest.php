@@ -7,6 +7,7 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOperationStore;
@@ -209,6 +210,30 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertTrue($resolved['can_generate']);
     }
 
+    public function test_canonical_question_decision_unlocks_generation_without_rewriting_document_analysis(): void
+    {
+        $document = $this->qualitySignalDocument([]);
+        $document->forceFill([
+            'organization_id' => 10,
+            'project_id' => 20,
+            'session_id' => 40,
+            'facts_summary' => [
+                ...$document->facts_summary,
+                'ai_question_count' => 1,
+                'questions' => [['code' => 'wall_material_required']],
+            ],
+        ]);
+        $registry = new FixedEstimateClarificationAnswerRegistry(['wall_material_required']);
+
+        $summary = (new DocumentGenerationReadinessService(null, null, null, $registry))
+            ->summary(new Collection([$document]));
+
+        self::assertSame(0, $summary['ai_question_count']);
+        self::assertSame(0, $summary['items'][0]['ai_question_count']);
+        self::assertTrue($summary['can_generate']);
+        self::assertSame(1, $document->facts_summary['ai_question_count']);
+    }
+
     public function test_ready_document_without_understanding_role_blocks_generation(): void
     {
         $document = new EstimateGenerationDocument;
@@ -375,5 +400,16 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
             'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot),
             'snapshot' => $snapshot,
         ], 17);
+    }
+}
+
+final readonly class FixedEstimateClarificationAnswerRegistry implements EstimateClarificationAnswerRegistry
+{
+    /** @param list<string> $keys */
+    public function __construct(private array $keys) {}
+
+    public function answeredKeys(int $organizationId, int $projectId, int $sessionId): array
+    {
+        return $this->keys;
     }
 }

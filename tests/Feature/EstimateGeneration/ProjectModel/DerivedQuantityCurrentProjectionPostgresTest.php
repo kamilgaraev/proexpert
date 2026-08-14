@@ -43,7 +43,11 @@ final class DerivedQuantityCurrentProjectionPostgresTest extends TestCase
     public function production_schema_has_a_scoped_current_derived_quantity_projection(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
-        self::assertSame('most_backend_testing', DB::getDatabaseName());
+        self::assertTrue(
+            DB::getDatabaseName() === 'most_backend_testing'
+                || (DB::getDatabaseName() === 'most_ai_estimator_contract'
+                    && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
+        );
         if (! Schema::hasColumn('estimate_generation_sessions', 'state_version')) {
             DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN state_version bigint NOT NULL DEFAULT 0');
         }
@@ -52,8 +56,6 @@ final class DerivedQuantityCurrentProjectionPostgresTest extends TestCase
                 $partial = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000200_create_estimate_generation_project_model_tables.php';
                 $partial->down();
             }
-            DB::statement('CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS eg_building_models_projection_scope_uq ON estimate_generation_building_models (id, organization_id, project_id, session_id, content_version)');
-            DB::statement('CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS eg_building_model_evidence_projection_scope_uq ON estimate_generation_building_model_evidence (building_model_id, evidence_id, organization_id, project_id, session_id)');
             foreach ([
                 '2026_08_01_000200_create_estimate_generation_project_model_tables.php',
                 '2026_08_10_000600_consolidate_estimate_project_model_v2.php',

@@ -4,14 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Planning;
 
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedWorkPlannerResponseData;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlannerResponseData;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
@@ -21,66 +17,6 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkPlanCompilerTest extends TestCase
 {
-    public function test_signed_residential_work_is_owned_by_its_canonical_package_only(): void
-    {
-        $decomposition = $this->createMock(EstimateDecompositionService::class);
-        $decomposition->method('decomposePackagePlan')->willReturn([
-            [
-                'key' => 'electrical', 'title' => 'Электрика', 'scope_type' => 'electrical',
-                'sections' => [['key' => 'electrical', 'title' => 'Электрика', 'source_refs' => []]],
-            ],
-            [
-                'key' => 'lighting', 'title' => 'Освещение', 'scope_type' => 'electrical',
-                'sections' => [['key' => 'lighting', 'title' => 'Освещение', 'source_refs' => []]],
-            ],
-        ]);
-        $quantity = new QuantityData(
-            key: 'lighting.lines',
-            unit: 'm',
-            amount: '154.240000',
-            formulaKey: 'residential_preliminary.lighting.lines',
-            formulaVersion: ResidentialQuantityScenarioCatalog::VERSION,
-            formulaInputs: ['scenario' => [
-                'id' => ResidentialQuantityScenarioCatalog::SCENARIO_ID,
-                'version' => ResidentialQuantityScenarioCatalog::VERSION,
-                'confidence' => 0.62,
-                'warnings' => ['preliminary_quantity_scenario'],
-            ]],
-            source: QuantitySource::Estimated,
-            evidenceIds: ['room:1'],
-            modelVersion: 'building-model:v1',
-            assumptions: [ResidentialQuantityScenarioCatalog::SCENARIO_ID],
-        );
-        $analysis = [
-            'object' => ['object_type' => 'house', 'area' => 192.8],
-            'document_context' => ['canonical_building_quantities' => [$quantity->toArray()]],
-            'planning_signals' => ['generation_mode' => 'ai_assisted'],
-        ];
-        $compiler = new WorkPlanCompiler(
-            new PackagePlannerService,
-            $decomposition,
-            new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
-            new NormativeContextPinResolver,
-        );
-
-        $compiled = $compiler->compile($analysis, deferNormativePin: true);
-        $packages = array_column($compiled['local_estimates'], null, 'key');
-        $electricalItems = $packages['electrical']['sections'][0]['work_items'];
-        $lightingItems = $packages['lighting']['sections'][0]['work_items'];
-
-        self::assertNotContains('lighting.lines', array_column($electricalItems, 'quantity_formula'));
-        self::assertSame(['lighting.lines'], array_column($lightingItems, 'quantity_formula'));
-        $lightingLine = current(array_filter(
-            $lightingItems,
-            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'lighting.lines',
-        ));
-        $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
-            ->issue('lighting.lines', 'residential');
-
-        self::assertIsArray($scenario);
-        self::assertSame($scenario, $lightingLine['specialization_scenario'] ?? null);
-    }
-
     public function test_quantity_coverage_warnings_are_attached_only_to_the_affected_packages(): void
     {
         $analysis = $this->analysis();
@@ -183,28 +119,26 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame(hash('sha256', json_encode($expected, JSON_THROW_ON_ERROR)), hash('sha256', json_encode($actual, JSON_THROW_ON_ERROR)));
     }
 
-    public function test_recorded_response_supplies_semantic_intents_without_final_norms_or_prices(): void
+    public function test_model_response_supplies_semantic_intents_without_final_norms_or_prices(): void
     {
-        $source = RecordedWorkPlannerResponseData::fromProviderArray([
-            'schema_version' => 'work-planner-v1',
-            'sections' => [[
-                'section_key' => 'foundation-section-1',
-                'title' => 'Фундамент',
-                'scope_type' => 'foundation',
-                'source_refs' => ['quantity:q1'],
-                'work_intents' => [[
-                    'intent_key' => 'foundation.concrete',
-                    'name' => 'Устройство монолитного фундамента',
-                    'category' => 'foundation',
-                    'unit' => 'm3',
-                    'quantity' => '12.5',
-                    'quantity_key' => 'concrete_volume', 'quantity_source_refs' => ['quantity:q1'],
-                    'confidence' => 0.91,
-                    'work_intent' => ['material' => 'concrete', 'action' => 'concreting', 'scope' => 'foundation',
-                        'object' => 'foundation', 'dimensions' => ['volume'], 'preferred_section_prefixes' => ['06']],
-                ]],
+        $source = new WorkPlannerResponseData([[
+            'section_key' => 'foundation-section-1',
+            'title' => 'Фундамент',
+            'scope_type' => 'foundation',
+            'source_refs' => ['quantity:q1'],
+            'work_intents' => [[
+                'intent_key' => 'foundation.concrete',
+                'name' => 'Устройство монолитного фундамента',
+                'category' => 'foundation',
+                'unit' => 'm3',
+                'quantity' => '12.5',
+                'quantity_key' => 'concrete_volume', 'quantity_source_refs' => ['quantity:q1'],
+                'confidence' => 0.91,
+                'work_intent' => ['material' => 'concrete', 'action' => 'concreting', 'scope' => 'foundation',
+                    'object' => 'foundation', 'dimensions' => ['volume'], 'preferred_section_prefixes' => ['06']],
             ]],
-        ])->toWorkPlannerResponse();
+        ]],
+        );
 
         $payload = $this->compiler()->compile($this->analysis(), $source);
         $items = array_merge(...array_map(static fn (array $estimate): array => array_merge(...array_column($estimate['sections'], 'work_items')), $payload['local_estimates']));
@@ -218,7 +152,7 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertArrayNotHasKey('norm_id', $item);
     }
 
-    public function test_recorded_intent_keeps_the_catalog_signed_scenario_for_later_normative_matching(): void
+    public function test_model_intent_keeps_the_catalog_signed_scenario_for_later_normative_matching(): void
     {
         $decomposition = $this->createMock(EstimateDecompositionService::class);
         $decomposition->method('decomposePackagePlan')->willReturn([[

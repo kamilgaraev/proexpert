@@ -35,16 +35,16 @@ final readonly class CurrentBaselineBenchmarkAdapter implements BenchmarkPipelin
         }
         $geometry = $this->drawing->analyze(0, $case->id.'.pdf', $recognition);
         if ($geometry['review_reasons'] !== []) {
-            return BenchmarkPipelineResultData::technicalFailure('normalized_building_model_required');
+            return BenchmarkPipelineResultData::technicalFailure('canonical_observations_required');
         }
         $analysis = new DrawingAnalysisResultData([], array_map(static fn (array $quantity): array => [
             'scope_key' => $quantity['key'], 'name' => $quantity['key'],
             'quantity' => $quantity['amount'], 'source_refs' => $quantity['evidence_ids'],
-        ], $geometry['quantities']), ['document_profile' => ['document_role' => 'normalized_building_model']]);
+        ], $geometry['quantities']), ['document_profile' => ['document_role' => 'canonical_observations']]);
 
         return BenchmarkPipelineResultData::success(
             $this->prediction($analysis),
-            ['drawing' => 'normalized-building-model:v1', 'pdf_text' => 'smalot-pdfparser:2.11'],
+            ['drawing' => 'canonical-observations:v1', 'pdf_text' => 'smalot-pdfparser:2.11'],
             null,
             null,
         );

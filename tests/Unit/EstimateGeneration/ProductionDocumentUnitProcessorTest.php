@@ -692,7 +692,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         $root = dirname(__DIR__, 3);
         $provider = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/EstimateGenerationServiceProvider.php');
         self::assertStringContainsString('DocumentUnitProcessor::class, ProductionDocumentUnitProcessor::class', $provider);
-        $recording = json_decode(file_get_contents($root.'/tests/Fixtures/EstimateGeneration/benchmarks/recordings/vector-pdf-001-geometry.json'), true, 512, JSON_THROW_ON_ERROR);
+        $recording = json_decode(file_get_contents($root.'/tests/Fixtures/EstimateGeneration/document-processing/vector-pdf-geometry.json'), true, 512, JSON_THROW_ON_ERROR);
         $geometry = VectorGeometryData::fromArray($recording['payload']);
         $files = $this->createMock(FileService::class);
         $cad = new class($geometry) implements CadGeometryProvider
@@ -753,7 +753,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
     {
         $root = dirname(__DIR__, 3);
         $recording = json_decode((string) file_get_contents(
-            $root.'/tests/Fixtures/EstimateGeneration/benchmarks/recordings/vector-pdf-001-geometry.json',
+            $root.'/tests/Fixtures/EstimateGeneration/document-processing/vector-pdf-geometry.json',
         ), true, 512, JSON_THROW_ON_ERROR);
         $geometry = VectorGeometryData::fromArray($recording['payload']);
         $files = $this->getMockBuilder(FileService::class)->disableOriginalConstructor()->onlyMethods(['putImmutable'])->getMock();

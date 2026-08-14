@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
@@ -12,12 +14,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineLeaseHeartbea
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
-use App\BusinessModules\Addons\EstimateGeneration\Planning\AiResidentialWorkCompositionAdvisor;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CanonicalTechnologyWorkItemPlanner;
-use App\BusinessModules\Addons\EstimateGeneration\Planning\ResidentialWorkPlanReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialScopeDecisionQuantityMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver;
 use Illuminate\Support\Facades\Log;
 
@@ -29,10 +28,10 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private WorkPlanCompiler $compiler,
         private StageResultFactory $results,
         private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
-        private AiResidentialWorkCompositionAdvisor $compositionAdvisor,
+        private RunEstimateComposer $composer,
+        private EstimateComposerInputFactory $composerInputs,
+        private EstimateCompositionProjector $compositionProjector = new EstimateCompositionProjector,
         private WorkItemQuantityResolver $quantityResolver = new WorkItemQuantityResolver,
-        private ResidentialWorkPlanReconciler $compositionReconciler = new ResidentialWorkPlanReconciler,
-        private ResidentialScopeDecisionQuantityMaterializer $scopeDecisionQuantities = new ResidentialScopeDecisionQuantityMaterializer,
         private CanonicalTechnologyWorkItemPlanner $technologyWorkItems = new CanonicalTechnologyWorkItemPlanner,
     ) {}
 
@@ -90,28 +89,9 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 array_values($quantities),
             );
         }
-        $baselinePayload = $this->compiler->compile($analysis, null, true);
+        $payload = $this->compiler->compile($analysis, null, true);
         $this->logProgress($context, 'baseline_compiled');
         $this->renewAfterProgress($heartbeat);
-        $advice = $this->compositionAdvisor->advise($analysis, $baselinePayload, $context);
-        $this->logProgress($context, 'composition_advised');
-        $this->renewAfterProgress($heartbeat);
-        [$analysis, $quantities] = $this->materializeScopeDecisionQuantities(
-            $analysis,
-            $quantities,
-            $advice->scopeDecisions,
-        );
-        if ($advice->scopeDecisions !== []) {
-            $analysis['residential_scope_decisions'] = $advice->scopeDecisions;
-        }
-        if ($quantities !== []) {
-            $analysis['document_context']['canonical_building_quantities'] = array_map(
-                static fn (QuantityData $quantity): array => $quantity->toArray(),
-                array_values($quantities),
-            );
-        }
-        $payload = $this->compiler->compile($analysis, null, true);
-        $payload = $this->compositionReconciler->reconcile($payload, $advice, $baselinePayload);
         $stageFiveItems = $this->technologyWorkItems->planPackages(
             is_array($stage6Context['work_packages'] ?? null) ? $stage6Context['work_packages'] : [],
         );
@@ -120,6 +100,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 'key' => 'stage5-technology-packages',
                 'title' => trans_message('estimate_generation.stage6.technology_packages_title'),
                 'scope_type' => 'technology',
+                'source_refs' => $this->sourceRefs($stageFiveItems),
                 'sections' => [[
                     'key' => 'stage5-technology-packages',
                     'title' => trans_message('estimate_generation.stage6.technology_packages_section'),
@@ -127,7 +108,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 ]],
             ];
         }
-        $this->logProgress($context, 'composition_reconciled');
+        $this->logProgress($context, 'deterministic_candidates_planned');
         $this->renewAfterProgress($heartbeat);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
@@ -145,6 +126,33 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             }
         }
         $this->logProgress($context, 'quantity_evidence_materialized');
+        $this->renewAfterProgress($heartbeat);
+        $candidates = $this->compositionProjector->candidates($payload['local_estimates']);
+        $composerInput = $this->composerInputs->capture(
+            $context->organizationId,
+            $context->projectId,
+            $context->sessionId,
+            $candidates,
+            array_map(
+                static fn (QuantityData $quantity): array => $quantity->toArray(),
+                array_values($quantities),
+            ),
+            $this->missingDocuments($coverageWarnings, $stage6Context),
+        );
+        $intents = $this->composer->run($composerInput);
+        $payload['local_estimates'] = $this->compositionProjector->apply(
+            $payload['local_estimates'],
+            $intents,
+            $composerInput->derivedQuantities,
+        );
+        $payload['estimate_composition'] = [
+            'schema_version' => 1,
+            'snapshot_token' => $composerInput->snapshotToken,
+            'input_fingerprint' => $composerInput->fingerprint(),
+            'intents_count' => count($intents),
+            'derived_quantities' => $composerInput->derivedQuantities,
+        ];
+        $this->logProgress($context, 'estimate_composed');
         $this->renewAfterProgress($heartbeat);
         $regionalContext = is_array($payload['regional_context'] ?? null) ? $payload['regional_context'] : [];
         $pinStartedAt = microtime(true);
@@ -185,9 +193,8 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             Log::info('estimate_generation.quantity_evidence_plan_outcomes', [
                 'session_id' => $context->sessionId,
                 'project_id' => $context->projectId,
-                'composition_advice_status' => $advice->status,
-                'composition_advice_model' => $advice->model,
-                'composition_advice_decisions_count' => count($advice->decisions),
+                'composition_snapshot_token' => $composerInput->snapshotToken,
+                'composition_intents_count' => count($intents),
                 ...$this->quantityEvidenceSummary($payload['local_estimates']),
             ]);
         }
@@ -204,45 +211,45 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
     }
 
-    /**
-     * @param  array<string, QuantityData>  $quantities
-     * @param  array<string, array<string, mixed>>  $scopeDecisions
-     * @return array{array<string, mixed>, array<string, QuantityData>}
-     */
-    private function materializeScopeDecisionQuantities(
-        array $analysis,
-        array $quantities,
-        array $scopeDecisions,
-    ): array {
-        $normalized = $analysis['normalized_building_model'] ?? null;
-        if ($scopeDecisions === [] || ! is_array($normalized)) {
-            return [$analysis, $quantities];
+    /** @return list<array{code:string,source_fact_ids:list<string>}> */
+    private function missingDocuments(array $coverageWarnings, array $stage6Context): array
+    {
+        $documents = [];
+        foreach ($coverageWarnings as $warning) {
+            if (! is_array($warning)) {
+                continue;
+            }
+            $code = $warning['reason_code'] ?? $warning['code'] ?? $warning['quantity_key'] ?? null;
+            if (! is_string($code) || preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/D', $code) !== 1) {
+                continue;
+            }
+            $sourceFactIds = is_array($warning['source_fact_ids'] ?? null)
+                ? array_values(array_unique(array_filter($warning['source_fact_ids'], 'is_string')))
+                : [];
+            $documents[$code.'|'.implode(',', $sourceFactIds)] = [
+                'code' => $code,
+                'source_fact_ids' => array_slice($sourceFactIds, 0, 256),
+            ];
+        }
+        $packages = is_array($stage6Context['work_packages'] ?? null) ? $stage6Context['work_packages'] : [];
+        foreach ($packages as $package) {
+            if (! is_array($package) || ! in_array($package['status'] ?? null, ['unknown', 'proven_missing'], true)) {
+                continue;
+            }
+            $code = is_string($package['id'] ?? null) ? $package['id'] : null;
+            if ($code === null || preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/D', $code) !== 1) {
+                continue;
+            }
+            $sourceFactIds = is_array($package['evidence_fact_ids'] ?? null)
+                ? array_values(array_unique(array_filter($package['evidence_fact_ids'], 'is_string')))
+                : [];
+            $documents[$code.'|'.implode(',', $sourceFactIds)] = [
+                'code' => $code,
+                'source_fact_ids' => array_slice($sourceFactIds, 0, 256),
+            ];
         }
 
-        $materialized = $this->scopeDecisionQuantities->materialize(
-            $scopeDecisions,
-            $quantities['floor_area'] ?? null,
-            NormalizedBuildingModelData::fromArray($normalized),
-            $quantities,
-        );
-        if ($materialized === []) {
-            return [$analysis, $quantities];
-        }
-
-        foreach ($materialized as $key => $quantity) {
-            $quantities[$key] = $quantity;
-        }
-        $resolvedKeys = array_fill_keys(array_keys($materialized), true);
-        $warnings = is_array($analysis['document_context']['quantity_coverage_warnings'] ?? null)
-            ? $analysis['document_context']['quantity_coverage_warnings']
-            : [];
-        $analysis['document_context']['quantity_coverage_warnings'] = array_values(array_filter(
-            $warnings,
-            static fn (mixed $warning): bool => ! is_array($warning)
-                || ! isset($resolvedKeys[(string) ($warning['quantity_key'] ?? '')]),
-        ));
-
-        return [$analysis, $quantities];
+        return array_slice(array_values($documents), 0, 200);
     }
 
     private function attachCanonicalQuantity(
@@ -290,6 +297,26 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
 
         return $workItem;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $items
+     * @return list<array<string, mixed>>
+     */
+    private function sourceRefs(array $items): array
+    {
+        $refs = [];
+        foreach ($items as $item) {
+            foreach (is_array($item['source_refs'] ?? null) ? $item['source_refs'] : [] as $ref) {
+                if (! is_array($ref)) {
+                    continue;
+                }
+                $refs[hash('sha256', json_encode($ref, JSON_THROW_ON_ERROR))] = $ref;
+            }
+        }
+        ksort($refs);
+
+        return array_values($refs);
     }
 
     private function quantityEvidenceSummary(array $localEstimates): array

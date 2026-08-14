@@ -16,9 +16,7 @@ final class WorkItemQuantityMapper
         $direct = $this->quantity($quantities[$workItemKey] ?? null);
         if ($direct !== null) {
             if (DirectTakeoffRequiredWorkItems::contains($workItemKey)
-                && $direct->source === QuantitySource::Estimated
-                && ! ResidentialQuantityScenarioCatalog::owns($direct)
-                && ! ResidentialScopeDecisionQuantityMaterializer::owns($direct)) {
+                && $direct->source === QuantitySource::Estimated) {
                 return null;
             }
 

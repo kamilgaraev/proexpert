@@ -24,7 +24,12 @@ final readonly class PreviewEstimateChange
             'command' => $command,
             'context_fingerprint' => $interpretation->payload['context_fingerprint'] ?? null,
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
-        $existing = $this->proposals->findByIdempotency((int) $session->organization_id, (int) $session->id, $idempotencyKey);
+        $existing = $this->proposals->findByIdempotency(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->id,
+            $idempotencyKey,
+        );
         if ($existing !== null) {
             if (! hash_equals((string) $existing->payload['payload_fingerprint'], $fingerprint)) {
                 throw new RuntimeException('estimate_generation.proposal_idempotency_collision');
@@ -68,7 +73,12 @@ final readonly class PreviewEstimateChange
         try {
             return DB::transaction(fn (): EstimateChangeProposal => $this->proposals->create($proposal, $affected), 3);
         } catch (QueryException $exception) {
-            $winner = $this->proposals->findByIdempotency((int) $session->organization_id, (int) $session->id, $idempotencyKey);
+            $winner = $this->proposals->findByIdempotency(
+                (int) $session->organization_id,
+                (int) $session->project_id,
+                (int) $session->id,
+                $idempotencyKey,
+            );
             if ($winner !== null && hash_equals((string) $winner->payload['payload_fingerprint'], $fingerprint)) {
                 return $winner;
             }

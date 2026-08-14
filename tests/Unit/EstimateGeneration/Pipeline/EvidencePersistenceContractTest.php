@@ -64,7 +64,7 @@ final class EvidencePersistenceContractTest extends TestCase
         self::assertStringContainsString('DocumentSourceReplacementCoordinator', $source);
         self::assertStringContainsString('$previousSourceVersion', $source);
         self::assertStringContainsString('replacement->commit(', $source);
-        self::assertStringNotContainsString('DB::transaction(', $source);
+        self::assertSame(2, substr_count($source, '$this->replacement->commit('));
     }
 
     private function path(string $relative): string

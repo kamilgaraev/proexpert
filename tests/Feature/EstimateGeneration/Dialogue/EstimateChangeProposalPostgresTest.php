@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration\Dialogue;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\ApplyEstimateChangeProposal;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CanonicalEstimateCommandProposalResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeSimulation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandContextBuilder;
@@ -12,10 +13,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateC
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpreter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalMutationExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalVersionFence;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateUndoInterpretationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\PreviewEstimateChange;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ApplyProjectModelDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
@@ -27,6 +30,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateChangeProposalRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateInterpretationAttemptRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ProjectModelEstimateClarificationAnswerRegistry;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -108,6 +112,10 @@ final class EstimateChangeProposalPostgresTest extends TestCase
         self::assertNotNull($firstPage['next_cursor']);
         self::assertSame(4, $firstPage['items'][0]['locator']['page']);
         self::assertSame(1205, DB::table('estimate_change_proposal_items')->where('proposal_id', $id)->count());
+        $history = $repository->history($scope, $scope, $scope, 1, null);
+        self::assertSame($id, $history['items'][0]->id());
+        self::assertNull($history['next_cursor']);
+        self::assertSame([], $repository->history($scope + 1, $scope, $scope, 10, null)['items']);
 
         try {
             $repository->find($id, $scope + 1, $scope, $scope);
@@ -155,6 +163,177 @@ final class EstimateChangeProposalPostgresTest extends TestCase
             self::assertStringContainsString('Index', implode(' ', array_map(fn ($row): string => (string) $row->{'QUERY PLAN'}, $currentPlan)));
             self::assertMatchesRegularExpression('/PostgreSQL 16\./', (string) DB::scalar('select version()'));
         }
+    }
+
+    public function test_clarification_answer_is_one_idempotent_user_decision_in_real_postgres(): void
+    {
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $actor->id,
+            'status' => 'ready_to_generate',
+            'processing_stage' => 'analysis',
+            'processing_progress' => 50,
+            'input_payload' => [],
+            'analysis_payload' => [],
+            'draft_payload' => [],
+            'problem_flags' => [],
+            'state_version' => 1,
+        ]);
+        $sourceVersion = 'sha256:'.hash('sha256', 'clarification-source');
+        $models = app(EloquentProjectModelRepository::class);
+        $models->saveSourceModel(
+            [new Entity(
+                'wall:clarification',
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->id,
+                $sourceVersion,
+                'wall',
+                'wall:clarification',
+                ['start' => [0, 0], 'end' => [1, 0]],
+            )],
+            [new Fact(
+                'fact:clarification:wall-material',
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->id,
+                $sourceVersion,
+                'wall:clarification',
+                'wall_material',
+                null,
+                null,
+                0.0,
+                'unresolved',
+                'unresolved',
+                [],
+            )],
+            [],
+        );
+        $decisions = new ApplyProjectModelDecision($models);
+        $arguments = [
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+            $sourceVersion,
+            'fact:clarification:wall-material',
+            'wall_material_required',
+            'selected',
+            'select:gas-concrete',
+            'Газобетон',
+            null,
+            hash('sha256', 'question-fingerprint'),
+            ['document_id' => 7, 'page_number' => 4],
+            (string) $actor->id,
+            'Выбран материал по основной спецификации',
+            'decision:clarification:'.hash('sha256', 'answer-request'),
+        ];
+
+        $first = $decisions->applyClarificationChoice(...$arguments);
+        $second = $decisions->applyClarificationChoice(...$arguments);
+
+        self::assertSame($first->id, $second->id);
+        self::assertSame(1, DB::table('estimate_generation_project_model_corrections')
+            ->where('stable_key', $first->id)
+            ->count());
+        $registry = new ProjectModelEstimateClarificationAnswerRegistry($models, 100);
+        self::assertSame(
+            ['wall_material_required'],
+            $registry->answeredKeys((int) $organization->id, (int) $project->id, (int) $session->id),
+        );
+        self::assertSame([], $registry->answeredKeys(
+            (int) $organization->id,
+            (int) $project->id + 1,
+            (int) $session->id,
+        ));
+    }
+
+    public function test_applied_fact_change_builds_undo_against_the_new_current_fact_projection(): void
+    {
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $actor->id,
+            'status' => 'ready_to_generate',
+            'processing_stage' => 'analysis',
+            'processing_progress' => 50,
+            'input_payload' => [],
+            'analysis_payload' => [],
+            'draft_payload' => [],
+            'problem_flags' => [],
+            'state_version' => 1,
+        ]);
+        $sourceVersion = 'sha256:'.hash('sha256', 'undo-current-projection');
+        $models = app(EloquentProjectModelRepository::class);
+        $entityId = 'entity:undo:area';
+        $originalFactId = 'fact:undo:area:v1';
+        $models->saveSourceModel(
+            [new Entity(
+                $entityId,
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->id,
+                $sourceVersion,
+                'quantity',
+                $entityId,
+                ['value' => 42.5, 'unit' => 'm2'],
+            )],
+            [new Fact(
+                $originalFactId,
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->id,
+                $sourceVersion,
+                $entityId,
+                'area',
+                '42.5000',
+                'm2',
+                1.0,
+                'user_assumption',
+                'confirmed',
+                [],
+            )],
+            [],
+        );
+        (new ApplyProjectModelDecision($models))->apply(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+            $sourceVersion,
+            $originalFactId,
+            '50.0000',
+            'm2',
+            (string) $actor->id,
+            'Подтверждённое изменение площади',
+            'decision:undo:'.hash('sha256', 'apply'),
+        );
+        $context = (new EstimateCommandContextBuilder($models))->build($session->fresh());
+        $currentFactId = $context['facts'][0]['stable_key'];
+        self::assertNotSame($originalFactId, $currentFactId);
+        $original = new EstimateChangeProposal([
+            'id' => 'proposal:undo:'.hash('sha256', 'original'),
+            'status' => 'applied',
+            'intent' => 'correct_fact',
+            'before_payload' => [
+                'stable_key' => $originalFactId,
+                'entity_id' => $entityId,
+                'type' => 'area',
+                'value' => '42.5000',
+                'unit' => 'm2',
+            ],
+        ]);
+        $inverse = (new EstimateUndoInterpretationFactory)->make($original, $context);
+        $resolved = (new CanonicalEstimateCommandProposalResolver)->resolve($inverse, $context);
+
+        self::assertSame($currentFactId, $resolved->payload['target_key']);
+        self::assertSame('42.5000', $resolved->payload['after']['value']['value']);
+        self::assertSame($context['facts'][0]['value_fingerprint'], $resolved->payload['after']['value_fingerprint']);
     }
 
     public function test_apply_is_atomic_idempotent_version_fenced_and_marks_stale_expired_or_failed(): void

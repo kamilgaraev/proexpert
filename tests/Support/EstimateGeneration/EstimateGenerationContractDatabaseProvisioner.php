@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '15188f630c48197a18659725d9f8d493acf44147894659812a3e21065bfabf3e',
-        'training' => '4a167aa891c13d44b15e73e96deeb2b4b68cf6f773dab692870b6218fd419374',
-        'pricing' => '4a167aa891c13d44b15e73e96deeb2b4b68cf6f773dab692870b6218fd419374',
+        'geometry' => '03b346dacce34ac2fba712f90292c3df3eb60c905e832c2a0a8e76b71fedded0',
+        'training' => 'cc0fcc720ff70e7a326a5e241b176f990637a67671183f3b6f761f12c958912f',
+        'pricing' => 'cc0fcc720ff70e7a326a5e241b176f990637a67671183f3b6f761f12c958912f',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '28b1b798e18a64c87125bbb64fb910ec3ef975d5b7bd5aad2b10f931c0308fd3';
+    private const FRESH_INVENTORY_DIGEST = '8efbc0309475b325e2569754f56fc2477932b67347869b6aebcc500f9c10d249';
 
     private const SUBJECT = [
         'geometry' => [
@@ -191,6 +191,11 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_12_000100_add_derived_quantity_current_projection.php',
         'database/migrations/2026_08_12_000002_create_estimate_change_proposals.php',
         'database/migrations/2026_08_12_000003_add_interpretation_attempts_and_cost_state.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000100_create_estimate_generation_ai_role_runs.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000100_extend_ai_usage_for_multi_agent_roles.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000200_detach_project_model_from_building_model.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000800_extend_ai_usage_for_composer_corrections.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000900_remove_obsolete_estimate_generation_review_contours.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

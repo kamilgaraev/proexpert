@@ -47,7 +47,6 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
                 : trans_message('estimate_generation.draft_default_title'),
             'generation_mode' => $plan['generation_mode'],
             'source_input_version' => $source['base_input_version'],
-            'building_model' => Arr::get($analysis, 'normalized_building_model', []),
             'building_quantities' => $quantities,
             'document_requirements' => $plan['document_requirements'],
             'object_profile' => $plan['object_profile'],

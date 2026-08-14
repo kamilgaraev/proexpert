@@ -79,9 +79,24 @@ final class PipelineNineInvocationE2ETest extends TestCase
                 'quantity_learning_hints' => [],
                 'quantity_coverage_warnings' => [],
                 'building_quantities' => [],
+                'stage6_generation_context' => [],
             ],
-            ProcessingStage::PlanWorkItems => ['object_profile' => [], 'package_plan' => [], 'document_requirements' => [], 'generation_mode' => 'complete', 'regional_context' => [], 'normative_context_pin' => ['status' => 'review_required', 'blocking_issues' => ['normative_dataset_not_pinned']], 'local_estimates' => []],
-            ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices => ['regional_context' => [], 'local_estimates' => []],
+            ProcessingStage::PlanWorkItems => [
+                'object_profile' => [], 'package_plan' => [], 'document_requirements' => [],
+                'generation_mode' => 'complete', 'regional_context' => [],
+                'normative_context_pin' => ['status' => 'review_required', 'blocking_issues' => ['normative_dataset_not_pinned']],
+                'local_estimates' => [],
+                'estimate_composition' => [
+                    'schema_version' => 1,
+                    'snapshot_token' => str_repeat('c', 64),
+                    'input_fingerprint' => str_repeat('d', 64),
+                    'intents_count' => 1,
+                    'derived_quantities' => [],
+                ],
+            ],
+            ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices => [
+                'regional_context' => [], 'supplementary_materials' => [], 'local_estimates' => [],
+            ],
             ProcessingStage::BuildDraft => ['draft' => []],
             ProcessingStage::ValidateDraft => ['draft' => [], 'requires_review' => true],
         };

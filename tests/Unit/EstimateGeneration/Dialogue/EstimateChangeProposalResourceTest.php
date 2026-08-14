@@ -46,7 +46,7 @@ final class EstimateChangeProposalResourceTest extends TestCase
         self::assertSame(['area' => '100.0000', 'decision_key' => 'decision:roof', 'selected_option' => 'roof:metal'], $payload['before_payload']);
         self::assertSame(['area' => '110.0000', 'decision_key' => 'decision:roof', 'response' => 'roof:soft'], $payload['after_payload']);
         self::assertSame([['artifact_id' => 7, 'source_version' => 'source-v2', 'page' => 2, 'native_reference' => 'АР-2']], $payload['evidence']);
-        self::assertSame('v1', $payload['interpretation_version']);
+        self::assertArrayNotHasKey('interpretation_version', $payload);
         self::assertSame(['quantity:room'], $payload['dependency_keys']);
         self::assertArrayNotHasKey('version_fence', $payload);
         self::assertArrayNotHasKey('result', $payload);
@@ -108,6 +108,7 @@ final class EstimateChangeProposalResourceTest extends TestCase
             'proposal_idempotency_collision', 'proposal_too_large', 'proposal_payload_invalid',
             'proposal_intent_unsupported', 'proposal_terminal', 'proposal_expired', 'proposal_stale',
             'proposal_concurrent', 'proposal_preview_unknown', 'proposal_preview_partial', 'locator_invalid',
+            'proposal_undo_unavailable',
         ];
         foreach ($codes as $code) {
             self::assertArrayHasKey($code, $translations);

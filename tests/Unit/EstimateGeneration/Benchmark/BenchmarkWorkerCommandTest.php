@@ -36,7 +36,7 @@ final class BenchmarkWorkerCommandTest extends TestCase
         });
 
         self::assertSame('technical_failure', $result->status);
-        self::assertSame('normalized_building_model_required', $result->failureCode);
+        self::assertSame('canonical_observations_required', $result->failureCode);
         self::assertSame([], $result->prediction);
     }
 }

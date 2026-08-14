@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\BuildingModel;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ConfirmedProjectModelProjector;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelAssertion;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelAssertionList;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelCorrection;
@@ -103,7 +102,7 @@ final class ProjectModelMergerTest extends TestCase
     }
 
     #[Test]
-    public function resolved_values_cannot_be_fabricated_and_projection_requires_canonical_proof(): void
+    public function resolved_values_cannot_be_fabricated_without_canonical_proof(): void
     {
         self::assertFalse((new \ReflectionMethod(ProjectModelResolvedValue::class, '__construct'))->isPublic());
         $entity = $this->entity('room-1', 'room');
@@ -111,7 +110,6 @@ final class ProjectModelMergerTest extends TestCase
 
         $merged = $this->merge($entity, [$assertion], [], []);
         self::assertCount(0, $merged->resolved);
-        self::assertCount(0, (new ConfirmedProjectModelProjector)->project($merged)->values);
     }
 
     /** @param list<ProjectModelAssertion> $assertions @param list<ProjectModelCorrection> $corrections @param list<ProjectModelEvidenceBinding> $bindings */

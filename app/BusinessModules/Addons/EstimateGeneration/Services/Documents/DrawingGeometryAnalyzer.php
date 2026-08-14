@@ -4,19 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingModelQuantityInputMapper;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
 
 final class DrawingGeometryAnalyzer
 {
-    public function __construct(
-        private readonly BuildingQuantityCalculator $calculator = new BuildingQuantityCalculator,
-        private readonly BuildingModelQuantityInputMapper $inputMapper = new NormalizedBuildingModelQuantityInputMapper,
-    ) {}
-
     /**
      * Compatibility boundary: document metadata is intentionally ignored. Only a normalized metric model may produce quantities.
      *
@@ -32,38 +23,36 @@ final class DrawingGeometryAnalyzer
     public function analyze(int $documentId, string $filename, OcrRecognitionResult $recognition): array
     {
         unset($documentId, $filename);
-        $models = [];
-        $modelPages = [];
+        $elements = [];
+        $quantities = [];
 
         foreach ($recognition->pages as $page) {
-            $model = $page->rawPayload['normalized_building_model'] ?? null;
-            if (is_array($model)) {
-                $models[] = $model;
-                $modelPages[] = $page->pageNumber;
+            foreach ($this->list($page->rawPayload['drawing_elements'] ?? null) as $element) {
+                $elements[] = [...$element, 'page_number' => $page->pageNumber];
+            }
+            foreach ($this->list($page->rawPayload['quantity_takeoffs'] ?? null) as $takeoff) {
+                if (! $this->validTakeoff($takeoff)) {
+                    continue;
+                }
+                $quantities[] = [
+                    'key' => (string) ($takeoff['scope_key'] ?? $takeoff['name']),
+                    'amount' => (string) $takeoff['quantity'],
+                    'unit' => (string) $takeoff['unit'],
+                    'evidence_ids' => array_values(array_filter(
+                        is_array($takeoff['source_refs'] ?? null) ? $takeoff['source_refs'] : [],
+                        'is_string',
+                    )),
+                ];
             }
         }
 
-        $quantities = [];
-        $reviewReasons = [];
-        if (count($models) === 1) {
-            $model = NormalizedBuildingModelData::fromArray($models[0]);
-            $calculation = $this->calculator->calculate($this->inputMapper->map($model));
-            $quantities = $calculation->toArray()['quantities'];
-            $reviewReasons = array_values(array_unique(array_map(
-                static fn (array $diagnostic): string => $diagnostic['code'],
-                array_filter($calculation->diagnostics, static fn (array $diagnostic): bool => $diagnostic['severity'] === 'blocking')
-            )));
-        } elseif (count($models) > 1) {
-            $reviewReasons = ['multiple_normalized_building_models'];
-        } else {
-            $reviewReasons = ['normalized_building_model_missing'];
-            $modelPages = array_map(static fn ($page): int => $page->pageNumber, $recognition->pages);
-        }
-
-        sort($reviewReasons, SORT_STRING);
+        $reviewReasons = $quantities === [] ? ['canonical_observations_missing'] : [];
+        $reviewPages = $reviewReasons === []
+            ? []
+            : array_map(static fn ($page): int => $page->pageNumber, $recognition->pages);
 
         return [
-            'elements' => [],
+            'elements' => $elements,
             'quantities' => $quantities,
             'metrics' => [
                 'page_count' => count($recognition->pages), 'geometry_metrics_status' => 'unavailable',
@@ -73,7 +62,29 @@ final class DrawingGeometryAnalyzer
             ],
             'page_metrics' => [],
             'review_reasons' => $reviewReasons,
-            'review_required_pages' => $reviewReasons === [] ? [] : $modelPages,
+            'review_required_pages' => $reviewPages,
         ];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function list(mixed $value): array
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            return [];
+        }
+
+        return array_values(array_filter($value, 'is_array'));
+    }
+
+    /** @param array<string, mixed> $takeoff */
+    private function validTakeoff(array $takeoff): bool
+    {
+        return is_string($takeoff['name'] ?? null)
+            && $takeoff['name'] !== ''
+            && is_string($takeoff['unit'] ?? null)
+            && $takeoff['unit'] !== ''
+            && is_numeric($takeoff['quantity'] ?? null)
+            && (float) $takeoff['quantity'] >= 0
+            && is_finite((float) $takeoff['quantity']);
     }
 }

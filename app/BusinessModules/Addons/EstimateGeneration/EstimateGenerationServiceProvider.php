@@ -8,6 +8,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\TimewebEstimateAuditModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
@@ -97,10 +106,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkReport
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\PrivateBenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCaseExecutor;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProductionReplayBenchmarkAdapter;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedBenchmarkCatalogLoader;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeLoader;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedReplayProjectionLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectCadRuntimeReadinessCommand;
@@ -382,7 +387,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(BenchmarkRunner::class);
         $this->app->singleton(RegisteredBenchmarkManifestRepository::class, fn (): RegisteredBenchmarkManifestRepository => new RegisteredBenchmarkManifestRepository(
             base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
-            $this->repositoryReplayEnabled() ? (array) config('estimate-generation.benchmark.registered_manifests', []) : [],
+            [],
         ));
         $this->app->singleton(RasterPreprocessor::class);
         $this->app->singleton(GeometryResourceLimits::class, static fn (): GeometryResourceLimits => new GeometryResourceLimits(
@@ -424,24 +429,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         ));
         $this->app->singleton(CadGeometryProvider::class, static fn ($app): DwgDxfGeometryProvider => $app->make(DwgDxfGeometryProvider::class));
         $this->app->singleton(BenchmarkAdapterRegistry::class, function ($app): BenchmarkAdapterRegistry {
-            $adapters = [$app->make(CurrentBaselineBenchmarkAdapter::class)];
-            if ($this->repositoryReplayEnabled()) {
-                $adapters[] = new ProductionReplayBenchmarkAdapter(
-                    new RecordedReplayProjectionLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
-                    new RecordedPortEnvelopeLoader(
-                        base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
-                        base_path('tests/Fixtures/EstimateGeneration/benchmarks/recordings/manifest.json'),
-                    ),
-                    new RecordedBenchmarkCatalogLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
-                    $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler::class),
-                    $app->make(ResourceAssemblyService::class),
-                    $app->make(NormativeWorkIntentFactory::class),
-                    $app->make(EstimateValidationService::class),
-                    (array) config('estimate-generation.benchmark.production_replay_projections', []),
-                );
-            }
-
-            return new BenchmarkAdapterRegistry($adapters);
+            return new BenchmarkAdapterRegistry([$app->make(CurrentBaselineBenchmarkAdapter::class)]);
         });
         $this->app->singleton(RunEstimateGenerationBenchmarkCaseCommand::class, fn ($app): RunEstimateGenerationBenchmarkCaseCommand => new RunEstimateGenerationBenchmarkCaseCommand(
             $app->make(BenchmarkAdapterRegistry::class),
@@ -536,6 +524,33 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger::class,
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\SynchronousPlanningReanalysisTrigger::class,
         );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource => new \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource(
+                $app->make('db'),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification::class),
+                (int) config('estimate-generation.project_planning.max_facts') + 1,
+            ),
+        );
+        $this->app->alias(
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationSource::class,
+        );
+        $this->app->alias(
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry => new \App\BusinessModules\Addons\EstimateGeneration\Questions\ProjectModelEstimateClarificationAnswerRegistry(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                (int) config('estimate-generation.project_planning.max_facts') + 1,
+            ),
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\AnswerEstimateClarification::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\ListEstimateClarifications::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator::class,
             static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator => new \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator(
@@ -660,6 +675,57 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (string) config('estimate-generation.project_engineer.model'),
         ));
         $this->app->alias(RunProjectSynthesis::class, ProjectSynthesisRunner::class);
+        $this->app->singleton(TimewebEstimateComposerModel::class, static fn ($app): TimewebEstimateComposerModel => new TimewebEstimateComposerModel(
+            $app->make(RerankWireClient::class),
+            $app->make(AiUsageStore::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
+            (string) config('estimate-generation.estimate_composer.model'),
+            (int) config('estimate-generation.estimate_composer.max_input_bytes'),
+            (int) config('estimate-generation.estimate_composer.max_output_tokens'),
+            (int) config('estimate-generation.estimate_composer.timeout_seconds'),
+        ));
+        $this->app->alias(TimewebEstimateComposerModel::class, EstimateComposerModel::class);
+        $this->app->alias(
+            TimewebEstimateComposerModel::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel::class,
+        );
+        $this->app->singleton(RunEstimateComposer::class, static fn ($app): RunEstimateComposer => new RunEstimateComposer(
+            $app->make(AiRoleRunRepository::class),
+            $app->make(EstimateComposerModel::class),
+            (string) config('estimate-generation.estimate_composer.model'),
+        ));
+        $this->app->singleton(EstimateComposerInputFactory::class, static fn ($app): EstimateComposerInputFactory => new EstimateComposerInputFactory(
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+            (int) config('estimate-generation.estimate_composer.max_facts'),
+        ));
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection => new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection(
+                $app->make(AiRoleRunRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel::class),
+                (string) config('estimate-generation.estimate_composer.model'),
+            ),
+        );
+        $this->app->singleton(EstimateAuditModel::class, static fn ($app): EstimateAuditModel => new TimewebEstimateAuditModel(
+            $app->make(RerankWireClient::class),
+            $app->make(AiUsageStore::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
+            (string) config('estimate-generation.estimate_auditor.model'),
+            (int) config('estimate-generation.estimate_auditor.max_input_bytes'),
+            (int) config('estimate-generation.estimate_auditor.max_output_tokens'),
+            (int) config('estimate-generation.estimate_auditor.timeout_seconds'),
+        ));
+        $this->app->singleton(RunEstimateAudit::class, static fn ($app): RunEstimateAudit => new RunEstimateAudit(
+            $app->make(AiRoleRunRepository::class),
+            $app->make(EstimateAuditModel::class),
+            (string) config('estimate-generation.estimate_auditor.model'),
+        ));
+        $this->app->singleton(EstimateAuditInputFactory::class, static fn ($app): EstimateAuditInputFactory => new EstimateAuditInputFactory(
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class),
+            (int) config('estimate-generation.estimate_auditor.max_facts'),
+        ));
+        $this->app->singleton(ApplyComposerCorrectionCycle::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore::class,
@@ -894,12 +960,5 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ->by($key);
         });
 
-    }
-
-    private function repositoryReplayEnabled(): bool
-    {
-        return (bool) config('estimate-generation.benchmark.repository_replay_enabled', false)
-            && $this->app->environment(['local', 'testing'])
-            && is_dir(base_path('tests/Fixtures/EstimateGeneration/benchmarks'));
     }
 }

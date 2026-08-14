@@ -8,7 +8,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalEvidenceJson
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -256,7 +255,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             formulaVersion: '1.0.0',
             formulaInputs: [
                 'scenario' => [
-                    'id' => ResidentialQuantityScenarioCatalog::SCENARIO_ID,
+                    'id' => 'obsolete-residential-scenario',
                     'version' => '1.0.0',
                     'confidence' => 0.55,
                     'warnings' => ['preliminary_quantity_scenario'],
@@ -273,11 +272,11 @@ final class WorkItemQuantityMapperTest extends TestCase
             unit: 'm',
             amount: '42.000000',
             formulaKey: 'residential_preliminary.roof.gutter',
-            formulaVersion: ResidentialQuantityScenarioCatalog::VERSION,
+            formulaVersion: 'obsolete-residential-scenario:v1',
             formulaInputs: [
                 'scenario' => [
-                    'id' => ResidentialQuantityScenarioCatalog::SCENARIO_ID,
-                    'version' => ResidentialQuantityScenarioCatalog::VERSION,
+                    'id' => 'obsolete-residential-scenario',
+                    'version' => 'obsolete-residential-scenario:v1',
                     'confidence' => 0.55,
                     'warnings' => ['preliminary_quantity_scenario'],
                 ],
@@ -285,7 +284,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             source: QuantitySource::Estimated,
             evidenceIds: ['page:plan:1'],
             modelVersion: 'building-model:v1',
-            assumptions: [ResidentialQuantityScenarioCatalog::SCENARIO_ID],
+            assumptions: ['obsolete-residential-scenario'],
             reviewBlockers: [],
         );
         $unlisted = new QuantityData(
@@ -298,7 +297,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             source: QuantitySource::Estimated,
             evidenceIds: ['page:plan:1'],
             modelVersion: 'building-model:v1',
-            assumptions: [ResidentialQuantityScenarioCatalog::SCENARIO_ID],
+            assumptions: ['obsolete-residential-scenario'],
             reviewBlockers: [],
         );
 

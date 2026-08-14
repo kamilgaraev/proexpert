@@ -50,7 +50,11 @@ final class GeometryExpertPostgresTest extends TestCase
     public function geometry_role_replays_exactly_and_session_reconciliation_switches_current_projection_without_losing_history(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
-        self::assertSame('most_backend_testing', DB::getDatabaseName());
+        self::assertTrue(
+            DB::getDatabaseName() === 'most_backend_testing'
+                || (DB::getDatabaseName() === 'most_ai_estimator_contract'
+                    && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
+        );
         self::assertInstanceOf(VisionGeometryExpertModel::class, app(GeometryExpertModel::class));
         self::assertInstanceOf(RunGeometryExpert::class, app(RunGeometryExpert::class));
         self::assertInstanceOf(ReconcileSessionGeometryProjection::class, app(ReconcileSessionGeometryProjection::class));
@@ -125,8 +129,6 @@ final class GeometryExpertPostgresTest extends TestCase
                 $partial = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000200_create_estimate_generation_project_model_tables.php';
                 $partial->down();
             }
-            DB::statement('CREATE UNIQUE INDEX IF NOT EXISTS eg_building_models_projection_scope_uq ON estimate_generation_building_models (id, organization_id, project_id, session_id, content_version)');
-            DB::statement('CREATE UNIQUE INDEX IF NOT EXISTS eg_building_model_evidence_projection_scope_uq ON estimate_generation_building_model_evidence (building_model_id, evidence_id, organization_id, project_id, session_id)');
             foreach ([
                 '2026_08_01_000200_create_estimate_generation_project_model_tables.php',
                 '2026_08_10_000600_consolidate_estimate_project_model_v2.php',

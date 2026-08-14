@@ -56,6 +56,49 @@ final readonly class ApplyProjectModelDecision
         return $decision;
     }
 
+    public function applyClarificationChoice(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $factId,
+        string $questionKey,
+        string $response,
+        string $choiceValue,
+        ?string $choiceLabel,
+        ?string $other,
+        string $questionFingerprint,
+        array $sourceLocator,
+        string $actorId,
+        string $reason,
+        string $decisionId,
+    ): Decision {
+        [$decision, $selected] = $this->build(
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+            $factId,
+            [
+                'question_key' => $questionKey,
+                'response' => $response,
+                'choice_value' => $choiceValue,
+                'choice_label' => $choiceLabel,
+                'other' => $other,
+                'question_fingerprint' => $questionFingerprint,
+                'source_locator' => $sourceLocator,
+            ],
+            null,
+            $actorId,
+            $reason,
+            $decisionId,
+            $response === 'leave_unresolved' ? 'unresolved' : 'confirmed',
+        );
+        $this->models->applyDecision($decision, $selected);
+
+        return $decision;
+    }
+
     private function build(
         int $organizationId,
         int $projectId,
@@ -67,6 +110,7 @@ final readonly class ApplyProjectModelDecision
         string $actorId,
         string $reason,
         string $decisionId,
+        string $status = 'confirmed',
     ): array {
         $original = $this->models->fact($organizationId, $projectId, $sessionId, $factId);
         if (! $original instanceof Fact || $original->sourceVersion !== $sourceVersion) {
@@ -93,8 +137,8 @@ final readonly class ApplyProjectModelDecision
                 value: $value,
                 unit: $unit,
                 confidence: 1.0,
-                origin: 'user_assumption',
-                status: 'confirmed',
+                origin: $status === 'unresolved' ? 'unresolved' : 'user_assumption',
+                status: $status,
                 evidenceIds: $original->evidenceIds,
                 version: $base->version + 1,
                 supersedesFactId: $base->id,

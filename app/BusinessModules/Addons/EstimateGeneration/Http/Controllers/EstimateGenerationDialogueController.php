@@ -8,10 +8,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\ApplyEsti
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CancelEstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\PreviewUndoEstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateChangeProposalRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CancelEstimateChangeProposalRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\InterpretEstimateCommandRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ListEstimateChangeProposalItemsRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ListEstimateChangeProposalsRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\PreviewUndoEstimateChangeProposalRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateChangeProposalResource;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateChangeProposalRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -25,7 +28,13 @@ use RuntimeException;
 
 final class EstimateGenerationDialogueController extends Controller
 {
-    public function __construct(private readonly InterpretEstimateCommand $interpret, private readonly ApplyEstimateChangeProposal $apply, private readonly CancelEstimateChangeProposal $cancel, private readonly EstimateChangeProposalRepository $proposals) {}
+    public function __construct(
+        private readonly InterpretEstimateCommand $interpret,
+        private readonly ApplyEstimateChangeProposal $apply,
+        private readonly CancelEstimateChangeProposal $cancel,
+        private readonly PreviewUndoEstimateChangeProposal $undo,
+        private readonly EstimateChangeProposalRepository $proposals,
+    ) {}
 
     public function interpret(InterpretEstimateCommandRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
@@ -46,6 +55,49 @@ final class EstimateGenerationDialogueController extends Controller
             $this->guard($request, $project, $session);
 
             return (new EstimateChangeProposalResource($this->proposals->find($proposal, (int) $session->organization_id, (int) $project->id, (int) $session->id)->payload))->resolve($request);
+        }, $session);
+    }
+
+    public function history(
+        ListEstimateChangeProposalsRequest $request,
+        Project $project,
+        EstimateGenerationSession $session,
+    ): JsonResponse {
+        return $this->safe(function () use ($request, $project, $session): array {
+            $this->guard($request, $project, $session);
+            $page = $this->proposals->history(
+                (int) $session->organization_id,
+                (int) $project->id,
+                (int) $session->id,
+                (int) ($request->validated('limit') ?? 50),
+                is_string($request->validated('cursor')) ? $request->validated('cursor') : null,
+            );
+
+            return [
+                'items' => array_map(
+                    static fn ($proposal): array => (new EstimateChangeProposalResource($proposal->payload))->resolve($request),
+                    $page['items'],
+                ),
+                'next_cursor' => $page['next_cursor'],
+            ];
+        }, $session);
+    }
+
+    public function undoPreview(
+        PreviewUndoEstimateChangeProposalRequest $request,
+        Project $project,
+        EstimateGenerationSession $session,
+        string $proposal,
+    ): JsonResponse {
+        return $this->safe(function () use ($request, $project, $session, $proposal): array {
+            $this->guard($request, $project, $session);
+
+            return (new EstimateChangeProposalResource($this->undo->handle(
+                $session,
+                (int) $request->user()->id,
+                $proposal,
+                (string) $request->validated('idempotency_key'),
+            )->payload))->resolve($request);
         }, $session);
     }
 
@@ -137,6 +189,7 @@ final class EstimateGenerationDialogueController extends Controller
             'proposal_expired' => ['estimate_generation.proposal_expired', 409],
             'proposal_terminal' => ['estimate_generation.proposal_terminal', 409],
             'proposal_concurrent' => ['estimate_generation.proposal_concurrent', 409],
+            'proposal_undo_unavailable' => ['estimate_generation.proposal_undo_unavailable', 422],
             'proposal_too_large' => ['estimate_generation.proposal_too_large', 422],
             'proposal_payload_invalid' => ['estimate_generation.proposal_payload_invalid', 422],
             'proposal_intent_unsupported' => ['estimate_generation.proposal_intent_unsupported', 422],
@@ -156,6 +209,7 @@ final class EstimateGenerationDialogueController extends Controller
             'proposal_idempotency_collision',
             'proposal_payload_invalid',
             'proposal_intent_unsupported',
+            'proposal_undo_unavailable',
             'locator_invalid',
         ], true)) {
             return 'payload_invalid';

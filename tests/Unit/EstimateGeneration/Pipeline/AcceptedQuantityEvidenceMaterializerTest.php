@@ -17,7 +17,7 @@ use PHPUnit\Framework\TestCase;
 final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
 {
     #[Test]
-    public function mapped_room_area_quantity_with_deep_source_formula_is_materialized_idempotently(): void
+    public function mapped_first_floor_quantity_with_deep_source_formula_is_materialized_idempotently(): void
     {
         $repository = new InMemoryEvidenceRepository;
         $materializer = new AcceptedQuantityEvidenceMaterializer($repository);
@@ -26,7 +26,7 @@ final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
             baseInputVersion: 'sha256:'.str_repeat('b', 64),
         );
         $source = new QuantityData(
-            key: 'floor_area',
+            key: 'first_floor_internal_area',
             unit: 'm2',
             amount: '192.800000',
             formulaKey: 'floor.area.room_annotations',
@@ -41,7 +41,7 @@ final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
             evidenceIds: ['room:1'],
             modelVersion: 'building-model:v1',
         );
-        $quantity = (new WorkItemQuantityMapper)->map('earth.trench', ['floor_area' => $source]);
+        $quantity = (new WorkItemQuantityMapper)->map('earth.trench', ['first_floor_internal_area' => $source]);
 
         self::assertNotNull($quantity);
         self::assertSame('86.760000', $quantity->amount);

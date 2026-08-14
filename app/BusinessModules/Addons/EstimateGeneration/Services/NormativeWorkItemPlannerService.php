@@ -9,10 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\CanonicalTechnologyWo
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequiredWorkItems;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialScopeDecisionQuantityMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\BuildingModelMaterialEvidenceExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Throwable;
 
@@ -23,7 +20,6 @@ final class NormativeWorkItemPlannerService
         private readonly EstimatorScopeInferenceService $scopeInferenceService,
         private readonly ?ResidentialMaterialScenarioCatalog $materialScenarioCatalog = null,
         private readonly RoofTypeResolver $roofTypeResolver = new RoofTypeResolver,
-        private readonly ?BuildingModelMaterialEvidenceExtractor $buildingModelMaterialEvidenceExtractor = null,
     ) {}
 
     /**
@@ -353,8 +349,6 @@ final class NormativeWorkItemPlannerService
      */
     private function trustedSpecializationEvidence(array $analysis, string $workItemKey): array
     {
-        $buildingModelEvidence = ($this->buildingModelMaterialEvidenceExtractor ?? new BuildingModelMaterialEvidenceExtractor)
-            ->extract($analysis, $workItemKey);
         $documentContext = is_array($analysis['document_context'] ?? null)
             ? $analysis['document_context']
             : [];
@@ -364,7 +358,7 @@ final class NormativeWorkItemPlannerService
             $documentContext['specialization_evidence'] ?? null,
             $documentContext['material_evidence'] ?? null,
         ];
-        $result = $buildingModelEvidence;
+        $result = [];
 
         foreach ($sources as $source) {
             if (! is_array($source) || ! is_array($source[$workItemKey] ?? null)) {
@@ -372,7 +366,7 @@ final class NormativeWorkItemPlannerService
             }
             foreach ($source[$workItemKey] as $evidence) {
                 if (! is_array($evidence)
-                    || ! in_array($evidence['source'] ?? null, ['document', 'building_model', 'user_confirmation'], true)) {
+                    || ! in_array($evidence['source'] ?? null, ['document', 'decision'], true)) {
                     continue;
                 }
                 $text = trim((string) ($evidence['text'] ?? ''));
@@ -652,10 +646,6 @@ final class NormativeWorkItemPlannerService
         }
 
         if ($this->hasConfirmedSanitaryPointsTakeoff($analysis)) {
-            return true;
-        }
-
-        if ($this->hasApprovedResidentialScenarioQuantity($analysis, $quantityKey)) {
             return true;
         }
 
@@ -1376,16 +1366,12 @@ final class NormativeWorkItemPlannerService
                 continue;
             }
 
-            $isResidentialScenario = ResidentialQuantityScenarioCatalog::owns($quantity)
-                || ResidentialScopeDecisionQuantityMaterializer::owns($quantity);
             if ($quantity->source === QuantitySource::Estimated
-                && $quantity->reviewBlockers === []
-                && ! $isResidentialScenario) {
+                && $quantity->reviewBlockers === []) {
                 continue;
             }
             if (DirectTakeoffRequiredWorkItems::contains($quantity->key)
-                && $quantity->source !== QuantitySource::Evidenced
-                && ! $isResidentialScenario) {
+                && $quantity->source !== QuantitySource::Evidenced) {
                 continue;
             }
 
@@ -1399,9 +1385,7 @@ final class NormativeWorkItemPlannerService
                     $quantity->evidenceIds,
                 ),
                 'review_required' => $quantity->reviewBlockers !== [],
-                'source' => $isResidentialScenario
-                    ? 'residential_preliminary_scenario'
-                    : 'canonical_building_quantity',
+                'source' => 'canonical_building_quantity',
             ];
         }
 
@@ -1412,31 +1396,7 @@ final class NormativeWorkItemPlannerService
     {
         $definitionConfidence = (float) ($definition['confidence'] ?? $quantity['confidence'] ?? $default);
 
-        return ($quantity['source'] ?? null) === 'residential_preliminary_scenario'
-            ? min($definitionConfidence, (float) ($quantity['confidence'] ?? $default))
-            : $definitionConfidence;
-    }
-
-    private function hasApprovedResidentialScenarioQuantity(array $analysis, string $quantityKey): bool
-    {
-        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
-        $rows = is_array($documentContext['canonical_building_quantities'] ?? null)
-            ? $documentContext['canonical_building_quantities']
-            : [];
-
-        foreach ($rows as $row) {
-            if (! is_array($row) || ($row['key'] ?? null) !== $quantityKey) {
-                continue;
-            }
-
-            try {
-                return ResidentialQuantityScenarioCatalog::owns(QuantityData::fromArray($row));
-            } catch (Throwable) {
-                return false;
-            }
-        }
-
-        return false;
+        return $definitionConfidence;
     }
 
     /**

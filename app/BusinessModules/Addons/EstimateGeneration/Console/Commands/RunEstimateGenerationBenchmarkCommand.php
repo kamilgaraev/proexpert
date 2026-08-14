@@ -172,7 +172,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             return new BenchmarkCorpus(
                 BenchmarkManifest::fromFile($manifestPath, $this->fixtureRoot, $requireAllSourceTypes),
                 new \App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader,
-                $requireAllSourceTypes ? 'repository:v1' : 'repository-production-replay:v1',
+                'repository:v1',
             );
         }
         if (($this->environment)() !== 'production' && ($this->env)('RUN_ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK') !== '1') {

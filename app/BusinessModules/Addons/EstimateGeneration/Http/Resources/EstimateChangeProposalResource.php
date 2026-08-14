@@ -15,7 +15,7 @@ final class EstimateChangeProposalResource extends JsonResource
         $value = is_array($this->resource) ? $this->resource : [];
         $this->assertStatusShape($value);
         $result = array_intersect_key($value, array_flip([
-            'id', 'intent', 'interpretation_version', 'command_excerpt', 'affected_payload', 'dependency_keys',
+            'id', 'intent', 'command_excerpt', 'affected_payload', 'dependency_keys',
             'assumptions', 'questions', 'cost_state', 'cost_blockers', 'cost_delta_known', 'cost_delta',
             'status', 'status_version', 'created_at', 'expires_at', 'applied_at', 'cancelled_at', 'updated_at',
         ]));

@@ -25,7 +25,12 @@ final readonly class InterpretEstimateCommand
     {
         $context = $this->contexts->build($session);
         $fingerprint = hash('sha256', json_encode(['command' => $command, 'context_fingerprint' => $context['fingerprint']], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
-        $existing = $this->proposals->findByIdempotency((int) $session->organization_id, (int) $session->id, $idempotencyKey);
+        $existing = $this->proposals->findByIdempotency(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->id,
+            $idempotencyKey,
+        );
         if ($existing !== null) {
             if (! hash_equals((string) $existing->payload['payload_fingerprint'], $fingerprint)) {
                 throw new RuntimeException('estimate_generation.proposal_idempotency_collision');

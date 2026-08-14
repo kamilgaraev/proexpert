@@ -11,8 +11,6 @@ final readonly class BenchmarkPredictionCaseData
     /**
      * @param  list<string>  $tags
      * @param  list<string>  $allowedCapabilities
-     * @param  array<string, string>  $recordedEnvelopeReferences
-     * @param  array<string, string>  $recordedEnvelopeSha256
      */
     public function __construct(
         public string $id,
@@ -22,35 +20,12 @@ final readonly class BenchmarkPredictionCaseData
         public string $inputSha256,
         public array $tags,
         public array $allowedCapabilities,
-        public array $recordedEnvelopeReferences,
-        public array $recordedEnvelopeSha256,
-        public ?string $recordingManifestSha256 = null,
-        public ?string $benchmarkCatalogReference = null,
-        public ?string $benchmarkCatalogSha256 = null,
     ) {
         self::assertToken($id);
         self::assertLocator($inputLocator);
         self::assertHash($inputSha256);
         self::assertStringList($tags);
         self::assertStringList($allowedCapabilities);
-        if (array_keys($recordedEnvelopeReferences) !== array_keys($recordedEnvelopeSha256)) {
-            throw new InvalidArgumentException('recorded_envelope_keys_mismatch');
-        }
-        foreach ($recordedEnvelopeReferences as $port => $locator) {
-            self::assertToken($port);
-            self::assertLocator($locator);
-            self::assertHash($recordedEnvelopeSha256[$port]);
-        }
-        if ($recordingManifestSha256 !== null) {
-            self::assertHash($recordingManifestSha256);
-        }
-        if (($benchmarkCatalogReference === null) !== ($benchmarkCatalogSha256 === null)) {
-            throw new InvalidArgumentException('benchmark_catalog_pair_invalid');
-        }
-        if ($benchmarkCatalogReference !== null) {
-            self::assertLocator($benchmarkCatalogReference);
-            self::assertHash($benchmarkCatalogSha256);
-        }
     }
 
     public static function fromCase(BenchmarkCaseData $case): self
@@ -63,8 +38,6 @@ final readonly class BenchmarkPredictionCaseData
             $case->inputSha256,
             $case->tags,
             $case->allowedCapabilities,
-            [],
-            [],
         );
     }
 
