@@ -17,7 +17,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'pricing' => '15ee788d506971fcd28516675bc1330e88c89d4a47a13b1402badb1626de27ab',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'ec9720d9068d73966810891e181d3bfd9372992a5a5ddbfc1e0b58e6da0c9660';
+    private const FRESH_INVENTORY_DIGEST = '388afc75af891f5ed15d20a4561533a5dac3d1de40dabfdf444971cf842d6cc8';
 
     private const SUBJECT = [
         'geometry' => [
@@ -197,6 +197,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000800_extend_ai_usage_for_composer_corrections.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000900_remove_obsolete_estimate_generation_review_contours.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_001100_scope_failure_identities.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_15_000100_separate_vision_logical_request_from_processing_lineage.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

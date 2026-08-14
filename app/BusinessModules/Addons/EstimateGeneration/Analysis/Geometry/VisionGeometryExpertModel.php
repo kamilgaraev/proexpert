@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use InvalidArgumentException;
@@ -26,6 +27,7 @@ final readonly class VisionGeometryExpertModel implements GeometryExpertModel
             if (! $source instanceof VisionDocumentInput || ! is_array($arbitration)) {
                 throw new InvalidArgumentException('geometry_expert_sheet_source_invalid');
             }
+            $sourceContext = $source->operationContext;
             $analysis = $this->vision->analyze(new VisionDocumentInput(
                 organizationId: $source->organizationId,
                 projectId: $source->projectId,
@@ -39,7 +41,24 @@ final readonly class VisionGeometryExpertModel implements GeometryExpertModel
                 contentType: $source->contentType,
                 imageContent: $source->imageContent,
                 imageDetail: $source->imageDetail,
-                operationContext: $source->operationContext,
+                operationContext: new AiOperationContext(
+                    correlationId: AiOperationContext::deterministicId('geometry-correlation|'.$sourceContext->correlationId),
+                    attemptId: AiOperationContext::deterministicId(implode('|', [
+                        'geometry-attempt',
+                        $sourceContext->attemptId,
+                        $sourceContext->processingLineageId ?? 'unscoped',
+                    ])),
+                    organizationId: $sourceContext->organizationId,
+                    projectId: $sourceContext->projectId,
+                    sessionId: $sourceContext->sessionId,
+                    stage: $sourceContext->stage,
+                    operation: $sourceContext->operation,
+                    attemptOrdinal: $sourceContext->attemptOrdinal,
+                    documentId: $sourceContext->documentId,
+                    pageId: $sourceContext->pageId,
+                    unitId: $sourceContext->unitId,
+                    processingLineageId: $sourceContext->processingLineageId,
+                ),
                 sourceTransform: $source->sourceTransform,
                 sheetRole: $source->sheetRole,
                 nativeReferences: $source->nativeReferences,

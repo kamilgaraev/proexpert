@@ -114,6 +114,10 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
         if ($this->claimProjector === null || $this->evidenceWriter === null) {
             return;
         }
+        $payloadClaims = $result->payload['claims'] ?? null;
+        if (is_array($payloadClaims) && $payloadClaims === []) {
+            return;
+        }
         $claims = $this->claimProjector->claims($source, [$profile->role()->value => $result]);
         $this->evidenceWriter->writeIndependentObservations($claims, $source->documentId, $source->pageNumber);
     }

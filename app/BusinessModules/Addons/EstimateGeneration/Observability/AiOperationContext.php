@@ -20,11 +20,16 @@ final readonly class AiOperationContext
         public ?int $documentId = null,
         public ?int $pageId = null,
         public ?int $unitId = null,
+        public ?string $processingLineageId = null,
     ) {
         foreach ([$correlationId, $attemptId] as $uuid) {
             if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $uuid) !== 1) {
                 throw new InvalidArgumentException('Invalid usage UUID.');
             }
+        }
+        if ($processingLineageId !== null
+            && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $processingLineageId) !== 1) {
+            throw new InvalidArgumentException('Invalid processing lineage UUID.');
         }
         foreach ([$organizationId, $projectId, $sessionId, $attemptOrdinal] as $value) {
             if ($value < 1) {

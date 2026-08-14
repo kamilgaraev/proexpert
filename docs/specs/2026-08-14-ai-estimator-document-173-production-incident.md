@@ -336,3 +336,144 @@ cross-tenant|wrong session|missing ABAC|unknown failure
 - [ ] Создать backend/admin PR, выполнить merge и стандартный deploy только изменённых проектов.
 - [ ] Выполнить read-only canary `/ready`, release SHA, protected 401, Laravel/GlitchTip.
 - [ ] Обновить существующие статьи YouTrack Knowledge Base текущим выпущенным поведением.
+
+## 14. Дополнение инцидента: production-shaped повтор lineage `069e6374-9f47-4d10-9b56-a38000559921`
+
+### 14.1 Неизменяемый production evidence и границы диагностики
+
+Контролируемый ручной повтор завершился 14.08.2026 в 21:07:25 UTC без преждевременной финализации:
+
+- 5 реально исполнявшихся units завершились системной ошибкой, 17 units остановлены breaker;
+- новые физические HTTP 200 появились только для page 1 и двух ролей page 2;
+- добавлено ровно 3 usage rows: 14 508 input tokens, 5 055 output tokens, 6,053130 RUB;
+- всего для document 173 остаются неизменяемыми 25 usage rows: 154 987 input tokens, 80 704 output tokens, 86,293485 RUB;
+- response payload трёх HTTP 200 сохранён durable и рассматривается как уже оплаченный результат;
+- production-диагностика выполняется только read-only, без повторного dispatch и без AI/Vision-вызовов.
+
+В тестовых fixtures разрешена только минимальная обезличенная структура: роли, типы facts, cardinality, schema/prompt versions и deterministic identities. Тексты документа, изображения, prompts, signed URLs и исходный response body не сохраняются.
+
+### 14.2 Точные root causes
+
+#### PDO: page 1 / unit 390 и page 17 / unit 406
+
+Call path:
+
+```text
+durable HTTP 200
+  -> observer result completed
+  -> RunIndependentObservers::preserveObservation
+  -> ProjectModelEvidenceWriter::write
+  -> projectModelEntity(material)
+  -> INSERT estimate_generation_project_model_entities
+  -> PostgreSQL entity payload trigger
+```
+
+Exact isolated PostgreSQL RED воспроизвёл SQLSTATE `P0001` и typed invariant `estimate_generation.project_model_entity_payload_invalid` из `eg_project_model_entity_payload_guard()`. Причина не в enum CHECK: PHP сериализует `attributes['properties'] = []` как JSON array `[]`, а canonical material contract требует JSON object. Payload с корректными `kind`, `key`, `material_code` и `name` отклоняется строго на `jsonb_typeof(payload->'properties') = 'object'`. Fingerprint `aaf3eeab...` повторился на page 17 по тому же пути. Исправление PR #433 добавило material projection, но его fixture не пересекла canonical JSON-object boundary.
+
+#### InvalidArgumentException: page 2 / unit 391
+
+Два HTTP 200 успешно разобраны: construction observer сохранил непроецируемый `note`, risk observer вернул допустимый результат без claims и с четырьмя item-level quarantined observations. После этого `RunIndependentObservers::preserveObservation()` повторно передал одиночный observer result в `ArbitrationInputBuilder::claims()`. Builder трактует пустой список claims как ошибку всего arbitration input и бросает `InvalidArgumentException('arbitration_claims_missing')` до arbitration HTTP.
+
+Это не прежняя гипотеза `BuildingModelSchema::key / Room key is invalid`: этого класса в актуальном пути нет, а production-shaped result уже прошёл item-level quarantine. Ошибка находится во внешней preservation-границе, которая ошибочно требует хотя бы один проецируемый claim от каждого валидного observer result.
+
+#### Physical claim: page 3 / unit 392 и page 18 / unit 407
+
+Для обеих units новая lineage не создала physical rows. В каждой существует ровно одна старая completed physical row:
+
+- unit 392: attempt `09e235ee-65ad-5971-b60d-fa0cf925514e`, request fingerprint `9d15d7db...`;
+- unit 407: attempt `7bbe17f3-c5a9-5cae-ba2a-c195d2cec476`, request fingerprint `8632fa1f...`.
+
+`ProductionDocumentUnitProcessor` строит исходный `AiOperationContext::attemptId` без `processing_attempt_id`. `TimewebVisionProvider::physicalContext()` выводит physical attempt ID из этого значения, model, wire ordinal, prompt contract и derivative hash — также без lineage. Одновременно request fingerprint содержит полный wire payload и physical attempt ID. При явном повторе deterministic physical ID совпадает со старой строкой, `insertOrIgnore` ничего не создаёт, а проверка старого и нового request fingerprints бросает `UsageInvariantViolation('Vision physical attempt collision.')`. Ошибка возникает до wire-start, поэтому новых physical rows и usage нет. Одинаковый safe diagnostic fingerprint `3dfcd0cc...` у двух units соответствует одной invariant-границе.
+
+### 14.3 Почему PR #433/#434 были зелёными
+
+- PostgreSQL fixture PR #433 проверял `room_area` и отфильтрованный `roof_geometry`, но не содержал production-shaped `material`, поэтому несовпадение enum/constraint не пересекалось.
+- Тест writer вызывал projection напрямую и не проходил полный observer preservation flow с валидным пустым claims list и quarantined items.
+- Replay-тесты проверяли один physical ID с одним fingerprint; не было старой terminal/completed строки одной lineage и явного повтора другой lineage с изменившимся wire payload.
+- PR #434 сужал миграцию failure ledger и не менял parser, projection либо physical identity.
+
+### 14.4 Целевая машина identity/replay
+
+```text
+logical immutable request
+  = tenant + source/version + derivative + model + prompt + schema + canonical payload
+
+physical execution
+  = logical request + processing lineage + wire ordinal
+
+same lineage + same logical request
+  -> одна physical execution; concurrent workers видят busy/replay
+
+completed response_received + exact immutable fence
+  -> parser/persistence resume; provider calls +0; usage rows +0
+
+cross-lineage + exact immutable completed response
+  -> разрешён reuse того же durable response; provider calls +0; usage rows +0
+
+cross-lineage + immutable fence mismatch
+  -> новая lineage-scoped physical execution; один разрешённый HTTP
+
+ambiguous
+  -> никогда не является reusable success и не повторяется автоматически
+```
+
+`request_fingerprint` не зависит от lineage-scoped physical ID. Lineage хранится отдельно и участвует в physical execution identity всех document Vision-ролей: observer, arbitration и geometry expert. Конкурентный exact logical request сначала сериализуется unique identity/lock role-run, а внутри lineage физический claim сериализуется по primary physical attempt ID; поэтому provider получает не более одного владельца вызова.
+
+### 14.5 Preservation и project-model projection
+
+- Полный observer result остаётся durable в role run и доступен arbitration/оператору независимо от project-model projection.
+- Пустой claims list является допустимым результатом observer-а и не запускает projection.
+- Arbitrary observation (`note`, recommendation, unresolved question и другие неканонические типы) не преобразуется в room/material.
+- Каждый claim проецируется только при доказанном соответствии canonical entity/fact type; непроецируемый optional item получает typed limitation и не отменяет остальные claims/evidence.
+- Canonical entity ID включает scope и canonical type; replay с тем же смыслом идемпотентен, а тот же stable key с другим смыслом является typed semantic collision без перезаписи сохранённого результата.
+- Нормы, цены, арифметика, source/version/evidence ownership остаются fail-closed.
+
+### 14.6 Persistence и миграция
+
+Нужна только новая forward-only retry-safe migration:
+
+- канонически сериализовать object-valued entity attributes (`properties`) без ослабления deployed trigger и без изменения deployed migration;
+- явно хранить processing lineage и logical immutable request fingerprint у новых physical attempts;
+- сохранить существующую PostgreSQL uniqueness role-run для exact logical request и lineage-scoped primary identity physical attempt, не объявляя ambiguous success;
+- исторические rows и 25 usage rows не изменять и не переоценивать.
+
+Миграция не запускается в локальной БД. RED/GREEN выполняются только штатным isolated PostgreSQL contract harness.
+
+### 14.7 API и admin contract
+
+Backend resource остаётся единственным источником состояния:
+
+- `ready/failed/breaker_stopped/pending/running/leased` отражают фактические counts;
+- наличие сохранённых useful pages не скрывается terminal ошибкой другой page;
+- terminal error не нормализуется в ready;
+- retry action приходит только из backend action contract;
+- новая typed причина получает русское человекочитаемое сообщение через `trans_message(...)` и не раскрывает SQL/message/payload.
+
+Admin проверяется production-shaped MSW fixtures для partial success, system failure и наличия/отсутствия retry action.
+
+### 14.8 RED/GREEN-матрица
+
+| Инвариант | RED evidence | GREEN contract |
+|---|---|---|
+| Page 1 PDO | exact sanitized material claim в PostgreSQL даёт `P0001 / estimate_generation.project_model_entity_payload_invalid` | `properties` сериализуется JSON object; claim, entity, fact и evidence сохранены; replay идемпотентен |
+| Page 2 empty claims | construction result + risk result с 0 claims/4 quarantined items бросает `arbitration_claims_missing` | оба role results сохранены, полезный output доступен, arbitration/provider повторно не вызывается |
+| Cross-lineage collision | old/new lineage дают один physical ID и разные fingerprints | physical IDs разделены lineage; mismatch получает один новый call |
+| Two-worker claim | два PostgreSQL workers одновременно claim exact request | максимум один owner/physical call |
+| Same-lineage resume | `response_received` повторно доставлен | provider calls 0, usage rows +0, parsing/persistence завершены |
+| Cross-lineage reuse | exact completed response и mismatch/ambiguous варианты | reuse только exact completed; mismatch вызывает call; ambiguous не reuse |
+| Item quarantine | один invalid optional item среди валидных | invalid item получает typed limitation, остальные claims/evidence сохранены |
+| Canonical identity | replay и одинаковый key с иным canonical meaning | replay no-op; semantic collision fail-fast без уничтожения старой записи |
+| Breaker | три разных fingerprints и затем одинаковые terminal fingerprints | разные причины не суммируются; одинаковая причина открывает breaker по порогу |
+| Finalization | sibling pending/running/leased | aggregate не terminal |
+| Resource/admin | production-shaped partial/system/retry payloads | counts/pages/action отображаются без реконструкции |
+| Cost journal | снимок usage до/после resume/race | resume/reprojection +0; новый HTTP ровно +1 |
+
+### 14.9 Выпуск и canary
+
+- целевые PHPUnit, PostgreSQL contracts без skip, `php -l`, Pint, Larastan, autoload и `git diff --check`;
+- admin Vitest+MSW, `tsc --noEmit`, ESLint, Prettier и `git diff --check`, без frontend build;
+- один последовательный self-review correctness/security/architecture/UX;
+- отдельные PR backend/admin только при фактических изменениях соответствующего проекта;
+- стандартный deploy без изменения infrastructure/workflows;
+- read-only canary: `/ready`, exact release SHA, protected endpoint 401, новые Laravel/GlitchTip events и отсутствие нового dispatch/usage для document 173;
+- единственный следующий ручной retry document 173 выполняет пользователь только после успешного canary.

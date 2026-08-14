@@ -424,6 +424,35 @@ final class GeometryExpertTest extends TestCase
         self::assertSame(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'], $reserved);
     }
 
+    #[Test]
+    public function explicit_retry_lineages_change_geometry_physical_attempt_identity(): void
+    {
+        $firstProvider = new RecordedGeometryVisionProvider([]);
+        $secondProvider = new RecordedGeometryVisionProvider([]);
+        $sheet = static fn (VisionDocumentInput $source): array => [
+            'sheet_id' => 'page:17',
+            'sheet_role' => 'plan',
+            'source' => $source,
+            'arbitration' => ['decisions' => []],
+        ];
+
+        (new VisionGeometryExpertModel($firstProvider))->interpret(
+            $this->input([$sheet($this->visionInput('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'))]),
+            static function (): void {},
+        );
+        (new VisionGeometryExpertModel($secondProvider))->interpret(
+            $this->input([$sheet($this->visionInput('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'))]),
+            static function (): void {},
+        );
+
+        $first = $firstProvider->inputs[0]->operationContext;
+        $second = $secondProvider->inputs[0]->operationContext;
+        self::assertSame($first->correlationId, $second->correlationId);
+        self::assertNotSame($first->attemptId, $second->attemptId);
+        self::assertSame('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', $first->processingLineageId);
+        self::assertSame('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', $second->processingLineageId);
+    }
+
     /** @param list<array<string,mixed>> $sheets */
     private function input(array $sheets): GeometryExpertInput
     {
@@ -468,7 +497,7 @@ final class GeometryExpertTest extends TestCase
         ];
     }
 
-    private function visionInput(): VisionDocumentInput
+    private function visionInput(?string $processingLineageId = null): VisionDocumentInput
     {
         $image = imagecreatetruecolor(2, 2);
         imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
@@ -487,7 +516,7 @@ final class GeometryExpertTest extends TestCase
             new AiOperationContext(
                 '11111111-1111-5111-8111-111111111111',
                 '22222222-2222-5222-8222-222222222222',
-                7, 9, 11, 'checking_geometry', 'vision', 1, 13, 17, 19,
+                7, 9, 11, 'checking_geometry', 'vision', 1, 13, 17, 19, $processingLineageId,
             ),
             (new ProjectiveTransformFactory)->identity(),
             sheetRole: 'plan',

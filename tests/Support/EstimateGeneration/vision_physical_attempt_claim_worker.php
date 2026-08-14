@@ -49,6 +49,7 @@ $snapshot = (new EloquentVisionPhysicalAttemptStore($connection))->claim(
         isset($context['documentId']) ? (int) $context['documentId'] : null,
         isset($context['pageId']) ? (int) $context['pageId'] : null,
         isset($context['unitId']) ? (int) $context['unitId'] : null,
+        isset($context['processingLineageId']) ? (string) $context['processingLineageId'] : null,
     ),
     (string) ($payload['fingerprint'] ?? ''),
     (string) ($payload['owner_token'] ?? ''),
@@ -60,3 +61,7 @@ fwrite(STDOUT, json_encode([
     'state' => $snapshot->state,
     'owner_token' => $snapshot->ownerToken,
 ], JSON_THROW_ON_ERROR).PHP_EOL);
+fflush(STDOUT);
+$connection->disconnect();
+
+exit(0);

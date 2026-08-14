@@ -95,7 +95,7 @@ final readonly class ProjectModelEvidenceWriter
                 }
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
-                $entityId = 'entity:'.hash('sha256', $claim->entityKey);
+                $entityId = 'entity:'.hash('sha256', $projection['type'].'|'.$claim->entityKey);
                 $entities[$entityId] = new Entity(
                     $entityId,
                     $scope->organizationId,
@@ -217,16 +217,13 @@ final readonly class ProjectModelEvidenceWriter
         $type = mb_strtolower($claim->factType);
         $value = $claim->value['data'];
 
-        if ($type === 'room_area' && (is_int($value) || is_float($value)) && $value > 0 && $claim->unit === 'm2') {
-            return ['type' => 'room', 'attributes' => ['area_m2' => $value]];
-        }
-
-        if ((str_contains($type, 'material') || str_contains($type, 'finish'))
+        if (in_array($type, ['material', 'equipment'], true)
             && is_string($value) && trim($value) !== '') {
             $name = mb_substr(trim($value), 0, 240);
+            $codeField = $type.'_code';
 
-            return ['type' => 'material', 'attributes' => [
-                'material_code' => 'observed:'.substr(hash('sha256', $name), 0, 32),
+            return ['type' => $type, 'attributes' => [
+                $codeField => 'observed:'.substr(hash('sha256', $name), 0, 32),
                 'name' => $name,
                 'properties' => [],
             ]];
@@ -235,8 +232,10 @@ final readonly class ProjectModelEvidenceWriter
         $numeric = (is_int($value) || is_float($value)) && $value > 0;
         $unit = $claim->unit;
         $allowedUnits = ['m', 'm2', 'm3', 'pcs', 'kg', 't', 'h'];
-        if ($numeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
-            $kind = str_contains($type, 'count') || str_contains($type, 'quantity') ? 'quantity' : 'dimension';
+        $kind = $type === 'quantity'
+            ? 'quantity'
+            : (in_array($type, ['area', 'dimension_chain', 'elevation', 'level'], true) ? 'dimension' : null);
+        if ($kind !== null && $numeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
 
             return ['type' => $kind, 'attributes' => ['value' => $value, 'unit' => $unit]];
         }

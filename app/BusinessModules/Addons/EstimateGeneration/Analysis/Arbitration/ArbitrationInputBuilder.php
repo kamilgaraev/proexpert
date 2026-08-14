@@ -64,7 +64,11 @@ final class ArbitrationInputBuilder
                 imageDetail: $source->imageDetail,
                 operationContext: new AiOperationContext(
                     AiOperationContext::deterministicId('arbitration-correlation|'.$source->operationContext->correlationId),
-                    AiOperationContext::deterministicId('arbitration-attempt|'.$source->operationContext->attemptId),
+                    AiOperationContext::deterministicId(implode('|', [
+                        'arbitration-attempt',
+                        $source->operationContext->attemptId,
+                        $source->operationContext->processingLineageId ?? 'unscoped',
+                    ])),
                     $source->organizationId,
                     $source->projectId,
                     $source->sessionId,
@@ -74,6 +78,7 @@ final class ArbitrationInputBuilder
                     $source->documentId,
                     $source->pageId,
                     $source->processingUnitId,
+                    $source->operationContext->processingLineageId,
                 ),
                 sourceTransform: $source->sourceTransform,
                 sheetRole: $source->sheetRole,

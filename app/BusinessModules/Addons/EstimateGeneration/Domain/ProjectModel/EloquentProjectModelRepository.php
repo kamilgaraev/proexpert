@@ -365,6 +365,16 @@ SQL, [
                         throw new InvalidArgumentException('Project model entity batch is invalid.');
                     }
                     $projectionScopeId = $this->projectionScopeId($entity);
+                    $payload = [
+                        'kind' => $entity->type,
+                        'key' => $entity->stableKey,
+                        ...$entity->attributes,
+                    ];
+                    if (in_array($entity->type, ['material', 'equipment'], true)
+                        && ($payload['properties'] ?? null) === []) {
+                        $payload['properties'] = (object) [];
+                    }
+                    $serializedPayload = $this->json($payload);
                     $this->database->table('estimate_generation_project_model_entities')->insertOrIgnore([
                         'building_model_id' => $projectionScopeId,
                         'organization_id' => $entity->organizationId,
@@ -373,14 +383,26 @@ SQL, [
                         'source_version' => $entity->sourceVersion,
                         'stable_key' => $entity->stableKey,
                         'entity_kind' => $entity->type,
-                        'payload' => $this->json([
-                            'kind' => $entity->type,
-                            'key' => $entity->stableKey,
-                            ...$entity->attributes,
-                        ]),
+                        'payload' => $serializedPayload,
                         'confidence' => null,
                         'created_at' => now(),
                     ]);
+                    $stored = $this->database->table('estimate_generation_project_model_entities')
+                        ->where('building_model_id', $projectionScopeId)
+                        ->where('stable_key', $entity->stableKey)
+                        ->first(['entity_kind', 'payload']);
+                    $comparisonPayload = $payload;
+                    if (is_object($comparisonPayload['properties'] ?? null)
+                        && get_object_vars($comparisonPayload['properties']) === []) {
+                        $comparisonPayload['properties'] = [];
+                    }
+                    if ($stored === null || (string) $stored->entity_kind !== $entity->type
+                        || ! hash_equals(
+                            DerivedQuantityIdentity::canonicalJson($comparisonPayload),
+                            DerivedQuantityIdentity::canonicalJson($this->decodedJson($stored->payload)),
+                        )) {
+                        throw new InvalidArgumentException('project_model_entity_exact_identity_collision');
+                    }
                 }
             }, 3);
         }

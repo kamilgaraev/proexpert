@@ -16,6 +16,7 @@ use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 
@@ -60,13 +61,18 @@ final class ObserverEvidenceProjectionPostgresTest extends TestCase
             ];
             $claims = [
                 new ObservationClaim(
+                    'construction:material', 'observer_construction', 'material.1', 'material',
+                    ['type' => 'string', 'data' => 'Обезличенный материал'], null, 'construction:material', true,
+                    $scope[0], $scope[1], $scope[2], $scope[3], $locator,
+                ),
+                new ObservationClaim(
                     'literal:1', 'observer_literal', 'building.roof', 'roof_geometry',
                     ['type' => 'enum', 'data' => 'gable'], null, 'literal:roof', true,
                     $scope[0], $scope[1], $scope[2], $scope[3], $locator,
                 ),
                 new ObservationClaim(
-                    'literal:2', 'observer_literal', 'room.1', 'room_area',
-                    ['type' => 'number', 'data' => 24.5], 'm2', 'literal:room-area', true,
+                    'literal:2', 'observer_literal', 'finish.1', 'finish_zone',
+                    ['type' => 'string', 'data' => 'Обезличенная зона отделки'], null, 'literal:finish-zone', true,
                     $scope[0], $scope[1], $scope[2], $scope[3], $locator,
                 ),
             ];
@@ -95,8 +101,66 @@ final class ObserverEvidenceProjectionPostgresTest extends TestCase
                 ->where('project_id', $scope[1])
                 ->where('session_id', $scope[2])
                 ->count());
+            self::assertSame('object', DB::selectOne(
+                "SELECT jsonb_typeof(payload->'properties') AS type FROM estimate_generation_project_model_entities WHERE entity_kind = 'material'",
+            )->type);
         } finally {
             DB::rollBack();
         }
+    }
+
+    #[Test]
+    public function canonical_entity_replay_is_idempotent_and_semantic_collision_preserves_the_first_result(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
+
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => User::factory()->create()->id,
+            'status' => 'draft',
+            'processing_stage' => 'draft',
+            'processing_progress' => 20,
+            'input_payload' => [],
+        ]);
+        $sourceVersion = 'sha256:'.str_repeat('6', 64);
+        $scope = [(int) $organization->id, (int) $project->id, (int) $session->id, $sourceVersion];
+        $locator = ['page' => 1, 'unit_type' => 'pdf_page', 'unit_index' => 1, 'source_version' => $sourceVersion, 'explicit' => true];
+        $writer = new ProjectModelEvidenceWriter(
+            new EloquentProjectModelRepository(app('db')),
+            new EloquentEvidenceRepository(DB::connection()),
+        );
+        $first = new ObservationClaim(
+            'construction:material:first', 'observer_construction', 'material.same', 'material',
+            ['type' => 'string', 'data' => 'Материал А'], null, 'construction:material:first', true,
+            $scope[0], $scope[1], $scope[2], $scope[3], $locator,
+        );
+        $collision = new ObservationClaim(
+            'construction:material:second', 'observer_construction', 'material.same', 'material',
+            ['type' => 'string', 'data' => 'Материал Б'], null, 'construction:material:second', true,
+            $scope[0], $scope[1], $scope[2], $scope[3], $locator,
+        );
+
+        $writer->writeIndependentObservations([$first], 173, 1);
+        $writer->writeIndependentObservations([$first], 173, 1);
+        try {
+            $writer->writeIndependentObservations([$collision], 173, 1);
+            self::fail('Semantic entity collision was silently accepted.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame('project_model_entity_exact_identity_collision', $exception->getMessage());
+        }
+
+        self::assertSame(1, DB::table('estimate_generation_project_model_entities')
+            ->where('organization_id', $scope[0])->where('project_id', $scope[1])
+            ->where('session_id', $scope[2])->where('source_version', $sourceVersion)->count());
+        self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
+            ->where('organization_id', $scope[0])->where('project_id', $scope[1])
+            ->where('session_id', $scope[2])->where('source_version', $sourceVersion)->count());
+        self::assertSame(1, DB::table('estimate_generation_evidence')
+            ->where('organization_id', $scope[0])->where('project_id', $scope[1])
+            ->where('session_id', $scope[2])->count());
     }
 }

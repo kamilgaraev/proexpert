@@ -24,7 +24,11 @@ final class ObserverInputBuilder
             $profile->promptHash(),
         ]);
         $correlationId = AiOperationContext::deterministicId('observer-correlation|'.$contextSeed);
-        $attemptId = AiOperationContext::deterministicId('observer-attempt|'.$contextSeed);
+        $attemptId = AiOperationContext::deterministicId(implode('|', [
+            'observer-attempt',
+            $contextSeed,
+            $source->operationContext->processingLineageId ?? 'unscoped',
+        ]));
         $imageContent = $this->composeImage($source->imageContent, $profile);
         $trustedMetadata = array_intersect_key($source->auxiliaryMetadata, array_flip([
             'representation_status',
@@ -59,6 +63,7 @@ final class ObserverInputBuilder
                 $source->documentId,
                 $source->pageId,
                 $source->processingUnitId,
+                $source->operationContext->processingLineageId,
             ),
             sourceTransform: $source->sourceTransform,
             sheetRole: 'unknown',

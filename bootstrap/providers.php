@@ -1,6 +1,6 @@
 <?php
 
-return [
+$providers = [
     App\Providers\StorageServiceProvider::class,
     App\Providers\EstimateGenerationIntegrationServiceProvider::class,
     App\Providers\CustomerReportingServiceProvider::class,
@@ -46,3 +46,13 @@ return [
     App\Providers\RouteServiceProvider::class,
     App\Providers\ScheduleTaskIntervalServiceProvider::class,
 ];
+
+if (getenv('APP_ENV') === 'testing'
+    && getenv('ESTIMATE_GENERATION_MODULAR_CONTRACT_BOOTSTRAP') === '1') {
+    $providers = array_values(array_diff($providers, [
+        App\BusinessModules\Core\Reporting\ReportingExecutionServiceProvider::class,
+        App\BusinessModules\Core\Reporting\ReportingCatalogServiceProvider::class,
+    ]));
+}
+
+return $providers;

@@ -355,6 +355,9 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 documentId: $context->documentId,
                 pageId: $context->pageId,
                 unitId: $context->unitId,
+                processingLineageId: preg_match('/\A[0-9a-f-]{36}\z/i', $context->processingAttemptId) === 1
+                    ? strtolower($context->processingAttemptId)
+                    : null,
             ),
             sourceTransform: $preprocessed->transform,
             nativeReferences: $nativeReferences,
