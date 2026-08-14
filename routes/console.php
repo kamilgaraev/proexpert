@@ -88,10 +88,6 @@ use Illuminate\Support\Facades\File;
 // Ежемесячная перепроверка организаций (например, 1 числа каждого месяца в 03:00 ночи)
 Schedule::command(ReverifyOrganizationsCommand::class)->monthlyOn(1, '03:00');
 
-Schedule::command('estimate-generation:deliver-geometry-regeneration --limit=100')
-    ->everyMinute()
-    ->withoutOverlapping(5);
-
 use App\BusinessModules\Core\Payments\Jobs\ProcessOverduePaymentsJob;
 use App\BusinessModules\Core\Payments\Jobs\SendPaymentRemindersJob;
 use App\BusinessModules\Core\Payments\Jobs\SendUpcomingPaymentNotificationsJob;

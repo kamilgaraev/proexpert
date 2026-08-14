@@ -10,6 +10,15 @@ use PHPUnit\Framework\TestCase;
 final class GeometryMigrationContractTest extends TestCase
 {
     #[Test]
+    public function removed_geometry_regeneration_command_is_not_scheduled(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 4).'/routes/console.php');
+
+        self::assertIsString($source);
+        self::assertStringNotContainsString('estimate-generation:deliver-geometry-regeneration', $source);
+    }
+
+    #[Test]
     public function jsonb_rollout_uses_bounded_shadow_backfill_and_one_explicit_swap_lock(): void
     {
         $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000250_convert_session_payloads_to_jsonb.php');
