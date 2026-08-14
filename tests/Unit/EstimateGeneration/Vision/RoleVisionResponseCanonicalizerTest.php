@@ -71,6 +71,27 @@ final class RoleVisionResponseCanonicalizerTest extends TestCase
         ], $result->payload['evidence'][0]['locator']);
     }
 
+    #[Test]
+    public function mismatched_outer_and_inner_evidence_keys_are_left_for_fail_closed_validation(): void
+    {
+        $payload = json_decode((string) file_get_contents(
+            dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/observer-production-v3.json',
+        ), true, flags: JSON_THROW_ON_ERROR);
+        $payload['evidence'] = [
+            'outer-reference' => [
+                'key' => 'inner-reference',
+                'locator' => $this->locator(),
+            ],
+        ];
+
+        $result = (new RoleVisionResponseCanonicalizer)->canonicalize(
+            $payload,
+            $this->input(['observer' => ['index' => 1]]),
+        );
+
+        self::assertSame($payload['evidence'], $result->payload['evidence']);
+    }
+
     /** @param array<string,mixed> $auxiliaryMetadata */
     private function input(array $auxiliaryMetadata): VisionDocumentInput
     {

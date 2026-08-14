@@ -220,7 +220,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 'readability' => 'medium',
                 'confidence' => 0.93,
                 'ambiguous' => true,
-                'material_risk' => true,
+                'material_risk' => 'high',
                 'reasons' => ['Совмещены план, фасад и мелкие размерные цепочки.'],
                 'semantic_regions' => [[
                     'label' => 'Размерная цепочка фасада',
@@ -261,6 +261,31 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             self::assertSame('vision_observer_model_mismatch', $exception->reason);
         }
         Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function production_shaped_page_three_http_two_hundred_preserves_useful_sections_and_quarantines_only_bad_facts(): void
+    {
+        Http::fake(fn () => Http::response($this->fixtureResponse('document-173-page-3-response.json')));
+
+        $analysis = $this->provider()->analyze((new ObserverInputBuilder)->build(
+            $this->input(sheetRole: 'specification', claim: 17303),
+            ObserverProfile::Literal,
+            static function (): void {},
+        ));
+
+        self::assertSame(4, $analysis->toArray()['schema_version']);
+        self::assertSame('schedule', $analysis->sheetType);
+        self::assertSame('medium', $analysis->analysisRouting?->materialRisk->value);
+        self::assertSame('sheet-index', $analysis->elements[0]->key);
+        self::assertCount(1, $analysis->projectSheetAnalysis?->facts ?? []);
+        self::assertContains(
+            ['section' => 'facts', 'index' => 1, 'reason' => 'invalid_project_sheet_fact'],
+            $analysis->quarantinedItems,
+        );
+        self::assertCount(1, $this->attempts);
+        self::assertSame('succeeded', $this->attempts[0]->status);
+        Http::assertSentCount(1);
     }
 
     #[Test]

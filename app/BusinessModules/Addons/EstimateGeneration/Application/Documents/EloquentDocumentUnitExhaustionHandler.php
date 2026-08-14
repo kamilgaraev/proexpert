@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProce
 
 final readonly class EloquentDocumentUnitExhaustionHandler implements DocumentUnitExhaustionHandler
 {
-    public function __construct(private RequireDocumentProcessingReview $review) {}
+    public function __construct(private DocumentUnitAggregateReconciler $reconciler) {}
 
     public function handle(int $unitId): void
     {
@@ -22,11 +22,9 @@ final readonly class EloquentDocumentUnitExhaustionHandler implements DocumentUn
             'status' => 'failed',
         ])->save();
 
-        $this->review->handle(
+        $this->reconciler->reconcile(
             (int) $unit->document->getKey(),
             (string) $unit->source_version,
-            (string) $unit->source_version,
-            ['document_unit_attempts_exhausted'],
         );
     }
 }

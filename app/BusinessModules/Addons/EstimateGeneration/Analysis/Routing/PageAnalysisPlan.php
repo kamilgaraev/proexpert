@@ -30,7 +30,7 @@ final readonly class PageAnalysisPlan
         };
         $arbitration = $route === PageAnalysisRoute::DenseAmbiguous
             || ($route === PageAnalysisRoute::StructuredTextual
-                && ($decision->materialRisk || $semanticDisagreement));
+                && ($decision->materialRisk->requiresArbitration() || $semanticDisagreement));
         $reasons = $decision->reasons;
         if ($decision->effectiveRoute !== $decision->requestedRoute) {
             $reasons[] = 'server_minimum_analysis_depth';

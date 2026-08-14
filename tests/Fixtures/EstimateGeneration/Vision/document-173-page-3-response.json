@@ -1,0 +1,16 @@
+{
+  "model": "openai/gpt-5.6-luna",
+  "choices": [
+    {
+      "message": {
+        "content": "{\"schema_version\":4,\"sheet_type\":\"schedule\",\"evidence\":{\"ev_title\":{\"key\":\"ev_title\",\"locator\":{\"page_id\":17,\"page_number\":2,\"processing_unit_id\":19,\"source_version\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"coordinate_space\":\"normalized_derivative_v1\"}},\"ev_schedule\":{\"key\":\"ev_schedule\",\"locator\":{\"page_id\":17,\"page_number\":2,\"processing_unit_id\":19,\"source_version\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"coordinate_space\":\"normalized_derivative_v1\"}}},\"elements\":[{\"key\":\"sheet-index\",\"type\":\"text\",\"label\":\"Индекс листов\",\"polygon\":[[0.1,0.1],[0.9,0.1]],\"confidence\":0.99,\"evidence_ref\":\"ev_schedule\"}],\"scale_candidates\":[],\"warnings\":[\"scale_missing\"],\"visual_attributes\":{\"roof_type\":{\"value\":\"gable\",\"confidence\":0.91,\"evidence_ref\":\"ev_title\"}},\"project_sheet_analysis\":{\"contractVersion\":\"sheet-analysis:v3\",\"role\":\"specification\",\"facts\":[{\"entityKey\":\"sheet.index\",\"factType\":\"table\",\"value\":{\"type\":\"string\",\"data\":\"bounded-index\"},\"unit\":null,\"evidenceRef\":\"ev_schedule\",\"sourcePolygonOrNativeRef\":[[0.1,0.1],[0.9,0.1]],\"confidence\":0.99,\"contractVersion\":\"sheet-analysis:v3\"},{\"entityKey\":\"sheet.cross-reference\",\"factType\":\"cross_sheet_link\",\"value\":{\"type\":\"string\",\"data\":\"bounded-reference\"},\"evidenceRef\":\"ev_schedule\",\"sourcePolygonOrNativeRef\":[[0.2,0.2],[0.8,0.2]],\"confidence\":0.98,\"contractVersion\":\"sheet-analysis:v3\"}]},\"analysis_routing\":{\"page_kind\":\"schedule\",\"requested_depth\":\"structured_textual\",\"information_density\":\"medium\",\"readability\":\"high\",\"confidence\":0.99,\"ambiguous\":false,\"material_risk\":\"medium\",\"reasons\":[\"Содержательная ведомость.\"],\"semantic_regions\":[]}}"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 6839,
+    "completion_tokens": 4999,
+    "total_tokens": 11838
+  }
+}

@@ -391,9 +391,9 @@ final class DocumentArbitrationTest extends TestCase
         $writer->writeArbitration($claims, $decisions, 13, 4);
         $writer->writeArbitration($claims, $decisions, 13, 4);
 
-        self::assertEqualsCanonicalizing(['candidate', 'confirmed', 'unresolved'], array_values(array_unique(array_column($models->facts, 'status'))));
-        self::assertCount(3, $models->facts);
-        self::assertCount(3, $models->evidence);
+        self::assertEqualsCanonicalizing(['candidate', 'confirmed'], array_values(array_unique(array_column($models->facts, 'status'))));
+        self::assertCount(2, $models->facts);
+        self::assertCount(2, $models->evidence);
     }
 
     #[Test]
@@ -407,10 +407,8 @@ final class DocumentArbitrationTest extends TestCase
         $writer->writeIndependentObservations([$claim], 13, 1);
         $writer->writeIndependentObservations([$claim], 13, 2);
 
-        self::assertCount(2, $models->facts);
-        self::assertSame(['candidate'], array_values(array_unique(array_column($models->facts, 'status'))));
-        self::assertSame([0.0], array_values(array_unique(array_column($models->facts, 'confidence'))));
-        self::assertCount(2, $models->evidence);
+        self::assertSame([], $models->facts);
+        self::assertSame([], $models->evidence);
     }
 
     #[Test]

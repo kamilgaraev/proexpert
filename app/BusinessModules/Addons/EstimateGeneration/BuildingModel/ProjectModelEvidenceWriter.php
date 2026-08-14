@@ -37,6 +37,17 @@ final readonly class ProjectModelEvidenceWriter
             $byId[$claim->id] = $claim;
         }
         $scope = $claims[0];
+        foreach ($decisions as $decision) {
+            $claim = $byId[$decision->claimId] ?? throw new InvalidArgumentException('Arbitration claim is absent.');
+            $this->assertScope($claim, $scope);
+        }
+        $decisions = array_values(array_filter(
+            $decisions,
+            fn (ArbitrationDecision $decision): bool => $this->projectModelEntity($byId[$decision->claimId]) !== null,
+        ));
+        if ($decisions === []) {
+            return;
+        }
         $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope): void {
             $entities = [];
             $facts = [];
@@ -50,6 +61,7 @@ final readonly class ProjectModelEvidenceWriter
                         ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
                     $this->assertScope($supportingClaim, $scope);
                     if ($supportingClaim->evidenceRef === null
+                        || $this->projectModelEntity($supportingClaim) === null
                         || ! in_array($supportingClaim->evidenceRef, $decision->evidenceRefs, true)) {
                         continue;
                     }
@@ -81,6 +93,8 @@ final readonly class ProjectModelEvidenceWriter
                     $evidenceIds[] = $evidenceId;
                     $domainEvidence[$evidenceId] = $this->domainEvidence($node);
                 }
+                $projection = $this->projectModelEntity($claim)
+                    ?? throw new InvalidArgumentException('Project model claim is not projectable.');
                 $entityId = 'entity:'.hash('sha256', $claim->entityKey);
                 $entities[$entityId] = new Entity(
                     $entityId,
@@ -88,9 +102,9 @@ final readonly class ProjectModelEvidenceWriter
                     $scope->projectId,
                     $scope->sessionId,
                     $scope->sourceVersion,
-                    $this->entityType($claim),
+                    $projection['type'],
                     $entityId,
-                    ['source_key' => $claim->entityKey],
+                    $projection['attributes'],
                 );
                 $factId = 'fact:'.hash('sha256', implode('|', [
                     $claim->id,
@@ -197,19 +211,37 @@ final readonly class ProjectModelEvidenceWriter
         }
     }
 
-    private function entityType(ObservationClaim $claim): string
+    /** @return array{type:string,attributes:array<string,mixed>}|null */
+    private function projectModelEntity(ObservationClaim $claim): ?array
     {
-        $haystack = mb_strtolower($claim->entityKey.' '.$claim->factType);
+        $type = mb_strtolower($claim->factType);
+        $value = $claim->value['data'];
 
-        return match (true) {
-            str_contains($haystack, 'room') || str_contains($haystack, 'помещ') => 'room',
-            str_contains($haystack, 'wall') || str_contains($haystack, 'стен') => 'wall',
-            str_contains($haystack, 'opening') || str_contains($haystack, 'проем') || str_contains($haystack, 'проём') => 'opening',
-            str_contains($haystack, 'equipment') || str_contains($haystack, 'оборуд') => 'equipment',
-            str_contains($haystack, 'dimension') || str_contains($haystack, 'размер') => 'dimension',
-            str_contains($haystack, 'quantity') || str_contains($haystack, 'колич') => 'quantity',
-            default => 'material',
-        };
+        if ($type === 'room_area' && (is_int($value) || is_float($value)) && $value > 0 && $claim->unit === 'm2') {
+            return ['type' => 'room', 'attributes' => ['area_m2' => $value]];
+        }
+
+        if ((str_contains($type, 'material') || str_contains($type, 'finish'))
+            && is_string($value) && trim($value) !== '') {
+            $name = mb_substr(trim($value), 0, 240);
+
+            return ['type' => 'material', 'attributes' => [
+                'material_code' => 'observed:'.substr(hash('sha256', $name), 0, 32),
+                'name' => $name,
+                'properties' => [],
+            ]];
+        }
+
+        $numeric = (is_int($value) || is_float($value)) && $value > 0;
+        $unit = $claim->unit;
+        $allowedUnits = ['m', 'm2', 'm3', 'pcs', 'kg', 't', 'h'];
+        if ($numeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
+            $kind = str_contains($type, 'count') || str_contains($type, 'quantity') ? 'quantity' : 'dimension';
+
+            return ['type' => $kind, 'attributes' => ['value' => $value, 'unit' => $unit]];
+        }
+
+        return null;
     }
 
     private function domainEvidence(EvidenceNode $node): Evidence

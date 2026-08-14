@@ -39,6 +39,65 @@ final class EstimateGenerationFailureLedgerPostgresTest extends TestCase
     }
 
     #[Test]
+    public function same_primary_failure_fingerprint_is_persisted_for_two_distinct_units_without_masking_either_failure(): void
+    {
+        $this->requireEnvironment(false);
+        $fixture = $this->fixture();
+        try {
+            $first = $this->failure($fixture, (string) Str::uuid());
+            $secondUnitId = (int) DB::table('estimate_generation_processing_units')->insertGetId([
+                'organization_id' => $fixture['organization_id'],
+                'project_id' => $fixture['project_id'],
+                'session_id' => $fixture['session_id'],
+                'document_id' => $fixture['document_id'],
+                'unit_type' => 'pdf_page',
+                'unit_index' => 2,
+                'source_version' => 'sha256:'.str_repeat('a', 64),
+                'status' => 'pending',
+                'locator' => json_encode([
+                    'source_kind' => 'pdf',
+                    'source_version' => 'sha256:'.str_repeat('a', 64),
+                    'coordinate_space' => 'pdf_page_pixels',
+                    'artifact_path' => 'org-'.$fixture['organization_id'].'/estimate-generation/contracts/page-2.png',
+                    'artifact_source_version' => 'sha256:'.str_repeat('a', 64),
+                    'artifact_version_id' => 'failure-contract-page-2',
+                    'artifact_bytes' => 1,
+                    'artifact_sha256' => 'sha256:'.str_repeat('a', 64),
+                    'content_type' => 'image/png',
+                ], JSON_THROW_ON_ERROR),
+                'metadata' => '{}',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $secondEventId = (string) Str::uuid();
+            $second = (new FailureNormalizer)->normalize(new RuntimeException('private document'), new FailureContext(
+                organizationId: $fixture['organization_id'],
+                projectId: $fixture['project_id'],
+                sessionId: $fixture['session_id'],
+                stage: ProcessingStage::UnderstandDocuments,
+                operation: 'process_unit',
+                attempt: 1,
+                correlationId: $secondEventId,
+                documentId: $fixture['document_id'],
+                unitId: $secondUnitId,
+                eventId: $secondEventId,
+            ));
+            self::assertSame($first->fingerprint, $second->fingerprint);
+
+            $store = new EloquentFailureStore(DB::connection());
+            $store->record($first, new \DateTimeImmutable('2026-08-14T18:27:12+00:00'));
+            $store->record($second, new \DateTimeImmutable('2026-08-14T18:27:13+00:00'));
+
+            self::assertSame(2, DB::table('estimate_generation_failure_identities')
+                ->where('fingerprint', $first->fingerprint)->count());
+            self::assertSame(2, DB::table('estimate_generation_failure_events')
+                ->where('fingerprint', $first->fingerprint)->count());
+        } finally {
+            $this->cleanup($fixture);
+        }
+    }
+
+    #[Test]
     public function committed_winner_unblocks_duplicate_event_without_double_occurrence(): void
     {
         $this->requireEnvironment(true);

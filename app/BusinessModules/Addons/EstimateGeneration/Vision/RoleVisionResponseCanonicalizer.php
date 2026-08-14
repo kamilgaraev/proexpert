@@ -55,16 +55,19 @@ final class RoleVisionResponseCanonicalizer
     private function projectObserverEvidence(array $payload, VisionDocumentInput $input): array
     {
         $evidence = $payload['evidence'] ?? null;
-        if (! is_array($evidence) || ! array_is_list($evidence) || count($evidence) > 256) {
+        if (! is_array($evidence) || count($evidence) > 256) {
             return $payload;
         }
         $references = [];
         $projectedEvidence = [];
-        foreach ($evidence as $item) {
+        foreach ($evidence as $outerKey => $item) {
             if (! is_array($item) || ! is_string($item['key'] ?? null)) {
                 continue;
             }
             $localReference = trim($item['key']);
+            if (! array_is_list($evidence) && (! is_string($outerKey) || ! hash_equals($outerKey, $localReference))) {
+                return $payload;
+            }
             if ($localReference === '' || mb_strlen($localReference) > 200) {
                 continue;
             }

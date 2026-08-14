@@ -29,7 +29,7 @@ final readonly class PageAnalysisRoutingDecision
         public string $readability,
         public float $confidence,
         public bool $ambiguous,
-        public bool $materialRisk,
+        public AnalysisMaterialRisk $materialRisk,
         public array $reasons,
         public array $semanticRegions,
         public bool $failOpenEscalated,
@@ -48,6 +48,9 @@ final readonly class PageAnalysisRoutingDecision
         $route = is_string($payload['requested_depth'] ?? null)
             ? PageAnalysisRoute::tryFrom($payload['requested_depth'])
             : null;
+        $materialRisk = is_string($payload['material_risk'] ?? null)
+            ? AnalysisMaterialRisk::tryFrom($payload['material_risk'])
+            : null;
         $confidence = $payload['confidence'] ?? null;
         if (! is_string($payload['page_kind'] ?? null)
             || ! in_array($payload['page_kind'], self::PAGE_KINDS, true)
@@ -60,7 +63,7 @@ final readonly class PageAnalysisRoutingDecision
             || ! is_finite((float) $confidence)
             || (float) $confidence < 0.0 || (float) $confidence > 1.0
             || ! is_bool($payload['ambiguous'] ?? null)
-            || ! is_bool($payload['material_risk'] ?? null)
+            || ! $materialRisk instanceof AnalysisMaterialRisk
             || ! is_array($payload['reasons'] ?? null) || ! array_is_list($payload['reasons'])
             || count($payload['reasons']) < 1 || count($payload['reasons']) > 8
             || ! is_array($payload['semantic_regions'] ?? null) || ! array_is_list($payload['semantic_regions'])
@@ -101,7 +104,7 @@ final readonly class PageAnalysisRoutingDecision
             $payload['readability'],
             (float) $confidence,
             $payload['ambiguous'],
-            $payload['material_risk'],
+            $materialRisk,
             $reasons,
             array_values($payload['semantic_regions']),
             $failOpen,
@@ -118,7 +121,7 @@ final readonly class PageAnalysisRoutingDecision
             'low',
             0.0,
             true,
-            true,
+            AnalysisMaterialRisk::High,
             [$reason],
             [],
             true,
@@ -146,7 +149,7 @@ final readonly class PageAnalysisRoutingDecision
             'readability' => $this->readability,
             'confidence' => $this->confidence,
             'ambiguous' => $this->ambiguous,
-            'material_risk' => $this->materialRisk,
+            'material_risk' => $this->materialRisk->value,
             'reasons' => $this->reasons,
             'semantic_regions' => $this->semanticRegions,
         ];
