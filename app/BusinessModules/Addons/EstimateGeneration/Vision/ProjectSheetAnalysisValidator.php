@@ -91,13 +91,17 @@ final class ProjectSheetAnalysisValidator
     {
         if (! self::hasExactKeys($fact, ['entityKey', 'factType', 'value', 'unit', 'evidenceRef', 'sourcePolygonOrNativeRef', 'confidence', 'contractVersion'])
             || ! is_string($fact['entityKey'] ?? null) || preg_match('~^[a-z0-9][a-z0-9._:-]{0,79}$~', $fact['entityKey']) !== 1
-            || ! is_string($fact['factType'] ?? null) || ! in_array($fact['factType'], self::ROLE_FACT_TYPES[$role], true)
+            || ! is_string($fact['factType'] ?? null) || preg_match('~^[a-z0-9][a-z0-9._:-]{0,79}$~', $fact['factType']) !== 1
             || ! is_array($fact['value'] ?? null) || (! is_string($fact['unit'] ?? null) && ($fact['unit'] ?? null) !== null)
             || ! is_string($fact['evidenceRef'] ?? null) || ! in_array($fact['evidenceRef'], $evidenceKeys, true)
             || ! is_numeric($fact['confidence'] ?? null) || ! is_finite((float) $fact['confidence'])
             || (float) $fact['confidence'] < 0 || (float) $fact['confidence'] > 1
             || ($fact['contractVersion'] ?? null) !== ProjectSheetAnalysisData::CONTRACT_VERSION) {
             throw new VisionContractException('invalid_project_sheet_fact');
+        }
+
+        if (! in_array($fact['factType'], self::ROLE_FACT_TYPES[$role], true)) {
+            throw new VisionContractException('unregistered_project_sheet_fact_type');
         }
 
         self::assertSourceReference($fact['sourcePolygonOrNativeRef'] ?? null, $nativeReferences);

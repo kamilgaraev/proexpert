@@ -14,8 +14,8 @@ final class DocumentUnderstandingSummaryBuilder
     ) {}
 
     /**
-     * @param array<string, mixed> $drawingSummary
-     * @param array<string, mixed> $factsSummary
+     * @param  array<string, mixed>  $drawingSummary
+     * @param  array<string, mixed>  $factsSummary
      * @return array<string, mixed>
      */
     public function build(
@@ -55,7 +55,6 @@ final class DocumentUnderstandingSummaryBuilder
             'type' => $documentType,
             'classified_type' => $classifiedType,
             'source_format' => $sourceFormat,
-            'confidence' => $this->confidence($classification, $documentProfile, $documentType, $capabilities),
             'role_for_estimation' => $this->roleForEstimation(
                 $documentType,
                 $classifiedType,
@@ -71,7 +70,7 @@ final class DocumentUnderstandingSummaryBuilder
     }
 
     /**
-     * @param array<string, mixed> $understanding
+     * @param  array<string, mixed>  $understanding
      * @return array<int, array<string, mixed>>
      */
     public function pageUnderstandingByNumber(array $understanding): array
@@ -80,7 +79,7 @@ final class DocumentUnderstandingSummaryBuilder
         $result = [];
 
         foreach ($profiles as $profile) {
-            if (!is_array($profile)) {
+            if (! is_array($profile)) {
                 continue;
             }
 
@@ -92,7 +91,6 @@ final class DocumentUnderstandingSummaryBuilder
 
             $result[$pageNumber] = [
                 'page_role' => (string) ($profile['page_role'] ?? 'technical_document'),
-                'confidence' => (float) ($profile['confidence'] ?? 0.5),
                 'signals' => array_values(array_map('strval', is_array($profile['signals'] ?? null) ? $profile['signals'] : [])),
                 'review_reasons' => array_values(array_map('strval', is_array($profile['review_reasons'] ?? null) ? $profile['review_reasons'] : [])),
                 'review_required' => (bool) ($profile['requires_review'] ?? false),
@@ -117,43 +115,9 @@ final class DocumentUnderstandingSummaryBuilder
     }
 
     /**
-     * @param array<string, mixed> $classification
-     * @param array<string, mixed> $documentProfile
-     * @param array<string, mixed> $capabilities
-     */
-    private function confidence(array $classification, array $documentProfile, string $documentType, array $capabilities): float
-    {
-        $values = [];
-
-        if (isset($classification['confidence']) && is_numeric($classification['confidence'])) {
-            $values[] = (float) $classification['confidence'];
-        }
-
-        if (isset($documentProfile['confidence']) && is_numeric($documentProfile['confidence'])) {
-            $values[] = (float) $documentProfile['confidence'];
-        }
-
-        if ($values === []) {
-            return $documentType === 'unknown' ? 0.2 : 0.5;
-        }
-
-        $confidence = array_sum($values) / count($values);
-
-        if (($capabilities['has_quantity_takeoffs'] ?? false) === true) {
-            $confidence += 0.04;
-        }
-
-        if (($capabilities['requires_manual_review'] ?? false) === true) {
-            $confidence -= 0.08;
-        }
-
-        return round(max(min($confidence, 0.99), 0.1), 4);
-    }
-
-    /**
-     * @param array<string, mixed> $drawingSummary
-     * @param array<string, mixed> $factsSummary
-     * @param array<string, mixed> $documentProfile
+     * @param  array<string, mixed>  $drawingSummary
+     * @param  array<string, mixed>  $factsSummary
+     * @param  array<string, mixed>  $documentProfile
      * @return array<string, bool>
      */
     private function capabilities(
@@ -205,16 +169,15 @@ final class DocumentUnderstandingSummaryBuilder
     }
 
     /**
-     * @param array<string, bool> $capabilities
-     * @param array<int, string> $classificationReasons
+     * @param  array<string, bool>  $capabilities
+     * @param  array<int, string>  $classificationReasons
      */
     private function roleForEstimation(
         string $documentType,
         string $classifiedType,
         array $capabilities,
         array $classificationReasons
-    ): string
-    {
+    ): string {
         if (($capabilities['requires_manual_review'] ?? false) === true && $documentType === 'unknown') {
             return 'needs_review';
         }
@@ -270,8 +233,8 @@ final class DocumentUnderstandingSummaryBuilder
     }
 
     /**
-     * @param array<int, mixed> $pageProfiles
-     * @param array<string, bool> $capabilities
+     * @param  array<int, mixed>  $pageProfiles
+     * @param  array<string, bool>  $capabilities
      * @return array<int, string>
      */
     private function signals(array $pageProfiles, array $capabilities): array
@@ -279,7 +242,7 @@ final class DocumentUnderstandingSummaryBuilder
         $signals = [];
 
         foreach ($pageProfiles as $profile) {
-            if (!is_array($profile)) {
+            if (! is_array($profile)) {
                 continue;
             }
 

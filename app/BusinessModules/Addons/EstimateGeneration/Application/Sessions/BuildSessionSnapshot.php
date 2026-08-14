@@ -246,10 +246,8 @@ final class BuildSessionSnapshot
         }
 
         if ($status === EstimateGenerationStatus::InputReviewRequired
-            && $this->usableDocumentResults($documentsSummary) > 0
-            && $this->hasGeometryEvidence($documentsSummary)
-            && $this->documentsTerminal($documentsSummary)) {
-            return 'geometry';
+            && $this->documentAnalysisComplete($documentsSummary)) {
+            return (int) ($documentsSummary['ai_question_count'] ?? 0) > 0 ? 'ai_questions' : 'draft';
         }
 
         return null;
@@ -271,16 +269,17 @@ final class BuildSessionSnapshot
         $requiresDocumentRecovery = $status === EstimateGenerationStatus::ProcessingDocuments
             || ($status === EstimateGenerationStatus::Failed
                 && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments);
-        $complete = $total > 0 && $this->documentsTerminal($documentsSummary) && ($usable + $ignored) >= $total;
+        $analysisComplete = $total > 0
+            && $this->documentAnalysisComplete($documentsSummary)
+            && ($usable + $ignored) >= $total;
+        $questionsResolved = (int) ($documentsSummary['ai_question_count'] ?? 0) === 0;
 
         $available = [
             'object' => true,
             'documents' => true,
-            'geometry' => $usable > 0 && $this->hasGeometryEvidence($documentsSummary),
-            'building' => $complete && ! $requiresDocumentRecovery,
-            'draft' => $complete && ! $requiresDocumentRecovery,
-            'review' => $complete && ! $requiresDocumentRecovery,
-            'summary' => $complete && ! $requiresDocumentRecovery,
+            'ai_questions' => $analysisComplete && ! $requiresDocumentRecovery,
+            'draft' => $analysisComplete && $questionsResolved && ! $requiresDocumentRecovery,
+            'review' => $analysisComplete && $questionsResolved && ! $requiresDocumentRecovery,
         ];
 
         return array_map(
@@ -300,16 +299,12 @@ final class BuildSessionSnapshot
     }
 
     /** @param array<string, mixed> $documentsSummary */
-    private function documentsTerminal(array $documentsSummary): bool
+    private function documentAnalysisComplete(array $documentsSummary): bool
     {
-        return (int) ($documentsSummary['pending'] ?? $documentsSummary['pending_count'] ?? 0) === 0
-            && (int) ($documentsSummary['action_required'] ?? $documentsSummary['action_required_count'] ?? 0) === 0;
-    }
+        $multiAgentCount = (int) ($documentsSummary['multi_agent_document_count'] ?? 0);
 
-    /** @param array<string, mixed> $documentsSummary */
-    private function hasGeometryEvidence(array $documentsSummary): bool
-    {
-        return (int) ($documentsSummary['drawing_elements'] ?? 0) > 0;
+        return (int) ($documentsSummary['pending'] ?? $documentsSummary['pending_count'] ?? 0) === 0
+            && ($multiAgentCount === 0 || ($documentsSummary['analysis_roles_complete'] ?? false) === true);
     }
 
     /** @return list<array<string, mixed>> */

@@ -9,6 +9,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisDat
 
 final readonly class VisionAnalysisData
 {
+    public const MAX_RAW_OBSERVATION_BYTES = 131_072;
+
     public const SCHEMA_VERSION = 1;
 
     public const CURRENT_SCHEMA_VERSION = 2;
@@ -36,6 +38,7 @@ final readonly class VisionAnalysisData
         public array $visualAttributes = [],
         public ?ProjectSheetAnalysisData $projectSheetAnalysis = null,
         public array $quarantinedItems = [],
+        public array $rawObserverFacts = [],
     ) {
         if (! in_array($sheetType, self::SHEET_TYPES, true) || $evidence === [] || count($evidence) > 256 || count($elements) > 500 || count($scaleCandidates) > 32
             || array_diff($warnings, self::WARNINGS) !== [] || count($warnings) !== count(array_unique($warnings))
@@ -44,8 +47,15 @@ final readonly class VisionAnalysisData
             || preg_match('/^[A-Za-z0-9._:-]{1,80}$/', $modelVersion) !== 1
             || ! in_array($usageStatus, ['measured', 'unavailable'], true)
             || ($usageStatus === 'unavailable') !== ($inputTokens === null && $outputTokens === null)
-            || ($inputTokens !== null && $inputTokens < 0) || ($outputTokens !== null && $outputTokens < 0)) {
+            || ($inputTokens !== null && $inputTokens < 0) || ($outputTokens !== null && $outputTokens < 0)
+            || count($rawObserverFacts) > 64
+            || strlen(json_encode($rawObserverFacts, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)) > self::MAX_RAW_OBSERVATION_BYTES) {
             throw new VisionContractException('invalid_analysis_metadata');
+        }
+        foreach ($rawObserverFacts as $fact) {
+            if (! is_array($fact)) {
+                throw new VisionContractException('invalid_analysis_metadata');
+            }
         }
         $evidenceKeys = array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence);
         $evidenceByKey = array_combine($evidenceKeys, $evidence);
@@ -187,6 +197,7 @@ final readonly class VisionAnalysisData
             $visualAttributes,
             $projectSheetAnalysis,
             [...$elementQuarantine, ...$scaleQuarantine, ...$visualQuarantine, ...$semanticQuarantine],
+            self::boundedRawObserverFacts($data['project_sheet_analysis']['facts'] ?? []),
         );
     }
 
@@ -358,6 +369,10 @@ final readonly class VisionAnalysisData
                 ...$targetedProjectSheetAnalysis->quarantinedItems,
                 ...$projectSheetAnalysis->quarantinedItems,
             ],
+            self::boundedRawObserverFacts([
+                ...$primary->rawObserverFacts,
+                ...self::boundedRawObserverFacts($data['project_sheet_analysis']['facts'] ?? []),
+            ]),
         );
     }
 
@@ -378,7 +393,31 @@ final readonly class VisionAnalysisData
             $this->visualAttributes,
             $this->projectSheetAnalysis?->mapPolygonsToSource($transform),
             $this->quarantinedItems,
+            $this->rawObserverFacts,
         );
+    }
+
+    /** @return list<array<string, mixed>> */
+    private static function boundedRawObserverFacts(mixed $facts): array
+    {
+        if (! is_array($facts)) {
+            return [];
+        }
+        $bounded = [];
+        $bytes = 2;
+        foreach ($facts as $fact) {
+            if (! is_array($fact) || count($bounded) >= 64) {
+                continue;
+            }
+            $encoded = json_encode($fact, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+            if ($bytes + strlen($encoded) + 1 > self::MAX_RAW_OBSERVATION_BYTES) {
+                break;
+            }
+            $bounded[] = $fact;
+            $bytes += strlen($encoded) + 1;
+        }
+
+        return $bounded;
     }
 
     public function assertProvenance(VisionDocumentInput $input, string $coordinateSpace): self

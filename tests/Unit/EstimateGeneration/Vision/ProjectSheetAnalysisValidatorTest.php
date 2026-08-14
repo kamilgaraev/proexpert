@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Vision;
 
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\SheetAnalysis\FacadeSheetAnalysis;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\SheetAnalysis\PlanSheetAnalysis;
@@ -31,7 +30,7 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function it_rejects_unknown_keys_missing_evidence_and_broken_coordinates(): void
+    public function it_quarantines_unknown_keys_missing_evidence_and_broken_coordinates(): void
     {
         foreach (['unknown_key', 'missing_evidence', 'geometry'] as $case) {
             $payload = $this->payload();
@@ -43,21 +42,19 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
                 $payload['facts'][0]['sourcePolygonOrNativeRef'][1] = [1.01, 0.8];
             }
 
-            try {
-                ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
-                self::fail('Expected a strict schema violation for '.$case);
-            } catch (VisionContractException) {
-                self::addToAssertionCount(1);
-            }
+            $analysis = ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+            self::assertSame([], $analysis->facts, $case);
+            self::assertCount(1, $analysis->quarantinedItems, $case);
         }
     }
 
     #[Test]
-    public function it_rejects_a_fact_that_does_not_belong_to_the_selected_role_contract(): void
+    public function it_preserves_an_unknown_professional_fact_for_arbitration_without_confirming_it(): void
     {
-        $this->expectException(VisionContractException::class);
+        $analysis = ProjectSheetAnalysisData::fromProviderArray($this->payload('facade', 'room'), ['page-1']);
 
-        ProjectSheetAnalysisData::fromProviderArray($this->payload('facade', 'room'), ['page-1']);
+        self::assertSame([], $analysis->facts);
+        self::assertSame('unregistered_project_sheet_fact_type', $analysis->quarantinedItems[0]['reason']);
     }
 
     #[Test]
@@ -101,20 +98,19 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function it_rejects_a_well_formed_native_reference_that_is_absent_from_the_published_registry(): void
+    public function it_quarantines_a_well_formed_native_reference_that_is_absent_from_the_published_registry(): void
     {
         $native = $this->payload('specification', 'table');
         $native['facts'][0]['sourcePolygonOrNativeRef'] = 'xlsx:sheet:Спецификация!Z999';
 
-        $this->expectException(VisionContractException::class);
-        $this->expectExceptionMessage('invalid_project_sheet_native_reference');
-
-        ProjectSheetAnalysisData::fromProviderArray(
+        $analysis = ProjectSheetAnalysisData::fromProviderArray(
             $native,
             ['page-1'],
             500,
             ['xlsx:sheet:Спецификация!A2:D8'],
         );
+        self::assertSame([], $analysis->facts);
+        self::assertSame('invalid_project_sheet_native_reference', $analysis->quarantinedItems[0]['reason']);
     }
 
     #[Test]
@@ -130,9 +126,9 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
         );
 
         $native['facts'][0]['sourcePolygonOrNativeRef'] = $hallucinated;
-        $this->expectException(VisionContractException::class);
-        $this->expectExceptionMessage('invalid_project_sheet_native_reference');
-        ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'], 500, [$published]);
+        $analysis = ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'], 500, [$published]);
+        self::assertSame([], $analysis->facts);
+        self::assertSame('invalid_project_sheet_native_reference', $analysis->quarantinedItems[0]['reason']);
     }
 
     #[Test]
@@ -143,9 +139,9 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
         $native = $this->payload();
         $native['facts'][0]['sourcePolygonOrNativeRef'] = $stale;
 
-        $this->expectException(VisionContractException::class);
-        $this->expectExceptionMessage('invalid_project_sheet_native_reference');
-        ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'], 500, [$current]);
+        $analysis = ProjectSheetAnalysisData::fromProviderArray($native, ['page-1'], 500, [$current]);
+        self::assertSame([], $analysis->facts);
+        self::assertSame('invalid_project_sheet_native_reference', $analysis->quarantinedItems[0]['reason']);
     }
 
     /** @return iterable<string, array{string, string}> */

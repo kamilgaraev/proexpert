@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
@@ -26,7 +28,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionP
 use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\Http;
@@ -121,7 +122,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     #[Test]
     public function it_returns_strict_typed_analysis_and_records_one_physical_attempt(): void
     {
-        Http::fake(['*' => Http::response($this->response())]);
+        Http::fake(fn () => Http::response($this->response()));
 
         $analysis = $this->provider()->analyze($this->input(nativeReferences: ['cad:object:2F']));
 
@@ -162,6 +163,140 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && $user['native_reference_registry'] === ['cad:object:2F']
                 && ! array_key_exists('native_reference_registry_truncated', $user)
                 && $user['evidence_locator']['processing_unit_id'] === 19;
+        });
+    }
+
+    #[Test]
+    public function independent_observers_use_distinct_prompts_contexts_and_physical_attempts_on_one_model(): void
+    {
+        Http::fake(fn () => Http::response($this->response()));
+        $builder = new ObserverInputBuilder;
+        $reserved = [];
+
+        foreach (ObserverProfile::cases() as $index => $profile) {
+            try {
+                $this->provider()->analyze($builder->build(
+                    $this->input(claim: $index + 20),
+                    $profile,
+                    static function (string $attemptId) use (&$reserved): void {
+                        $reserved[] = $attemptId;
+                    },
+                ));
+            } catch (VisionProviderException $exception) {
+                self::fail($profile->value.': '.$exception->reason);
+            }
+        }
+
+        $requests = Http::recorded()->all();
+        self::assertCount(3, $requests);
+        self::assertCount(3, array_unique($reserved));
+        self::assertSame(['openai/gpt-5.6-luna'], array_values(array_unique(array_map(
+            static fn (array $pair): string => (string) $pair[0]['model'],
+            $requests,
+        ))));
+        $systems = [];
+        $contracts = [];
+        foreach ($requests as [$request]) {
+            $systems[] = hash('sha256', (string) $request['messages'][0]['content']);
+            $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
+            $contracts[] = $user['contract_sha256'];
+            self::assertArrayHasKey('observer_profile', $user);
+            self::assertArrayNotHasKey('observer_outputs', $user);
+            self::assertArrayNotHasKey('peer_result', $user);
+        }
+        self::assertCount(3, array_unique($systems));
+        self::assertCount(3, array_unique($contracts));
+    }
+
+    #[Test]
+    public function independent_observer_rejects_an_effective_model_that_differs_from_authoritative_config(): void
+    {
+        config()->set('estimate-generation.vision.model', 'gemini/gemini-3.5-flash');
+        Http::fake();
+
+        try {
+            $this->provider()->analyze((new ObserverInputBuilder)->build(
+                $this->input(claim: 30),
+                ObserverProfile::Literal,
+                static function (): void {},
+            ));
+            self::fail('Observer must not use a model override or fallback.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_observer_model_mismatch', $exception->reason);
+        }
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function independent_observer_preserves_an_unknown_professional_fact_for_arbitration(): void
+    {
+        $response = $this->response([
+            'project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'unknown',
+                'facts' => [[
+                    ...$this->semanticFact(
+                        'junction-1',
+                        'unregistered_professional_type',
+                        ['type' => 'string', 'data' => 'Нестандартный узел примыкания'],
+                    ),
+                ]],
+            ],
+        ]);
+        Http::fake(fn () => Http::response($response));
+
+        $analysis = $this->provider()->analyze((new ObserverInputBuilder)->build(
+            $this->input(claim: 31),
+            ObserverProfile::Construction,
+            static function (): void {},
+        ));
+
+        self::assertSame([], $analysis->projectSheetAnalysis?->facts);
+        self::assertSame('unregistered_professional_type', $analysis->rawObserverFacts[0]['factType']);
+        self::assertSame('Нестандартный узел примыкания', $analysis->rawObserverFacts[0]['value']['data']);
+    }
+
+    #[Test]
+    public function arbitration_call_uses_original_image_and_returns_allowlisted_decision_intent(): void
+    {
+        $intent = [
+            'claim_id' => 'risk:1',
+            'status' => 'accepted',
+            'supporting_claim_ids' => ['risk:1'],
+            'evidence_refs' => ['risk:note-1'],
+            'reason_code' => 'explicit_note_over_visual_similarity',
+        ];
+        Http::fake(['*' => Http::response($this->response([
+            'project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v2',
+                'role' => 'unknown',
+                'facts' => [$intent],
+            ],
+        ]))]);
+
+        $analysis = $this->provider()->analyze($this->input(auxiliaryMetadata: [
+            'arbitration' => [
+                'contract' => \App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder::PROMPT_CONTRACT,
+                'source_version' => 'sha256:'.str_repeat('a', 64),
+                'minority_evidence_required' => true,
+                'claims' => [[
+                    'id' => 'risk:1', 'role' => 'observer_risk', 'entity_key' => 'foundation-1',
+                    'fact_type' => 'foundation_type', 'value' => ['type' => 'string', 'data' => 'условный'],
+                    'unit' => null, 'evidence_ref' => 'risk:note-1', 'explicit_evidence' => true,
+                    'locator' => ['page_number' => 2, 'source_version' => 'sha256:'.str_repeat('a', 64)],
+                ]],
+            ],
+        ]));
+
+        self::assertSame([$intent], $analysis->rawObserverFacts);
+        Http::assertSent(static function ($request): bool {
+            $system = (string) $request['messages'][0]['content'];
+            $user = (string) $request['messages'][1]['content'][0]['text'];
+
+            return str_contains($system, 'Check minority evidence')
+                && str_contains($system, 'Agreement is only a signal')
+                && str_contains($user, 'risk:note-1')
+                && $request['response_format'] === ['type' => 'json_object'];
         });
     }
 
@@ -327,11 +462,17 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     public function it_retries_only_retryable_physical_calls_without_model_fallback(): void
     {
         Http::fakeSequence()->pushStatus(409)->pushStatus(429)->push($this->response());
+        $reservedAttempts = [];
 
-        $this->provider()->analyze($this->input());
+        $this->provider()->analyze($this->input(
+            onPhysicalAttemptReserved: static function (string $attemptId) use (&$reservedAttempts): void {
+                $reservedAttempts[] = $attemptId;
+            },
+        ));
 
         self::assertSame(['http_failed', 'http_failed', 'succeeded'], array_map(fn (AiUsageData $row): string => $row->status, $this->attempts));
         self::assertCount(3, array_unique(array_map(fn (AiUsageData $row): string => $row->context->attemptId, $this->attempts)));
+        self::assertSame(array_map(fn (AiUsageData $row): string => $row->context->attemptId, $this->attempts), $reservedAttempts);
         self::assertSame(['openai/gpt-5.6-luna'], array_values(array_unique(array_map(fn (AiUsageData $row): string => $row->requestedModel, $this->attempts))));
     }
 
@@ -1395,34 +1536,6 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertInstanceOf(TimewebVisionProvider::class, app(VisionProvider::class));
     }
 
-    #[Test]
-    public function primary_and_targeted_requests_use_independent_bounded_output_budgets(): void
-    {
-        Http::fake(fn () => Http::response($this->response()));
-        $this->provider()->analyze($this->input());
-        Http::assertSentCount(1);
-        Http::assertSent(static fn ($request): bool => $request['max_tokens'] === 8192);
-
-        Http::fake(fn () => Http::response($this->response()));
-        $scope = TargetedSheetRecheckScope::forEntity(
-            'plan',
-            'sheet_role_insufficient_evidence',
-            'room-1',
-            'document:13/sheet:17',
-        );
-        $this->provider()->analyze($this->input(recheckScope: $scope, claim: 2));
-        Http::assertSent(static fn ($request): bool => $request['max_tokens'] === 6144);
-
-        config()->set('estimate-generation.vision.primary_max_output_tokens', 99_999);
-        $this->physicalAttempts = new InMemoryVisionPhysicalAttemptStore;
-        $this->app->instance(VisionPhysicalAttemptStore::class, $this->physicalAttempts);
-        $this->app->forgetInstance(TimewebVisionProvider::class);
-        Http::fake(fn () => Http::response($this->response()));
-        $this->provider()->analyze($this->input(claim: 3));
-        Http::assertSent(static fn ($request): bool => $request['max_tokens'] === 16_384);
-    }
-
-    #[Test]
     public function length_finish_reason_is_typed_terminal_truncation_and_is_not_retried(): void
     {
         $response = $this->response();
@@ -1442,91 +1555,9 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertSame(4081, $this->attempts[0]->outputTokens);
     }
 
-    #[Test]
-    public function targeted_provider_call_contains_only_one_role_contract_and_records_safe_scope(): void
-    {
-        $scope = TargetedSheetRecheckScope::forSheetPair(
-            'facade',
-            'sheet_role_conflict',
-            'document:13/sheet:17',
-            'document:13/sheet:18',
-        );
-        $targetedResponse = $this->response();
-        $targetedResponse['choices'][0]['message']['content'] = json_encode([
-            'schema_version' => 1,
-            'evidence' => [['key' => 'targeted-page-1', 'locator' => [
-                'page_id' => 17, 'page_number' => 2, 'processing_unit_id' => 19,
-                'source_version' => 'sha256:'.str_repeat('a', 64), 'coordinate_space' => 'normalized_derivative_v1',
-            ]]],
-            'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2',
-                'role' => 'facade',
-                'facts' => [[
-                    'entityKey' => 'facade-1', 'factType' => 'structural_element',
-                    'value' => ['type' => 'unknown', 'data' => null], 'unit' => null,
-                    'evidenceRef' => 'targeted-page-1', 'sourcePolygonOrNativeRef' => $this->responsePolygon(),
-                    'confidence' => 0.95, 'contractVersion' => 'sheet-analysis:v2',
-                ]],
-            ],
-        ], JSON_THROW_ON_ERROR);
-        Http::fake(['*' => Http::response($targetedResponse)]);
-
-        $primaryInput = $this->input();
-        $primaryPayload = json_decode($this->response()['choices'][0]['message']['content'], true, 16, JSON_THROW_ON_ERROR);
-        $primaryPayload['sheet_type'] = 'elevation';
-        $primaryPayload['project_sheet_analysis'] = [
-            'contractVersion' => 'sheet-analysis:v2',
-            'role' => 'facade',
-            'facts' => [$this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => 0.0], 'm')],
-        ];
-        $primaryAnalysis = VisionAnalysisData::fromProviderArray(
-            $primaryPayload,
-            'timeweb',
-            'openai/gpt-5.6-luna',
-            'openai/gpt-5.6-luna',
-            'timeweb-gpt-5.6-luna-2026-08-13',
-            'measured',
-            100,
-            20,
-            96,
-            64,
-        )->mapPolygonsToSource((new ProjectiveTransformFactory)->identity());
-        $supplemental = new TargetedSheetEvidence(
-            7, 9, 11, 13, 18, 3, 20,
-            'sha256:'.str_repeat('b', 64),
-            'sha256:'.hash('sha256', $primaryInput->imageContent),
-            'image/png',
-            $primaryInput->imageContent,
-        );
-        $analysis = $this->provider()->analyze($this->input(
-            sheetRole: 'facade',
-            recheckScope: $scope,
-            supplementalEvidence: [$supplemental],
-            primaryAnalysis: $primaryAnalysis,
-        ));
-
-        self::assertSame('facade', $analysis->projectSheetAnalysis?->sheetRole);
-        self::assertSame(['level-ground', 'facade-1'], array_column($analysis->projectSheetAnalysis?->facts ?? [], 'entityKey'));
-        self::assertSame($scope->toSafeUsageContext(), $this->attempts[0]->requestContext);
-        [$request] = Http::recorded()->first();
-        $system = (string) $request['messages'][0]['content'];
-        $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
-        $images = array_values(array_filter(
-            $request['messages'][1]['content'],
-            static fn (array $item): bool => ($item['type'] ?? null) === 'image_url',
-        ));
-
-        self::assertStringContainsString('already accepted construction drawing analysis', $system);
-        self::assertStringContainsString('Role is exactly facade', $system);
-        self::assertSame('sheet_role_conflict', $user['targeted_recheck']['reason']);
-        self::assertSame(['document:13/sheet:17', 'document:13/sheet:18'], $user['targeted_recheck']['source_set']);
-        self::assertSame(18, $user['supplemental_evidence'][0]['page_id']);
-        self::assertCount(2, $images);
-    }
-
-    #[Test]
     public function production_targeted_call_returns_only_enrichment_and_merges_it_into_primary(): void
     {
+        self::markTestSkipped('Удалён вместе со старым targeted-контуром.');
         $targeted = [
             'schema_version' => 1,
             'evidence' => [['key' => 'targeted-page-1', 'locator' => [
@@ -1608,13 +1639,11 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     private function input(
         ?\App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData $transform = null,
         string $sheetRole = 'plan',
-        ?TargetedSheetRecheckScope $recheckScope = null,
-        array $supplementalEvidence = [],
         int $claim = 1,
         array $nativeReferences = [],
         ?string $auxiliaryText = null,
         array $auxiliaryMetadata = [],
-        ?VisionAnalysisData $primaryAnalysis = null,
+        ?\Closure $onPhysicalAttemptReserved = null,
     ): VisionDocumentInput {
         $image = imagecreatetruecolor(2, 2);
         imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
@@ -1634,12 +1663,10 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             sourceTransform: $transform ?? (new ProjectiveTransformFactory)->identity(),
             derivativeHash: 'sha256:'.hash('sha256', $imageContent),
             sheetRole: $sheetRole,
-            recheckScope: $recheckScope,
             nativeReferences: $nativeReferences,
-            supplementalEvidence: $supplementalEvidence,
             auxiliaryText: $auxiliaryText,
             auxiliaryMetadata: $auxiliaryMetadata,
-            primaryAnalysis: $primaryAnalysis,
+            onPhysicalAttemptReserved: $onPhysicalAttemptReserved,
         );
     }
 
