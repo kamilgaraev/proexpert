@@ -396,13 +396,19 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
             'progress_percent' => 100,
             'checksum_sha256' => $checksum,
             'source_version' => $sourceVersion,
-            'page_count' => 3,
+            'page_count' => 22,
             'processed_page_count' => 0,
             'facts_summary' => [],
             'meta' => ['processing_attempt_id' => 'old-concurrent-lineage'],
         ]);
         $fingerprint = hash('sha256', 'concurrent-system-root');
-        foreach (range(1, 3) as $index) {
+        $failureCodes = [
+            ...array_fill(0, 9, 'document_unit_pre_wire_failed'),
+            ...array_fill(0, 11, 'vision_provider_response_invalid'),
+            ...array_fill(0, 2, 'vision_wire_outcome_ambiguous'),
+        ];
+        foreach ($failureCodes as $offset => $failureCode) {
+            $index = $offset + 1;
             $unit = EstimateGenerationProcessingUnit::query()->create([
                 'organization_id' => 38,
                 'project_id' => 52,
@@ -414,7 +420,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
                 'status' => 'failed',
                 'attempt_count' => 3,
                 'output_count' => 0,
-                'failure_code' => 'document_geometry_processing_failed',
+                'failure_code' => $failureCode,
                 'failure_fingerprint' => $fingerprint,
                 'locator' => ['page' => $index],
                 'metadata' => ['failure_category' => 'terminal'],
@@ -431,6 +437,16 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
                 'status' => 'failed',
             ]);
         }
+        DB::table('estimate_generation_ai_usage')->insert([
+            'attempt_id' => 'old-physical-attempt',
+            'session_id' => $session->id,
+            'document_id' => $document->id,
+            'cost_amount' => '17.420000',
+            'request_context' => json_encode([
+                'processing_attempt_id' => 'old-concurrent-lineage',
+            ], JSON_THROW_ON_ERROR),
+        ]);
+        $oldUsage = DB::table('estimate_generation_ai_usage')->first();
         DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION explicit_retry_hold_document_lock() RETURNS trigger AS $$
 BEGIN
@@ -477,6 +493,10 @@ SQL);
         self::assertCount(1, array_unique(array_column($results, 'attempt_id')));
         self::assertCount(1, EstimateGenerationDocument::query()->findOrFail($document->id)->meta['explicit_document_retry_history']);
         self::assertSame(1, EstimateGenerationAuditEvent::query()->count());
+        $retriedDocument = EstimateGenerationDocument::query()->findOrFail($document->id);
+        self::assertNotSame('old-concurrent-lineage', $retriedDocument->meta['processing_attempt_id']);
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')->count());
+        self::assertEquals($oldUsage, DB::table('estimate_generation_ai_usage')->first());
     }
 
     public function test_terminal_retry_repair_migration_closes_only_matching_lineage(): void
@@ -647,6 +667,10 @@ CREATE TABLE estimate_generation_audit_events (
  id bigserial PRIMARY KEY, session_id bigint, package_id bigint, user_id bigint, event_type varchar(100),
  payload jsonb default '{}', created_at timestamptz, updated_at timestamptz
 );
+CREATE TABLE estimate_generation_ai_usage (
+ attempt_id varchar(80) PRIMARY KEY, session_id bigint, document_id bigint,
+ cost_amount numeric(18, 6), request_context jsonb default '{}'
+);
 SQL);
     }
 
@@ -654,6 +678,7 @@ SQL);
     {
         DB::unprepared(<<<'SQL'
 DROP TABLE IF EXISTS estimate_generation_audit_events CASCADE;
+DROP TABLE IF EXISTS estimate_generation_ai_usage CASCADE;
 DROP TABLE IF EXISTS estimate_generation_document_pages CASCADE;
 DROP TABLE IF EXISTS estimate_generation_processing_units CASCADE;
 DROP TABLE IF EXISTS estimate_generation_documents CASCADE;
