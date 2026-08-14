@@ -189,7 +189,7 @@ final readonly class TechnologyRecommendationDecisionService
             || (int) $actor->current_organization_id !== $context->organizationId
             || (int) $session->organization_id !== $context->organizationId
             || (int) $session->project_id !== $context->projectId
-            || ! $this->authorization->can($actor, 'estimate_generation.update', [
+            || ! $this->authorization->can($actor, 'estimate_generation.review', [
                 'organization_id' => $context->organizationId,
                 'project_id' => $context->projectId,
             ])) {

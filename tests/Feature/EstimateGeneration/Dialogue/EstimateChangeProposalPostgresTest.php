@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\Interpret
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\PreviewEstimateChange;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ApplyProjectModelDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
@@ -27,6 +28,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateChangeProposalRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateInterpretationAttemptRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ProjectModelEstimateClarificationAnswerRegistry;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -108,6 +110,10 @@ final class EstimateChangeProposalPostgresTest extends TestCase
         self::assertNotNull($firstPage['next_cursor']);
         self::assertSame(4, $firstPage['items'][0]['locator']['page']);
         self::assertSame(1205, DB::table('estimate_change_proposal_items')->where('proposal_id', $id)->count());
+        $history = $repository->history($scope, $scope, $scope, 1, null);
+        self::assertSame($id, $history['items'][0]->id());
+        self::assertNull($history['next_cursor']);
+        self::assertSame([], $repository->history($scope + 1, $scope, $scope, 10, null)['items']);
 
         try {
             $repository->find($id, $scope + 1, $scope, $scope);
@@ -155,6 +161,92 @@ final class EstimateChangeProposalPostgresTest extends TestCase
             self::assertStringContainsString('Index', implode(' ', array_map(fn ($row): string => (string) $row->{'QUERY PLAN'}, $currentPlan)));
             self::assertMatchesRegularExpression('/PostgreSQL 16\./', (string) DB::scalar('select version()'));
         }
+    }
+
+    public function test_clarification_answer_is_one_idempotent_user_decision_in_real_postgres(): void
+    {
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $actor->id,
+            'status' => 'ready_to_generate',
+            'processing_stage' => 'analysis',
+            'processing_progress' => 50,
+            'input_payload' => [],
+            'analysis_payload' => [],
+            'draft_payload' => [],
+            'problem_flags' => [],
+            'state_version' => 1,
+        ]);
+        $sourceVersion = 'sha256:'.hash('sha256', 'clarification-source');
+        $models = app(EloquentProjectModelRepository::class);
+        $models->saveSourceModel(
+            [new Entity(
+                'wall:clarification',
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->id,
+                $sourceVersion,
+                'wall',
+                'wall:clarification',
+                ['start' => [0, 0], 'end' => [1, 0]],
+            )],
+            [new Fact(
+                'fact:clarification:wall-material',
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->id,
+                $sourceVersion,
+                'wall:clarification',
+                'wall_material',
+                null,
+                null,
+                0.0,
+                'unresolved',
+                'unresolved',
+                [],
+            )],
+            [],
+        );
+        $decisions = new ApplyProjectModelDecision($models);
+        $arguments = [
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+            $sourceVersion,
+            'fact:clarification:wall-material',
+            'wall_material_required',
+            'selected',
+            'select:gas-concrete',
+            'Газобетон',
+            null,
+            hash('sha256', 'question-fingerprint'),
+            ['document_id' => 7, 'page_number' => 4],
+            (string) $actor->id,
+            'Выбран материал по основной спецификации',
+            'decision:clarification:'.hash('sha256', 'answer-request'),
+        ];
+
+        $first = $decisions->applyClarificationChoice(...$arguments);
+        $second = $decisions->applyClarificationChoice(...$arguments);
+
+        self::assertSame($first->id, $second->id);
+        self::assertSame(1, DB::table('estimate_generation_project_model_corrections')
+            ->where('stable_key', $first->id)
+            ->count());
+        $registry = new ProjectModelEstimateClarificationAnswerRegistry($models, 100);
+        self::assertSame(
+            ['wall_material_required'],
+            $registry->answeredKeys((int) $organization->id, (int) $project->id, (int) $session->id),
+        );
+        self::assertSame([], $registry->answeredKeys(
+            (int) $organization->id,
+            (int) $project->id + 1,
+            (int) $session->id,
+        ));
     }
 
     public function test_apply_is_atomic_idempotent_version_fenced_and_marks_stale_expired_or_failed(): void

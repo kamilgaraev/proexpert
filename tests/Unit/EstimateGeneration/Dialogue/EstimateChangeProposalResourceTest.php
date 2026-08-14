@@ -108,6 +108,7 @@ final class EstimateChangeProposalResourceTest extends TestCase
             'proposal_idempotency_collision', 'proposal_too_large', 'proposal_payload_invalid',
             'proposal_intent_unsupported', 'proposal_terminal', 'proposal_expired', 'proposal_stale',
             'proposal_concurrent', 'proposal_preview_unknown', 'proposal_preview_partial', 'locator_invalid',
+            'proposal_undo_unavailable',
         ];
         foreach ($codes as $code) {
             self::assertArrayHasKey($code, $translations);

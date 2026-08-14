@@ -52,15 +52,19 @@ final class EstimateChangeProposalRepository
         return new EstimateChangeProposal($this->decode((array) $row));
     }
 
-    public function findByIdempotency(int $organizationId, int $sessionId, string $key): ?EstimateChangeProposal
+    public function findByIdempotency(int $organizationId, int $projectId, int $sessionId, string $key): ?EstimateChangeProposal
     {
-        $id = DB::table('estimate_change_proposals')->where('organization_id', $organizationId)->where('session_id', $sessionId)->where('idempotency_key', $key)->value('id');
+        $id = DB::table('estimate_change_proposals')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('idempotency_key', $key)
+            ->value('id');
         if (! is_string($id)) {
             return null;
         }
-        $scope = DB::table('estimate_change_proposals')->where('id', $id)->first(['project_id']);
 
-        return $this->find($id, $organizationId, (int) $scope->project_id, $sessionId);
+        return $this->find($id, $organizationId, $projectId, $sessionId);
     }
 
     /** @return array<string, mixed> */
@@ -75,6 +79,52 @@ final class EstimateChangeProposalRepository
         $rows = array_slice($rows, 0, $limit);
 
         return ['items' => $rows, 'next_cursor' => $hasMore ? (string) $rows[array_key_last($rows)]['id'] : null];
+    }
+
+    /** @return array{items:array<int,EstimateChangeProposal>,next_cursor:?string} */
+    public function history(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        int $limit,
+        ?string $cursor,
+    ): array {
+        $query = DB::table('estimate_change_proposals as p')
+            ->join('estimate_change_proposal_states as s', 's.proposal_id', '=', 'p.id')
+            ->where('p.organization_id', $organizationId)
+            ->where('p.project_id', $projectId)
+            ->where('p.session_id', $sessionId)
+            ->select('p.*', 's.status', 's.version as status_version', 's.result', 's.failure_code', 's.applied_at', 's.cancelled_at', 's.updated_at')
+            ->orderByDesc('p.created_at')
+            ->orderByDesc('p.id')
+            ->limit($limit + 1);
+        if ($cursor !== null) {
+            $anchor = DB::table('estimate_change_proposals')
+                ->where('id', $cursor)
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('session_id', $sessionId)
+                ->first(['id', 'created_at']);
+            if ($anchor === null) {
+                throw new RuntimeException('estimate_generation.proposal_not_found');
+            }
+            $query->where(static function ($nested) use ($anchor): void {
+                $nested->where('p.created_at', '<', $anchor->created_at)
+                    ->orWhere(static fn ($sameTime) => $sameTime
+                        ->where('p.created_at', '=', $anchor->created_at)
+                        ->where('p.id', '<', $anchor->id));
+            });
+        }
+        $rows = $query->get()->map(fn ($row): EstimateChangeProposal => new EstimateChangeProposal(
+            $this->decode((array) $row),
+        ))->all();
+        $hasMore = count($rows) > $limit;
+        $rows = array_slice($rows, 0, $limit);
+
+        return [
+            'items' => $rows,
+            'next_cursor' => $hasMore ? $rows[array_key_last($rows)]->id() : null,
+        ];
     }
 
     /** @param array<string, mixed> $result */

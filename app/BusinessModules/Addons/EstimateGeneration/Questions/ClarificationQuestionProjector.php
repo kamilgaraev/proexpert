@@ -24,6 +24,7 @@ final class ClarificationQuestionProjector
         $groups = [];
         foreach ($pages as $page) {
             $pageNumber = is_int($page['page_number'] ?? null) ? $page['page_number'] : null;
+            $pageSource = $this->pageSource($page, $pageNumber);
             $arbitration = is_array($page['document_arbitration'] ?? null) ? $page['document_arbitration'] : [];
             $pageQuestions = is_array($page['ai_questions'] ?? null)
                 ? $page['ai_questions']
@@ -49,6 +50,9 @@ final class ClarificationQuestionProjector
                     $groups[$code]['authority'] = 'explicit_document';
                 }
                 $sources = is_array($locator['sources'] ?? null) ? $locator['sources'] : [];
+                if ($pageSource !== null) {
+                    $sources[] = $pageSource;
+                }
                 if (isset($locator['document_id']) || isset($locator['page_id']) || isset($locator['source_version'])) {
                     $sources[] = array_filter([
                         'document_id' => $locator['document_id'] ?? null,
@@ -107,6 +111,28 @@ final class ClarificationQuestionProjector
         }
 
         return array_slice($result, 0, 128);
+    }
+
+    /** @param array<string,mixed> $page @return array<string,mixed>|null */
+    private function pageSource(array $page, ?int $pageNumber): ?array
+    {
+        $documentId = $page['document_id'] ?? null;
+        $pageId = $page['page_id'] ?? null;
+        $sourceVersion = $page['source_version'] ?? null;
+        if (! is_int($documentId) || $documentId < 1
+            || ! is_int($pageId) || $pageId < 1
+            || $pageNumber === null
+            || ! is_string($sourceVersion)
+            || preg_match('/^sha256:[a-f0-9]{64}$/D', $sourceVersion) !== 1) {
+            return null;
+        }
+
+        return [
+            'document_id' => $documentId,
+            'page_id' => $pageId,
+            'page_number' => $pageNumber,
+            'source_version' => $sourceVersion,
+        ];
     }
 
     /** @param list<array<string,mixed>> $questions @return array<string,mixed> */

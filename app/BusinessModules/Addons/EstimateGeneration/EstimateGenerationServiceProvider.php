@@ -545,6 +545,33 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger::class,
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\SynchronousPlanningReanalysisTrigger::class,
         );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource => new \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource(
+                $app->make('db'),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification::class),
+                (int) config('estimate-generation.project_planning.max_facts') + 1,
+            ),
+        );
+        $this->app->alias(
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationSource::class,
+        );
+        $this->app->alias(
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry => new \App\BusinessModules\Addons\EstimateGeneration\Questions\ProjectModelEstimateClarificationAnswerRegistry(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                (int) config('estimate-generation.project_planning.max_facts') + 1,
+            ),
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\AnswerEstimateClarification::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\ListEstimateClarifications::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator::class,
             static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator => new \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator(
