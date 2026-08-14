@@ -32,6 +32,88 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class GeometryExpertTest extends TestCase
 {
     #[Test]
+    public function geometry_ai_selects_allowlisted_claims_while_server_projects_values_units_and_lineage(): void
+    {
+        $sheet = $this->sheet('plan', 1, [[
+            'quantity_ref' => 'floor-area',
+            'entity_ref' => 'floor-1',
+            'formula_id' => 'floor_area',
+            'output_unit' => 'ft2',
+            'rounding_scale' => 1,
+            'operands' => [
+                ['name' => 'length', 'claim_ref' => 'claim:length', 'evidence_ref' => 'evidence:length', 'value' => '999'],
+                ['name' => 'width', 'claim_ref' => 'claim:width', 'evidence_ref' => 'evidence:width', 'value' => '999'],
+            ],
+        ]]);
+        $sheet['document_id'] = 171;
+        $sheet['page_id'] = 701;
+        $sheet['processing_unit_id'] = 801;
+        $sheet['source_version'] = 'sha256:'.str_repeat('a', 64);
+        $sheet['arbitration'] = ['decisions' => [
+            $this->geometryDecision('claim:length', '12.5', 'm', 'evidence:length'),
+            $this->geometryDecision('claim:width', '8.4', 'm', 'evidence:width'),
+        ]];
+
+        $result = $this->calculator()->calculate($this->input([$sheet]));
+
+        self::assertSame('105', $result->quantities[0]['value']);
+        self::assertSame(['12.5', '8.4'], array_column($result->quantities[0]['operands'], 'value'));
+        self::assertSame(['evidence:length', 'evidence:width'], $result->quantities[0]['evidence_ids']);
+        self::assertSame(6, $result->quantities[0]['rounding_scale']);
+    }
+
+    #[Test]
+    public function invalid_geometry_intent_is_quarantined_without_losing_valid_quantity(): void
+    {
+        $valid = $this->interpretation('floor:1:area', 'floor:1', 'floor_area', 'm2', [
+            $this->operand('length', '12.5', 'm', 'length', 'page:1:length'),
+            $this->operand('width', '8.4', 'm', 'width', 'page:1:width'),
+        ]);
+        $invalid = $this->interpretation('floor:2:area', 'floor:2', 'invented_formula', 'm2', [
+            $this->operand('length', '10', 'm', 'length-2', 'page:2:length'),
+        ]);
+
+        $result = (new DeterministicGeometryCalculator(static fn (string $key): string => $key))->calculate(
+            new GeometryExpertInput(7, 9, 11, 'sha256:'.str_repeat('a', 64), [
+                $this->sheet('plan', 1, [$valid, $invalid]),
+            ]),
+        );
+
+        self::assertCount(1, $result->quantities);
+        self::assertSame('105', $result->quantities[0]['value']);
+        self::assertStringStartsWith('quantity:', $result->quantities[0]['quantity_id']);
+        self::assertNotSame('floor:1:area', $result->quantities[0]['quantity_id']);
+        self::assertSame([[
+            'sheet_id' => 'page:1',
+            'index' => 1,
+            'reason' => 'geometry_formula_invalid',
+        ]], $result->quarantinedIntents);
+    }
+
+    #[Test]
+    public function candidate_claims_cannot_be_promoted_to_confirmed_geometry(): void
+    {
+        $sheet = $this->sheet('plan', 1, [[
+            'quantity_ref' => 'floor-area',
+            'entity_ref' => 'floor-1',
+            'formula_id' => 'floor_area',
+            'operands' => [
+                ['name' => 'length', 'claim_ref' => 'claim:length', 'evidence_ref' => 'evidence:length'],
+                ['name' => 'width', 'claim_ref' => 'claim:width', 'evidence_ref' => 'evidence:width'],
+            ],
+        ]]);
+        $sheet['arbitration'] = ['decisions' => [
+            $this->geometryDecision('claim:length', '12.5', 'm', 'evidence:length', 'candidate'),
+            $this->geometryDecision('claim:width', '8.4', 'm', 'evidence:width', 'candidate'),
+        ]];
+
+        $result = $this->calculator()->calculate($this->input([$sheet]));
+
+        self::assertSame([], $result->quantities);
+        self::assertSame('geometry_source_reference_not_allowlisted', $result->quarantinedIntents[0]['reason']);
+    }
+
+    #[Test]
     public function plan_dimensions_are_multiplied_as_exact_decimals_with_formula_and_evidence_lineage(): void
     {
         if (! class_exists(DeterministicGeometryCalculator::class) || ! class_exists(GeometryExpertInput::class)) {
@@ -149,12 +231,9 @@ final class GeometryExpertTest extends TestCase
     }
 
     #[Test]
-    public function incompatible_operand_or_output_units_are_rejected_before_arithmetic(): void
+    public function incompatible_operand_or_output_units_are_quarantined_before_arithmetic(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('geometry_unit_incompatible');
-
-        $this->calculator()->calculate($this->input([
+        $result = $this->calculator()->calculate($this->input([
             $this->sheet('plan', 4, [
                 $this->interpretation('floor:invalid:area', 'floor:invalid', 'floor_area', 'm', [
                     $this->operand('length', '12.5', 'm', '225', 'invalid:length'),
@@ -162,6 +241,9 @@ final class GeometryExpertTest extends TestCase
                 ]),
             ]),
         ]));
+
+        self::assertSame([], $result->quantities);
+        self::assertSame('geometry_unit_incompatible', $result->quarantinedIntents[0]['reason']);
     }
 
     #[Test]
@@ -441,6 +523,22 @@ final class GeometryExpertTest extends TestCase
 
             return is_string($value) ? $value : $key;
         });
+    }
+
+    /** @return array<string,mixed> */
+    private function geometryDecision(string $claimId, string $value, string $unit, string $evidence, string $status = 'accepted'): array
+    {
+        return [
+            'status' => $status,
+            'evidence_refs' => [$evidence],
+            'canonical_claim' => [
+                'entity_key' => 'floor-1',
+                'fact_type' => 'dimension',
+                'value' => ['type' => 'decimal', 'data' => $value],
+                'unit' => $unit,
+                'source_claim_id' => $claimId,
+            ],
+        ];
     }
 }
 

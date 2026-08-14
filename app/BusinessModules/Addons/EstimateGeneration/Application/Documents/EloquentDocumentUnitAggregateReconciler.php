@@ -68,6 +68,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     $pages->map(static fn ($page): array => [
                         'processing_unit_id' => (int) $page->processing_unit_id,
                         'status' => (string) $page->status,
+                        'quality_flags' => is_array($page->quality_flags) ? $page->quality_flags : [],
                     ])->all(),
                     $units->map(static fn ($unit): array => [
                         'id' => (int) $unit->id,

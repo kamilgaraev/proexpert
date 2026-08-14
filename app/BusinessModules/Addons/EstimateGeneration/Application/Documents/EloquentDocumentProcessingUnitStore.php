@@ -263,12 +263,20 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 return false;
             }
             $routing = $output->normalizedPayload['sheet_analysis_routing'] ?? null;
-            $needsReview = is_array($routing) && ($routing['needs_review'] ?? false) === true;
+            $targetedReview = is_array($routing) && ($routing['needs_review'] ?? false) === true;
+            $semanticState = $output->semanticState();
+            $needsReview = $targetedReview || $semanticState !== 'ready';
+            $qualityFlags = match (true) {
+                $semanticState === 'questions' => ['ai_questions_pending'],
+                $semanticState === 'partial' => ['ai_partial_result'],
+                $targetedReview => ['targeted_analysis_limited'],
+                default => [],
+            };
             $page->forceFill(['output_version' => $output->version, 'width' => $output->width, 'height' => $output->height,
                 'rotation' => $output->rotation, 'text' => $output->text,
                 'text_hash' => $output->text !== '' ? hash('sha256', $output->text) : null,
                 'confidence' => $output->confidence, 'normalized_payload' => $output->persistedNormalizedPayload(),
-                'quality_flags' => $needsReview ? ['targeted_analysis_limited'] : [],
+                'quality_flags' => $qualityFlags,
                 'status' => $needsReview ? 'needs_review' : 'ready',
                 'excluded_at' => null,
                 'excluded_reason' => null])->save();

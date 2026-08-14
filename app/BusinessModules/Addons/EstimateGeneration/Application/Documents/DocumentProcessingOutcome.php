@@ -12,6 +12,7 @@ final readonly class DocumentProcessingOutcome
         public string $documentStatus,
         public int $processedPages,
         public array $counts,
+        public string $state,
         public ?string $errorCode = null,
         public ?string $errorMessageKey = null,
         public bool $retryAllowed = false,
@@ -27,6 +28,7 @@ final readonly class DocumentProcessingOutcome
 
         return [
             'type' => $this->type,
+            'state' => $this->state,
             'counts' => $this->counts,
             'retry_allowed' => $this->retryAllowed,
             'execution_progress_percent' => $executionProgress,

@@ -642,11 +642,11 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
-    public function repeated_page_specific_contract_failures_do_not_open_document_circuit(): void
+    public function two_page_specific_content_failures_do_not_stop_the_remaining_twenty_pages(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
         $units = [];
-        foreach (range(1, 4) as $index) {
+        foreach (range(1, 22) as $index) {
             $units[] = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, $index, 'source'));
         }
         $processor = new class implements DocumentUnitProcessor
@@ -662,12 +662,14 @@ final class DocumentProcessingUnitContractTest extends TestCase
         };
         $usecase = $this->processUnit($store, $processor, $reconciler);
 
-        foreach (array_slice($units, 0, 3) as $unit) {
+        foreach (array_slice($units, 0, 2) as $unit) {
             self::assertSame(DocumentProcessingUnitClaimStatus::Terminal, $usecase->handle($unit->id, 'source')->status);
         }
 
-        self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($units[3]->id)?->status);
-        self::assertSame(0, $store->find($units[3]->id)?->attemptCount);
+        foreach (array_slice($units, 2) as $unit) {
+            self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($unit->id)?->status);
+            self::assertSame(0, $store->find($unit->id)?->attemptCount);
+        }
     }
 
     #[Test]

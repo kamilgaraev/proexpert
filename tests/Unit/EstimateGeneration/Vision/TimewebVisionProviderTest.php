@@ -257,7 +257,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function observer_canonicalizes_the_production_v2_envelope_once_without_losing_evidence(): void
+    public function observer_quarantines_the_retired_v2_semantic_contract_without_repairing_it(): void
     {
         Http::fake(fn () => Http::response($this->fixtureResponse('observer-v2-envelope-response.json')));
 
@@ -267,19 +267,14 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             static function (): void {},
         ));
 
-        self::assertSame('facade', $analysis->projectSheetAnalysis?->sheetRole);
-        self::assertSame('sheet-analysis:v3', $analysis->projectSheetAnalysis?->facts[0]['contractVersion']);
-        self::assertSame('Раздел проектных решений', $analysis->projectSheetAnalysis?->facts[0]['value']['data']);
+        self::assertSame([], $analysis->projectSheetAnalysis?->facts);
+        self::assertSame('Раздел проектных решений', $analysis->rawObserverFacts[0]['value']['data']);
         self::assertSame(['scale_missing', 'geometry_incomplete'], $analysis->warnings);
-        self::assertSame(
-            ['schema_version_string_to_integer', 'sheet_analysis_v2_to_v3'],
-            $analysis->toArray()['contract_repairs'] ?? null,
-        );
         Http::assertSentCount(1);
     }
 
     #[Test]
-    public function arbiter_canonicalizes_the_production_v2_envelope_and_keeps_decision_intents(): void
+    public function arbiter_ingests_decision_intents_without_repairing_the_provider_envelope(): void
     {
         Http::fake(fn () => Http::response($this->fixtureResponse('arbiter-v2-envelope-response.json')));
 
@@ -342,14 +337,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         ]));
 
         self::assertSame('accepted', $analysis->rawObserverFacts[0]['status']);
-        self::assertSame([
-            'entity_key' => 'foundation-1',
-            'fact_type' => 'foundation_type',
-            'value' => ['type' => 'string', 'data' => 'условный'],
-            'unit' => null,
-            'source_claim_id' => 'risk:1',
-        ], $analysis->rawObserverFacts[0]['canonical_claim']);
-        self::assertSame(['arbiter_canonical_claim_from_allowlist'], $analysis->contractRepairs);
+        self::assertArrayNotHasKey('canonical_claim', $analysis->rawObserverFacts[0]);
         Http::assertSent(static function ($request): bool {
             $system = (string) $request['messages'][0]['content'];
             $user = (string) $request['messages'][1]['content'][0]['text'];

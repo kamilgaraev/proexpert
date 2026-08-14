@@ -35,6 +35,70 @@ final readonly class DocumentUnitOutput
             : [...$this->normalizedPayload, 'quality_signals' => $this->qualitySignals];
     }
 
+    public function semanticState(): string
+    {
+        $arbitration = is_array($this->normalizedPayload['document_arbitration'] ?? null)
+            ? $this->normalizedPayload['document_arbitration']
+            : [];
+        $geometry = is_array($this->normalizedPayload['geometry_expert'] ?? null)
+            ? $this->normalizedPayload['geometry_expert']
+            : [];
+        $questions = is_array($this->normalizedPayload['ai_questions'] ?? null)
+            ? $this->normalizedPayload['ai_questions']
+            : [];
+        $decisions = is_array($arbitration['decisions'] ?? null) ? $arbitration['decisions'] : [];
+        if ($questions !== []
+            || ($arbitration['result_state'] ?? null) === 'questions'
+            || $this->hasDecisionStatus($decisions, 'unresolved')) {
+            return 'questions';
+        }
+
+        $observerQuarantine = false;
+        $observers = is_array($this->normalizedPayload['independent_observations'] ?? null)
+            ? $this->normalizedPayload['independent_observations']
+            : [];
+        foreach ($observers as $observer) {
+            $items = is_array($observer) && is_array($observer['observation']['quarantined_items'] ?? null)
+                ? $observer['observation']['quarantined_items']
+                : [];
+            if ($items !== []) {
+                $observerQuarantine = true;
+                break;
+            }
+        }
+        $visionQuarantine = is_array($this->normalizedPayload['vision_analysis']['quarantined_items'] ?? null)
+            ? $this->normalizedPayload['vision_analysis']['quarantined_items']
+            : [];
+        $arbitrationQuarantine = is_array($arbitration['quarantined_intents'] ?? null)
+            ? $arbitration['quarantined_intents']
+            : [];
+        $geometryQuarantine = is_array($geometry['quarantined_intents'] ?? null)
+            ? $geometry['quarantined_intents']
+            : [];
+        if (($arbitration['result_state'] ?? null) === 'partial'
+            || $observerQuarantine
+            || $visionQuarantine !== []
+            || $arbitrationQuarantine !== []
+            || $geometryQuarantine !== []
+            || $this->hasDecisionStatus($decisions, 'candidate')) {
+            return 'partial';
+        }
+
+        return 'ready';
+    }
+
+    /** @param array<mixed> $decisions */
+    private function hasDecisionStatus(array $decisions, string $status): bool
+    {
+        foreach ($decisions as $decision) {
+            if (is_array($decision) && ($decision['status'] ?? null) === $status) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function matches(DocumentUnitExecutionContext $context): bool
     {
         return ($this->unitType === null || $this->unitType === $context->type)

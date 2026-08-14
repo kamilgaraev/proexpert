@@ -117,9 +117,17 @@ class EstimateGenerationDocumentResource extends JsonResource
             'user_action_required' => 'estimate_generation.document_processing_user_action_required',
             default => 'estimate_generation.document_processing_in_progress',
         };
+        $state = is_string($stored['state'] ?? null) ? $stored['state'] : match (true) {
+            $type === 'processing' => 'processing',
+            $counts['ready'] > 0 && $counts['system_failed'] > 0 => 'partial',
+            $counts['needs_user_action'] > 0 => 'questions',
+            in_array($type, ['system_failure', 'temporary_failure'], true) => 'system_failure',
+            default => 'ready',
+        };
 
         return [
             'type' => $type,
+            'state' => $state,
             'counts' => $counts,
             'retry_allowed' => ($stored['retry_allowed'] ?? false) === true,
             'execution_progress_percent' => max(0, min(100, (int) ($stored['execution_progress_percent'] ?? $document->progress_percent ?? 0))),

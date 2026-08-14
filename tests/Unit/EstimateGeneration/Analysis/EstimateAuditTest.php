@@ -27,7 +27,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotR
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
-use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
@@ -52,8 +51,35 @@ final class EstimateAuditTest extends TestCase
         self::assertSame('audit-cycle:0:'.str_repeat('a', 64), $runs->inputs[0]->subjectVersion);
     }
 
+    public function test_auditor_projects_server_identity_and_locator_and_quarantines_only_invalid_finding(): void
+    {
+        $valid = $this->finding('PROVIDER_FINDING_ID', 'coverage_gap');
+        $valid['source_locator'] = ['document_id' => 999, 'page' => 999];
+        $invalid = $this->finding('PROVIDER_INVALID_ID', 'coverage_gap');
+        $invalid['source_fact_ids'] = ['fact:invented'];
+        $auditor = new RunEstimateAudit(
+            new InMemoryAiRoleRunRepository,
+            new RecordedEstimateAuditModel([[
+                'accepted' => false,
+                'findings' => [$valid, $invalid],
+            ]]),
+            'openai/gpt-5-mini',
+        );
+
+        $result = $auditor->run($this->input($this->draft([$this->item('work:foundation')])));
+
+        self::assertFalse($result['accepted']);
+        self::assertCount(1, $result['findings']);
+        self::assertNotSame('PROVIDER_FINDING_ID', $result['findings'][0]['finding_id']);
+        self::assertSame(['document_id' => 7, 'page' => 2], $result['findings'][0]['source_locator']);
+        self::assertSame([[
+            'index' => 1,
+            'reason' => 'estimate_audit_source_fact_invalid',
+        ]], $result['quarantined_findings']);
+    }
+
     #[DataProvider('invalidFindingProvider')]
-    public function test_auditor_rejects_untyped_or_untraceable_findings(callable $mutate, string $message): void
+    public function test_auditor_isolates_invalid_findings_and_ignores_non_authoritative_copies(callable $mutate, ?string $quarantineReason): void
     {
         $input = $this->input($this->draft([$this->item('work:foundation')]));
         $result = ['accepted' => false, 'findings' => [$this->finding('finding:1', 'coverage_gap')]];
@@ -64,16 +90,22 @@ final class EstimateAuditTest extends TestCase
             'openai/gpt-5-mini',
         );
 
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage($message);
-        $auditor->run($input);
+        $validated = $auditor->run($input);
+
+        if ($quarantineReason === null) {
+            self::assertCount(1, $validated['findings']);
+            self::assertSame([], $validated['quarantined_findings']);
+        } else {
+            self::assertSame([], $validated['findings']);
+            self::assertSame($quarantineReason, $validated['quarantined_findings'][0]['reason']);
+        }
     }
 
     public static function invalidFindingProvider(): iterable
     {
         yield 'accepted with findings' => [
             static fn (array $result): array => ['accepted' => true, 'findings' => $result['findings']],
-            'estimate_audit_acceptance_invalid',
+            null,
         ];
         yield 'unknown type' => [
             static function (array $result): array {
@@ -97,7 +129,7 @@ final class EstimateAuditTest extends TestCase
 
                 return $result;
             },
-            'estimate_audit_finding_shape_invalid',
+            null,
         ];
         yield 'invented locator' => [
             static function (array $result): array {
@@ -105,7 +137,7 @@ final class EstimateAuditTest extends TestCase
 
                 return $result;
             },
-            'estimate_audit_source_locator_invalid',
+            null,
         ];
         yield 'raw english user text' => [
             static function (array $result): array {
@@ -173,7 +205,8 @@ final class EstimateAuditTest extends TestCase
         self::assertSame(3, $model->calls);
         self::assertSame(2, $result['audit']['correction_cycles']);
         self::assertSame('review_required', $result['audit']['status']);
-        self::assertSame('finding:remaining', $result['draft']['audit_review_items'][0]['finding_id']);
+        self::assertStringStartsWith('finding:', $result['draft']['audit_review_items'][0]['finding_id']);
+        self::assertNotSame('finding:remaining', $result['draft']['audit_review_items'][0]['finding_id']);
         self::assertCount(1, $result['draft']['local_estimates'][0]['sections'][0]['work_items']);
     }
 
@@ -191,7 +224,8 @@ final class EstimateAuditTest extends TestCase
         self::assertSame(1, $model->calls);
         self::assertSame(0, $result['audit']['correction_cycles']);
         self::assertSame('review_required', $result['audit']['status']);
-        self::assertSame('finding:omission', $result['draft']['audit_review_items'][0]['finding_id']);
+        self::assertStringStartsWith('finding:', $result['draft']['audit_review_items'][0]['finding_id']);
+        self::assertNotSame('finding:omission', $result['draft']['audit_review_items'][0]['finding_id']);
     }
 
     public function test_composer_correction_applies_omission_quantity_and_unit_changes_before_reaudit(): void
@@ -323,7 +357,8 @@ final class EstimateAuditTest extends TestCase
             'openai/gpt-5-mini',
         ))->run($input);
 
-        self::assertSame('finding:roof-omission', $result['findings'][0]['finding_id']);
+        self::assertStringStartsWith('finding:', $result['findings'][0]['finding_id']);
+        self::assertNotSame('finding:roof-omission', $result['findings'][0]['finding_id']);
         self::assertSame(3, $locator['page']);
         self::assertSame('document:9', $locator['source_artifact_id']);
     }
@@ -577,6 +612,16 @@ final class RecordedEstimateComposerCorrectionModel implements EstimateComposerC
     {
         $onPhysicalAttemptReserved('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
 
-        return ['corrections' => $this->calls++ === 0 ? $this->results : []];
+        if ($this->calls++ !== 0) {
+            return ['corrections' => []];
+        }
+        $corrections = $this->results;
+        foreach ($corrections as $index => $correction) {
+            if (isset($input->findings[$index]['finding_id'])) {
+                $corrections[$index]['finding_id'] = $input->findings[$index]['finding_id'];
+            }
+        }
+
+        return ['corrections' => $corrections];
     }
 }
