@@ -9,12 +9,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditIn
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateDecisionContextData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeRerankResultData;
@@ -72,7 +72,6 @@ use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
-use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class PipelineStageFunctionalTest extends TestCase
 {
@@ -88,12 +87,27 @@ final class PipelineStageFunctionalTest extends TestCase
         $this->previousFacadeApplication = Facade::getFacadeApplication();
         $container = new Container;
         $container->instance('config', new Repository([
+            'app' => ['fallback_locale' => 'ru'],
             'estimate-generation' => [
                 'normative_matching' => [
                     'reranker' => ['models' => ['openai/test-model']],
                 ],
             ],
         ]));
+        $container->instance('app', new class
+        {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+        $container->instance('translator', new class
+        {
+            public function get(string $key, array $replace = [], ?string $locale = null): string
+            {
+                return $key;
+            }
+        });
         $container->instance('log', new NullLogger);
         Container::setInstance($container);
         Facade::clearResolvedInstances();
@@ -383,32 +397,7 @@ final class PipelineStageFunctionalTest extends TestCase
                     'evidence_id' => 701,
                     'confidence' => 0.95,
                     'floor_count' => 1,
-                ], 'normalized_building_model' => (new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData(
-                    unit: 'm',
-                    scaleStatus: 'confirmed',
-                    scaleMetersPerUnit: 1.0,
-                    floors: [new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData(
-                        key: 'floor-1',
-                        elevationM: 0.0,
-                        heightM: 3.0,
-                        rooms: [new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\RoomData(
-                            key: 'room-1',
-                            name: 'Жилая комната',
-                            polygon: [[0, 0], [10, 0], [10, 8], [0, 8]],
-                            evidenceIds: [701],
-                            confidence: 0.95,
-                            geometryCertainty: 'confirmed',
-                        )],
-                        walls: [],
-                        openings: [],
-                        engineeringElements: [],
-                        evidenceIds: [701],
-                        confidence: 0.95,
-                        geometryCertainty: 'confirmed',
-                    )],
-                    assumptions: [],
-                    modelVersion: 'building-model:v1',
-                ))->toArray()];
+                ]];
             }
         };
         $matcher = $this->createMock(ResourceAssemblyService::class);
@@ -431,15 +420,76 @@ final class PipelineStageFunctionalTest extends TestCase
         $artifacts = new InMemoryPipelineArtifactStore;
         $graph = PipelineDefinitionGraph::standard();
         $results = new StageResultFactory($artifacts, $graph);
+        $base = 'sha256:'.str_repeat('a', 64);
+        $projectModels = new \Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
+        $room = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity(
+            'room:1', 1, 2, 3, $base, 'room', 'room:1',
+        );
+        $lengthEvidence = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence(
+            'evidence:room:length', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:length',
+        );
+        $widthEvidence = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence(
+            'evidence:room:width', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:width',
+        );
+        $projectModels->saveSourceModel([$room], [
+            new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(
+                'fact:room:length', 1, 2, 3, $base, $room->id, 'length', '10', 'm', 1.0,
+                'document', 'confirmed', [$lengthEvidence->id],
+            ),
+            new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(
+                'fact:room:width', 1, 2, 3, $base, $room->id, 'width', '8', 'm', 1.0,
+                'document', 'confirmed', [$widthEvidence->id],
+            ),
+        ], [$lengthEvidence, $widthEvidence]);
+        $snapshotToken = $projectModels->snapshotForPlanning(1, 2, 3, 100)['token'];
+        self::assertTrue($projectModels->replaceTechnologyRecommendations(
+            1, 2, 3, $base, $snapshotToken, 'technology:v1', str_repeat('c', 64), [], [],
+        ));
+        $technologyPackage = new \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackage(
+            'package:floor',
+            [[
+                'id' => 'work:floor',
+                'label' => 'Устройство пола',
+                'quantity_formula_id' => 'formula:floor',
+                'norm_intent_id' => 'intent:floor',
+            ]],
+            [],
+            [],
+            [['id' => 'intent:floor', 'candidate_refs' => ['floor_installation']]],
+            [[
+                'id' => 'formula:floor',
+                'unit' => 'm',
+                'operands' => [['fact_id' => 'fact:room:length']],
+            ]],
+            [],
+            [],
+            [],
+            [],
+            ['rule_id' => 'floor'],
+        );
+        $finding = new \App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding(
+            'floor', '1.0.0', str_repeat('d', 64), 'finding:floor', 1,
+            'technology_required', 'proven_missing', 'warning', 'Требуется устройство пола', 1.0,
+            ['fact:room:length'], [$room->id], ['length'], ['status' => 'applicable'],
+            ['allowed' => false], null, $technologyPackage,
+        );
+        self::assertTrue($projectModels->replaceCompleteness(
+            1, 2, 3, $base, $snapshotToken, 'technology:v1', str_repeat('c', 64),
+            'rules:v1', str_repeat('d', 64), [$finding], [],
+        ));
+        self::assertNotNull($projectModels->currentTechnologyRecommendations(1, 2, 3));
+        self::assertNotNull($projectModels->currentCompleteness(1, 2, 3));
+        $canonicalQuantities = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService(
+            $projectModels,
+            new \App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory,
+        );
         $stages = [
             new UnderstandDocumentsStage($gateway, $results),
             new UnderstandObjectStage(new ConstructionSemanticParser, $gateway, $results),
             new ExtractQuantitiesStage(
                 new EstimateGenerationQuantityLearningEvidenceService,
                 $results,
-                new \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomAnnotationFloorAreaQuantityFactory(
-                    new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository,
-                ),
+                $canonicalQuantities,
             ),
             new PlanWorkItemsStage(
                 new \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), new NormativeContextPinResolver),
@@ -465,7 +515,7 @@ final class PipelineStageFunctionalTest extends TestCase
                     },
                     'test-model',
                 ),
-                new EstimateComposerInputFactory(new InMemoryProjectModelRepository, 10000),
+                new EstimateComposerInputFactory($projectModels, 10000),
                 new EstimateCompositionProjector,
             ),
             new MatchNormativesStage($matcher, $workflow, new NormativeWorkIntentFactory, $results),
@@ -489,10 +539,9 @@ final class PipelineStageFunctionalTest extends TestCase
                     },
                     'test-model',
                 )),
-                new EstimateAuditInputFactory(new InMemoryProjectModelRepository, 10000),
+                new EstimateAuditInputFactory($projectModels, 10000),
             ),
         ];
-        $base = 'sha256:'.str_repeat('a', 64);
         $attempt = '00000000-0000-4000-8000-000000000001';
         $state = new InMemoryPipelineStateStore($artifacts);
         $resolver = new PipelinePlanResolver($graph, $state, $state);
@@ -514,17 +563,31 @@ final class PipelineStageFunctionalTest extends TestCase
             }),
             static fn (): DateTimeImmutable => new DateTimeImmutable('2026-07-11T10:00:00+00:00'),
         );
-        $seed = new PipelineContext(1, 2, 3, 4, $base, 'generating', generationAttemptId: $attempt, baseInputVersion: $base);
+        $seed = new PipelineContext(
+            sessionId: 3,
+            organizationId: 1,
+            projectId: 2,
+            stateVersion: 4,
+            inputVersion: $base,
+            sessionStatus: 'generating',
+            generationAttemptId: $attempt,
+            baseInputVersion: $base,
+        );
         for ($invocation = 0; $invocation < 9; $invocation++) {
             $context = $resolver->next($seed);
             self::assertNotNull($context);
+            if ($context->stage === ProcessingStage::ExtractQuantities) {
+                self::assertNotNull($projectModels->currentTechnologyRecommendations(1, 2, 3), 'technology stale before stage 6');
+                self::assertNotNull($projectModels->currentCompleteness(1, 2, 3), 'completeness stale before stage 6');
+            }
             $result = $runner->runNext($context);
+            if ($context->stage === ProcessingStage::ExtractQuantities) {
+                self::assertNotEmpty($result?->transientData['stage6_generation_context']['work_packages'] ?? []);
+            }
             self::assertSame($context->stage, $result?->stage);
         }
         self::assertNull($resolver->next($seed));
         $planned = $state->priorOutputs($seed)->payload(ProcessingStage::PlanWorkItems);
-        $floorItems = [];
-        $scopeDecisionItems = [];
         $plannedItems = [];
         foreach ($planned['local_estimates'] as $localEstimate) {
             foreach ($localEstimate['sections'] as $section) {
@@ -533,27 +596,15 @@ final class PipelineStageFunctionalTest extends TestCase
                     if (is_string($quantityKey) && $quantityKey !== '') {
                         $plannedItems[$quantityKey] = $workItem;
                     }
-                    if ($quantityKey === 'finish.floor') {
-                        $floorItems[] = $workItem;
-                    }
-                    if (in_array($quantityKey, ['heating.unit', 'sewerage.outlet_route'], true)) {
-                        $scopeDecisionItems[$quantityKey] = $workItem;
-                    }
                 }
             }
         }
-        self::assertNotEmpty($floorItems);
-        foreach ([
-            'electrical.panel',
-            'electrical.outlets',
-            'electrical.switches',
-            'lighting.fixtures',
-        ] as $quantityKey) {
-            self::assertArrayHasKey($quantityKey, $plannedItems);
-            self::assertSame('pcs', $plannedItems[$quantityKey]['unit']);
-            self::assertSame($quantityKey, $plannedItems[$quantityKey]['quantity_evidence']['key'] ?? null);
-            self::assertIsInt($plannedItems[$quantityKey]['quantity_evidence_id'] ?? null);
-        }
+        $floorPackageQuantity = 'quantity:technology_work_package:package:floor:formula:floor';
+        self::assertArrayHasKey($floorPackageQuantity, $plannedItems);
+        self::assertSame('Устройство пола', $plannedItems[$floorPackageQuantity]['name']);
+        self::assertSame('m', $plannedItems[$floorPackageQuantity]['unit']);
+        self::assertSame('package:floor', $plannedItems[$floorPackageQuantity]['metadata']['technology_package_id']);
+        self::assertSame('intent:floor', $plannedItems[$floorPackageQuantity]['metadata']['normative_intent']['id']);
         $pricedItems = [];
         foreach ($planned['local_estimates'] as $localEstimate) {
             foreach ($localEstimate['sections'] as $section) {
@@ -580,7 +631,7 @@ final class PipelineStageFunctionalTest extends TestCase
             static fn (mixed $quantity): bool => is_array($quantity) && ($quantity['key'] ?? null) === 'floor_area',
         ));
         self::assertNotEmpty($floorAreaRows);
-        self::assertSame('80.000000', $floorAreaRows[0]['amount']);
+        self::assertSame('80', $floorAreaRows[0]['amount']);
 
         $payload = $state->priorOutputs($seed)->payload(ProcessingStage::ValidateDraft);
         self::assertArrayHasKey('quality_summary', $payload['draft']);

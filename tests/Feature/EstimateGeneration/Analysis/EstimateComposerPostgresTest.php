@@ -79,7 +79,11 @@ final class EstimateComposerPostgresTest extends TestCase
         $connection = $this->app->make('db')->connection();
         self::assertInstanceOf(PostgresConnection::class, $connection);
         self::assertSame('pgsql', $connection->getDriverName());
-        self::assertSame('most_backend_testing', $connection->getDatabaseName());
+        self::assertTrue(
+            $connection->getDatabaseName() === 'most_backend_testing'
+                || ($connection->getDatabaseName() === 'most_ai_estimator_contract'
+                    && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
+        );
         $connection->statement("SET statement_timeout TO '5000ms'");
         $connection->statement("SET lock_timeout TO '5000ms'");
         $schema = 'most_ci_estimate_composer_'.bin2hex(random_bytes(8));

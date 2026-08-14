@@ -288,31 +288,8 @@ return [
     'benchmark' => [
         'production_pipeline_version' => $envValue('ESTIMATE_GENERATION_PRODUCTION_PIPELINE_VERSION'),
         'admin_case_timeout_ms' => (int) env('ESTIMATE_GENERATION_ADMIN_BENCHMARK_CASE_TIMEOUT_MS', 300000),
-        'repository_replay_enabled' => (bool) env('ESTIMATE_GENERATION_REPOSITORY_REPLAY_ENABLED', true),
         'production_output_store' => env('ESTIMATE_GENERATION_BENCHMARK_PRODUCTION_OUTPUT_STORE', 's3'),
         'acceptance_manifest' => $envValue('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_MANIFEST'),
         'acceptance_organization_id' => (int) env('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_ORGANIZATION_ID', 0),
-        'production_replay_projections' => [
-            'reg-replay-vector-wall-opening-001' => [
-                'reference' => 'projections/vector-wall-opening-v1.json',
-                'sha256' => '1debc0e4da66695d32f9c6f1335d885b000c42b323226ea3d125ac16734d1d2a',
-            ],
-            'reg-replay-vision-sketch-001' => [
-                'reference' => 'projections/vision-sketch-v1.json',
-                'sha256' => '65e41198fa8118378e4001c812b6c9bf365c592434d2036ab77e6c09c4b86e3c',
-            ],
-            'reg-replay-vector-pdf-001' => ['reference' => 'projections/vector-pdf-001.json', 'sha256' => '1844b0e9aa0a54d54fe5b3500510e34cac47417d7b3a44c7f146019ed22b4a43'],
-            'reg-replay-scanned-pdf-001' => ['reference' => 'projections/scanned-pdf-001.json', 'sha256' => 'bc43f37e2b37a2c7663546cd69ca63f97a62f74b288f302e590636a310e814b0'],
-            'reg-replay-dwg-layout-001' => ['reference' => 'projections/dwg-layout-001.json', 'sha256' => 'd04132f233a8ceb67fcc6669a4e885d0c2e465b8eb4b056f6b7669d180a51f02'],
-            'reg-replay-dimensioned-raster-001' => ['reference' => 'projections/dimensioned-raster-001.json', 'sha256' => 'fe76cb4a6be5af2a1d716bf68b13a8afa5814f6c56eee092c229da7e4d34beac'],
-            'reg-replay-freehand-review-001' => ['reference' => 'projections/freehand-review-001.json', 'sha256' => '0292bf79d7ebb71bd115967577cb12ce31754ceaf41818e0348ce8d999f6fee4'],
-            'reg-replay-engineering-layout-001' => ['reference' => 'projections/engineering-layout-001.json', 'sha256' => 'dd94e170fd47dd0ec118c4bf253ff7e62037555e4215b7ab7a379a4a289452e4'],
-        ],
-        'registered_manifests' => [
-            'repository-production-replay:v1' => [
-                'locator' => 'production-replay-manifest.json',
-                'sha256' => '83b522e6206f6771254ccd759b4853ac6272dd411d9caa73cb3b3d8ecd32b07f',
-            ],
-        ],
     ],
 ];

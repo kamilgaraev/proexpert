@@ -17,17 +17,17 @@ final class RegisteredBenchmarkManifestRepositoryTest extends TestCase
     public function registered_locator_and_reference_are_bound_to_the_exact_revision(): void
     {
         $root = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';
-        $hash = hash_file('sha256', $root.'/production-replay-manifest.json');
+        $hash = hash_file('sha256', $root.'/manifest.json');
         $repository = new RegisteredBenchmarkManifestRepository($root, [
-            'repository-production-replay:v1' => ['locator' => 'production-replay-manifest.json', 'sha256' => $hash],
+            'repository:v1' => ['locator' => 'manifest.json', 'sha256' => $hash],
         ]);
 
-        self::assertSame($hash, $repository->byReference('repository-production-replay:v1')->manifestSha256);
-        self::assertSame('repository-production-replay:v1', $repository->byLocator('production-replay-manifest.json')['reference']);
+        self::assertSame($hash, $repository->byReference('repository:v1')->manifestSha256);
+        self::assertSame('repository:v1', $repository->byLocator('manifest.json')['reference']);
 
         foreach ([
             ['locator' => '../manifest.json', 'sha256' => $hash],
-            ['locator' => 'production-replay-manifest.json', 'sha256' => str_repeat('0', 64)],
+            ['locator' => 'manifest.json', 'sha256' => str_repeat('0', 64)],
         ] as $descriptor) {
             try {
                 (new RegisteredBenchmarkManifestRepository($root, ['repository-bad:v1' => $descriptor]))
@@ -39,7 +39,7 @@ final class RegisteredBenchmarkManifestRepositoryTest extends TestCase
         }
 
         $link = $root.'/registered-manifest-link.json';
-        if (@symlink($root.'/production-replay-manifest.json', $link)) {
+        if (@symlink($root.'/manifest.json', $link)) {
             try {
                 (new RegisteredBenchmarkManifestRepository($root, [
                     'repository-link:v1' => ['locator' => 'registered-manifest-link.json', 'sha256' => $hash],
@@ -53,7 +53,7 @@ final class RegisteredBenchmarkManifestRepositoryTest extends TestCase
         }
 
         $this->expectException(BenchmarkManifestException::class);
-        $repository->byLocator('manifest.json');
+        $repository->byLocator('unregistered.json');
     }
 
     #[Test]
@@ -61,12 +61,12 @@ final class RegisteredBenchmarkManifestRepositoryTest extends TestCase
     {
         $sourceRoot = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';
         $root = sys_get_temp_dir().'/most-registered-manifests-'.bin2hex(random_bytes(5));
-        mkdir($root.'/regression/replay-vector-wall-opening-001', 0700, true);
-        foreach (['input.dxf', 'expected.json'] as $file) {
-            copy($sourceRoot.'/regression/replay-vector-wall-opening-001/'.$file,
-                $root.'/regression/replay-vector-wall-opening-001/'.$file);
+        mkdir($root.'/development/dimensioned-sketch-001', 0700, true);
+        foreach (['input.svg', 'expected.json'] as $file) {
+            copy($sourceRoot.'/development/dimensioned-sketch-001/'.$file,
+                $root.'/development/dimensioned-sketch-001/'.$file);
         }
-        $source = json_decode((string) file_get_contents($sourceRoot.'/production-replay-manifest.json'), true, 64, JSON_THROW_ON_ERROR);
+        $source = json_decode((string) file_get_contents($sourceRoot.'/manifest.json'), true, 64, JSON_THROW_ON_ERROR);
         $source['cases'] = [$source['cases'][0]];
         $source['manifest_version'] = 'registered-a:v1';
         file_put_contents($root.'/a.json', json_encode($source, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
@@ -79,17 +79,17 @@ final class RegisteredBenchmarkManifestRepositoryTest extends TestCase
         ]);
 
         try {
-            self::assertSame($repository->byReference('registered-a:v1')->case('reg-replay-vector-wall-opening-001')->id,
-                $repository->byReference('registered-b:v1')->case('reg-replay-vector-wall-opening-001')->id);
+            self::assertSame($repository->byReference('registered-a:v1')->case('dev-dimensioned-sketch-001')->id,
+                $repository->byReference('registered-b:v1')->case('dev-dimensioned-sketch-001')->id);
             self::assertNotSame($repository->byReference('registered-a:v1')->manifestSha256,
                 $repository->byReference('registered-b:v1')->manifestSha256);
         } finally {
             unlink($root.'/a.json');
             unlink($root.'/b.json');
-            unlink($root.'/regression/replay-vector-wall-opening-001/input.dxf');
-            unlink($root.'/regression/replay-vector-wall-opening-001/expected.json');
-            rmdir($root.'/regression/replay-vector-wall-opening-001');
-            rmdir($root.'/regression');
+            unlink($root.'/development/dimensioned-sketch-001/input.svg');
+            unlink($root.'/development/dimensioned-sketch-001/expected.json');
+            rmdir($root.'/development/dimensioned-sketch-001');
+            rmdir($root.'/development');
             rmdir($root);
         }
     }

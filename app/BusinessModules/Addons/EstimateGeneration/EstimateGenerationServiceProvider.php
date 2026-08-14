@@ -106,10 +106,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkReport
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\PrivateBenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCaseExecutor;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProductionReplayBenchmarkAdapter;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedBenchmarkCatalogLoader;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeLoader;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedReplayProjectionLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectCadRuntimeReadinessCommand;
@@ -391,7 +387,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(BenchmarkRunner::class);
         $this->app->singleton(RegisteredBenchmarkManifestRepository::class, fn (): RegisteredBenchmarkManifestRepository => new RegisteredBenchmarkManifestRepository(
             base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
-            $this->repositoryReplayEnabled() ? (array) config('estimate-generation.benchmark.registered_manifests', []) : [],
+            [],
         ));
         $this->app->singleton(RasterPreprocessor::class);
         $this->app->singleton(GeometryResourceLimits::class, static fn (): GeometryResourceLimits => new GeometryResourceLimits(
@@ -433,24 +429,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         ));
         $this->app->singleton(CadGeometryProvider::class, static fn ($app): DwgDxfGeometryProvider => $app->make(DwgDxfGeometryProvider::class));
         $this->app->singleton(BenchmarkAdapterRegistry::class, function ($app): BenchmarkAdapterRegistry {
-            $adapters = [$app->make(CurrentBaselineBenchmarkAdapter::class)];
-            if ($this->repositoryReplayEnabled()) {
-                $adapters[] = new ProductionReplayBenchmarkAdapter(
-                    new RecordedReplayProjectionLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
-                    new RecordedPortEnvelopeLoader(
-                        base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
-                        base_path('tests/Fixtures/EstimateGeneration/benchmarks/recordings/manifest.json'),
-                    ),
-                    new RecordedBenchmarkCatalogLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
-                    $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler::class),
-                    $app->make(ResourceAssemblyService::class),
-                    $app->make(NormativeWorkIntentFactory::class),
-                    $app->make(EstimateValidationService::class),
-                    (array) config('estimate-generation.benchmark.production_replay_projections', []),
-                );
-            }
-
-            return new BenchmarkAdapterRegistry($adapters);
+            return new BenchmarkAdapterRegistry([$app->make(CurrentBaselineBenchmarkAdapter::class)]);
         });
         $this->app->singleton(RunEstimateGenerationBenchmarkCaseCommand::class, fn ($app): RunEstimateGenerationBenchmarkCaseCommand => new RunEstimateGenerationBenchmarkCaseCommand(
             $app->make(BenchmarkAdapterRegistry::class),
@@ -967,12 +946,5 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ->by($key);
         });
 
-    }
-
-    private function repositoryReplayEnabled(): bool
-    {
-        return (bool) config('estimate-generation.benchmark.repository_replay_enabled', false)
-            && $this->app->environment(['local', 'testing'])
-            && is_dir(base_path('tests/Fixtures/EstimateGeneration/benchmarks'));
     }
 }

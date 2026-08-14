@@ -54,7 +54,7 @@ final class CurrentBaselineBenchmarkAdapterTest extends TestCase
 
         self::assertSame('technical_failure', $result->status);
         self::assertSame('current-baseline', $adapter->id());
-        self::assertSame('normalized_building_model_required', $result->failureCode);
+        self::assertSame('canonical_observations_required', $result->failureCode);
     }
 
     #[Test]

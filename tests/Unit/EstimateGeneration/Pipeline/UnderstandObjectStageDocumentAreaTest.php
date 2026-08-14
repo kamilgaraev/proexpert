@@ -15,11 +15,38 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandObjectStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
+use Illuminate\Container\Container;
+use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 
 final class UnderstandObjectStageDocumentAreaTest extends TestCase
 {
+    private Container $previousContainer;
+
+    private mixed $previousFacadeApplication;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->previousContainer = Container::getInstance();
+        $this->previousFacadeApplication = Facade::getFacadeApplication();
+        $container = new Container;
+        $container->instance('log', new NullLogger);
+        Container::setInstance($container);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($container);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($this->previousFacadeApplication);
+        Container::setInstance($this->previousContainer);
+        parent::tearDown();
+    }
+
     #[Test]
     public function exact_document_area_evidence_is_carried_into_analysis(): void
     {
@@ -39,7 +66,6 @@ final class UnderstandObjectStageDocumentAreaTest extends TestCase
                     'input' => ['description' => 'Жилой дом'],
                     'documents' => [],
                     'user_id' => 7,
-                    'normalized_building_model' => null,
                     'document_total_area' => $this->area,
                 ];
             }

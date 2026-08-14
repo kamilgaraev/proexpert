@@ -14,7 +14,7 @@ class ConstructionSemanticParser
      * @param  array<int, array<string, mixed>>  $documents
      * @return array<string, mixed>
      */
-    public function parse(array $input, array $documents, ?array $normalizedBuildingModel = null): array
+    public function parse(array $input, array $documents): array
     {
         $description = (string) ($input['description'] ?? '');
         $generationMode = EstimateGenerationMode::fromInput($input['generation_mode'] ?? null)->value;
@@ -107,9 +107,6 @@ class ConstructionSemanticParser
                 'scopes' => $scopes['items'],
             ],
         ];
-        if ($normalizedBuildingModel !== null) {
-            $analysis['normalized_building_model'] = $normalizedBuildingModel;
-        }
 
         return $analysis;
     }

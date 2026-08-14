@@ -1016,23 +1016,6 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 ];
             }
         }
-        $derivedQuantities = [];
-        foreach ($this->currentQuantities as $quantity) {
-            if (! $quantity instanceof DerivedQuantity
-                || $this->scope($quantity) !== [$organizationId, $projectId, $sessionId]) {
-                continue;
-            }
-            $derivedQuantities[] = [
-                'source_version' => $quantity->sourceVersion,
-                'logical_key' => $quantity->logicalId,
-                'exact_identity' => $quantity->exactIdentity,
-                'formula_version' => $quantity->formulaVersion,
-                'snapshot_identity' => $quantity->snapshotIdentity,
-            ];
-        }
-        usort($derivedQuantities, static fn (array $left, array $right): int => [
-            $left['source_version'], $left['logical_key'],
-        ] <=> [$right['source_version'], $right['logical_key']]);
         $roleRuns = [];
         foreach ($this->synthesisRoleFingerprints as $role => $fingerprints) {
             foreach ($fingerprints as $fingerprint) {
@@ -1051,7 +1034,6 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             'bindings' => $bindings,
             'evidence' => array_values($evidence),
             'decisions' => $decisions,
-            'derived_quantities' => $derivedQuantities,
             'role_runs' => $roleRuns,
         ]);
     }

@@ -156,7 +156,7 @@ final class PdfGeometryWorkerScriptTest extends TestCase
 
     public function test_worker_rejects_aggregate_preview_budget_before_publication(): void
     {
-        $pdf = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks/regression/replay-scanned-pdf-001/input.pdf';
+        $pdf = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/ocr/scanned-plan.pdf';
         $published = false;
 
         $this->expectExceptionMessage('pdf_preview_aggregate_bytes_limit');
@@ -221,7 +221,7 @@ PYTHON;
 
     public function test_vector_object_budget_degrades_to_raster_preview_instead_of_rejecting_pdf(): void
     {
-        $pdf = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks/regression/replay-vector-pdf-001/input.pdf';
+        $pdf = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/ocr/vector-plan.pdf';
 
         $payload = (new PdfGeometryWorker(
             scriptPath: dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py',
@@ -254,7 +254,7 @@ PYTHON;
     public function test_vector_parser_failure_degrades_to_raster_contract_for_preview_processing(): void
     {
         $module = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py';
-        $pdf = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks/regression/replay-vector-pdf-001/input.pdf';
+        $pdf = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/ocr/vector-plan.pdf';
         $script = <<<'PYTHON'
 import importlib.util
 import json
@@ -320,8 +320,8 @@ PYTHON;
 
     public static function committedPdfProvider(): iterable
     {
-        yield 'scanned' => ['regression/replay-scanned-pdf-001/input.pdf'];
-        yield 'vector' => ['regression/replay-vector-pdf-001/input.pdf'];
+        yield 'scanned' => ['../ocr/scanned-plan.pdf'];
+        yield 'vector' => ['../ocr/vector-plan.pdf'];
     }
 
     private function multiPagePdf(int $pages): string

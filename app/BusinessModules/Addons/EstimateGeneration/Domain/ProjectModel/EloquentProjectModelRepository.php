@@ -1597,27 +1597,6 @@ SQL, [
         }
         $sourceVersions = array_values(array_unique($sourceVersions));
         sort($sourceVersions, SORT_STRING);
-        $derivedQuantities = $sourceVersions === [] ? collect() : $this->database
-            ->table('estimate_generation_project_model_derived_quantity_projections as projection')
-            ->join(
-                'estimate_generation_project_model_derived_quantities as quantity',
-                'quantity.id',
-                '=',
-                'projection.derived_quantity_id',
-            )
-            ->where('projection.organization_id', $organizationId)
-            ->where('projection.project_id', $projectId)
-            ->where('projection.session_id', $sessionId)
-            ->whereIn('projection.source_version', $sourceVersions)
-            ->orderBy('projection.source_version')
-            ->orderBy('projection.logical_key')
-            ->get([
-                'projection.source_version',
-                'projection.logical_key',
-                'quantity.exact_identity',
-                'quantity.formula_version',
-                'quantity.snapshot_identity',
-            ]);
         $roleRuns = $sourceVersions === [] ? collect() : $this->database
             ->table('estimate_generation_ai_role_runs')
             ->where('organization_id', $organizationId)
@@ -1642,13 +1621,6 @@ SQL, [
                 'id' => (int) $decision->id,
                 'selected_fact_id' => (string) $decision->selected_fact_stable_key,
                 'version' => (int) $decision->version,
-            ])->all(),
-            'derived_quantities' => $derivedQuantities->map(fn ($quantity): array => [
-                'source_version' => (string) $quantity->source_version,
-                'logical_key' => (string) $quantity->logical_key,
-                'exact_identity' => (string) $quantity->exact_identity,
-                'formula_version' => (string) $quantity->formula_version,
-                'snapshot_identity' => $this->decode($quantity->snapshot_identity),
             ])->all(),
             'role_runs' => $roleRuns->map(static fn ($run): array => [
                 'role' => (string) $run->role,

@@ -100,7 +100,6 @@ final class EstimateGenerationBenchmarkResourceTest extends TestCase
         self::assertStringContainsString('CurrentBaselineBenchmarkAdapter::class', $provider);
         self::assertIsString($resource);
         self::assertStringContainsString("->default('current-baseline')", $resource);
-        self::assertStringNotContainsString("->default('production-replay')", $resource);
     }
 
     #[Test]
@@ -146,7 +145,7 @@ final class EstimateGenerationBenchmarkResourceTest extends TestCase
             'dataset_content_hash' => 'sha256:'.str_repeat('a', 64),
             'manifest_base_prefix' => 'org-71/estimate-generation/benchmarks/acceptance/',
             'manifest_locator' => 's3://org-71/estimate-generation/benchmarks/acceptance/corpus.json',
-            'manifest_sha256' => str_repeat('b', 64), 'adapter_id' => 'production-replay',
+            'manifest_sha256' => str_repeat('b', 64), 'adapter_id' => 'current-baseline',
             'prompt_version' => 'recorded-ports:v3', 'settings_snapshot_id' => 8,
             'settings_snapshot_version' => 2, 'pipeline_version' => 'pipeline:v4',
             'settings_scope' => 'organization', 'settings_organization_id' => 71,
@@ -162,7 +161,7 @@ final class EstimateGenerationBenchmarkResourceTest extends TestCase
     {
         return [
             'dataset' => 'acceptance', 'manifest_sha256' => str_repeat('b', 64),
-            'adapter_id' => 'production-replay', 'prompt_version' => 'recorded-ports:v3',
+            'adapter_id' => 'current-baseline', 'prompt_version' => 'none:v1',
             'pipeline_version' => 'pipeline:v4', 'model_versions' => ['vision' => 'openai/gpt-5'],
             'normative_version' => 'normative:v7', 'price_version' => 'price:v5', 'currency' => 'RUB',
             'settings_snapshot_id' => 8, 'settings_snapshot_version' => 2,

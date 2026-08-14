@@ -106,7 +106,6 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
             'input' => $this->json($session->input_payload),
             'documents' => array_values($documents),
             'user_id' => $session->user_id === null ? null : (int) $session->user_id,
-            'normalized_building_model' => null,
             'effective_project_model_values' => $projectModel['effective_values'],
             'project_model_snapshot_token' => $projectModel['token'],
         ];

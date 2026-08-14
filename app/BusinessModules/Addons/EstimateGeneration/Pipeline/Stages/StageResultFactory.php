@@ -24,19 +24,24 @@ final readonly class StageResultFactory
             throw new \DomainException('Pipeline stage context does not match the executor.');
         }
         $payload = PipelineStagePayload::from($stage, $data);
-        Log::info('estimate_generation.pipeline_artifact_write', [
-            'session_id' => $context->sessionId,
-            'stage' => $stage->value,
-            'phase' => 'started',
-        ]);
+        $this->logWrite($context, $stage, 'started');
         $artifact = $this->artifacts->write($context, $definition, $payload->data);
-        Log::info('estimate_generation.pipeline_artifact_write', [
-            'session_id' => $context->sessionId,
-            'stage' => $stage->value,
-            'phase' => 'completed',
-        ]);
+        $this->logWrite($context, $stage, 'completed');
         $output = PipelineStageOutput::create($definition, $context->inputVersion, $context->dependencyVersions, $artifact);
 
         return new PipelineStageResult($stage, $output->version, $metrics, $warnings, $output, $data);
+    }
+
+    private function logWrite(PipelineContext $context, ProcessingStage $stage, string $phase): void
+    {
+        $application = Log::getFacadeApplication();
+        if ($application === null || ! $application->bound('log')) {
+            return;
+        }
+        Log::info('estimate_generation.pipeline_artifact_write', [
+            'session_id' => $context->sessionId,
+            'stage' => $stage->value,
+            'phase' => $phase,
+        ]);
     }
 }

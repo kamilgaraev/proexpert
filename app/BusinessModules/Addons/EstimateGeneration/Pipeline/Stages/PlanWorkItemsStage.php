@@ -100,6 +100,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 'key' => 'stage5-technology-packages',
                 'title' => trans_message('estimate_generation.stage6.technology_packages_title'),
                 'scope_type' => 'technology',
+                'source_refs' => $this->sourceRefs($stageFiveItems),
                 'sections' => [[
                     'key' => 'stage5-technology-packages',
                     'title' => trans_message('estimate_generation.stage6.technology_packages_section'),
@@ -291,6 +292,26 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
 
         return $workItem;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $items
+     * @return list<array<string, mixed>>
+     */
+    private function sourceRefs(array $items): array
+    {
+        $refs = [];
+        foreach ($items as $item) {
+            foreach (is_array($item['source_refs'] ?? null) ? $item['source_refs'] : [] as $ref) {
+                if (! is_array($ref)) {
+                    continue;
+                }
+                $refs[hash('sha256', json_encode($ref, JSON_THROW_ON_ERROR))] = $ref;
+            }
+        }
+        ksort($refs);
+
+        return array_values($refs);
     }
 
     private function quantityEvidenceSummary(array $localEstimates): array

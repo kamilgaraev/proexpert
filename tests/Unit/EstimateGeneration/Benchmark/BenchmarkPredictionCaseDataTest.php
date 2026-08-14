@@ -27,8 +27,7 @@ final class BenchmarkPredictionCaseDataTest extends TestCase
 
         self::assertSame([
             'id', 'dataset', 'sourceType', 'inputLocator', 'inputSha256', 'tags',
-            'allowedCapabilities', 'recordedEnvelopeReferences', 'recordedEnvelopeSha256',
-            'recordingManifestSha256', 'benchmarkCatalogReference', 'benchmarkCatalogSha256',
+            'allowedCapabilities',
         ], $properties);
         self::assertStringNotContainsString('expected', strtolower($serialized));
         self::assertStringNotContainsString(strtolower($root), strtolower($serialized));
@@ -37,7 +36,7 @@ final class BenchmarkPredictionCaseDataTest extends TestCase
     }
 
     #[Test]
-    public function projection_rejects_traversal_in_input_and_recorded_envelope_locators(): void
+    public function projection_rejects_traversal_in_input_locator(): void
     {
         $this->expectException(\InvalidArgumentException::class);
 
@@ -49,8 +48,6 @@ final class BenchmarkPredictionCaseDataTest extends TestCase
             str_repeat('a', 64),
             ['geometry'],
             ['cad_geometry'],
-            ['vision_extraction' => '../expected.json'],
-            ['vision_extraction' => str_repeat('b', 64)],
         );
     }
 }

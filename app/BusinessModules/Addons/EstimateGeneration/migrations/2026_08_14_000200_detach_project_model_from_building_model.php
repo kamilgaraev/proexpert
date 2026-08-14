@@ -10,7 +10,7 @@ return new class extends Migration
     public function up(): void
     {
         foreach ([
-            ['estimate_generation_project_model_evidence', 'eg_project_model_evidence_model_scope_fk'],
+            ['estimate_generation_project_model_evidence_bindings', 'eg_project_model_evidence_model_scope_fk'],
             ['estimate_generation_project_model_relations', 'eg_project_model_relations_model_scope_fk'],
             ['estimate_generation_project_model_corrections', 'eg_project_model_corrections_model_scope_fk'],
             ['estimate_generation_project_model_assertions', 'eg_project_model_assertions_model_scope_fk'],
