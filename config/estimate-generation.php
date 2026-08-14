@@ -17,6 +17,13 @@ return [
         'max_output_tokens' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_MAX_OUTPUT_TOKENS', 4096),
         'timeout_seconds' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_TIMEOUT_SECONDS', 120),
     ],
+    'estimate_composer' => [
+        'model' => $envValue('ESTIMATE_GENERATION_COMPOSER_MODEL', 'openai/gpt-5-mini'),
+        'max_facts' => (int) env('ESTIMATE_GENERATION_COMPOSER_MAX_FACTS', 10000),
+        'max_input_bytes' => (int) env('ESTIMATE_GENERATION_COMPOSER_MAX_INPUT_BYTES', 524_288),
+        'max_output_tokens' => (int) env('ESTIMATE_GENERATION_COMPOSER_MAX_OUTPUT_TOKENS', 8192),
+        'timeout_seconds' => (int) env('ESTIMATE_GENERATION_COMPOSER_TIMEOUT_SECONDS', 120),
+    ],
     'vision' => [
         'provider' => env('ESTIMATE_GENERATION_VISION_PROVIDER', 'timeweb'),
         'model_override' => $visionModelOverride,

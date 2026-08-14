@@ -13,7 +13,7 @@ final readonly class PipelineStagePayload
         'understand_documents' => ['base_input_version', 'documents', 'documents_count', 'rebuild_section_key'],
         'understand_object' => ['analysis'],
         'extract_quantities' => ['quantity_learning_hints', 'quantity_coverage_warnings', 'building_quantities', 'stage6_generation_context'],
-        'plan_work_items' => ['object_profile', 'package_plan', 'document_requirements', 'generation_mode', 'regional_context', 'normative_context_pin', 'local_estimates'],
+        'plan_work_items' => ['object_profile', 'package_plan', 'document_requirements', 'generation_mode', 'regional_context', 'normative_context_pin', 'local_estimates', 'estimate_composition'],
         'match_normatives' => ['regional_context', 'supplementary_materials', 'local_estimates'],
         'assemble_resources' => ['regional_context', 'supplementary_materials', 'local_estimates'],
         'resolve_prices' => ['regional_context', 'supplementary_materials', 'local_estimates'],
@@ -80,6 +80,15 @@ final readonly class PipelineStagePayload
             throw new InvalidArgumentException('Pipeline generation mode is invalid.');
         }
         self::assertList($data['local_estimates']);
+        if (! is_array($data['estimate_composition'])
+            || array_keys($data['estimate_composition']) !== ['schema_version', 'snapshot_token', 'input_fingerprint', 'intents_count']
+            || $data['estimate_composition']['schema_version'] !== 1
+            || preg_match('/^[a-f0-9]{64}$/D', (string) $data['estimate_composition']['snapshot_token']) !== 1
+            || preg_match('/^[a-f0-9]{64}$/D', (string) $data['estimate_composition']['input_fingerprint']) !== 1
+            || ! is_int($data['estimate_composition']['intents_count'])
+            || $data['estimate_composition']['intents_count'] < 1) {
+            throw new InvalidArgumentException('Pipeline estimate composition is invalid.');
+        }
         self::assertCanonicalQuantityEvidence($data['local_estimates']);
     }
 

@@ -8,6 +8,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
@@ -660,6 +664,24 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (string) config('estimate-generation.project_engineer.model'),
         ));
         $this->app->alias(RunProjectSynthesis::class, ProjectSynthesisRunner::class);
+        $this->app->singleton(EstimateComposerModel::class, static fn ($app): EstimateComposerModel => new TimewebEstimateComposerModel(
+            $app->make(RerankWireClient::class),
+            $app->make(AiUsageStore::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
+            (string) config('estimate-generation.estimate_composer.model'),
+            (int) config('estimate-generation.estimate_composer.max_input_bytes'),
+            (int) config('estimate-generation.estimate_composer.max_output_tokens'),
+            (int) config('estimate-generation.estimate_composer.timeout_seconds'),
+        ));
+        $this->app->singleton(RunEstimateComposer::class, static fn ($app): RunEstimateComposer => new RunEstimateComposer(
+            $app->make(AiRoleRunRepository::class),
+            $app->make(EstimateComposerModel::class),
+            (string) config('estimate-generation.estimate_composer.model'),
+        ));
+        $this->app->singleton(EstimateComposerInputFactory::class, static fn ($app): EstimateComposerInputFactory => new EstimateComposerInputFactory(
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+            (int) config('estimate-generation.estimate_composer.max_facts'),
+        ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore::class,

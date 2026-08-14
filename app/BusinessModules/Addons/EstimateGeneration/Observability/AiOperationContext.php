@@ -38,6 +38,7 @@ final readonly class AiOperationContext
         }
         $valid = ($stage === 'understand_documents' && in_array($operation, ['ocr', 'vision', 'project_synthesis'], true))
             || ($stage === 'checking_geometry' && $operation === 'vision')
+            || ($stage === 'plan_work_items' && $operation === 'estimate_composition')
             || ($stage === 'match_normatives' && $operation === 'rerank')
             || ($stage === 'validate_draft' && $operation === 'completeness_review');
         if (! $valid) {
