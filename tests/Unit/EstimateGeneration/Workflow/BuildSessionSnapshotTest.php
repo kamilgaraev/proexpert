@@ -208,18 +208,16 @@ final class BuildSessionSnapshotTest extends TestCase
         self::assertSame([
             ['id' => 'object', 'available' => true, 'recommended' => false],
             ['id' => 'documents', 'available' => true, 'recommended' => true],
-            ['id' => 'geometry', 'available' => false, 'recommended' => false],
-            ['id' => 'building', 'available' => false, 'recommended' => false],
+            ['id' => 'ai_questions', 'available' => false, 'recommended' => false],
             ['id' => 'draft', 'available' => false, 'recommended' => false],
             ['id' => 'review', 'available' => false, 'recommended' => false],
-            ['id' => 'summary', 'available' => false, 'recommended' => false],
         ], $snapshot->workflowSteps);
         self::assertFalse($snapshot->canGenerate);
         self::assertFalse($snapshot->canApply);
     }
 
     #[Test]
-    public function partial_document_success_keeps_geometry_available_but_recommends_recovery(): void
+    public function partial_document_success_keeps_ai_questions_unavailable_and_recommends_recovery(): void
     {
         $session = $this->makeSession(EstimateGenerationStatus::Failed);
         $session->forceFill([
@@ -242,13 +240,13 @@ final class BuildSessionSnapshotTest extends TestCase
         );
 
         self::assertSame('documents', $snapshot->recommendedStep);
-        self::assertTrue($snapshot->workflowSteps[2]['available']);
+        self::assertFalse($snapshot->workflowSteps[2]['available']);
         self::assertFalse($snapshot->workflowSteps[3]['available']);
-        self::assertFalse($snapshot->workflowSteps[6]['available']);
+        self::assertFalse($snapshot->workflowSteps[4]['available']);
     }
 
     #[Test]
-    public function successful_recovery_recommends_geometry_and_unlocks_downstream_steps(): void
+    public function successful_recovery_recommends_ai_questions_before_draft(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
@@ -261,16 +259,17 @@ final class BuildSessionSnapshotTest extends TestCase
                 'action_required' => 0,
                 'ignored' => 0,
                 'drawing_elements' => 24,
+                'ai_question_count' => 2,
             ],
         );
 
-        self::assertSame('geometry', $snapshot->recommendedStep);
+        self::assertSame('ai_questions', $snapshot->recommendedStep);
         self::assertTrue($snapshot->workflowSteps[2]['recommended']);
-        self::assertTrue($snapshot->workflowSteps[6]['available']);
+        self::assertFalse($snapshot->workflowSteps[3]['available']);
     }
 
     #[Test]
-    public function ignored_documents_count_as_terminal_without_hiding_usable_geometry(): void
+    public function ignored_documents_count_as_terminal_and_unlock_draft_after_questions(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
@@ -286,13 +285,13 @@ final class BuildSessionSnapshotTest extends TestCase
             ],
         );
 
-        self::assertSame('geometry', $snapshot->recommendedStep);
+        self::assertSame('draft', $snapshot->recommendedStep);
         self::assertTrue($snapshot->workflowSteps[2]['available']);
-        self::assertTrue($snapshot->workflowSteps[6]['available']);
+        self::assertTrue($snapshot->workflowSteps[4]['available']);
     }
 
     #[Test]
-    public function ready_documents_without_geometry_evidence_do_not_expose_geometry_review(): void
+    public function ready_documents_do_not_require_a_separate_geometry_step(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
@@ -308,8 +307,8 @@ final class BuildSessionSnapshotTest extends TestCase
             ],
         );
 
-        self::assertNull($snapshot->recommendedStep);
-        self::assertFalse($snapshot->workflowSteps[2]['available']);
+        self::assertSame('draft', $snapshot->recommendedStep);
+        self::assertTrue($snapshot->workflowSteps[2]['available']);
         self::assertTrue($snapshot->workflowSteps[3]['available']);
     }
 

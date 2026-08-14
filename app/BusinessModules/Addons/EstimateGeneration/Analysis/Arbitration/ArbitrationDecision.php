@@ -81,7 +81,7 @@ final readonly class ArbitrationDecision
 
     private static function assertQuestion(mixed $question): void
     {
-        $keys = ['code', 'reason', 'impact', 'recommendation', 'choices', 'source_locator'];
+        $keys = ['code', 'subject', 'reason', 'impact', 'recommendation', 'choices', 'source_locator'];
         if (! is_array($question) || array_keys($question) !== $keys
             || ! is_string($question['code']) || preg_match('/^[a-z0-9][a-z0-9_]{0,79}$/D', $question['code']) !== 1
             || ! is_array($question['choices']) || ! array_is_list($question['choices'])
@@ -89,7 +89,7 @@ final readonly class ArbitrationDecision
             || ! is_array($question['source_locator']) || array_is_list($question['source_locator'])) {
             throw new InvalidArgumentException('arbitration_question_invalid');
         }
-        foreach (['reason', 'impact', 'recommendation'] as $field) {
+        foreach (['subject', 'reason', 'impact', 'recommendation'] as $field) {
             if (! is_string($question[$field]) || trim($question[$field]) === '' || mb_strlen($question[$field]) > 500) {
                 throw new InvalidArgumentException('arbitration_question_invalid');
             }

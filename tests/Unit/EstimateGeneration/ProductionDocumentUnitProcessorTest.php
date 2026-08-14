@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadRepresentationPublisher;
@@ -18,9 +21,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocum
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PdfDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProductionDocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SpreadsheetDocumentAdapter;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetRoleClassifier;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\TargetedSheetEvidenceResolver;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
@@ -42,9 +42,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\RasterPreprocessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionResponseTruncatedException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetEvidence;
 use App\Models\Organization;
 use App\Services\Storage\FileService;
 use PHPUnit\Framework\Attributes\Test;
@@ -99,10 +97,11 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         $reader = new BoundedVersionedS3ObjectReader($files);
         $processor = new ProductionDocumentUnitProcessor(
             new OcrDocumentUnitProcessor($this->createMock(DocumentUnitContentReader::class), $this->createMock(OcrClientInterface::class)),
-            $vision,
             $this->createMock(CadGeometryProvider::class),
             new RasterPreprocessor($files, $reader),
             $reader,
+            $this->observerRunner($vision),
+            $this->arbitrator(),
         );
         foreach ($paths as $offset => $path) {
             $index = $offset + 1;
@@ -188,10 +187,11 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                 $this->createMock(DocumentUnitContentReader::class),
                 $this->createMock(OcrClientInterface::class),
             ),
-            $vision,
             $this->createMock(CadGeometryProvider::class),
             new RasterPreprocessor($files, $reader),
             $reader,
+            $this->observerRunner($vision),
+            $this->arbitrator(),
         );
         $locator = $unit->locator;
         $locator['document_representation']['capabilities'] = array_reverse(
@@ -226,7 +226,8 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         self::assertSame('image', $output->normalizedPayload['document_representation']['format']);
         self::assertSame($unit->index, $output->normalizedPayload['page_number']);
         $semanticSummary = (new DocumentSemanticUnderstandingSummarizer)->summarize([$output->normalizedPayload]);
-        self::assertSame($unit->index, $semanticSummary['coverage'][0]['page_number']);
+        self::assertSame(1, $semanticSummary['pages_checked']);
+        self::assertTrue($semanticSummary['analysis_roles_complete']);
         self::assertSame($sourceVersion, $output->normalizedPayload['document_representation']['source_version']);
         self::assertGreaterThan(0, $output->normalizedPayload['document_representation']['resource_usage']['duration_ms']);
         self::assertSame(
@@ -287,10 +288,11 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                 $this->createMock(DocumentUnitContentReader::class),
                 $this->createMock(OcrClientInterface::class),
             ),
-            $vision,
             $this->createMock(CadGeometryProvider::class),
             new RasterPreprocessor($files, $reader),
             $reader,
+            $this->observerRunner($vision),
+            $this->arbitrator(),
         );
         $context = new DocumentUnitExecutionContext(
             1,
@@ -564,100 +566,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         }
     }
 
-    #[Test]
-    public function targeted_truncation_preserves_primary_analysis_as_bounded_review_limitation(): void
-    {
-        $source = $this->png(12, 8);
-        $peerImage = $this->png(5, 7);
-        $objects = ['org-2/source.png' => ['body' => $source, 'content_type' => 'image/png']];
-        $files = $this->createMock(FileService::class);
-        $files->method('describeCurrent')->willReturnCallback(static function (string $path) use (&$objects): array {
-            $object = $objects[$path];
-
-            return [
-                'body' => $object['body'], 'content_type' => $object['content_type'],
-                'size' => strlen($object['body']), 'sha256' => hash('sha256', $object['body']),
-            ];
-        });
-        $files->method('putImmutable')->willReturnCallback(static function (string $path, string $body, string $contentType) use (&$objects): array {
-            $objects[$path] = ['body' => $body, 'content_type' => $contentType];
-
-            return ['size' => strlen($body), 'sha256' => hash('sha256', $body)];
-        });
-        $vision = new class($this->sheetAnalysis('elevation'), $this->sheetAnalysis('floor_plan')) implements VisionProvider
-        {
-            /** @var list<VisionDocumentInput> */
-            public array $inputs = [];
-
-            public function __construct(
-                private VisionAnalysisData $primary,
-                private VisionAnalysisData $targeted,
-            ) {}
-
-            public function analyze(VisionDocumentInput $input): VisionAnalysisData
-            {
-                $this->inputs[] = $input;
-
-                if (count($this->inputs) === 1) {
-                    return $this->primary;
-                }
-
-                throw new VisionResponseTruncatedException('length');
-            }
-        };
-        $peer = new TargetedSheetEvidence(
-            2, 3, 4, 6, 18, 2, 20,
-            'sha256:'.str_repeat('b', 64),
-            'sha256:'.hash('sha256', $peerImage),
-            'image/png',
-            $peerImage,
-        );
-        $resolver = new class($peer) implements TargetedSheetEvidenceResolver
-        {
-            public function __construct(private TargetedSheetEvidence $peer) {}
-
-            public function resolvePeer(DocumentUnitExecutionContext $context, string $role): ?TargetedSheetEvidence
-            {
-                return $this->peer;
-            }
-        };
-        $reader = new BoundedVersionedS3ObjectReader($files);
-        $processor = new ProductionDocumentUnitProcessor(
-            new OcrDocumentUnitProcessor(
-                $this->createMock(DocumentUnitContentReader::class),
-                $this->createMock(OcrClientInterface::class),
-            ),
-            $vision,
-            $this->createMock(CadGeometryProvider::class),
-            new RasterPreprocessor($files, $reader),
-            $reader,
-            sheetAnalysisRouter: new SheetAnalysisRouter(new SheetRoleClassifier),
-            targetedEvidenceResolver: $resolver,
-        );
-        $sourceVersion = 'sha256:'.str_repeat('a', 64);
-        $output = $processor->process(new DocumentUnitExecutionContext(
-            5, 2, 3, 4, 6, DocumentUnitType::RasterImage, 1, $sourceVersion,
-            [
-                'source_kind' => 'image', 'source_version' => $sourceVersion, 'coordinate_space' => 'image_pixels',
-                'artifact_path' => 'org-2/source.png', 'artifact_bytes' => strlen($source),
-                'artifact_sha256' => 'sha256:'.hash('sha256', $source),
-                'artifact_source_version' => 'sha256:'.hash('sha256', $source),
-                'content_type' => 'image/png',
-            ],
-            'org-2/source.png', 'image/png', 'source.png', 'claim', 1, 1, 'processing_documents', 17,
-            static fn (): bool => true,
-        ));
-
-        self::assertCount(2, $vision->inputs);
-        self::assertSame(['document:6/sheet:17', 'document:6/sheet:18'], $vision->inputs[1]->recheckScope?->sourceSet);
-        self::assertSame('plan', $vision->inputs[1]->primaryAnalysis?->projectSheetAnalysis?->sheetRole);
-        self::assertSame($peerImage, $vision->inputs[1]->supplementalEvidence[0]->imageContent);
-        self::assertSame('needs_review', $output->normalizedPayload['sheet_analysis_routing']['outcome']);
-        self::assertTrue($output->normalizedPayload['sheet_analysis_routing']['needs_review']);
-        self::assertSame('vision_response_truncated', $output->normalizedPayload['sheet_analysis_routing']['limitation_code']);
-        self::assertSame('plan', $output->normalizedPayload['vision_analysis']['project_sheet_analysis']['role']);
-    }
-
     private function cadFailureProcessor(\Throwable $error): ProductionDocumentUnitProcessor
     {
         $files = $this->createMock(FileService::class);
@@ -679,7 +587,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                     }
                 },
             ),
-            $this->createMock(VisionProvider::class),
             new class($error) implements CadGeometryProvider
             {
                 public function __construct(private \Throwable $error) {}
@@ -691,6 +598,8 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             },
             new RasterPreprocessor($files, reader: new BoundedVersionedS3ObjectReader($files)),
             new BoundedVersionedS3ObjectReader($files),
+            $this->observerRunner(),
+            $this->arbitrator(),
         );
     }
 
@@ -716,15 +625,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
 
             return ['path' => $path, 'body' => $body, 'content_type' => $contentType, 'size' => strlen($body), 'sha256' => hash('sha256', $body), 'etag' => hash('md5', $body), 'created' => true];
         });
-        $vision = new class($error) implements VisionProvider
-        {
-            public function __construct(private VisionProviderException $error) {}
-
-            public function analyze(VisionDocumentInput $input): VisionAnalysisData
-            {
-                throw $this->error;
-            }
-        };
         $reader = new BoundedVersionedS3ObjectReader($files);
 
         return new ProductionDocumentUnitProcessor(
@@ -732,10 +632,11 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                 $this->createMock(DocumentUnitContentReader::class),
                 $this->createMock(OcrClientInterface::class),
             ),
-            $vision,
             $this->createMock(CadGeometryProvider::class),
             new RasterPreprocessor($files, $reader),
             $reader,
+            $this->observerRunner(error: $error),
+            $this->arbitrator(),
         );
     }
 
@@ -809,16 +710,11 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                     }
                 },
             ),
-            new class implements VisionProvider
-            {
-                public function analyze(VisionDocumentInput $input): VisionAnalysisData
-                {
-                    throw new \LogicException('Vision must not be called for CAD.');
-                }
-            },
             $cad,
             new RasterPreprocessor($files, reader: new BoundedVersionedS3ObjectReader($files)),
             new BoundedVersionedS3ObjectReader($files),
+            $this->observerRunner(),
+            $this->arbitrator(),
         );
         $context = new DocumentUnitExecutionContext(
             1, 2, 3, 4, 5, DocumentUnitType::CadDrawing, 1,
@@ -878,10 +774,11 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                     }
                 },
             ),
-            $this->createMock(VisionProvider::class),
             $cad,
             new RasterPreprocessor($files, reader: new BoundedVersionedS3ObjectReader($files)),
             new BoundedVersionedS3ObjectReader($files),
+            $this->observerRunner(),
+            $this->arbitrator(),
             cadRepresentationPublisher: new CadRepresentationPublisher($files),
         );
 
@@ -892,6 +789,63 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         self::assertSame('available', $representation['capabilities']['sheet_render']);
         self::assertNotEmpty($representation['native_structure']['native_reference_registry']);
         self::assertStringStartsWith('org-2/', $representation['visual_artifact_path']);
+    }
+
+    private function observerRunner(?VisionProvider $provider = null, ?\Throwable $error = null): DocumentObserverRunner
+    {
+        return new class($provider, $error) implements DocumentObserverRunner
+        {
+            public function __construct(
+                private readonly ?VisionProvider $provider,
+                private readonly ?\Throwable $error,
+            ) {}
+
+            public function run(VisionDocumentInput $source): array
+            {
+                if ($this->error !== null) {
+                    throw $this->error;
+                }
+                $analysis = $this->provider?->analyze($source);
+                $observation = [
+                    'sheet_type' => $analysis?->sheetType ?? 'unknown',
+                    'elements' => $analysis?->toArray()['elements'] ?? [],
+                    'visual_attributes' => $analysis?->visualAttributes ?? [],
+                    'warnings' => $analysis?->warnings ?? ['scale_missing'],
+                    'quarantined_items' => [],
+                    'raw_facts' => [],
+                ];
+                $results = [];
+                foreach (['observer_analysis_literal', 'observer_codes_symbols', 'observer_materials_tables'] as $role) {
+                    $results[$role] = new AiRoleRunResult([
+                        'schema_version' => 1,
+                        'role' => $role,
+                        'source' => ['page_number' => $source->pageNumber],
+                        'observation' => $observation,
+                        'claims' => [],
+                        'evidence' => [],
+                    ], null);
+                }
+
+                return $results;
+            }
+        };
+    }
+
+    private function arbitrator(): DocumentArbitrator
+    {
+        return new class implements DocumentArbitrator
+        {
+            public function run(VisionDocumentInput $source, array $observerRuns): AiRoleRunResult
+            {
+                return new AiRoleRunResult([
+                    'schema_version' => 1,
+                    'role' => 'arbiter',
+                    'source' => ['page_number' => $source->pageNumber],
+                    'decisions' => [],
+                    'questions' => [],
+                ], null);
+            }
+        };
     }
 
     private function png(int $width, int $height): string

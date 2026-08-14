@@ -18,7 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContra
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use RuntimeException;
 
-final readonly class RunIndependentObservers
+final readonly class RunIndependentObservers implements DocumentObserverRunner
 {
     public function __construct(
         private AiRoleRunRepository $runs,

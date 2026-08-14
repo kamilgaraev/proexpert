@@ -4,14 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\DocumentSheetOperationScope;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationIdentity;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisOperationJournal;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\TargetedSheetEvidenceResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadStructureExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
@@ -20,14 +15,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3Obje
 use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectTransportException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckPlanner;
 use App\Models\Organization;
 use InvalidArgumentException;
 use JsonException;
@@ -37,19 +30,14 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
 {
     public function __construct(
         private OcrDocumentUnitProcessor $ocr,
-        private VisionProvider $vision,
         private CadGeometryProvider $cad,
         private RasterPreprocessor $raster,
         private BoundedVersionedS3ObjectReader $reader,
-        private ?SheetAnalysisRouter $sheetAnalysisRouter = null,
-        private ?SheetAnalysisOperationJournal $sheetAnalysisJournal = null,
+        private DocumentObserverRunner $independentObservers,
+        private DocumentArbitrator $documentArbitration,
         private CadStructureExtractor $cadStructure = new CadStructureExtractor,
         private ?CadRepresentationPublisher $cadRepresentationPublisher = null,
-        private ?TargetedSheetEvidenceResolver $targetedEvidenceResolver = null,
-        private TargetedSheetRecheckPlanner $targetedRecheckPlanner = new TargetedSheetRecheckPlanner,
         private DocumentRepresentationResourceMeter $resourceMeter = new SystemDocumentRepresentationResourceMeter,
-        private ?RunIndependentObservers $independentObservers = null,
-        private ?RunDocumentArbitration $documentArbitration = null,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -315,14 +303,15 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         )->body;
         $auxiliaryText = is_string($nativePdfText) ? mb_substr($nativePdfText, 0, 12_000) : null;
         $auxiliaryMetadata = $this->visionAuxiliaryMetadata($auxiliary, $preprocessed, $nativePdfText);
-        $correlationId = SheetAnalysisOperationIdentity::primary(
+        $correlationId = AiOperationContext::deterministicId(implode('|', [
+            'document-observation',
             $context->sessionId,
             $context->documentId,
             $context->unitId,
             $context->sourceVersion,
             $preprocessed->derivativeHash,
             $context->processingAttemptId,
-        );
+        ]));
         $input = new VisionDocumentInput(
             organizationId: $context->organizationId,
             projectId: $context->projectId,
@@ -354,142 +343,19 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             auxiliaryText: $auxiliaryText,
             auxiliaryMetadata: $auxiliaryMetadata,
         );
-        $observerResults = $this->independentObservers?->run($input) ?? [];
-        $arbitrationResult = $observerResults === [] ? null : $this->documentArbitration?->run($input, $observerResults);
-        $scope = new DocumentSheetOperationScope($context->organizationId, $context->projectId, $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $context->claimToken);
-        $primaryRouting = ['role' => 'unknown', 'needs_review' => false, 'outcome' => 'not_applicable'];
-        $primaryRun = $this->sheetAnalysisJournal?->run($correlationId, 'primary', $scope, $primaryRouting,
-            function () use ($context, $input) {
-                $context->renewLeaseOrFail();
-
-                return $this->vision->analyze($input);
-            });
-        if ($primaryRun !== null) {
-            $analysis = $primaryRun->analysis;
-        } else {
-            $context->renewLeaseOrFail();
-            $analysis = $this->vision->analyze($input);
+        $context->renewLeaseOrFail();
+        $observerResults = $this->independentObservers->run($input);
+        if (count($observerResults) !== 3) {
+            throw new DocumentUnitProcessingException('document_observers_incomplete');
         }
-        if ($analysis === null) {
-            throw new DocumentUnitProcessingException('sheet_analysis_requires_review');
-        }
-        $routing = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
-        $targetedRouting = null;
-        if ($routing?->classification->requiresTargetedReanalysis()) {
-            $targetedRouting = $routing->toArray();
-            $peerEvidence = $routing->classification->reanalysisReason === 'sheet_role_conflict'
-                ? $this->targetedEvidenceResolver?->resolvePeer($context, $routing->classification->role->value)
-                : null;
-            $targetedPlan = $this->targetedRecheckPlanner->plan(
-                $context->documentId,
-                $context->pageId,
-                $routing,
-                $analysis,
-                $peerEvidence,
-            );
-            if ($targetedPlan === null) {
-                $targetedRouting['outcome'] = 'needs_review';
-                $targetedRouting['needs_review'] = true;
-
-                return $this->rasterOutput(
-                    $context,
-                    $input,
-                    $preprocessed,
-                    $analysis,
-                    $auxiliary,
-                    $targetedRouting,
-                    $provenance,
-                    $routing,
-                    $observerResults,
-                    $arbitrationResult,
-                );
-            }
-            $targetedRouting['targeted_scope'] = $targetedPlan->scope->toSafeUsageContext();
-            $targetedOperation = SheetAnalysisOperationIdentity::targeted(
-                $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion, $preprocessed->derivativeHash,
-                $context->processingAttemptId,
-                $targetedRouting,
-            );
-            try {
-                $targetedInput = new VisionDocumentInput(
-                    organizationId: $input->organizationId,
-                    projectId: $input->projectId,
-                    sessionId: $input->sessionId,
-                    documentId: $input->documentId,
-                    pageId: $input->pageId,
-                    pageNumber: $input->pageNumber,
-                    processingUnitId: $input->processingUnitId,
-                    sourceVersion: $input->sourceVersion,
-                    derivativeHash: $input->derivativeHash,
-                    contentType: $input->contentType,
-                    imageContent: $input->imageContent,
-                    imageDetail: $input->imageDetail,
-                    operationContext: new AiOperationContext(
-                        correlationId: $targetedOperation,
-                        attemptId: $targetedOperation,
-                        organizationId: $input->operationContext->organizationId,
-                        projectId: $input->operationContext->projectId,
-                        sessionId: $input->operationContext->sessionId,
-                        stage: $input->operationContext->stage,
-                        operation: 'vision',
-                        attemptOrdinal: 2,
-                        documentId: $input->operationContext->documentId,
-                        pageId: $input->operationContext->pageId,
-                        unitId: $input->operationContext->unitId,
-                    ),
-                    sourceTransform: $input->sourceTransform,
-                    sheetRole: $routing->classification->role->value,
-                    recheckScope: $targetedPlan->scope,
-                    nativeReferences: $input->nativeReferences,
-                    supplementalEvidence: $targetedPlan->supplementalEvidence === null
-                        ? []
-                        : [$targetedPlan->supplementalEvidence],
-                    auxiliaryText: $input->auxiliaryText,
-                    auxiliaryMetadata: $input->auxiliaryMetadata,
-                    primaryAnalysis: $analysis,
-                );
-                $targetedRun = $this->sheetAnalysisJournal?->run(
-                    $targetedOperation,
-                    'targeted',
-                    $scope,
-                    $targetedRouting,
-                    function () use ($context, $targetedInput) {
-                        $context->renewLeaseOrFail();
-
-                        return $this->vision->analyze($targetedInput);
-                    },
-                );
-                if ($this->sheetAnalysisJournal !== null && $targetedRun?->analysis === null) {
-                    $targetedRouting['outcome'] = 'needs_review';
-                    $targetedRouting['needs_review'] = true;
-                } else {
-                    if ($targetedRun === null) {
-                        $context->renewLeaseOrFail();
-                        $analysis = $this->vision->analyze($targetedInput);
-                    } else {
-                        $analysis = $targetedRun->analysis;
-                    }
-                    $final = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
-                    $targetedRouting = [...$targetedRouting, ...($final?->toArray() ?? [])];
-                    $targetedRouting['outcome'] = $targetedRun?->outcome ?? 'succeeded';
-                    $this->sheetAnalysisJournal?->persistFinalRouting($targetedOperation, $scope, $targetedRouting);
-                }
-            } catch (VisionContractException|VisionProviderException $exception) {
-                $targetedRouting['outcome'] = 'needs_review';
-                $targetedRouting['needs_review'] = true;
-                $targetedRouting['limitation_code'] = $exception->reason;
-            }
-        }
+        $context->renewLeaseOrFail();
+        $arbitrationResult = $this->documentArbitration->run($input, $observerResults);
 
         return $this->rasterOutput(
             $context,
-            $input,
             $preprocessed,
-            $analysis,
             $auxiliary,
-            $targetedRouting,
             $provenance,
-            $routing,
             $observerResults,
             $arbitrationResult,
         );
@@ -656,22 +522,32 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
      *     representation_status: string,
      *     geometry_status: string
      * } $auxiliary
-     * @param  array<string, mixed>|null  $targetedRouting
      * @param  array<string, AiRoleRunResult>  $observerResults
      */
     private function rasterOutput(
         DocumentUnitExecutionContext $context,
-        VisionDocumentInput $input,
         \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessResult $preprocessed,
-        \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData $analysis,
         array $auxiliary,
-        ?array $targetedRouting,
         DocumentUnitProvenance $provenance,
-        ?\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRoutingResult $routing,
         array $observerResults,
-        ?AiRoleRunResult $arbitrationResult,
+        AiRoleRunResult $arbitrationResult,
     ): DocumentUnitOutput {
-        $payload = $analysis->toArray();
+        $observerPayloads = array_map(static fn (AiRoleRunResult $result): array => $result->payload, $observerResults);
+        $literalPayload = $observerPayloads['observer_analysis_literal']['observation'] ?? null;
+        if (! is_array($literalPayload)) {
+            throw new DocumentUnitProcessingException('literal_observer_result_missing');
+        }
+        $payload = [
+            'schema_version' => 4,
+            'sheet_type' => $literalPayload['sheet_type'] ?? 'unknown',
+            'elements' => is_array($literalPayload['elements'] ?? null) ? $literalPayload['elements'] : [],
+            'visual_attributes' => is_array($literalPayload['visual_attributes'] ?? null) ? $literalPayload['visual_attributes'] : [],
+            'warnings' => is_array($literalPayload['warnings'] ?? null) ? $literalPayload['warnings'] : [],
+            'quarantined_items' => is_array($literalPayload['quarantined_items'] ?? null) ? $literalPayload['quarantined_items'] : [],
+            'arbitration_decisions' => is_array($arbitrationResult->payload['decisions'] ?? null)
+                ? $arbitrationResult->payload['decisions']
+                : [],
+        ];
         $rasterRepresentation = null;
         if ($context->type === DocumentUnitType::PdfPage) {
             $rasterRepresentation = $auxiliary['representation']
@@ -684,10 +560,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 [...$context->locator, 'source_bounds' => [0, 0, $preprocessed->sourceWidth, $preprocessed->sourceHeight]],
             ));
         }
-        $geometryConfidence = $analysis->elements === []
-            ? null
-            : min(array_map(static fn ($element): float => $element->confidence, $analysis->elements));
-        $hardGeometryWarnings = array_values(array_intersect($analysis->warnings, [
+        $hardGeometryWarnings = array_values(array_intersect($payload['warnings'], [
             'scale_missing',
             'scale_conflict',
             'perspective_confirmation_required',
@@ -695,18 +568,20 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         ]));
         $nativePdfText = $auxiliary['native_text'];
         $pdfGeometry = $auxiliary['geometry'];
-        $finalRouting = $this->sheetAnalysisRouter?->route($analysis, $nativePdfText);
-        $routingPayload = $targetedRouting ?? $finalRouting?->toArray() ?? $routing?->toArray();
-        if ($routingPayload !== null && $finalRouting?->classification->requiresTargetedReanalysis()) {
-            $routingPayload['outcome'] = 'needs_review';
-            $routingPayload['exhausted_reason'] = $finalRouting->classification->reanalysisReason;
-        }
+        $questions = is_array($arbitrationResult->payload['questions'] ?? null)
+            ? $arbitrationResult->payload['questions']
+            : [];
+        $roleCompletion = [
+            'observer_analysis_literal' => isset($observerPayloads['observer_analysis_literal']),
+            'observer_codes_symbols' => isset($observerPayloads['observer_codes_symbols']),
+            'observer_materials_tables' => isset($observerPayloads['observer_materials_tables']),
+            'arbiter' => ($arbitrationResult->payload['role'] ?? null) === 'arbiter',
+        ];
 
         return new DocumentUnitOutput(
             version: hash('sha256', json_encode([
                 'vision_analysis' => $payload,
-                'semantic_quality' => $analysis->semanticQuality(),
-                'sheet_analysis_routing' => $routingPayload,
+                'role_completion' => $roleCompletion,
                 'pdf_native_text' => $nativePdfText,
                 'pdf_geometry' => $pdfGeometry,
                 'auxiliary_sources' => [$auxiliary['representation_status'], $auxiliary['geometry_status']],
@@ -714,21 +589,21 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     static fn (AiRoleRunResult $result): array => $result->payload,
                     $observerResults,
                 ),
-                'document_arbitration' => $arbitrationResult?->payload,
+                'document_arbitration' => $arbitrationResult->payload,
+                'ai_questions' => $questions,
             ], JSON_THROW_ON_ERROR)),
             text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
                 static fn (array $element): string => trim((string) ($element['label'] ?? '')),
                 $payload['elements'],
             )))),
-            confidence: $analysis->warnings === [] ? 1.0 : 0.7,
+            confidence: 1.0,
             normalizedPayload: [
-                'schema_version' => 1,
+                'schema_version' => 4,
                 'page_number' => $context->index,
                 'source_kind' => $provenance->sourceKind,
                 'source' => $provenance->toArray(),
                 'vision_analysis' => $payload,
-                'semantic_quality' => $analysis->semanticQuality(),
-                'sheet_analysis_routing' => $routingPayload,
+                'role_completion' => $roleCompletion,
                 'pdf_geometry' => $pdfGeometry,
                 'auxiliary_sources' => [
                     'document_representation' => ['status' => $auxiliary['representation_status']],
@@ -738,7 +613,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     static fn (AiRoleRunResult $result): array => $result->payload,
                     $observerResults,
                 ),
-                'document_arbitration' => $arbitrationResult?->payload,
+                'document_arbitration' => $arbitrationResult->payload,
+                'ai_questions' => $questions,
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,
                     'derivative_hash' => $preprocessed->derivativeHash,
@@ -749,9 +625,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 ],
                 ...($rasterRepresentation === null ? [] : ['document_representation' => $rasterRepresentation->toArray()]),
                 'provenance' => [
-                    'provider' => $analysis->provider,
-                    'model' => $analysis->reportedModel,
-                    'model_version' => $analysis->modelVersion,
                     'source_version' => $context->sourceVersion,
                 ],
             ],
@@ -761,15 +634,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             unitIndex: $context->index,
             sourceVersion: $context->sourceVersion,
             qualitySignals: [
-                'sheet_analysis_routing' => $routingPayload ?? [
-                    'role' => 'unknown',
-                    'needs_review' => false,
-                    'outcome' => 'not_applicable',
-                ],
+                'role_completion' => $roleCompletion,
+                'unresolved_question_count' => count($questions),
                 'geometry' => [
-                    'confidence' => $geometryConfidence,
                     'hard_blockers' => $hardGeometryWarnings,
-                    'evidence_source' => 'vision',
+                    'evidence_source' => 'arbitrated_observation',
                     'auxiliary_status' => $auxiliary['geometry_status'],
                 ],
             ],

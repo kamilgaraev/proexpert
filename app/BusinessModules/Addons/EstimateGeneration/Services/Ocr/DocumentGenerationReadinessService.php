@@ -79,7 +79,17 @@ class DocumentGenerationReadinessService
             EstimateGenerationStatus::ReadyToApply,
             EstimateGenerationStatus::Applied,
         ], true) || $this->cancelledAfterGeneration($session);
-        $canGenerate = $summary['can_generate'];
+        $canGenerate = $summary['can_generate'] || ($reviewAcknowledged
+            && ! $summary['has_pending']
+            && (int) $summary['system_failure_count'] === 0
+            && collect($summary['items'])->where('status', '!=', 'ignored')->every(
+                static fn (array $item): bool => ($item['is_action_required'] ?? false) !== true
+                    || (($item['requires_quality_review'] ?? false) === true
+                        && ($item['requires_document_review'] ?? false) !== true
+                        && ($item['missing_document_understanding'] ?? false) !== true
+                        && ($item['has_conflicts'] ?? false) !== true
+                        && ($item['has_low_quality'] ?? false) !== true),
+            ));
         $summary['review_acknowledged'] = $reviewAcknowledged;
         $summary['can_generate'] = $canGenerate;
 
@@ -116,6 +126,10 @@ class DocumentGenerationReadinessService
         $capabilityIncompleteDocuments = $items->where('capabilities_complete', false)->where('status', '!=', 'ignored');
         $actionRequiredCount = $actionRequired->count();
         $hasDocuments = $items->isNotEmpty();
+        $aiQuestionCount = (int) $items->sum('ai_question_count');
+        $multiAgentItems = $items->where('uses_multi_agent_analysis', true);
+        $analysisRolesComplete = $multiAgentItems->isNotEmpty()
+            && $multiAgentItems->every(static fn (array $item): bool => ($item['analysis_roles_complete'] ?? false) === true);
 
         return [
             'total' => $items->count(),
@@ -132,6 +146,9 @@ class DocumentGenerationReadinessService
             'structure_incomplete_count' => $structureIncompleteDocuments->count(),
             'capability_incomplete_count' => $capabilityIncompleteDocuments->count(),
             'action_required_count' => $actionRequiredCount,
+            'ai_question_count' => $aiQuestionCount,
+            'analysis_roles_complete' => $analysisRolesComplete,
+            'multi_agent_document_count' => $multiAgentItems->count(),
             'has_documents' => $hasDocuments,
             'has_pending' => $pending->isNotEmpty(),
             'has_action_required' => $actionRequiredCount > 0,
@@ -158,13 +175,20 @@ class DocumentGenerationReadinessService
         $isSystemFailure = $this->systemFailures->detected($document);
         $isActionStatus = in_array($status, self::ACTION_REQUIRED_STATUSES, true) && ! $isSystemFailure;
         $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
+        $usesMultiAgentAnalysis = array_key_exists('analysis_roles_complete', $factsSummary);
+        $analysisRolesComplete = ($factsSummary['analysis_roles_complete'] ?? false) === true;
+        $aiQuestionCount = max(0, (int) ($factsSummary['ai_question_count'] ?? 0));
         $qualityFlags = is_array($document->quality_flags) ? $document->quality_flags : [];
         $hasConflicts = (is_array($factsSummary['conflicts'] ?? null) && $factsSummary['conflicts'] !== []);
         $hasLowQuality = in_array($document->quality_level, ['low', 'unusable'], true);
-        $structureComplete = $isPending || $this->hasCompleteStructure($document);
-        $capabilitiesComplete = $isPending || $this->hasCompleteCapabilities($factsSummary);
-        $missingDocumentUnderstanding = ! $isPending && $this->missingDocumentUnderstanding($factsSummary);
-        $requiresDocumentReview = ! $isPending && $this->requiresDocumentReview($factsSummary);
+        $structureComplete = $isPending || ($usesMultiAgentAnalysis ? $analysisRolesComplete : $this->hasCompleteStructure($document));
+        $capabilitiesComplete = $isPending || ($usesMultiAgentAnalysis ? $analysisRolesComplete : $this->hasCompleteCapabilities($factsSummary));
+        $missingDocumentUnderstanding = ! $isPending && ($usesMultiAgentAnalysis
+            ? ! $analysisRolesComplete
+            : $this->missingDocumentUnderstanding($factsSummary));
+        $requiresDocumentReview = ! $isPending && ($usesMultiAgentAnalysis
+            ? $aiQuestionCount > 0
+            : $this->requiresDocumentReview($factsSummary));
         $qualitySignals = is_array($factsSummary['quality_signals'] ?? null) ? $factsSummary['quality_signals'] : [];
         $qualityDecision = $settings === null || $isPending
             ? null
@@ -189,11 +213,14 @@ class DocumentGenerationReadinessService
             'has_low_quality' => $hasLowQuality,
             'missing_document_understanding' => $missingDocumentUnderstanding,
             'requires_document_review' => $requiresDocumentReview,
+            'uses_multi_agent_analysis' => $usesMultiAgentAnalysis,
+            'analysis_roles_complete' => $usesMultiAgentAnalysis && $analysisRolesComplete,
+            'ai_question_count' => $aiQuestionCount,
             'requires_quality_review' => $requiresQualityReview,
             'quality_review_reasons' => $qualityDecision?->reasons ?? [],
             'structure_complete' => $structureComplete,
             'capabilities_complete' => $capabilitiesComplete,
-            'is_ready' => $status === 'ready' && $structureComplete && $capabilitiesComplete,
+            'is_ready' => $status === 'ready' && $structureComplete && $capabilitiesComplete && $aiQuestionCount === 0,
             'is_pending' => $isPending,
             'is_system_failure' => $isSystemFailure,
             'is_temporary_failure' => $isSystemFailure && $this->systemFailures->temporary($document),

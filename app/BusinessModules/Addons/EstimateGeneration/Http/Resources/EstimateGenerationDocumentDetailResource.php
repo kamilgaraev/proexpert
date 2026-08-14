@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ManageEstimateGenerationDocumentPages;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ClarificationQuestionProjector;
 use App\Models\User;
 use Illuminate\Http\Request;
 
@@ -43,8 +44,6 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'language_codes' => $page->language_codes ?? [],
                 'text' => $page->text,
                 'text_hash' => $page->text_hash,
-                'confidence' => $page->confidence,
-                'normalized_payload' => $page->normalized_payload ?? [],
                 'status' => self::pageStatus($page, $units->get((int) $page->processing_unit_id), $terminal),
                 'excluded' => (string) $page->status === ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED,
                 'excluded_at' => $page->excluded_at?->toISOString(),
@@ -61,6 +60,14 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'semantic_analysis' => self::semanticAnalysis($page),
             ])->all();
         }, []);
+        $payload['ai_questions'] = $document->relationLoaded('pages')
+            ? array_map(
+                static fn ($question): array => $question->toArray(),
+                app(ClarificationQuestionProjector::class)->projectPages($document->pages->map(
+                    static fn ($page): array => self::normalizedPayload($page),
+                )->all()),
+            )
+            : [];
 
         $payload['processing_units'] = $this->whenLoaded('processingUnits', function () use ($document): array {
             return $document->processingUnits->map(static fn ($unit): array => [
@@ -85,9 +92,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'value_text' => $fact->value_text,
                 'value_number' => $fact->value_number,
                 'unit' => $fact->unit,
-                'confidence' => $fact->confidence,
                 'source_ref' => $fact->source_ref ?? [],
-                'normalized_payload' => $fact->normalized_payload ?? [],
             ])->all();
         }, []);
 
@@ -102,9 +107,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'unit' => $element->unit,
                 'bbox' => $element->bbox ?? [],
                 'geometry' => $element->geometry ?? [],
-                'confidence' => $element->confidence,
                 'source_ref' => $element->source_ref ?? [],
-                'normalized_payload' => $element->normalized_payload ?? [],
             ])->all();
         }, []);
 
@@ -119,9 +122,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'unit' => $takeoff->unit,
                 'quantity' => $takeoff->quantity,
                 'formula' => $takeoff->formula,
-                'confidence' => $takeoff->confidence,
                 'source_refs' => $takeoff->source_refs ?? [],
-                'normalized_payload' => $takeoff->normalized_payload ?? [],
             ])->all();
         }, []);
 
@@ -135,7 +136,6 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'source_refs' => $inference->source_refs ?? [],
                 'normative_basis' => $inference->normative_basis ?? [],
                 'work_intent' => $inference->work_intent ?? [],
-                'confidence' => $inference->confidence,
                 'review_required' => $inference->review_required,
                 'accepted_at' => $inference->accepted_at?->toISOString(),
             ])->all();
@@ -172,39 +172,23 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
     {
         $payload = self::normalizedPayload($page);
         $vision = is_array($payload['vision_analysis'] ?? null) ? $payload['vision_analysis'] : [];
-        $analysis = is_array($vision['project_sheet_analysis'] ?? null) ? $vision['project_sheet_analysis'] : [];
-        $facts = is_array($analysis['facts'] ?? null) ? array_values(array_filter($analysis['facts'], 'is_array')) : [];
         $elements = is_array($vision['elements'] ?? null) ? array_values(array_filter($vision['elements'], 'is_array')) : [];
-        $quality = is_array($payload['semantic_quality'] ?? null) ? $payload['semantic_quality'] : [];
+        $completion = is_array($payload['role_completion'] ?? null) ? $payload['role_completion'] : [];
+        $questions = array_map(
+            static fn ($question): array => $question->toArray(),
+            app(ClarificationQuestionProjector::class)->projectPages([$payload]),
+        );
 
         return [
-            'role' => is_string($quality['role'] ?? null) ? $quality['role'] : 'unknown',
+            'analysis_complete' => count($completion) === 4 && ! in_array(false, $completion, true),
             'observations' => array_values(array_map(static fn (array $item): array => [
                 'type' => is_string($item['type'] ?? null) ? $item['type'] : 'unknown',
                 'label' => is_string($item['label'] ?? null) ? $item['label'] : null,
-                'confidence' => is_numeric($item['confidence'] ?? null) ? (float) $item['confidence'] : null,
                 'evidence_ref' => is_string($item['evidence_ref'] ?? null) ? $item['evidence_ref'] : null,
                 'region' => is_array($item['polygon'] ?? null) ? $item['polygon'] : [],
             ], $elements)),
-            'facts' => $facts,
-            'coverage' => [
-                'checked' => self::stringList($quality['checked'] ?? []),
-                'found' => self::stringList($quality['found'] ?? []),
-                'missing' => self::stringList($quality['missing'] ?? []),
-                'needs_targeted' => self::stringList($quality['needs_targeted'] ?? []),
-            ],
-            'quarantined_items' => is_array($quality['quarantined_items'] ?? null)
-                ? array_values(array_filter($quality['quarantined_items'], 'is_array'))
-                : [],
-            'questions' => array_values(array_filter($facts, static fn (array $fact): bool => ($fact['factType'] ?? null) === 'unresolved_question')),
-            'recommendations' => array_values(array_filter($facts, static fn (array $fact): bool => ($fact['factType'] ?? null) === 'recommendation')),
+            'questions' => $questions,
         ];
-    }
-
-    /** @return list<string> */
-    private static function stringList(mixed $value): array
-    {
-        return is_array($value) ? array_values(array_filter($value, 'is_string')) : [];
     }
 
     private static function actualExecutionCount(mixed $unit): ?int

@@ -108,6 +108,7 @@ final class DocumentArbitrationTest extends TestCase
             'reason_code' => 'source_conflict',
             'question' => [
                 'code' => 'wall_thickness_conflict',
+                'subject' => 'Толщина наружной стены',
                 'reason' => 'На листе указаны три разных значения толщины стены.',
                 'impact' => 'От толщины зависит объём кладки и стоимость работ.',
                 'recommendation' => 'Проверьте размер по рабочему чертежу стены.',
@@ -183,7 +184,8 @@ final class DocumentArbitrationTest extends TestCase
                 'claim_id' => 'risk:1', 'status' => 'unresolved', 'supporting_claim_ids' => ['risk:1'],
                 'evidence_refs' => ['dimension-conflict'], 'reason_code' => 'source_conflict',
                 'question' => [
-                    'code' => 'wall_thickness_conflict', 'reason' => 'Размеры стены расходятся.',
+                    'code' => 'wall_thickness_conflict', 'subject' => 'Толщина наружной стены',
+                    'reason' => 'Размеры стены расходятся.',
                     'impact' => 'Изменяется объём кладки.', 'recommendation' => 'Проверьте рабочий разрез.',
                     'choices' => ['300 мм', '375 мм'],
                     'source_locator' => ['page_number' => 4, 'evidence_refs' => ['dimension-conflict']],

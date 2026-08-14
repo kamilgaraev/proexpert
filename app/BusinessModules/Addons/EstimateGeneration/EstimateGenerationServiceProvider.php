@@ -6,8 +6,10 @@ namespace App\BusinessModules\Addons\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateNumberAllocator;
@@ -489,12 +491,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateGenerationUnitJobDispatcher::class, LaravelEstimateGenerationUnitJobDispatcher::class);
         $this->app->singleton(DocumentUnitExhaustionHandler::class, EloquentDocumentUnitExhaustionHandler::class);
         $this->app->singleton(DocumentUnitContentReader::class, S3DocumentUnitContentReader::class);
-        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetRoleClassifier::class);
-        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\SheetAnalysisRouter::class);
-        $this->app->singleton(
-            \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\TargetedSheetEvidenceResolver::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Understanding\EloquentTargetedSheetEvidenceResolver::class,
-        );
         $this->app->singleton(DocumentUnitProcessor::class, ProductionDocumentUnitProcessor::class);
         $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
         $this->app->singleton(DocumentSourceReplacementTransaction::class, LaravelDocumentSourceReplacementTransaction::class);
@@ -645,6 +641,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(ObserverInputBuilder::class),
             (string) config('estimate-generation.vision.model'),
         ));
+        $this->app->alias(RunIndependentObservers::class, DocumentObserverRunner::class);
         $this->app->singleton(RunDocumentArbitration::class, static fn ($app): RunDocumentArbitration => new RunDocumentArbitration(
             $app->make(AiRoleRunRepository::class),
             $app->make(VisionProvider::class),
@@ -652,6 +649,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (string) config('estimate-generation.vision.model'),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class),
         ));
+        $this->app->alias(RunDocumentArbitration::class, DocumentArbitrator::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore::class,

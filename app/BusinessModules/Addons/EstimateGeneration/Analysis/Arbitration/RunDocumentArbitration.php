@@ -18,7 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProvid
 use RuntimeException;
 use Throwable;
 
-final readonly class RunDocumentArbitration
+final readonly class RunDocumentArbitration implements DocumentArbitrator
 {
     public function __construct(
         private AiRoleRunRepository $runs,

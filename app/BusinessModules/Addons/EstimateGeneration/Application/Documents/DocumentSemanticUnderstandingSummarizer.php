@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ClarificationQuestionProjector;
+
 final readonly class DocumentSemanticUnderstandingSummarizer
 {
     private const MAX_FACTS = 500;
 
     private const MAX_ITEMS_PER_GROUP = 128;
+
+    public function __construct(private ClarificationQuestionProjector $questionProjector = new ClarificationQuestionProjector) {}
 
     /** @param list<mixed> $payloads @return array<string, mixed> */
     public function summarize(array $payloads): array
@@ -22,9 +26,20 @@ final readonly class DocumentSemanticUnderstandingSummarizer
         $quarantined = 0;
         $upstreamTruncated = false;
         $factOverflow = false;
+        $roleRunsComplete = true;
+        $arbitratedPages = [];
 
         foreach ($payloads as $payload) {
             if (! is_array($payload)) {
+                continue;
+            }
+            if (($payload['schema_version'] ?? null) === 4) {
+                $completion = is_array($payload['role_completion'] ?? null) ? $payload['role_completion'] : [];
+                $roleRunsComplete = $roleRunsComplete
+                    && count($completion) === 4
+                    && ! in_array(false, $completion, true);
+                $arbitratedPages[] = $payload;
+
                 continue;
             }
             $analysis = is_array($payload['vision_analysis'] ?? null) ? $payload['vision_analysis'] : [];
@@ -87,11 +102,20 @@ final readonly class DocumentSemanticUnderstandingSummarizer
             }
         }
 
+        $clarificationQuestions = array_map(
+            static fn ($question): array => $question->toArray(),
+            $this->questionProjector->projectPages($arbitratedPages),
+        );
+
         return [
-            'pages_checked' => count($coverage),
+            'pages_checked' => count($coverage) + count($arbitratedPages),
             'roles' => $roles,
             'facts' => $facts,
-            'questions' => array_slice($questions, 0, self::MAX_ITEMS_PER_GROUP),
+            'questions' => $clarificationQuestions === []
+                ? array_slice($questions, 0, self::MAX_ITEMS_PER_GROUP)
+                : $clarificationQuestions,
+            'ai_question_count' => count($clarificationQuestions),
+            'analysis_roles_complete' => $arbitratedPages !== [] && $roleRunsComplete,
             'recommendations' => array_slice($recommendations, 0, self::MAX_ITEMS_PER_GROUP),
             'coverage' => array_slice($coverage, 0, self::MAX_ITEMS_PER_GROUP),
             'cross_page_connections' => $connections,

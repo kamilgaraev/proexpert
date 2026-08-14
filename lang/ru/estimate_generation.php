@@ -91,6 +91,10 @@ return [
     'document_pages_excluded' => 'Выбранные страницы исключены из расчёта.',
     'document_pages_restored' => 'Выбранные страницы возвращены в расчёт.',
     'document_processing_ready' => 'Документ обработан.',
+    'ai_questions' => [
+        'other' => 'Другое',
+        'leave_unresolved' => 'Оставить нерешённым',
+    ],
     'document_processing_in_progress' => 'Документ обрабатывается.',
     'document_processing_user_action_required' => 'Для части страниц требуется ваше решение.',
     'document_processing_temporarily_unavailable' => 'Сервис временно не смог обработать документ. Файл сохранён, обработку можно повторить позже.',

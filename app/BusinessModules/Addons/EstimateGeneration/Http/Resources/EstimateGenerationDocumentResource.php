@@ -42,7 +42,7 @@ class EstimateGenerationDocumentResource extends JsonResource
                 'flags' => $document->quality_flags ?? [],
             ],
             'document_understanding' => $this->documentUnderstanding($document),
-            'facts_summary' => $document->facts_summary ?? [],
+            'analysis_status' => $this->analysisStatus($document),
             'understanding_summary' => [
                 'pages' => $this->countRelationOrAttribute($document, 'pages_count', 'pages'),
                 'facts' => $this->countRelationOrAttribute($document, 'facts_count', 'facts'),
@@ -156,5 +156,16 @@ class EstimateGenerationDocumentResource extends JsonResource
         $understanding = $factsSummary['document_understanding'] ?? $meta['document_understanding'] ?? null;
 
         return is_array($understanding) ? $understanding : null;
+    }
+
+    /** @return array{roles_complete: bool, question_count: int} */
+    private function analysisStatus(EstimateGenerationDocument $document): array
+    {
+        $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
+
+        return [
+            'roles_complete' => ($factsSummary['analysis_roles_complete'] ?? false) === true,
+            'question_count' => max(0, (int) ($factsSummary['ai_question_count'] ?? 0)),
+        ];
     }
 }

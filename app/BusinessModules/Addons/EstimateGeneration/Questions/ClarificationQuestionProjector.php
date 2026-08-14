@@ -1,0 +1,103 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Questions;
+
+use Closure;
+use InvalidArgumentException;
+
+use function trans_message;
+
+final class ClarificationQuestionProjector
+{
+    private Closure $translator;
+
+    public function __construct(?Closure $translator = null)
+    {
+        $this->translator = $translator ?? static fn (string $key): string => trans_message($key);
+    }
+
+    /** @param list<array<string,mixed>> $pages @return list<EstimateClarificationQuestion> */
+    public function projectPages(array $pages): array
+    {
+        $groups = [];
+        foreach ($pages as $page) {
+            $pageNumber = is_int($page['page_number'] ?? null) ? $page['page_number'] : null;
+            $arbitration = is_array($page['document_arbitration'] ?? null) ? $page['document_arbitration'] : [];
+            if (($arbitration['role'] ?? null) !== 'arbiter') {
+                continue;
+            }
+            foreach (is_array($arbitration['questions'] ?? null) ? $arbitration['questions'] : [] as $question) {
+                if (! is_array($question) || ! is_string($question['code'] ?? null)) {
+                    throw new InvalidArgumentException('estimate_clarification_projection_invalid');
+                }
+                $code = $question['code'];
+                $groups[$code] ??= ['questions' => [], 'pages' => [], 'evidence' => [], 'authority' => 'corroboration'];
+                $groups[$code]['questions'][] = $question;
+                if ($pageNumber !== null) {
+                    $groups[$code]['pages'][$pageNumber] = true;
+                }
+                $locator = is_array($question['source_locator'] ?? null) ? $question['source_locator'] : [];
+                foreach (is_array($locator['evidence_refs'] ?? null) ? $locator['evidence_refs'] : [] as $ref) {
+                    if (is_string($ref) && preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/D', $ref) === 1) {
+                        $groups[$code]['evidence'][$ref] = true;
+                    }
+                }
+                if (($locator['authority'] ?? null) === 'explicit_document') {
+                    $groups[$code]['authority'] = 'explicit_document';
+                }
+            }
+        }
+
+        ksort($groups, SORT_STRING);
+        $result = [];
+        foreach ($groups as $code => $group) {
+            $question = $this->authoritativeQuestion($group['questions']);
+            $choices = [];
+            foreach ($group['questions'] as $candidate) {
+                foreach (is_array($candidate['choices'] ?? null) ? $candidate['choices'] : [] as $choice) {
+                    if (is_string($choice) && trim($choice) !== '' && mb_strlen($choice) <= 160) {
+                        $choices[mb_strtolower(trim($choice))] = trim($choice);
+                    }
+                }
+            }
+            if ($choices === [] || count($choices) > 8) {
+                throw new InvalidArgumentException('estimate_clarification_choices_invalid');
+            }
+            $choiceObjects = array_map(
+                static fn (string $choice): EstimateClarificationChoice => new EstimateClarificationChoice('select:'.hash('sha256', $choice), $choice),
+                array_values($choices),
+            );
+            $choiceObjects[] = new EstimateClarificationChoice('other', ($this->translator)('estimate_generation.ai_questions.other'), 'other');
+            $choiceObjects[] = new EstimateClarificationChoice('leave_unresolved', ($this->translator)('estimate_generation.ai_questions.leave_unresolved'), 'leave_unresolved');
+            $pageNumbers = array_map('intval', array_keys($group['pages']));
+            sort($pageNumbers, SORT_NUMERIC);
+            $evidenceRefs = array_keys($group['evidence']);
+            sort($evidenceRefs, SORT_STRING);
+            $result[] = new EstimateClarificationQuestion(
+                $code,
+                is_string($question['subject'] ?? null) ? $question['subject'] : throw new InvalidArgumentException('estimate_clarification_subject_missing'),
+                (string) ($question['reason'] ?? ''),
+                (string) ($question['impact'] ?? ''),
+                (string) ($question['recommendation'] ?? ''),
+                $choiceObjects,
+                ['page_numbers' => $pageNumbers, 'evidence_refs' => $evidenceRefs, 'authority' => $group['authority']],
+            );
+        }
+
+        return array_slice($result, 0, 128);
+    }
+
+    /** @param list<array<string,mixed>> $questions @return array<string,mixed> */
+    private function authoritativeQuestion(array $questions): array
+    {
+        foreach ($questions as $question) {
+            if (($question['source_locator']['authority'] ?? null) === 'explicit_document') {
+                return $question;
+            }
+        }
+
+        return $questions[0] ?? throw new InvalidArgumentException('estimate_clarification_question_missing');
+    }
+}

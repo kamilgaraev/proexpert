@@ -190,6 +190,25 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertSame(['geometry_scale_conflict'], $summary['items'][0]['quality_review_reasons']);
     }
 
+    public function test_multi_agent_readiness_requires_all_roles_and_resolved_questions(): void
+    {
+        $document = $this->qualitySignalDocument([]);
+        $document->facts_summary = [
+            ...$document->facts_summary,
+            'analysis_roles_complete' => true,
+            'ai_question_count' => 1,
+        ];
+
+        $withQuestion = (new DocumentGenerationReadinessService)->summary(new Collection([$document]));
+        self::assertFalse($withQuestion['can_generate']);
+        self::assertSame(1, $withQuestion['ai_question_count']);
+
+        $document->facts_summary = [...$document->facts_summary, 'ai_question_count' => 0];
+        $resolved = (new DocumentGenerationReadinessService)->summary(new Collection([$document]));
+        self::assertTrue($resolved['analysis_roles_complete']);
+        self::assertTrue($resolved['can_generate']);
+    }
+
     public function test_ready_document_without_understanding_role_blocks_generation(): void
     {
         $document = new EstimateGenerationDocument;
@@ -321,6 +340,8 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
             'quality_score' => 0.95,
             'quality_flags' => [],
             'facts_summary' => [
+                'analysis_roles_complete' => true,
+                'ai_question_count' => 0,
                 'document_understanding' => [
                     'role_for_estimation' => 'geometry_source',
                     'extracted_capabilities' => ['requires_manual_review' => false],
