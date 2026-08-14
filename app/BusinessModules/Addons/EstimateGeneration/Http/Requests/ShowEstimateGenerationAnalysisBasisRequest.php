@@ -6,8 +6,9 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Requests;
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\Concerns\AuthorizesEstimateGenerationRequest;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
-final class ShowEstimateGenerationGeometryRequest extends FormRequest
+final class ShowEstimateGenerationAnalysisBasisRequest extends FormRequest
 {
     use AuthorizesEstimateGenerationRequest;
 
@@ -19,8 +20,8 @@ final class ShowEstimateGenerationGeometryRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'sources_page' => ['sometimes', 'integer', 'min:1'],
-            'sources_per_page' => ['sometimes', 'integer', 'min:1', 'max:50'],
+            'type' => ['required', Rule::in(['quantity', 'question'])],
+            'id' => ['required', 'string', 'min:1', 'max:180', 'regex:/^[a-zA-Z0-9._:-]+$/D'],
         ];
     }
 }

@@ -99,14 +99,11 @@ final class EstimateGenerationMutationAtomicityTest extends TestCase
     }
 
     #[Test]
-    public function geometry_confirmation_starts_generation_through_the_quota_aware_workflow(): void
+    public function manual_geometry_confirmation_mutation_is_removed(): void
     {
-        $source = $this->source('Application/Geometry/ConfirmBuildingGeometry.php');
-
-        self::assertStringContainsString('AdvanceEstimateGeneration $advance', $source);
-        self::assertStringContainsString('$this->advance->generationStarted(', $source);
-        self::assertStringNotContainsString("\$session->forceFill(['state_version'", $source);
-        self::assertLessThan(strpos($source, '$this->outbox->append('), strpos($source, '$this->advance->generationStarted('));
+        self::assertFileDoesNotExist(
+            dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/Application/Geometry/ConfirmBuildingGeometry.php',
+        );
     }
 
     private function source(string $relative): string
