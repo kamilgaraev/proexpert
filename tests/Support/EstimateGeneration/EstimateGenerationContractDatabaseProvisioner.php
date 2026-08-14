@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => 'cb2f83124991ca266fd6bf1bd4e1737850bd56fb92d0ea76bd0aaece17d483cf',
-        'training' => 'e9a3875fcd380312863516e67f8c21ec9364aceaa97d7991d516f18e6ae93eba',
-        'pricing' => 'e9a3875fcd380312863516e67f8c21ec9364aceaa97d7991d516f18e6ae93eba',
+        'geometry' => '6bceab3feb69a9bbbaef8a385c272f3d28df345f32da6c6b849681870d1a0c85',
+        'training' => '15ee788d506971fcd28516675bc1330e88c89d4a47a13b1402badb1626de27ab',
+        'pricing' => '15ee788d506971fcd28516675bc1330e88c89d4a47a13b1402badb1626de27ab',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'ec1997144dcbc3ebf147703f10f932ba4a28f251fff4873427dcb14da4e0ee94';
+    private const FRESH_INVENTORY_DIGEST = 'ec9720d9068d73966810891e181d3bfd9372992a5a5ddbfc1e0b58e6da0c9660';
 
     private const SUBJECT = [
         'geometry' => [
