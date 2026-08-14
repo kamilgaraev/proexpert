@@ -640,7 +640,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(GeometryExpertModel::class, VisionGeometryExpertModel::class);
         $this->app->singleton(RunGeometryExpert::class, static fn ($app): RunGeometryExpert => new RunGeometryExpert(
             $app->make(AiRoleRunRepository::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
             $app->make(GeometryExpertModel::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator::class),
             (string) config('estimate-generation.vision.model'),

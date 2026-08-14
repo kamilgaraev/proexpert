@@ -132,7 +132,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     'facts_summary' => [
                         'processing_outcome' => $outcome->toArray(),
                         'resource_usage' => $resourceUsage,
-                        'semantic_understanding' => $semanticUnderstanding,
+                        ...$semanticUnderstanding,
                         ...($qualitySignals === [] ? [] : ['quality_signals' => $qualitySignals]),
                         ...$visualAttributes,
                     ],

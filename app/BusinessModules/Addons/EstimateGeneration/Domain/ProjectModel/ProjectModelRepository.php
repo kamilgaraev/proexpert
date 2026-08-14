@@ -35,6 +35,15 @@ interface ProjectModelRepository
         array $inactiveLogicalIds,
     ): void;
 
+    /** @param list<DerivedQuantity> $quantities */
+    public function replaceDerivedQuantityFormulaProjectionSet(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        array $quantities,
+    ): void;
+
     public function deactivateDerivedQuantityProjectionScope(
         int $organizationId,
         int $projectId,
@@ -58,6 +67,15 @@ interface ProjectModelRepository
         int $sessionId,
         string $sourceVersion,
         string $formulaVersion,
+    ): array;
+
+    /** @return list<DerivedQuantity> */
+    public function currentDerivedQuantitiesForFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        int $limit = 200,
     ): array;
 
     /** @return list<DerivedQuantity> */

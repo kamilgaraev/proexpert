@@ -21,22 +21,39 @@ final class GeometrySheetRoleResolver
     ];
 
     /** @param array<string, AiRoleRunResult> $observerResults */
-    public function resolve(array $observerResults): ?string
+    public function resolve(array $observerResults, AiRoleRunResult $arbitration): ?string
     {
-        $votes = [];
-        foreach ($observerResults as $result) {
-            $sheetType = $result->payload['observation']['sheet_type'] ?? null;
-            $role = is_string($sheetType) ? (self::ROLES[$sheetType] ?? null) : null;
-            if ($role !== null) {
-                $votes[$role] = ($votes[$role] ?? 0) + 1;
-            }
-        }
-        if ($votes === []) {
+        if (($arbitration->payload['role'] ?? null) !== 'arbiter') {
             return null;
         }
-        arsort($votes, SORT_NUMERIC);
-        $roles = array_keys($votes);
+        $accepted = [];
+        foreach (is_array($arbitration->payload['decisions'] ?? null) ? $arbitration->payload['decisions'] : [] as $decision) {
+            if (! is_array($decision) || ($decision['status'] ?? null) !== 'accepted') {
+                continue;
+            }
+            $claimIds = array_values(array_unique(array_filter([
+                $decision['claim_id'] ?? null,
+                ...(is_array($decision['supporting_claim_ids'] ?? null) ? $decision['supporting_claim_ids'] : []),
+            ], 'is_string')));
+            foreach ($claimIds as $claimId) {
+                $prefix = strstr($claimId, ':', true);
+                $observerRole = is_string($prefix) ? 'observer_'.$prefix : '';
+                $sheetType = $observerResults[$observerRole]->payload['observation']['sheet_type'] ?? null;
+                $role = is_string($sheetType) ? (self::ROLES[$sheetType] ?? null) : null;
+                if ($role !== null) {
+                    $accepted[$role] = ($accepted[$role] ?? 0) + 1;
+                }
+            }
+        }
+        if ($accepted === []) {
+            return null;
+        }
+        arsort($accepted, SORT_NUMERIC);
+        $roles = array_keys($accepted);
+        if (isset($roles[1]) && $accepted[$roles[0]] === $accepted[$roles[1]]) {
+            return null;
+        }
 
-        return ($votes[$roles[0]] ?? 0) >= 2 ? $roles[0] : null;
+        return $roles[0];
     }
 }

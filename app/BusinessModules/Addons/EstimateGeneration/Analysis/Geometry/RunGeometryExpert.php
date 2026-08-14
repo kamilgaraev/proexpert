@@ -9,7 +9,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
-use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use RuntimeException;
@@ -21,7 +20,6 @@ final readonly class RunGeometryExpert implements GeometryExpertRunner
 
     public function __construct(
         private AiRoleRunRepository $runs,
-        private ProjectModelRepository $models,
         private GeometryExpertModel $model,
         private DeterministicGeometryCalculator $calculator,
         private string $modelName,
@@ -59,45 +57,6 @@ final readonly class RunGeometryExpert implements GeometryExpertRunner
                 $input->sourceVersion,
                 $sheets,
             ));
-            $quantities = $this->calculator->domainQuantities($input, $result);
-            $sheetIds = array_fill_keys(array_values(array_filter(array_map(
-                static fn (mixed $sheet): ?string => is_array($sheet) && is_string($sheet['sheet_id'] ?? null)
-                    ? $sheet['sheet_id']
-                    : null,
-                $input->sheets,
-            ))), true);
-            $currentLogicalIds = array_values(array_map(
-                static fn ($quantity): string => (string) $quantity->logicalId,
-                array_filter($this->models->currentDerivedQuantities(
-                    $input->organizationId,
-                    $input->projectId,
-                    $input->sessionId,
-                    $input->sourceVersion,
-                    10_000,
-                ), static fn ($quantity): bool => $quantity->formulaVersion === DeterministicGeometryCalculator::FORMULA_VERSION
-                    && array_intersect(
-                        array_keys($sheetIds),
-                        is_array($quantity->snapshotIdentity['sheet_ids'] ?? null)
-                            ? $quantity->snapshotIdentity['sheet_ids']
-                            : [],
-                    ) !== []),
-            ));
-            $nextLogicalIds = array_fill_keys(array_map(
-                static fn ($quantity): string => (string) $quantity->logicalId,
-                $quantities,
-            ), true);
-            $inactiveLogicalIds = array_values(array_filter(
-                $currentLogicalIds,
-                static fn (string $logicalId): bool => ! isset($nextLogicalIds[$logicalId]),
-            ));
-            $this->models->replaceDerivedQuantityProjection(
-                $input->organizationId,
-                $input->projectId,
-                $input->sessionId,
-                $input->sourceVersion,
-                $quantities,
-                $inactiveLogicalIds,
-            );
             $stored = new AiRoleRunResult([
                 'schema_version' => 1,
                 'role' => AiAnalysisRole::GeometryExpert->value,

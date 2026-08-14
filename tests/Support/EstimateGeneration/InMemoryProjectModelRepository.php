@@ -291,6 +291,47 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         return array_slice($items, 0, $limit);
     }
 
+    public function replaceDerivedQuantityFormulaProjectionSet(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        array $quantities,
+    ): void {
+        foreach ($this->currentQuantities as $key => $quantity) {
+            if ([$quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->formulaVersion]
+                === [$organizationId, $projectId, $sessionId, $formulaVersion]) {
+                unset($this->currentQuantities[$key]);
+            }
+        }
+        foreach ($quantities as $quantity) {
+            if (! $quantity instanceof DerivedQuantity
+                || [$quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->formulaVersion]
+                    !== [$organizationId, $projectId, $sessionId, $formulaVersion]) {
+                throw new InvalidArgumentException('Derived quantity formula projection scope is invalid.');
+            }
+        }
+        $this->appendDerivedQuantities($quantities);
+    }
+
+    public function currentDerivedQuantitiesForFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        int $limit = 200,
+    ): array {
+        $items = array_values(array_filter(
+            $this->currentQuantities,
+            static fn (DerivedQuantity $quantity): bool => [
+                $quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->formulaVersion,
+            ] === [$organizationId, $projectId, $sessionId, $formulaVersion],
+        ));
+        usort($items, static fn (DerivedQuantity $left, DerivedQuantity $right): int => $left->logicalId <=> $right->logicalId);
+
+        return array_slice($items, 0, $limit);
+    }
+
     public function currentDerivedQuantityLogicalIdsByFormulaVersion(
         int $organizationId,
         int $projectId,

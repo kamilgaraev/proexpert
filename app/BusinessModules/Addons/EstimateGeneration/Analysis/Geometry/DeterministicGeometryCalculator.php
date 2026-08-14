@@ -15,7 +15,7 @@ use function trans_message;
 
 final class DeterministicGeometryCalculator
 {
-    public const FORMULA_VERSION = 'geometry-formulas:v1';
+    public const FORMULA_VERSION = 'geometry-formulas:v2';
 
     private readonly Closure $translator;
 
@@ -50,7 +50,7 @@ final class DeterministicGeometryCalculator
                         'physical_locators' => array_values(array_unique($locators)),
                     ];
                     $questions[] = [
-                        'code' => 'duplicate_geometry_source',
+                        'code' => $this->questionCode('duplicate_geometry_source', $interpretation, $locators),
                         'subject' => $this->text('estimate_generation.geometry_expert.duplicate.subject'),
                         'reason' => $this->text('estimate_generation.geometry_expert.duplicate.reason'),
                         'impact' => $this->text('estimate_generation.geometry_expert.duplicate.impact'),
@@ -75,7 +75,7 @@ final class DeterministicGeometryCalculator
                         'missing_operand' => $partialOpening,
                     ];
                     $questions[] = [
-                        'code' => 'partial_opening_geometry',
+                        'code' => $this->questionCode('partial_opening_geometry', $interpretation, $locators),
                         'subject' => $this->text($partialOpening === 'opening_height'
                             ? 'estimate_generation.geometry_expert.partial_opening.missing_height'
                             : 'estimate_generation.geometry_expert.partial_opening.missing_width'),
@@ -86,10 +86,9 @@ final class DeterministicGeometryCalculator
                             $this->text('estimate_generation.geometry_expert.partial_opening.choice_specify'),
                             $this->text('estimate_generation.geometry_expert.partial_opening.choice_ignore'),
                         ],
-                        'source_locator' => [
-                            'page_number' => $sheet['page_number'] ?? null,
+                        'source_locator' => $this->sheetSourceLocator($sheet, [
                             'physical_locators' => array_values(array_unique($locators)),
-                        ],
+                        ]),
                     ];
 
                     continue;
@@ -98,8 +97,11 @@ final class DeterministicGeometryCalculator
                     'quantity' => [
                         ...$this->quantity($interpretation),
                         'sheet_ids' => [(string) ($sheet['sheet_id'] ?? '')],
+                        'source_version' => is_string($sheet['source_version'] ?? null)
+                            ? $sheet['source_version'] : $input->sourceVersion,
                     ],
                     'page_number' => $sheet['page_number'] ?? null,
+                    'source_locator' => $this->sheetSourceLocator($sheet),
                 ];
             }
         }
@@ -111,10 +113,56 @@ final class DeterministicGeometryCalculator
         return new GeometryExpertResult($quantities, $conflicts, $questions, $skippedSheets);
     }
 
+    /**
+     * @param  list<array{result:GeometryExpertResult,document_id:int,page_id:int,page_number:int,source_version:string}>  $pages
+     */
+    public function reconcileResults(array $pages): GeometryExpertResult
+    {
+        $candidates = [];
+        $conflicts = [];
+        $questions = [];
+        $skipped = [];
+        foreach ($pages as $page) {
+            if (! ($page['result'] ?? null) instanceof GeometryExpertResult) {
+                throw new InvalidArgumentException('geometry_reconciliation_page_invalid');
+            }
+            $result = $page['result'];
+            $locator = [
+                'document_id' => $page['document_id'],
+                'page_id' => $page['page_id'],
+                'page_number' => $page['page_number'],
+                'source_version' => $page['source_version'],
+            ];
+            foreach ($result->quantities as $quantity) {
+                $candidates[] = [
+                    'quantity' => [...$quantity, 'source_version' => $page['source_version']],
+                    'page_number' => $page['page_number'],
+                    'source_locator' => $locator,
+                ];
+            }
+            $conflicts = [...$conflicts, ...$result->conflicts];
+            $questions = [...$questions, ...$result->questions];
+            $skipped = [...$skipped, ...$result->skippedSheets];
+        }
+        [$quantities, $crossConflicts, $crossQuestions] = $this->reconcile($candidates);
+
+        return new GeometryExpertResult(
+            $quantities,
+            [...$conflicts, ...$crossConflicts],
+            [...$questions, ...$crossQuestions],
+            array_values(array_unique($skipped)),
+        );
+    }
+
     /** @return list<DerivedQuantity> */
     public function domainQuantities(GeometryExpertInput $input, GeometryExpertResult $result): array
     {
         return array_map(function (array $quantity) use ($input): DerivedQuantity {
+            $quantitySourceVersion = is_string($quantity['source_version'] ?? null)
+                ? $quantity['source_version'] : $input->sourceVersion;
+            if (preg_match('/^sha256:[a-f0-9]{64}$/D', $quantitySourceVersion) !== 1) {
+                throw new InvalidArgumentException('geometry_quantity_source_invalid');
+            }
             $operands = array_map(static function (array $operand): array {
                 return [
                     ...$operand,
@@ -133,7 +181,7 @@ final class DeterministicGeometryCalculator
                 organizationId: $input->organizationId,
                 projectId: $input->projectId,
                 sessionId: $input->sessionId,
-                sourceVersion: $input->sourceVersion,
+                sourceVersion: $quantitySourceVersion,
                 entityId: (string) $quantity['entity_id'],
                 formula: $quantity['formula_id'].':'.$quantity['formula_version'],
                 operands: $operands,
@@ -149,10 +197,15 @@ final class DeterministicGeometryCalculator
                     ? 'irrational_operation_then_formula_result' : 'formula_result',
                 unitCompatibility: 'exact',
                 snapshotIdentity: [
-                    'source_version' => $input->sourceVersion,
+                    'source_version' => $quantitySourceVersion,
+                    'source_set_version' => $input->sourceVersion,
                     'sheet_ids' => array_values(array_filter(
                         is_array($quantity['sheet_ids'] ?? null) ? $quantity['sheet_ids'] : [],
                         static fn (mixed $sheetId): bool => is_string($sheetId) && $sheetId !== '',
+                    )),
+                    'sources' => array_values(array_filter(
+                        is_array($quantity['sources'] ?? null) ? $quantity['sources'] : [],
+                        static fn (mixed $source): bool => is_array($source) && ! array_is_list($source),
                     )),
                 ],
                 logicalId: (string) $quantity['quantity_id'],
@@ -207,6 +260,7 @@ final class DeterministicGeometryCalculator
             || ! is_int($scale) || $scale < 0 || $scale > 12) {
             throw new InvalidArgumentException('geometry_formula_invalid');
         }
+        $operands = $this->normalizedOperands($formulaId, $operands, $interpretation['output_unit'] ?? null);
         $values = [];
         $evidence = [];
         foreach ($operands as $operand) {
@@ -229,7 +283,7 @@ final class DeterministicGeometryCalculator
             'formula_version' => self::FORMULA_VERSION,
             'operands' => $operands,
             'value' => $value->isZero() ? '0' : (string) $value->strippedOfTrailingZeros(),
-            'unit' => (string) ($interpretation['output_unit'] ?? ''),
+            'unit' => 'm2',
             'rounding_mode' => 'half_up',
             'rounding_scale' => $scale,
             'evidence_ids' => array_values(array_unique($evidence)),
@@ -324,17 +378,27 @@ final class DeterministicGeometryCalculator
         $conflicts = [];
         $questions = [];
         foreach ($groups as $quantityId => $group) {
+            usort($group, static fn (array $left, array $right): int => json_encode(
+                $left['source_locator'] ?? [],
+                JSON_THROW_ON_ERROR,
+            ) <=> json_encode($right['source_locator'] ?? [], JSON_THROW_ON_ERROR));
             $values = array_values(array_unique(array_column(array_column($group, 'quantity'), 'value')));
             if (count($values) === 1) {
                 $quantity = $group[0]['quantity'];
                 foreach (array_slice($group, 1) as $candidate) {
-                    $quantity['evidence_ids'] = array_values(array_unique([
-                        ...$quantity['evidence_ids'], ...$candidate['quantity']['evidence_ids'],
-                    ]));
+                    if (($candidate['quantity']['source_version'] ?? null) === ($quantity['source_version'] ?? null)) {
+                        $quantity['evidence_ids'] = array_values(array_unique([
+                            ...$quantity['evidence_ids'], ...$candidate['quantity']['evidence_ids'],
+                        ]));
+                    }
                     $quantity['sheet_ids'] = array_values(array_unique([
                         ...$quantity['sheet_ids'], ...$candidate['quantity']['sheet_ids'],
                     ]));
                 }
+                $quantity['sources'] = array_values(array_filter(
+                    array_map(static fn (array $candidate): mixed => $candidate['source_locator'] ?? null, $group),
+                    static fn (mixed $source): bool => is_array($source) && ! array_is_list($source),
+                ));
                 $quantities[] = $quantity;
 
                 continue;
@@ -344,6 +408,13 @@ final class DeterministicGeometryCalculator
                 static fn (mixed $page): bool => is_int($page),
             )));
             sort($pages, SORT_NUMERIC);
+            $sources = [];
+            foreach ($group as $candidate) {
+                if (is_array($candidate['source_locator'] ?? null)) {
+                    $sources[json_encode($candidate['source_locator'], JSON_THROW_ON_ERROR)] = $candidate['source_locator'];
+                }
+            }
+            ksort($sources, SORT_STRING);
             $conflicts[] = [
                 'code' => 'cross_sheet_geometry_conflict',
                 'quantity_id' => $quantityId,
@@ -351,19 +422,89 @@ final class DeterministicGeometryCalculator
                 'page_numbers' => $pages,
             ];
             $questions[] = [
-                'code' => 'cross_sheet_geometry_conflict',
+                'code' => 'cross_sheet_geometry_'.substr(hash('sha256', (string) $quantityId), 0, 16),
                 'subject' => $this->text($group[0]['quantity']['formula_id'] === 'floor_area'
                     ? 'estimate_generation.geometry_expert.cross_sheet.floor_subject'
                     : 'estimate_generation.geometry_expert.cross_sheet.geometry_subject'),
                 'reason' => $this->text('estimate_generation.geometry_expert.cross_sheet.reason'),
                 'impact' => $this->text('estimate_generation.geometry_expert.cross_sheet.impact'),
                 'recommendation' => $this->text('estimate_generation.geometry_expert.cross_sheet.recommendation'),
-                'choices' => $values,
-                'source_locator' => ['page_numbers' => $pages],
+                'choices' => array_map(
+                    fn (string $value): string => str_replace(
+                        ':value',
+                        $value,
+                        $this->text('estimate_generation.geometry_expert.cross_sheet.choice_value'),
+                    ),
+                    $values,
+                ),
+                'source_locator' => ['page_numbers' => $pages, 'sources' => array_values($sources)],
             ];
         }
 
         return [$quantities, $conflicts, $questions];
+    }
+
+    /** @param list<array<string,mixed>> $operands @return list<array<string,mixed>> */
+    private function normalizedOperands(string $formulaId, array $operands, mixed $outputUnit): array
+    {
+        $dimensions = match ($formulaId) {
+            'floor_area' => ['length' => 'length', 'width' => 'length'],
+            'wall_net_area' => [
+                'wall_length' => 'length', 'wall_height' => 'length',
+                'opening_width' => 'length', 'opening_height' => 'length',
+            ],
+            'sloped_roof_area' => [
+                'plan_area' => 'area', 'slope_rise' => 'length',
+                'slope_run' => 'length', 'roof_opening_area' => 'area',
+            ],
+            default => throw new InvalidArgumentException('geometry_formula_invalid'),
+        };
+        if (! is_string($outputUnit) || ! in_array(mb_strtolower(trim($outputUnit)), ['m2', 'm²'], true)) {
+            throw new InvalidArgumentException('geometry_unit_incompatible');
+        }
+
+        return array_map(function (array $operand) use ($dimensions): array {
+            $name = $operand['name'] ?? null;
+            $unit = $operand['unit'] ?? null;
+            if (! is_string($name) || ! isset($dimensions[$name]) || ! is_string($unit)) {
+                throw new InvalidArgumentException('geometry_unit_incompatible');
+            }
+            $normalizedUnit = mb_strtolower(trim($unit));
+            $factors = $dimensions[$name] === 'length'
+                ? ['m' => '1', 'cm' => '0.01', 'mm' => '0.001']
+                : ['m2' => '1', 'm²' => '1', 'cm2' => '0.0001', 'cm²' => '0.0001', 'mm2' => '0.000001', 'mm²' => '0.000001'];
+            if (! isset($factors[$normalizedUnit])) {
+                throw new InvalidArgumentException('geometry_unit_incompatible');
+            }
+            $value = BigDecimal::of((string) ($operand['value'] ?? ''))->multipliedBy($factors[$normalizedUnit]);
+
+            return [
+                ...$operand,
+                'value' => $value->isZero() ? '0' : (string) $value->strippedOfTrailingZeros(),
+                'unit' => $dimensions[$name] === 'length' ? 'm' : 'm2',
+            ];
+        }, $operands);
+    }
+
+    /** @param array<string,mixed> $interpretation @param list<mixed> $locators */
+    private function questionCode(string $prefix, array $interpretation, array $locators): string
+    {
+        return $prefix.'_'.substr(hash('sha256', json_encode([
+            $interpretation['quantity_id'] ?? null,
+            array_values(array_unique($locators)),
+        ], JSON_THROW_ON_ERROR)), 0, 16);
+    }
+
+    /** @param array<string,mixed> $sheet @param array<string,mixed> $extra @return array<string,mixed> */
+    private function sheetSourceLocator(array $sheet, array $extra = []): array
+    {
+        return array_filter([
+            'document_id' => $sheet['document_id'] ?? null,
+            'page_id' => $sheet['page_id'] ?? null,
+            'page_number' => $sheet['page_number'] ?? null,
+            'source_version' => $sheet['source_version'] ?? null,
+            ...$extra,
+        ], static fn (mixed $value): bool => $value !== null && $value !== []);
     }
 
     private function text(string $key): string

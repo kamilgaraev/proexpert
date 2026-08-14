@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSemanticUnderstandingSummarizer;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ClarificationQuestionProjector;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -59,7 +60,13 @@ final class DocumentSemanticUnderstandingSummarizerTest extends TestCase
             'value' => ['type' => 'string', 'data' => 'Question '.$index],
         ], range(1, 129));
 
-        $summary = (new DocumentSemanticUnderstandingSummarizer)->summarize([[
+        $summary = (new DocumentSemanticUnderstandingSummarizer(
+            new ClarificationQuestionProjector(static fn (string $key): string => match ($key) {
+                'estimate_generation.ai_questions.other' => 'Другое',
+                'estimate_generation.ai_questions.leave_unresolved' => 'Оставить нерешённым',
+                default => $key,
+            }),
+        ))->summarize([[
             'page_number' => 1,
             'vision_analysis' => [
                 'project_sheet_analysis' => ['role' => 'plan', 'facts' => $questions],
@@ -69,5 +76,40 @@ final class DocumentSemanticUnderstandingSummarizerTest extends TestCase
 
         self::assertCount(128, $summary['questions']);
         self::assertTrue($summary['truncated']);
+    }
+
+    #[Test]
+    public function geometry_questions_are_counted_and_block_readiness_in_the_canonical_question_projection(): void
+    {
+        $summary = (new DocumentSemanticUnderstandingSummarizer(
+            new ClarificationQuestionProjector(static fn (string $key): string => match ($key) {
+                'estimate_generation.ai_questions.other' => 'Другое',
+                'estimate_generation.ai_questions.leave_unresolved' => 'Оставить нерешённым',
+                default => $key,
+            }),
+        ))->summarize([[
+            'schema_version' => 4,
+            'page_number' => 7,
+            'role_completion' => [
+                'observer_literal' => true,
+                'observer_construction' => true,
+                'observer_risk' => true,
+                'arbiter' => true,
+                'geometry_expert' => true,
+            ],
+            'ai_questions' => [[
+                'code' => 'partial_opening_geometry_abc123',
+                'subject' => 'Не определена высота проёма',
+                'reason' => 'На разрезе указана только ширина проёма.',
+                'impact' => 'Без высоты нельзя точно вычесть площадь проёма.',
+                'recommendation' => 'Укажите высоту по ведомости проёмов.',
+                'choices' => ['Указать высоту', 'Не учитывать проём'],
+                'source_locator' => ['page_number' => 7, 'authority' => 'explicit_document'],
+            ]],
+        ]]);
+
+        self::assertSame(1, $summary['ai_question_count']);
+        self::assertSame('partial_opening_geometry_abc123', $summary['questions'][0]['code']);
+        self::assertTrue($summary['analysis_roles_complete']);
     }
 }

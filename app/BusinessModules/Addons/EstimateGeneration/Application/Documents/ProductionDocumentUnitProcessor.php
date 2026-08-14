@@ -356,7 +356,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         }
         $context->renewLeaseOrFail();
         $arbitrationResult = $this->documentArbitration->run($input, $observerResults);
-        $sheetRole = $this->geometrySheetRoleResolver->resolve($observerResults);
+        $sheetRole = $this->geometrySheetRoleResolver->resolve($observerResults, $arbitrationResult);
         $geometryResult = null;
         if ($sheetRole !== null) {
             $context->renewLeaseOrFail();
@@ -596,6 +596,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $questions = is_array($arbitrationResult->payload['questions'] ?? null)
             ? $arbitrationResult->payload['questions']
             : [];
+        $questions = [...$questions, ...($geometryResult?->questions ?? [])];
         $roleCompletion = [
             'observer_literal' => isset($observerPayloads['observer_literal']),
             'observer_construction' => isset($observerPayloads['observer_construction']),

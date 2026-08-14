@@ -14,6 +14,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpe
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\RunGeometryExpert;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\VisionGeometryExpertModel;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileSessionGeometryProjection;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
@@ -45,22 +47,26 @@ final class GeometryExpertPostgresTest extends TestCase
     }
 
     #[Test]
-    public function geometry_role_replays_exactly_and_switches_current_projection_without_losing_history(): void
+    public function geometry_role_replays_exactly_and_session_reconciliation_switches_current_projection_without_losing_history(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
         self::assertSame('most_backend_testing', DB::getDatabaseName());
         self::assertInstanceOf(VisionGeometryExpertModel::class, app(GeometryExpertModel::class));
         self::assertInstanceOf(RunGeometryExpert::class, app(RunGeometryExpert::class));
+        self::assertInstanceOf(ReconcileSessionGeometryProjection::class, app(ReconcileSessionGeometryProjection::class));
+        $reconciler = app(ReconcileEstimateGenerationDocuments::class);
+        $geometryProperty = new \ReflectionProperty($reconciler, 'geometry');
+        self::assertInstanceOf(ReconcileSessionGeometryProjection::class, $geometryProperty->getValue($reconciler));
         $this->ensureSchema();
         DB::beginTransaction();
         try {
             [$repository, $input, $scope, $evidenceId] = $this->fixture();
             $firstModel = new PostgresGeometryModel($this->sheets('10', '8', 'v1', $evidenceId));
+            $calculator = new DeterministicGeometryCalculator;
             $firstService = new RunGeometryExpert(
                 new PostgresGeometryRoleRunRepository,
-                $repository,
                 $firstModel,
-                new DeterministicGeometryCalculator,
+                $calculator,
                 'openai/gpt-5.6-luna',
             );
 
@@ -69,18 +75,28 @@ final class GeometryExpertPostgresTest extends TestCase
 
             self::assertSame($first->toArray(), $replay->toArray());
             self::assertSame(1, $firstModel->calls);
+            self::assertSame([], $repository->currentDerivedQuantities(...$scope));
+            $repository->replaceDerivedQuantityFormulaProjectionSet(
+                $scope[0], $scope[1], $scope[2],
+                DeterministicGeometryCalculator::FORMULA_VERSION,
+                $calculator->domainQuantities($input, $first),
+            );
             self::assertSame('80', $repository->currentDerivedQuantities(...$scope)[0]->value);
             self::assertCount(1, $repository->derivedQuantityHistory(...[...$scope, 'floor:1:area']));
 
             $this->saveOperands($repository, $scope, $evidenceId, 'v2', '12', '8', 2, 'v1');
             $secondService = new RunGeometryExpert(
                 new PostgresGeometryRoleRunRepository,
-                $repository,
                 new PostgresGeometryModel($this->sheets('12', '8', 'v2', $evidenceId, 2)),
                 new DeterministicGeometryCalculator,
                 'openai/gpt-5.6-luna',
             );
-            $secondService->run($input);
+            $second = $secondService->run($input);
+            $repository->replaceDerivedQuantityFormulaProjectionSet(
+                $scope[0], $scope[1], $scope[2],
+                DeterministicGeometryCalculator::FORMULA_VERSION,
+                $calculator->domainQuantities($input, $second),
+            );
 
             $current = $repository->currentDerivedQuantities(...$scope);
             self::assertCount(1, $current);

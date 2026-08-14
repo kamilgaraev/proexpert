@@ -35,7 +35,7 @@ final readonly class AnalysisBasisPayloadService
     /** @return array<string, mixed>|null */
     private function quantity(int $organizationId, int $projectId, int $sessionId, string $id): ?array
     {
-        $row = $this->database->table('estimate_generation_project_model_derived_quantity_projections as projection')
+        $rows = $this->database->table('estimate_generation_project_model_derived_quantity_projections as projection')
             ->join(
                 'estimate_generation_project_model_derived_quantities as quantity',
                 'quantity.id',
@@ -46,16 +46,19 @@ final readonly class AnalysisBasisPayloadService
             ->where('projection.project_id', $projectId)
             ->where('projection.session_id', $sessionId)
             ->where('projection.logical_key', $id)
-            ->first([
+            ->orderBy('projection.source_version')
+            ->limit(2)
+            ->get([
                 'quantity.value',
                 'quantity.unit',
                 'quantity.formula_identity',
                 'quantity.formula_version',
                 'quantity.evidence_lineage',
             ]);
-        if ($row === null) {
+        if ($rows->count() !== 1) {
             return null;
         }
+        $row = $rows->first();
         $formula = is_string($row->formula_identity) ? $row->formula_identity : '';
         $formulaKey = match ($formula) {
             'floor_area' => 'estimate_generation.analysis_basis.formula.floor_area',
@@ -89,20 +92,52 @@ final readonly class AnalysisBasisPayloadService
                 continue;
             }
 
-            return [
-                'type' => 'question',
-                'id' => $id,
-                'title' => ($this->translate)('estimate_generation.analysis_basis.question_title'),
-                'explanation' => (string) ($question['reason'] ?? $question['subject'] ?? ''),
-                'impact' => (string) ($question['impact'] ?? ''),
-                'recommendation' => (string) ($question['recommendation'] ?? ''),
-                'sources' => isset($question['source_locator']) && is_array($question['source_locator'])
-                    ? [['locator' => $question['source_locator']]]
-                    : [],
-            ];
+            return $this->questionPayload($id, $question);
+        }
+        $rows = $this->database->table('estimate_generation_document_pages as page')
+            ->join('estimate_generation_documents as document', 'document.id', '=', 'page.document_id')
+            ->where('document.organization_id', $organizationId)
+            ->where('document.project_id', $projectId)
+            ->where('document.session_id', $sessionId)
+            ->where('document.status', '<>', 'ignored')
+            ->whereColumn('page.source_version', 'document.source_version')
+            ->where('page.status', '<>', 'excluded')
+            ->orderBy('document.id')
+            ->orderBy('page.page_number')
+            ->limit(10_000)
+            ->get(['page.normalized_payload']);
+        foreach ($rows as $row) {
+            $payload = $this->decodeObject($row->normalized_payload);
+            foreach (is_array($payload['ai_questions'] ?? null) ? $payload['ai_questions'] : [] as $question) {
+                if (is_array($question) && (string) ($question['code'] ?? '') === $id) {
+                    return $this->questionPayload($id, $question);
+                }
+            }
         }
 
         return null;
+    }
+
+    /** @param array<string,mixed> $question @return array<string,mixed> */
+    private function questionPayload(string $id, array $question): array
+    {
+        $locator = is_array($question['source_locator'] ?? null) ? $question['source_locator'] : [];
+        $sources = is_array($locator['sources'] ?? null)
+            ? array_values(array_map(static fn (array $source): array => ['locator' => $source], array_filter(
+                $locator['sources'],
+                static fn (mixed $source): bool => is_array($source) && ! array_is_list($source),
+            )))
+            : [];
+
+        return [
+            'type' => 'question',
+            'id' => $id,
+            'title' => ($this->translate)('estimate_generation.analysis_basis.question_title'),
+            'explanation' => (string) ($question['reason'] ?? $question['subject'] ?? ''),
+            'impact' => (string) ($question['impact'] ?? ''),
+            'recommendation' => (string) ($question['recommendation'] ?? ''),
+            'sources' => $sources !== [] ? $sources : ($locator === [] ? [] : [['locator' => $locator]]),
+        ];
     }
 
     /** @param list<mixed> $evidenceIds @return list<array<string, mixed>> */

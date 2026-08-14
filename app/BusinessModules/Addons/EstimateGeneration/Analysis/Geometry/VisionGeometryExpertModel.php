@@ -56,7 +56,10 @@ final readonly class VisionGeometryExpertModel implements GeometryExpertModel
             $results[] = [
                 'sheet_id' => is_string($sheet['sheet_id'] ?? null) ? $sheet['sheet_id'] : 'page:'.$source->pageId,
                 'sheet_role' => $sheet['sheet_role'],
+                'document_id' => $source->documentId,
+                'page_id' => $source->pageId,
                 'page_number' => $source->pageNumber,
+                'source_version' => $source->sourceVersion,
                 'interpretations' => $analysis->rawObserverFacts,
             ];
         }

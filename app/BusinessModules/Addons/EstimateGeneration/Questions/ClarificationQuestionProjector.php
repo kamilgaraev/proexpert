@@ -25,15 +25,16 @@ final class ClarificationQuestionProjector
         foreach ($pages as $page) {
             $pageNumber = is_int($page['page_number'] ?? null) ? $page['page_number'] : null;
             $arbitration = is_array($page['document_arbitration'] ?? null) ? $page['document_arbitration'] : [];
-            if (($arbitration['role'] ?? null) !== 'arbiter') {
-                continue;
-            }
-            foreach (is_array($arbitration['questions'] ?? null) ? $arbitration['questions'] : [] as $question) {
+            $pageQuestions = is_array($page['ai_questions'] ?? null)
+                ? $page['ai_questions']
+                : ((($arbitration['role'] ?? null) === 'arbiter' && is_array($arbitration['questions'] ?? null))
+                    ? $arbitration['questions'] : []);
+            foreach ($pageQuestions as $question) {
                 if (! is_array($question) || ! is_string($question['code'] ?? null)) {
                     throw new InvalidArgumentException('estimate_clarification_projection_invalid');
                 }
                 $code = $question['code'];
-                $groups[$code] ??= ['questions' => [], 'pages' => [], 'evidence' => [], 'authority' => 'corroboration'];
+                $groups[$code] ??= ['questions' => [], 'pages' => [], 'evidence' => [], 'sources' => [], 'authority' => 'corroboration'];
                 $groups[$code]['questions'][] = $question;
                 if ($pageNumber !== null) {
                     $groups[$code]['pages'][$pageNumber] = true;
@@ -46,6 +47,20 @@ final class ClarificationQuestionProjector
                 }
                 if (($locator['authority'] ?? null) === 'explicit_document') {
                     $groups[$code]['authority'] = 'explicit_document';
+                }
+                $sources = is_array($locator['sources'] ?? null) ? $locator['sources'] : [];
+                if (isset($locator['document_id']) || isset($locator['page_id']) || isset($locator['source_version'])) {
+                    $sources[] = array_filter([
+                        'document_id' => $locator['document_id'] ?? null,
+                        'page_id' => $locator['page_id'] ?? null,
+                        'page_number' => $locator['page_number'] ?? $pageNumber,
+                        'source_version' => $locator['source_version'] ?? null,
+                    ], static fn (mixed $value): bool => $value !== null);
+                }
+                foreach ($sources as $source) {
+                    if (is_array($source) && ! array_is_list($source)) {
+                        $groups[$code]['sources'][json_encode($source, JSON_THROW_ON_ERROR)] = $source;
+                    }
                 }
             }
         }
@@ -82,7 +97,12 @@ final class ClarificationQuestionProjector
                 (string) ($question['impact'] ?? ''),
                 (string) ($question['recommendation'] ?? ''),
                 $choiceObjects,
-                ['page_numbers' => $pageNumbers, 'evidence_refs' => $evidenceRefs, 'authority' => $group['authority']],
+                array_filter([
+                    'page_numbers' => $pageNumbers,
+                    'evidence_refs' => $evidenceRefs,
+                    'authority' => $group['authority'],
+                    'sources' => array_values($group['sources']),
+                ], static fn (mixed $value): bool => $value !== []),
             );
         }
 

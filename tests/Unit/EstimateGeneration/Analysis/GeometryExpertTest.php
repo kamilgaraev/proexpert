@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometrySheetRoleResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\RunGeometryExpert;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\VisionGeometryExpertModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
@@ -62,7 +63,7 @@ final class GeometryExpertTest extends TestCase
 
         self::assertCount(1, $result->quantities);
         self::assertSame('105', $result->quantities[0]['value']);
-        self::assertSame('geometry-formulas:v1', $result->quantities[0]['formula_version']);
+        self::assertSame('geometry-formulas:v2', $result->quantities[0]['formula_version']);
         self::assertSame(['evidence:101', 'evidence:102'], $result->quantities[0]['evidence_ids']);
         self::assertSame([], $result->questions);
     }
@@ -131,6 +132,39 @@ final class GeometryExpertTest extends TestCase
     }
 
     #[Test]
+    public function formula_operands_are_normalized_to_canonical_units_before_arithmetic(): void
+    {
+        $result = $this->calculator()->calculate($this->input([
+            $this->sheet('plan', 4, [
+                $this->interpretation('floor:metric:area', 'floor:metric', 'floor_area', 'm2', [
+                    $this->operand('length', '1250', 'cm', '223', 'metric:length'),
+                    $this->operand('width', '8400', 'mm', '224', 'metric:width'),
+                ]),
+            ]),
+        ]));
+
+        self::assertSame('105', $result->quantities[0]['value']);
+        self::assertSame(['12.5', '8.4'], array_column($result->quantities[0]['operands'], 'value'));
+        self::assertSame(['m', 'm'], array_column($result->quantities[0]['operands'], 'unit'));
+    }
+
+    #[Test]
+    public function incompatible_operand_or_output_units_are_rejected_before_arithmetic(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('geometry_unit_incompatible');
+
+        $this->calculator()->calculate($this->input([
+            $this->sheet('plan', 4, [
+                $this->interpretation('floor:invalid:area', 'floor:invalid', 'floor_area', 'm', [
+                    $this->operand('length', '12.5', 'm', '225', 'invalid:length'),
+                    $this->operand('width', '8.4', 'm2', '226', 'invalid:width'),
+                ]),
+            ]),
+        ]));
+    }
+
+    #[Test]
     public function duplicated_physical_locator_is_not_counted_twice_and_creates_a_concrete_question(): void
     {
         $result = $this->calculator()->calculate($this->input([
@@ -187,6 +221,60 @@ final class GeometryExpertTest extends TestCase
     }
 
     #[Test]
+    public function independently_calculated_pages_are_reconciled_as_one_source_set(): void
+    {
+        $calculator = $this->calculator();
+        $first = $calculator->calculate($this->input([
+            $this->sheet('plan', 4, [
+                $this->interpretation('floor:1:area', 'floor:1', 'floor_area', 'm2', [
+                    $this->operand('length', '10', 'm', '431', 'plan:length'),
+                    $this->operand('width', '8', 'm', '432', 'plan:width'),
+                ]),
+            ]),
+        ]));
+        $second = $calculator->calculate($this->input([
+            $this->sheet('explication', 9, [
+                $this->interpretation('floor:1:area', 'floor:1', 'floor_area', 'm2', [
+                    $this->operand('length', '10', 'm', '433', 'explication:length'),
+                    $this->operand('width', '8.2', 'm', '434', 'explication:width'),
+                ]),
+            ]),
+        ]));
+
+        $result = $calculator->reconcileResults([
+            ['result' => $first, 'document_id' => 31, 'page_id' => 41, 'page_number' => 4, 'source_version' => 'sha256:'.str_repeat('a', 64)],
+            ['result' => $second, 'document_id' => 32, 'page_id' => 49, 'page_number' => 9, 'source_version' => 'sha256:'.str_repeat('b', 64)],
+        ]);
+
+        self::assertSame([], $result->quantities);
+        self::assertSame('cross_sheet_geometry_conflict', $result->conflicts[0]['code']);
+        self::assertSame([
+            ['document_id' => 31, 'page_id' => 41, 'page_number' => 4, 'source_version' => 'sha256:'.str_repeat('a', 64)],
+            ['document_id' => 32, 'page_id' => 49, 'page_number' => 9, 'source_version' => 'sha256:'.str_repeat('b', 64)],
+        ], $result->questions[0]['source_locator']['sources']);
+    }
+
+    #[Test]
+    public function arbiter_accepted_minority_evidence_controls_geometry_applicability(): void
+    {
+        $observers = [
+            'observer_literal' => new AiRoleRunResult(['observation' => ['sheet_type' => 'detail']], 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+            'observer_construction' => new AiRoleRunResult(['observation' => ['sheet_type' => 'detail']], 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+            'observer_risk' => new AiRoleRunResult(['observation' => ['sheet_type' => 'roof_plan']], 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),
+        ];
+        $arbitration = new AiRoleRunResult([
+            'role' => 'arbiter',
+            'decisions' => [[
+                'claim_id' => 'risk:1',
+                'status' => 'accepted',
+                'supporting_claim_ids' => ['risk:1'],
+            ]],
+        ], 'dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+
+        self::assertSame('roof', (new GeometrySheetRoleResolver)->resolve($observers, $arbitration));
+    }
+
+    #[Test]
     public function geometry_role_is_persisted_once_and_exact_replay_does_not_call_the_model_again(): void
     {
         if (! class_exists(RunGeometryExpert::class) || ! interface_exists(GeometryExpertModel::class)) {
@@ -203,7 +291,7 @@ final class GeometryExpertTest extends TestCase
                 ]),
             ]),
         ]);
-        $service = new RunGeometryExpert($runs, $models, $model, $this->calculator(), 'openai/gpt-5.6-luna');
+        $service = new RunGeometryExpert($runs, $model, $this->calculator(), 'openai/gpt-5.6-luna');
         $input = $this->input([$this->sheet('plan', 4, [])]);
 
         $first = $service->run($input);
@@ -214,7 +302,7 @@ final class GeometryExpertTest extends TestCase
         self::assertSame(AiAnalysisRole::GeometryExpert, $runs->inputs[0]->role);
         self::assertSame('geometry-expert:v1', $runs->inputs[0]->promptContractVersion);
         self::assertSame('80', $first->quantities[0]['value']);
-        self::assertCount(1, $models->currentDerivedQuantities(7, 9, 11, 'sha256:'.str_repeat('a', 64)));
+        self::assertCount(0, $models->currentDerivedQuantities(7, 9, 11, 'sha256:'.str_repeat('a', 64)));
     }
 
     #[Test]

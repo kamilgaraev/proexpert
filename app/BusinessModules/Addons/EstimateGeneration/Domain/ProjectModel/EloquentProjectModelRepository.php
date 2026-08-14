@@ -686,6 +686,67 @@ SQL, [
         return $rows->map(fn (object $row): DerivedQuantity => $this->derivedQuantityFromRow($row))->all();
     }
 
+    public function replaceDerivedQuantityFormulaProjectionSet(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        array $quantities,
+    ): void {
+        $this->database->connection()->transaction(function () use (
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $formulaVersion,
+            $quantities,
+        ): void {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $quantityIds = $this->database->table('estimate_generation_project_model_derived_quantities')
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('session_id', $sessionId)
+                ->where('formula_version', $formulaVersion)
+                ->pluck('id');
+            if ($quantityIds->isNotEmpty()) {
+                $this->database->table('estimate_generation_project_model_derived_quantity_projections')
+                    ->where('organization_id', $organizationId)
+                    ->where('project_id', $projectId)
+                    ->where('session_id', $sessionId)
+                    ->whereIn('derived_quantity_id', $quantityIds)
+                    ->delete();
+            }
+            foreach ($quantities as $quantity) {
+                if (! $quantity instanceof DerivedQuantity
+                    || [$quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->formulaVersion]
+                        !== [$organizationId, $projectId, $sessionId, $formulaVersion]) {
+                    throw new InvalidArgumentException('Derived quantity formula projection scope is invalid.');
+                }
+            }
+            $this->appendDerivedQuantities($quantities, 200);
+        }, 3);
+    }
+
+    public function currentDerivedQuantitiesForFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        int $limit = 200,
+    ): array {
+        $this->assertReadLimit($limit);
+        $rows = $this->database->table('estimate_generation_project_model_derived_quantity_projections as projection')
+            ->join('estimate_generation_project_model_derived_quantities as quantity', 'quantity.id', '=', 'projection.derived_quantity_id')
+            ->where('projection.organization_id', $organizationId)
+            ->where('projection.project_id', $projectId)
+            ->where('projection.session_id', $sessionId)
+            ->where('quantity.formula_version', $formulaVersion)
+            ->orderBy('projection.logical_key')
+            ->limit($limit)
+            ->get('quantity.*');
+
+        return $rows->map(fn (object $row): DerivedQuantity => $this->derivedQuantityFromRow($row))->all();
+    }
+
     public function currentDerivedQuantityLogicalIdsByFormulaVersion(
         int $organizationId,
         int $projectId,

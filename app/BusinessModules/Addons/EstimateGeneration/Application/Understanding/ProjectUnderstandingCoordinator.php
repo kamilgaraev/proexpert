@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Understanding;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\RunProjectSynthesis;
@@ -74,15 +75,26 @@ final readonly class ProjectUnderstandingCoordinator
         foreach ($sourceVersions as $version) {
             $quantities = [
                 ...$quantities,
-                ...$this->models->currentDerivedQuantities(
+                ...array_values(array_filter($this->models->currentDerivedQuantities(
                     $organizationId,
                     $projectId,
                     $sessionId,
                     $version,
                     $this->budget->maxFacts,
-                ),
+                ), static fn (DerivedQuantity $quantity): bool => $quantity->formulaVersion
+                    !== DeterministicGeometryCalculator::FORMULA_VERSION)),
             ];
         }
+        $quantities = [
+            ...$quantities,
+            ...$this->models->currentDerivedQuantitiesForFormulaVersion(
+                $organizationId,
+                $projectId,
+                $sessionId,
+                DeterministicGeometryCalculator::FORMULA_VERSION,
+                $this->budget->maxFacts,
+            ),
+        ];
         $roleFingerprints = $this->models->completedSynthesisRoleFingerprints(
             $organizationId,
             $projectId,
