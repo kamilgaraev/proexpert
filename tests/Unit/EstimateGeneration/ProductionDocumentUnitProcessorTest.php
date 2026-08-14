@@ -840,7 +840,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                         'readability' => 'medium',
                         'confidence' => 0.95,
                         'ambiguous' => false,
-                        'material_risk' => true,
+                        'material_risk' => 'high',
                         'reasons' => ['test_dense_page'],
                         'semantic_regions' => [],
                     ],

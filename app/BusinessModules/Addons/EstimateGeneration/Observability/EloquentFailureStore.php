@@ -14,11 +14,20 @@ final readonly class EloquentFailureStore implements FailureStore
     public function record(FailureData $failure, DateTimeImmutable $seenAt): void
     {
         $this->database->transaction(function () use ($failure, $seenAt): void {
-            $identityId = self::deterministicId('identity|'.$failure->fingerprint);
+            $identityId = self::deterministicId($this->identitySeed($failure));
             $identity = $this->identityAttributes($failure, $identityId, $seenAt);
+            $existingIdentity = $this->database->table('estimate_generation_failure_identities')
+                ->where('fingerprint', $failure->fingerprint)
+                ->lockForUpdate()
+                ->get()
+                ->first(fn (object $candidate): bool => $this->sameSemanticIdentity($candidate, $identity));
+            if ($existingIdentity !== null) {
+                $identityId = (string) $existingIdentity->id;
+                $identity['id'] = $identityId;
+            }
             $this->database->table('estimate_generation_failure_identities')->insertOrIgnore($identity);
             $existingIdentity = $this->database->table('estimate_generation_failure_identities')
-                ->where('fingerprint', $failure->fingerprint)->lockForUpdate()->first();
+                ->where('id', $identityId)->lockForUpdate()->first();
             if ($existingIdentity === null || ! $this->sameIdentity($existingIdentity, $identity)) {
                 throw new FailureStoreInvariantViolation('Failure identity collision.');
             }
@@ -171,10 +180,42 @@ final readonly class EloquentFailureStore implements FailureStore
         ];
     }
 
+    private function identitySeed(FailureData $failure): string
+    {
+        return implode('|', [
+            'identity',
+            $failure->fingerprint,
+            $failure->context->organizationId,
+            $failure->context->projectId,
+            $failure->context->sessionId,
+            $failure->context->documentId ?? '',
+            $failure->context->pageId ?? '',
+            $failure->context->unitId ?? '',
+            $failure->context->checkpointId ?? '',
+            $failure->context->usageAttemptId ?? '',
+            $failure->context->stage->value,
+            $failure->context->operation,
+            $failure->context->provider ?? '',
+            $failure->context->model ?? '',
+            $failure->category->value,
+            $failure->code,
+        ]);
+    }
+
     /** @param array<string, mixed> $expected */
     private function sameIdentity(object $actual, array $expected): bool
     {
-        foreach (['id', 'fingerprint', 'organization_id', 'project_id', 'session_id', 'document_id', 'page_id', 'unit_id',
+        if ((string) ($actual->id ?? '') !== (string) ($expected['id'] ?? '')) {
+            return false;
+        }
+
+        return $this->sameSemanticIdentity($actual, $expected);
+    }
+
+    /** @param array<string, mixed> $expected */
+    private function sameSemanticIdentity(object $actual, array $expected): bool
+    {
+        foreach (['fingerprint', 'organization_id', 'project_id', 'session_id', 'document_id', 'page_id', 'unit_id',
             'checkpoint_id', 'usage_attempt_id', 'stage', 'operation', 'provider', 'model', 'category', 'code'] as $key) {
             if ((string) ($actual->{$key} ?? '') !== (string) ($expected[$key] ?? '')) {
                 return false;

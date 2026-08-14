@@ -938,6 +938,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 'analysis_routing has exactly page_kind, requested_depth, information_density, readability, confidence, ambiguous, material_risk, reasons, semantic_regions.',
                 'page_kind is title, divider, empty, cover, narrative, specification, schedule, explication, legend, index, drawing, combined or unknown. requested_depth is simple_context, structured_textual or dense_ambiguous.',
                 'information_density is low, medium or high; readability is high, medium or low; confidence is finite in [0,1]; reasons contains 1..8 concise natural-language reasons.',
+                'material_risk is exactly low, medium or high. Use low only when missing secondary interpretation cannot materially change the estimate; medium and high require arbitration.',
                 'semantic_regions contains 0..16 objects with exactly label, purpose and box. label and purpose are bounded natural language. box is normalized [left,top,right,bottom] within the full page and must cover a meaningful subdrawing or text block, not a fixed grid cell.',
                 'Unknown page kind, low readability, confidence below 0.8 or ambiguity always requests dense_ambiguous. Routing selects analysis depth and never discards a page.',
             ] : []),
@@ -1097,7 +1098,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     'readability' => ['type' => 'string', 'enum' => ['high', 'medium', 'low']],
                     'confidence' => ['type' => 'number', 'minimum' => 0, 'maximum' => 1],
                     'ambiguous' => ['type' => 'boolean'],
-                    'material_risk' => ['type' => 'boolean'],
+                    'material_risk' => ['type' => 'string', 'enum' => ['low', 'medium', 'high']],
                     'reasons' => ['type' => 'array', 'minItems' => 1, 'maxItems' => 8, 'items' => ['type' => 'string']],
                     'semantic_regions' => ['type' => 'array', 'maxItems' => 16, 'items' => [
                         'type' => 'object',

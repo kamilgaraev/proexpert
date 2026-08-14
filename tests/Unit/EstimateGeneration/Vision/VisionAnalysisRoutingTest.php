@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\AnalysisMaterialRisk;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -39,7 +40,7 @@ final class VisionAnalysisRoutingTest extends TestCase
                 'readability' => 'medium',
                 'confidence' => 0.91,
                 'ambiguous' => true,
-                'material_risk' => true,
+                'material_risk' => 'high',
                 'reasons' => ['Мелкие размеры требуют увеличения.'],
                 'semantic_regions' => [[
                     'label' => 'Размеры узла',
@@ -50,7 +51,39 @@ final class VisionAnalysisRoutingTest extends TestCase
         ], 'timeweb', 'openai/gpt-5.6-luna', 'openai/gpt-5.6-luna', 'vision-v4', 'measured', 100, 30, 64);
 
         self::assertSame('dense_ambiguous', $analysis->analysisRouting?->effectiveRoute->value);
+        self::assertSame(AnalysisMaterialRisk::High, $analysis->analysisRouting?->materialRisk);
         self::assertSame('Размеры узла', $analysis->analysisRouting?->semanticRegions[0]['label']);
         self::assertSame(4, $analysis->toArray()['schema_version']);
+    }
+
+    #[Test]
+    public function legacy_boolean_material_risk_is_rejected_instead_of_coerced(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('page_analysis_routing_schema_invalid');
+
+        \App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoutingDecision::fromProviderArray([
+            'page_kind' => 'title',
+            'requested_depth' => 'simple_context',
+            'information_density' => 'low',
+            'readability' => 'high',
+            'confidence' => 0.99,
+            'ambiguous' => false,
+            'material_risk' => false,
+            'reasons' => ['Лёгкая страница.'],
+            'semantic_regions' => [],
+        ]);
+    }
+
+    #[Test]
+    public function fail_open_uses_high_material_risk_without_changing_the_ambiguity_type(): void
+    {
+        $decision = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoutingDecision::failOpen(
+            'invalid_routing_contract',
+        );
+
+        self::assertTrue($decision->ambiguous);
+        self::assertSame(AnalysisMaterialRisk::High, $decision->materialRisk);
+        self::assertSame('high', $decision->toArray()['material_risk']);
     }
 }

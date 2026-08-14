@@ -63,7 +63,7 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
         return $this->query()
             ->whereHas('document', static fn (Builder $query): Builder => $query
                 ->whereColumn('estimate_generation_documents.source_version', 'estimate_generation_processing_units.source_version')
-                ->where('estimate_generation_documents.status', '<>', 'ignored'))
+                ->whereIn('estimate_generation_documents.status', ['queued', 'processing']))
             ->where(static function (Builder $query) use ($now): void {
                 $query->where(static fn (Builder $pending): Builder => $pending
                     ->where('status', DocumentProcessingUnitStatus::Pending->value)

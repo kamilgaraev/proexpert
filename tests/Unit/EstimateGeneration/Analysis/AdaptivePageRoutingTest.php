@@ -23,7 +23,7 @@ final class AdaptivePageRoutingTest extends TestCase
             'readability' => 'high',
             'confidence' => 0.95,
             'ambiguous' => false,
-            'material_risk' => false,
+            'material_risk' => 'low',
             'reasons' => ['Классифицирована ведомость.'],
             'semantic_regions' => [],
         ]);
@@ -42,7 +42,7 @@ final class AdaptivePageRoutingTest extends TestCase
             'readability' => 'high',
             'confidence' => 0.98,
             'ambiguous' => false,
-            'material_risk' => false,
+            'material_risk' => 'low',
             'reasons' => ['Титульный лист однозначно задаёт раздел АР.'],
             'semantic_regions' => [],
         ]);
@@ -81,7 +81,7 @@ final class AdaptivePageRoutingTest extends TestCase
             'readability' => 'medium',
             'confidence' => 0.94,
             'ambiguous' => true,
-            'material_risk' => true,
+            'material_risk' => 'high',
             'reasons' => ['На листе совмещены план, разрез и узлы с мелкими размерами.'],
             'semantic_regions' => [[
                 'label' => 'Размерная цепочка фасада',
@@ -109,7 +109,7 @@ final class AdaptivePageRoutingTest extends TestCase
             'readability' => 'low',
             'confidence' => 0.41,
             'ambiguous' => false,
-            'material_risk' => false,
+            'material_risk' => 'low',
             'reasons' => ['Тип листа не определён.'],
             'semantic_regions' => [],
         ]);
@@ -158,7 +158,7 @@ final class AdaptivePageRoutingTest extends TestCase
             'readability' => 'high',
             'confidence' => 0.96,
             'ambiguous' => $depth === 'dense_ambiguous',
-            'material_risk' => $risk,
+            'material_risk' => $risk ? 'high' : 'low',
             'reasons' => ['Маршрут определён по содержимому листа.'],
             'semantic_regions' => $depth === 'dense_ambiguous' ? [[
                 'label' => 'Главный чертёж',
