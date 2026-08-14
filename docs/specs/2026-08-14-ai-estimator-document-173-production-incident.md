@@ -1,7 +1,7 @@
 # Production-инцидент AI-сметчика МОСТ: project 52 / session 71 / document 173
 
 Дата фиксации: 2026-08-14
-Статус: реализация и выпуск
+Статус: точечное исправление explicit retry и повторный штатный выпуск
 Область: backend/API и админка МОСТ
 
 ## 1. Цель
@@ -228,4 +228,111 @@ Admin:
 
 ## 12. Остаточный риск и ручная проверка
 
-Canary намеренно не вызывает AI. После выпуска единственная ручная проверка пользователя должна выполняться на новом тестовом документе: загрузить один небольшой PDF с лёгкой титульной страницей и одной содержательной страницей, дождаться фактического завершения и проверить честный прогресс, сохранённые страницы и доступность следующего шага только после готовности backend.
+Canary намеренно не вызывает AI. После выпуска единственная ручная проверка выполняется пользователем на сохранённом document 173: открыть документ и один раз подтвердить появившееся действие «Повторить обработку документа», затем дождаться результата. Агент не запускает этот повтор и не выполняет платный smoke.
+
+## 13. Дополнение инцидента: ручной повтор после неопределённого исхода provider-вызова
+
+### 13.1 Актуальный production evidence
+
+Read-only снимок от 14.08.2026 после завершения предыдущего релиза:
+
+- document 173: `failed/completed`, progress 100, processed pages 0 из 22;
+- session 71: `failed`, progress 100, state version 3;
+- `processing_outcome.type=system_failure`, `retry_allowed=false`;
+- terminal units текущего source version: 9 × `document_unit_pre_wire_failed`, 11 × `vision_provider_response_invalid`, 2 × `vision_wire_outcome_ambiguous`;
+- pending/running units: 0; units с действующей арендой: 0;
+- текущая processing lineage: `6a2fe0cd-49af-4fbc-855f-f989c9ce842e`.
+
+Authoritative `ExplicitDocumentRetryEligibility` разрешает только известные repairable и breaker failure codes. Код `vision_wire_outcome_ambiguous` отсутствует в разрешённом наборе, поэтому две terminal units закрывают eligibility всего документа. `EstimateGenerationDocumentActionBuilder` закономерно не публикует `retry_document`, а админка, следующая action contract, не показывает кнопку. Это точная причина противоречия между рекомендацией ручного повтора и фактическим серверным контрактом.
+
+### 13.2 Граница безопасности
+
+`vision_wire_outcome_ambiguous` нельзя автоматически повторять: неизвестно, был ли provider-вызов физически принят и учтён. Допустим только новый, явно подтверждённый пользователем document-level retry. Он является новой логической и физической попыткой, а не повторной доставкой старой ambiguous attempt.
+
+Старые physical attempts, usage, стоимость, failure history и audit history неизменны. Компенсации, удаление или переиспользование старого provider attempt запрещены. Exactly-once учёт остаётся scoped к каждой physical attempt.
+
+### 13.3 Машина состояний ручного повтора
+
+```text
+terminal system_failure
+  + все units текущей lineage terminal
+  + нет pending/running/active lease
+  + нет user_action_required
+  + tenant/project/session/document/source/version совпадают
+  + ABAC estimate_generation.review
+  + explicit user confirmation
+    -> accepted(new idempotency key)
+    -> new processing_attempt_id
+    -> queued/stored/processing outcome
+    -> one after-commit dispatch
+
+accepted + same idempotency key
+    -> replay same new lineage, no second dispatch
+
+processing + different idempotency key
+    -> already_in_progress, no lineage, no dispatch
+
+ambiguous physical attempt + automatic recovery
+    -> terminal, no provider retry
+
+pending|running|active lease|user_action_required|stale source/version|
+cross-tenant|wrong session|missing ABAC|unknown failure
+    -> fail-closed, action absent, no dispatch
+```
+
+### 13.4 Backend action и mutation contract
+
+Детальный и списочный `AdminResponse` публикует действие только из единого `EstimateGenerationDocumentActionBuilder`:
+
+```json
+{
+  "action": "retry_document",
+  "label": "Повторить обработку документа",
+  "method": "POST",
+  "endpoint": "/api/v1/admin/projects/{project}/estimate-generation/sessions/{session}/documents/{document}/retry",
+  "requires_confirmation": true,
+  "state_version": 3,
+  "source_version": "sha256:<current>",
+  "retry_disposition": "explicit_system_failure_retry"
+}
+```
+
+Запрос содержит action-provided `state_version`, `source_version` и UUID `idempotency_key`. Под PostgreSQL document/session row locks сервис повторно проверяет tenant, ABAC, source identity, session version, terminal eligibility и отсутствие активной lineage. Принятая операция создаёт новый UUID `processing_attempt_id`, добавляет audit/history, переводит документ и session в processing и регистрирует единственный dispatch после commit.
+
+### 13.5 Admin UX contract
+
+- Кнопка существует только при наличии typed `retry_document` action.
+- Перед отправкой обязательна явная модальная проверка. Текст сообщает, что новый анализ может снова использовать лимит и повлечь стоимость.
+- Неопределённый сетевой исход и повтор отправки используют тот же idempotency key.
+- После accepted response UI принимает authoritative document/snapshot: показывает «Выполняется» и не накладывает старые terminal 100%/system failure на новую lineage.
+- Terminal `system_failure` подписывается «Обработка завершена с ошибкой»; 100% в этом состоянии означает завершённость работы, а не успешную готовность.
+
+### 13.6 TDD-матрица точечного исправления
+
+| Инвариант | RED | GREEN |
+|---|---|---|
+| Production-shaped eligibility | 9 pre-wire + 11 response-invalid + 2 ambiguous не публикуют action | публикуется ровно один typed retry action |
+| Только ambiguous | terminal документ только с ambiguous не допускает explicit retry | explicit user-confirmed document retry разрешён; автоматический recovery не меняется |
+| Активная работа | pending, running или действующая lease | action отсутствует, mutation fail-closed |
+| Пользовательское решение | хотя бы одна unit `user_action_required` | action отсутствует |
+| Fences | stale source/version, cross-tenant, wrong session, missing ABAC | action отсутствует или mutation возвращает безопасный conflict |
+| Новая lineage | accepted retry после ambiguous | новый attempt ID отличается от старого; старые physical attempts не используются |
+| Replay | два запроса с одним key | одна lineage и один dispatch |
+| Competing key | второй key во время processing | `already_in_progress`, без дубля |
+| PostgreSQL race | два одновременных manual retry | одна accepted lineage и один post-commit dispatch |
+| Usage/cost | история старой lineage до и после retry mutation | старые usage/cost строки неизменны; новая lineage учитывается отдельно downstream |
+| Admin action | production-shaped AdminResponse action present/absent | кнопка и confirmation только при present |
+| Admin submit | accepted response с processing document/snapshot | сразу «Выполняется», старое terminal состояние скрыто |
+| Admin timeout | повтор после неопределённого ответа | сохранён тот же idempotency key |
+| Terminal copy | failed + 100% + system failure | «Обработка завершена с ошибкой», без ложной готовности |
+
+### 13.7 План исполнения и выпуска
+
+- [x] Зафиксировать RED backend eligibility/presentation и PostgreSQL lineage/concurrency/usage contracts.
+- [x] Зафиксировать RED admin MSW/interaction/copy contracts.
+- [x] Внести минимальное изменение единого eligibility/action/retry пути без параллельного контура.
+- [x] Выполнить целевые проверки backend/admin и UTF-8/diff gates.
+- [x] Провести один последовательный self-review correctness/security/architecture/UX.
+- [ ] Создать backend/admin PR, выполнить merge и стандартный deploy только изменённых проектов.
+- [ ] Выполнить read-only canary `/ready`, release SHA, protected 401, Laravel/GlitchTip.
+- [ ] Обновить существующие статьи YouTrack Knowledge Base текущим выпущенным поведением.

@@ -110,6 +110,95 @@ final class ExplicitDocumentRetryEligibilityTest extends TestCase
         self::assertTrue((new ExplicitDocumentRetryEligibility)->allowed($document));
     }
 
+    #[Test]
+    public function terminal_ambiguous_units_allow_only_a_new_explicit_document_lineage(): void
+    {
+        self::assertTrue((new ExplicitDocumentRetryEligibility)->allowed(
+            $this->document('failed', 'vision_wire_outcome_ambiguous'),
+        ));
+    }
+
+    #[Test]
+    public function production_document_173_failure_mix_allows_an_explicit_document_retry(): void
+    {
+        $failureCodes = [
+            ...array_fill(0, 9, 'document_unit_pre_wire_failed'),
+            ...array_fill(0, 11, 'vision_provider_response_invalid'),
+            ...array_fill(0, 2, 'vision_wire_outcome_ambiguous'),
+        ];
+        $document = $this->document('failed', $failureCodes[0]);
+        $document->forceFill([
+            'page_count' => 22,
+            'error_code' => 'document_processing_system_failed',
+        ]);
+        foreach ($document->processingUnits as $index => $unit) {
+            $unit->forceFill(['failure_code' => $failureCodes[$index]]);
+        }
+        foreach (array_slice($failureCodes, 3) as $index => $failureCode) {
+            $unit = clone $document->processingUnits->first();
+            $unit->forceFill([
+                'id' => $index + 4,
+                'unit_index' => $index + 4,
+                'failure_code' => $failureCode,
+            ]);
+            $document->processingUnits->push($unit);
+        }
+
+        self::assertCount(22, $document->processingUnits);
+        self::assertTrue((new ExplicitDocumentRetryEligibility)->allowed($document));
+    }
+
+    #[Test]
+    #[DataProvider('activeUnitStatuses')]
+    public function active_current_lineage_units_block_an_explicit_retry(DocumentProcessingUnitStatus $status): void
+    {
+        $document = $this->document('failed', 'vision_wire_outcome_ambiguous');
+        $unit = $document->processingUnits->first();
+        $unit->forceFill([
+            'status' => $status,
+            'failure_code' => null,
+            'metadata' => [],
+        ]);
+        if ($status === DocumentProcessingUnitStatus::Running) {
+            $unit->setRawAttributes([
+                ...$unit->getAttributes(),
+                'claim_token' => 'active-lease',
+                'lease_expires_at' => '2099-01-01 00:00:00+00',
+            ], true);
+        }
+
+        self::assertFalse((new ExplicitDocumentRetryEligibility)->allowed($document));
+    }
+
+    #[Test]
+    public function user_action_required_failure_blocks_an_explicit_retry(): void
+    {
+        $document = $this->document('failed', 'vision_wire_outcome_ambiguous');
+        $document->processingUnits->first()->forceFill([
+            'metadata' => ['failure_category' => 'user_action_required'],
+        ]);
+
+        self::assertFalse((new ExplicitDocumentRetryEligibility)->allowed($document));
+    }
+
+    #[Test]
+    public function stale_source_units_do_not_make_a_document_retryable(): void
+    {
+        $document = $this->document('failed', 'vision_wire_outcome_ambiguous');
+        foreach ($document->processingUnits as $unit) {
+            $unit->forceFill(['source_version' => 'sha256:stale']);
+        }
+
+        self::assertFalse((new ExplicitDocumentRetryEligibility)->allowed($document));
+    }
+
+    /** @return iterable<string, array{DocumentProcessingUnitStatus}> */
+    public static function activeUnitStatuses(): iterable
+    {
+        yield 'pending' => [DocumentProcessingUnitStatus::Pending];
+        yield 'running with active lease' => [DocumentProcessingUnitStatus::Running];
+    }
+
     /** @return iterable<string, array{string}> */
     public static function unsafeFailureCodes(): iterable
     {

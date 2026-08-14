@@ -27,6 +27,7 @@ final readonly class ExplicitDocumentRetryEligibility
         'vision_physical_claim_failed',
         'vision_physical_attempt_persistence_failed',
         'vision_provider_response_invalid',
+        'vision_wire_outcome_ambiguous',
     ];
 
     private const BREAKER_FAILURE_CODES = [

@@ -87,7 +87,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
     }
 
     #[Test]
-    public function systemic_document_failure_exposes_explicit_retry_capability_and_source_fence(): void
+    public function production_document_173_failure_mix_exposes_explicit_retry_capability_and_source_fence(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->allows('can')->andReturnTrue();
@@ -104,16 +104,6 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
             'error_message_key' => 'estimate_generation.document_processing_system_failed',
             'meta' => [
                 'processing_attempt_id' => 'attempt-terminal',
-                'explicit_document_retry' => [
-                    'attempt_id' => 'attempt-terminal',
-                    'source_version' => 'sha256:current',
-                    'status' => 'failed',
-                    'terminal_reason' => 'system_failure',
-                ],
-                'explicit_document_retry_history' => [[
-                    'old_attempt_id' => 'attempt-original',
-                    'new_attempt_id' => 'attempt-terminal',
-                ]],
             ],
             'facts_summary' => [
                 'processing_outcome' => [
@@ -131,8 +121,13 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
             ],
         ]);
         $fingerprint = hash('sha256', 'typed-systemic-root');
+        $failureCodes = [
+            ...array_fill(0, 9, 'document_unit_pre_wire_failed'),
+            ...array_fill(0, 11, 'vision_provider_response_invalid'),
+            ...array_fill(0, 2, 'vision_wire_outcome_ambiguous'),
+        ];
         $document->setRelation('processingUnits', new Collection(array_map(
-            static function (int $index) use ($fingerprint): EstimateGenerationProcessingUnit {
+            static function (string $failureCode, int $index) use ($fingerprint): EstimateGenerationProcessingUnit {
                 $unit = new EstimateGenerationProcessingUnit;
                 $unit->forceFill([
                     'id' => 500 + $index,
@@ -142,15 +137,16 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
                     'document_id' => 91,
                     'source_version' => 'sha256:current',
                     'unit_type' => DocumentUnitType::PdfPage,
-                    'unit_index' => $index,
+                    'unit_index' => $index + 1,
                     'status' => DocumentProcessingUnitStatus::Failed,
                     'output_count' => 0,
-                    'failure_code' => 'document_geometry_processing_failed',
+                    'failure_code' => $failureCode,
                     'failure_fingerprint' => $fingerprint,
+                    'metadata' => ['failure_category' => 'terminal'],
                 ]);
 
                 return $unit;
-            }, range(1, 3),
+            }, $failureCodes, range(0, 21),
         )));
         $request = Request::create('/documents/91');
         $user = $this->user(7);
@@ -485,6 +481,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
     public function file_service_never_logs_generated_temporary_url(): void
     {
         Log::spy();
+        Log::shouldReceive('debug')->never();
         $logging = Mockery::mock(LoggingService::class);
         $disk = Mockery::mock(FilesystemAdapter::class);
         $disk->expects('temporaryUrl')->once()->withArgs(static fn (
@@ -506,7 +503,6 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         );
 
         self::assertSame('https://storage.example/secret-signed-url', $url);
-        Log::shouldNotHaveReceived('debug');
     }
 
     private function user(int $organizationId): User
