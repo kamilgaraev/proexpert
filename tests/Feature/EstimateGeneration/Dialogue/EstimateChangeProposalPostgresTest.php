@@ -237,6 +237,9 @@ final class EstimateChangeProposalPostgresTest extends TestCase
 
         self::assertSame($first->id, $second->id);
         self::assertSame(1, DB::table('estimate_generation_project_model_corrections')
+            ->where('organization_id', $organization->id)
+            ->where('project_id', $project->id)
+            ->where('session_id', $session->id)
             ->where('stable_key', $first->id)
             ->count());
         $registry = new ProjectModelEstimateClarificationAnswerRegistry($models, 100);
