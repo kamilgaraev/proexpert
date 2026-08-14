@@ -12,7 +12,7 @@ use InvalidArgumentException;
 
 final class ArbitrationInputBuilder
 {
-    public const PROMPT_CONTRACT = 'document-arbitration:v1';
+    public const PROMPT_CONTRACT = 'document-arbitration:v3';
 
     /**
      * @param  array<string,AiRoleRunResult>  $observerRuns

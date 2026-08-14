@@ -1,0 +1,10 @@
+{
+  "model": "openai/gpt-5.6-luna",
+  "choices": [{
+    "message": {
+      "content": "{\"schema_version\":\"3\",\"sheet_type\":\"elevation\",\"evidence\":[{\"key\":\"page-1\",\"locator\":{\"page_id\":17,\"page_number\":2,\"processing_unit_id\":19,\"source_version\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"coordinate_space\":\"normalized_derivative_v1\"}}],\"elements\":[],\"scale_candidates\":[],\"warnings\":[\"scale_missing\"],\"visual_attributes\":{\"roof_type\":{\"value\":\"unknown\",\"confidence\":0.8,\"evidence_ref\":\"page-1\"}},\"project_sheet_analysis\":{\"contractVersion\":\"sheet-analysis:v2\",\"role\":\"unknown\",\"facts\":[{\"claim_id\":\"literal:1\",\"status\":\"accepted\",\"supporting_claim_ids\":[\"literal:1\"],\"evidence_refs\":[\"literal:note-1\"],\"reason_code\":\"explicit_note\"},{\"claim_id\":\"literal:2\",\"status\":\"unresolved\",\"supporting_claim_ids\":[\"literal:2\"],\"evidence_refs\":[\"literal:note-2\"],\"reason_code\":\"dimension_missing\",\"question\":{\"code\":\"confirm_dimensions\",\"subject\":\"Размеры элемента\",\"reason\":\"На листе нет полного размера.\",\"impact\":\"Нельзя подтвердить объём работ.\",\"recommendation\":\"Укажите размер по проекту.\",\"choices\":[\"Указать размер\",\"Исключить элемент\"],\"source_locator\":{\"page_number\":2,\"evidence_refs\":[\"literal:note-2\"]}}}]}}"
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {"prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200}
+}

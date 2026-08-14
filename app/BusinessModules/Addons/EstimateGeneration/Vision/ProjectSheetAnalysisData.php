@@ -15,7 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\SheetAnalysis\UnknownSh
 
 final readonly class ProjectSheetAnalysisData
 {
-    public const CONTRACT_VERSION = 'sheet-analysis:v2';
+    public const CONTRACT_VERSION = 'sheet-analysis:v3';
 
     /** @param list<array<string, mixed>> $facts @param list<array{section: string, index: int, reason: string}> $quarantinedItems */
     private function __construct(

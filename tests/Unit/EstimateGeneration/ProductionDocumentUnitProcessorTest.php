@@ -906,12 +906,12 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             'warnings' => ['scale_missing'],
             'visual_attributes' => ['roof_type' => ['value' => 'unknown', 'confidence' => 0.0, 'evidence_ref' => 'page-1']],
             'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2', 'role' => 'plan',
+                'contractVersion' => 'sheet-analysis:v3', 'role' => 'plan',
                 'facts' => [[
                     'entityKey' => 'room-1', 'factType' => 'room',
                     'value' => ['type' => 'unknown', 'data' => null], 'unit' => null,
                     'evidenceRef' => 'page-1', 'sourcePolygonOrNativeRef' => [[0.1, 0.1], [0.9, 0.9]],
-                    'confidence' => 0.9, 'contractVersion' => 'sheet-analysis:v2',
+                    'confidence' => 0.9, 'contractVersion' => 'sheet-analysis:v3',
                 ]],
             ],
         ], 'test', 'model', 'model', 'v1', 'unavailable', null, null, 10);

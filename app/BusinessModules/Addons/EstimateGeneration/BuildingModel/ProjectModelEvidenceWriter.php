@@ -69,7 +69,7 @@ final readonly class ProjectModelEvidenceWriter
                         ],
                         $decision->status === 'accepted' && $supportingClaim->explicitEvidence ? 1.0 : 0.0,
                         EvidenceProducer::DrawingAnalyzer->value,
-                        'sha256:'.hash('sha256', 'document-arbitration:v1'),
+                        'sha256:'.hash('sha256', 'document-arbitration:v3'),
                     ));
                     $evidenceId = 'evidence:'.$node->id;
                     $evidenceIds[] = $evidenceId;

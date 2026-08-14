@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers;
 
 final class ConstructionObserverPrompt
 {
-    public const VERSION = 'observer-construction:v1';
+    public const VERSION = 'observer-construction:v3';
 
     public static function text(): string
     {

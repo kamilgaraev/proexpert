@@ -78,7 +78,7 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
                 throw new RuntimeException('arbitration_decisions_missing');
             }
             $result = new AiRoleRunResult([
-                'schema_version' => 1,
+                'schema_version' => 3,
                 'role' => AiAnalysisRole::Arbiter->value,
                 'prompt_contract' => ArbitrationInputBuilder::PROMPT_CONTRACT,
                 'source' => [
@@ -93,8 +93,10 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
                     'supporting_claim_ids' => $decision->supportingClaimIds,
                     'evidence_refs' => $decision->evidenceRefs,
                     'reason_code' => $decision->reasonCode,
+                    'canonical_claim' => $decision->canonicalClaim,
                     'question' => $decision->question,
                 ], $decisions),
+                'contract_repairs' => $analysis->contractRepairs,
                 'questions' => array_values(array_filter(array_map(
                     static fn (ArbitrationDecision $decision): ?array => $decision->question,
                     $decisions,
