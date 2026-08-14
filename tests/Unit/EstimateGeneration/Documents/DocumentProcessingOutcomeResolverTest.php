@@ -137,6 +137,22 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
     }
 
     #[Test]
+    public function semantic_questions_and_quarantine_have_distinct_honest_states(): void
+    {
+        $questions = (new DocumentProcessingOutcomeResolver)->resolve(
+            [$this->page(1, 'needs_review', ['ai_questions_pending'])],
+            [$this->unit(1, 'completed', 1)],
+        );
+        $partial = (new DocumentProcessingOutcomeResolver)->resolve(
+            [$this->page(1, 'needs_review', ['ai_partial_result'])],
+            [$this->unit(1, 'completed', 1)],
+        );
+
+        self::assertSame('questions', $questions->toArray()['state']);
+        self::assertSame('partial', $partial->toArray()['state']);
+    }
+
+    #[Test]
     public function production_partial_result_preserves_thirteen_completed_outputs_and_terminal_counts(): void
     {
         $pages = [];
@@ -161,6 +177,7 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
         $outcome = (new DocumentProcessingOutcomeResolver)->resolve($pages, $units);
 
         self::assertSame('system_failure', $outcome->type);
+        self::assertSame('partial', $outcome->toArray()['state']);
         self::assertSame('needs_review', $outcome->documentStatus);
         self::assertSame(13, $outcome->processedPages);
         self::assertSame(13, $outcome->counts['ready']);
@@ -185,10 +202,10 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
         self::assertSame('document_processing_temporarily_unavailable', $outcome->errorCode);
     }
 
-    /** @return array{processing_unit_id: int, status: string} */
-    private function page(int $unitId, string $status): array
+    /** @param list<string> $qualityFlags @return array{processing_unit_id: int, status: string, quality_flags:list<string>} */
+    private function page(int $unitId, string $status, array $qualityFlags = []): array
     {
-        return ['processing_unit_id' => $unitId, 'status' => $status];
+        return ['processing_unit_id' => $unitId, 'status' => $status, 'quality_flags' => $qualityFlags];
     }
 
     /** @return array{id: int, status: string, output_count: int, metadata: array<string, string>} */

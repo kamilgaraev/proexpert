@@ -31,6 +31,8 @@ final readonly class DocumentProcessingOutcomeResolver
         ];
         $hasTerminalSystemFailure = false;
         $hasRecoverableSystemFailure = false;
+        $hasQuestionReview = false;
+        $hasPartialReview = false;
         foreach ($pages as $page) {
             $pageStatus = (string) ($page['status'] ?? 'queued');
             if ($pageStatus === ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED) {
@@ -43,6 +45,9 @@ final readonly class DocumentProcessingOutcomeResolver
             $unitStatus = (string) ($unit['status'] ?? 'pending');
             $metadata = is_array($unit['metadata'] ?? null) ? $unit['metadata'] : [];
             $category = $metadata['failure_category'] ?? null;
+            $qualityFlags = is_array($page['quality_flags'] ?? null) ? $page['quality_flags'] : [];
+            $hasQuestionReview = $hasQuestionReview || in_array('ai_questions_pending', $qualityFlags, true);
+            $hasPartialReview = $hasPartialReview || in_array('ai_partial_result', $qualityFlags, true);
 
             if (in_array($pageStatus, ['queued', 'processing'], true)
                 || in_array($unitStatus, ['pending', 'running'], true)) {
@@ -84,6 +89,15 @@ final readonly class DocumentProcessingOutcomeResolver
             documentStatus: $status,
             processedPages: $counts['ready'],
             counts: $counts,
+            state: match (true) {
+                $type === 'processing' => 'processing',
+                $counts['ready'] > 0 && $counts['system_failed'] > 0 => 'partial',
+                $hasQuestionReview => 'questions',
+                $hasPartialReview => 'partial',
+                in_array($type, ['system_failure', 'temporary_failure'], true) => 'system_failure',
+                $counts['needs_user_action'] > 0 => 'questions',
+                default => 'ready',
+            },
             errorCode: match ($type) {
                 'system_failure' => 'document_processing_system_failed',
                 'temporary_failure' => 'document_processing_temporarily_unavailable',

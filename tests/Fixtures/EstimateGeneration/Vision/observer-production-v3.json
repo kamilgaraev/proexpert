@@ -1,0 +1,26 @@
+{
+  "schema_version": "3",
+  "sheet_type": "elevation",
+  "evidence": [
+    {"key": "facade-title", "locator": {"page_id": 999, "source_version": "stale"}}
+  ],
+  "elements": [],
+  "scale_candidates": [],
+  "warnings": ["scale_missing"],
+  "visual_attributes": {"facade": {"evidence_ref": "facade-title"}},
+  "project_sheet_analysis": {
+    "contractVersion": "sheet-analysis:v3",
+    "role": "facade",
+    "facts": [
+      {
+        "entityKey": "building-1",
+        "factType": "note",
+        "value": {"type": "string", "data": "Фасад без размерной цепочки"},
+        "unit": null,
+        "evidenceRef": "facade-title",
+        "confidence": 0.93,
+        "contractVersion": "sheet-analysis:v3"
+      }
+    ]
+  }
+}

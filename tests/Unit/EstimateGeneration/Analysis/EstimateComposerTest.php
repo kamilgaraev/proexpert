@@ -74,6 +74,8 @@ final class EstimateComposerTest extends TestCase
         ))->run($input);
         $intent = $intents[array_key_last($intents)];
         self::assertSame('supplementary', $intent['kind']);
+        self::assertStringStartsWith('supplementary:', $intent['candidate_id']);
+        self::assertNotSame('supplementary:roof-safety', $intent['candidate_id']);
         self::assertSame('roof_safety_barrier', $intent['work_key']);
         self::assertSame('quantity:roof', $intent['derived_quantity_id']);
         self::assertArrayNotHasKey('unit_price', $intent);
@@ -81,22 +83,27 @@ final class EstimateComposerTest extends TestCase
     }
 
     #[DataProvider('invalidResultProvider')]
-    public function test_composer_rejects_suppression_duplicates_invented_sources_and_provider_prices(
+    public function test_composer_projects_server_owned_coverage_and_quarantines_only_bad_content(
         callable $mutate,
-        string $expectedMessage,
+        bool $expectsQuarantine,
     ): void {
         $input = $this->input();
         $result = $mutate($this->validResult($input));
+        $runs = new ComposerRoleRunMemoryRepository;
         $composer = new RunEstimateComposer(
-            new ComposerRoleRunMemoryRepository,
+            $runs,
             new RecordedEstimateComposerModel($result),
             'openai/gpt-5-mini',
         );
 
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage($expectedMessage);
+        $intents = $composer->run($input);
 
-        $composer->run($input);
+        self::assertCount(count($input->candidates), $intents);
+        self::assertSame(array_column($input->candidates, 'candidate_id'), array_column($intents, 'candidate_id'));
+        self::assertSame(
+            $expectsQuarantine ? 'partial' : 'ready',
+            $runs->lastResult?->payload['result_state'],
+        );
     }
 
     public static function invalidResultProvider(): iterable
@@ -107,7 +114,7 @@ final class EstimateComposerTest extends TestCase
 
                 return $result;
             },
-            'estimate_composer_candidate_coverage_invalid',
+            false,
         ];
         yield 'duplicate candidate' => [
             static function (array $result): array {
@@ -115,7 +122,7 @@ final class EstimateComposerTest extends TestCase
 
                 return $result;
             },
-            'estimate_composer_candidate_duplicate',
+            true,
         ];
         yield 'invented fact' => [
             static function (array $result): array {
@@ -123,15 +130,7 @@ final class EstimateComposerTest extends TestCase
 
                 return $result;
             },
-            'estimate_composer_source_fact_invalid',
-        ];
-        yield 'provider price' => [
-            static function (array $result): array {
-                $result['work_intents'][0]['price'] = '1.00';
-
-                return $result;
-            },
-            'estimate_work_intent_shape_invalid',
+            false,
         ];
         yield 'wrong technology package' => [
             static function (array $result): array {
@@ -139,7 +138,7 @@ final class EstimateComposerTest extends TestCase
 
                 return $result;
             },
-            'estimate_composer_technology_candidate_invalid',
+            false,
         ];
         yield 'raw provider assumption' => [
             static function (array $result): array {
@@ -147,7 +146,7 @@ final class EstimateComposerTest extends TestCase
 
                 return $result;
             },
-            'estimate_work_intent_text_invalid',
+            true,
         ];
         yield 'english supplementary work name' => [
             static function (array $result): array {
@@ -166,8 +165,24 @@ final class EstimateComposerTest extends TestCase
 
                 return $result;
             },
-            'estimate_work_intent_text_invalid',
+            true,
         ];
+    }
+
+    public function test_provider_price_copy_is_ignored_and_never_becomes_authoritative(): void
+    {
+        $input = $this->input();
+        $result = $this->validResult($input);
+        $result['work_intents'][0]['price'] = '999999.99';
+
+        $intents = (new RunEstimateComposer(
+            new ComposerRoleRunMemoryRepository,
+            new RecordedEstimateComposerModel($result),
+            'openai/gpt-5-mini',
+        ))->run($input);
+
+        self::assertArrayNotHasKey('price', $intents[0]);
+        self::assertSame($input->candidates[0]['candidate_id'], $intents[0]['candidate_id']);
     }
 
     public function test_input_fingerprint_fences_exact_snapshot_decisions_quantities_candidates_and_missing_documents(): void
@@ -492,6 +507,8 @@ final class ComposerRoleRunMemoryRepository implements AiRoleRunRepository
 {
     public array $inputs = [];
 
+    public ?AiRoleRunResult $lastResult = null;
+
     private ?AiRoleRunResult $result = null;
 
     public function claim(AiRoleRunInput $input, string $ownerUuid): AiRoleRunClaim
@@ -508,6 +525,7 @@ final class ComposerRoleRunMemoryRepository implements AiRoleRunRepository
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
     {
         $this->result = $result;
+        $this->lastResult = $result;
     }
 
     public function fail(int $runId, string $ownerUuid, AiRoleRunFailure $failure): void {}

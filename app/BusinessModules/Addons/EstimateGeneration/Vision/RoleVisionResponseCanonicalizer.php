@@ -4,106 +4,129 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
+
 final class RoleVisionResponseCanonicalizer
 {
     /**
      * @param  array<string, mixed>  $payload
-     * @param  array<string, mixed>  $auxiliaryMetadata
      */
-    public function canonicalize(array $payload, array $auxiliaryMetadata): RoleVisionResponseCanonicalization
+    public function canonicalize(array $payload, VisionDocumentInput $input): RoleVisionResponseCanonicalization
     {
+        $auxiliaryMetadata = $input->auxiliaryMetadata;
         $isObserver = isset($auxiliaryMetadata['observer']);
-        $arbitration = $auxiliaryMetadata['arbitration'] ?? null;
-        if (! $isObserver && ! is_array($arbitration)) {
-            return new RoleVisionResponseCanonicalization($payload, []);
+        $isArbitration = is_array($auxiliaryMetadata['arbitration'] ?? null);
+        $isGeometry = is_array($auxiliaryMetadata['geometry_expert'] ?? null);
+        if (! $isObserver && ! $isArbitration && ! $isGeometry) {
+            return new RoleVisionResponseCanonicalization($payload);
         }
 
-        $repairs = [];
         if (($payload['schema_version'] ?? null) === '3') {
             $payload['schema_version'] = 3;
-            $repairs[] = 'schema_version_string_to_integer';
         }
 
-        $sheet = $payload['project_sheet_analysis'] ?? null;
-        if (! is_array($sheet) || array_is_list($sheet)) {
-            return new RoleVisionResponseCanonicalization($payload, $repairs);
-        }
-        if (($sheet['contractVersion'] ?? null) === 'sheet-analysis:v2') {
-            $sheet['contractVersion'] = ProjectSheetAnalysisData::CONTRACT_VERSION;
-            $repairs[] = 'sheet_analysis_v2_to_v3';
-        }
-
-        $facts = $sheet['facts'] ?? null;
-        if (! is_array($facts) || ! array_is_list($facts) || count($facts) > 64) {
-            $payload['project_sheet_analysis'] = $sheet;
-
-            return new RoleVisionResponseCanonicalization($payload, $repairs);
-        }
-
-        if ($isObserver) {
-            foreach ($facts as $index => $fact) {
-                if (is_array($fact) && ($fact['contractVersion'] ?? null) === 'sheet-analysis:v2') {
-                    $facts[$index]['contractVersion'] = ProjectSheetAnalysisData::CONTRACT_VERSION;
-                }
+        if ($isArbitration || $isGeometry) {
+            $facts = $payload['decisions']
+                ?? $payload['interpretations']
+                ?? ($payload['project_sheet_analysis']['facts'] ?? []);
+            if (! is_array($facts) || ! array_is_list($facts) || count($facts) > 64) {
+                $facts = [];
             }
-        } elseif (is_array($arbitration)) {
-            [$facts, $canonicalClaimAdded] = $this->canonicalizeArbitrationClaims(
-                $facts,
-                is_array($arbitration['claims'] ?? null) ? $arbitration['claims'] : [],
-            );
-            if ($canonicalClaimAdded) {
-                $repairs[] = 'arbiter_canonical_claim_from_allowlist';
-            }
+
+            return new RoleVisionResponseCanonicalization([
+                'schema_version' => 3,
+                'sheet_type' => is_string($payload['sheet_type'] ?? null) ? $payload['sheet_type'] : 'unknown',
+                'evidence' => [[
+                    'key' => 'server_page_evidence',
+                    'locator' => $this->locator($input),
+                ]],
+                'elements' => [],
+                'scale_candidates' => [],
+                'warnings' => ['scale_missing'],
+                'visual_attributes' => [],
+                'project_sheet_analysis' => [
+                    'contractVersion' => ProjectSheetAnalysisData::CONTRACT_VERSION,
+                    'role' => 'unknown',
+                    'facts' => $facts,
+                ],
+            ]);
         }
 
-        $sheet['facts'] = $facts;
-        $payload['project_sheet_analysis'] = $sheet;
-
-        return new RoleVisionResponseCanonicalization($payload, array_values(array_unique($repairs)));
+        return new RoleVisionResponseCanonicalization($this->projectObserverEvidence($payload, $input));
     }
 
-    /**
-     * @param  list<mixed>  $facts
-     * @param  array<mixed>  $claims
-     * @return array{list<mixed>, bool}
-     */
-    private function canonicalizeArbitrationClaims(array $facts, array $claims): array
+    /** @param array<string,mixed> $payload @return array<string,mixed> */
+    private function projectObserverEvidence(array $payload, VisionDocumentInput $input): array
     {
-        $claimsById = [];
-        foreach ($claims as $claim) {
-            if (! is_array($claim) || ! is_string($claim['id'] ?? null)) {
+        $evidence = $payload['evidence'] ?? null;
+        if (! is_array($evidence) || ! array_is_list($evidence) || count($evidence) > 256) {
+            return $payload;
+        }
+        $references = [];
+        $projectedEvidence = [];
+        foreach ($evidence as $item) {
+            if (! is_array($item) || ! is_string($item['key'] ?? null)) {
                 continue;
             }
-            $claimsById[$claim['id']] = $claim;
+            $localReference = trim($item['key']);
+            if ($localReference === '' || mb_strlen($localReference) > 200) {
+                continue;
+            }
+            $serverReference = 'evidence:'.substr(hash('sha256', implode('|', [
+                $input->organizationId,
+                $input->projectId,
+                $input->sessionId,
+                $input->documentId,
+                $input->pageId,
+                $input->processingUnitId,
+                $input->sourceVersion,
+                $localReference,
+            ])), 0, 32);
+            $references[$localReference] = $serverReference;
+            $projectedEvidence[] = ['key' => $serverReference, 'locator' => $this->locator($input)];
+        }
+        $payload['evidence'] = $projectedEvidence;
+
+        return $this->replaceEvidenceReferences($payload, $references);
+    }
+
+    /** @param array<string,string> $references */
+    private function replaceEvidenceReferences(mixed $value, array $references, ?string $key = null): mixed
+    {
+        if (is_string($value) && in_array($key, ['evidence_ref', 'evidenceRef'], true)) {
+            return $references[$value] ?? $value;
+        }
+        if (! is_array($value)) {
+            return $value;
+        }
+        if (in_array($key, ['evidence_refs', 'evidenceRefs'], true) && array_is_list($value)) {
+            return array_map(
+                static fn (mixed $reference): mixed => is_string($reference)
+                    ? ($references[$reference] ?? $reference)
+                    : $reference,
+                $value,
+            );
+        }
+        foreach ($value as $childKey => $childValue) {
+            $value[$childKey] = $this->replaceEvidenceReferences(
+                $childValue,
+                $references,
+                is_string($childKey) ? $childKey : null,
+            );
         }
 
-        $added = false;
-        foreach ($facts as $index => $fact) {
-            if (! is_array($fact)
-                || array_key_exists('canonical_claim', $fact)
-                || ! in_array($fact['status'] ?? null, ['accepted', 'candidate'], true)
-                || ! is_string($fact['claim_id'] ?? null)) {
-                continue;
-            }
-            $claim = $claimsById[$fact['claim_id']] ?? null;
-            $supporting = $fact['supporting_claim_ids'] ?? null;
-            if (! is_array($claim) || ! is_array($supporting) || ! in_array($fact['claim_id'], $supporting, true)
-                || ! is_string($claim['entity_key'] ?? null)
-                || ! is_string($claim['fact_type'] ?? null)
-                || ! is_array($claim['value'] ?? null)
-                || ! array_key_exists('unit', $claim)) {
-                continue;
-            }
-            $facts[$index]['canonical_claim'] = [
-                'entity_key' => $claim['entity_key'],
-                'fact_type' => $claim['fact_type'],
-                'value' => $claim['value'],
-                'unit' => $claim['unit'],
-                'source_claim_id' => $fact['claim_id'],
-            ];
-            $added = true;
-        }
+        return $value;
+    }
 
-        return [$facts, $added];
+    /** @return array{page_id:int,page_number:int,processing_unit_id:int,source_version:string,coordinate_space:string} */
+    private function locator(VisionDocumentInput $input): array
+    {
+        return [
+            'page_id' => $input->pageId,
+            'page_number' => $input->pageNumber,
+            'processing_unit_id' => $input->processingUnitId,
+            'source_version' => $input->sourceVersion,
+            'coordinate_space' => 'normalized_derivative_v1',
+        ];
     }
 }

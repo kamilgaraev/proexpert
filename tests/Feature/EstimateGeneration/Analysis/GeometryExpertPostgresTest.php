@@ -86,7 +86,9 @@ final class GeometryExpertPostgresTest extends TestCase
                 $calculator->domainQuantities($input, $first),
             );
             self::assertSame('80', $repository->currentDerivedQuantities(...$scope)[0]->value);
-            self::assertCount(1, $repository->derivedQuantityHistory(...[...$scope, 'floor:1:area']));
+            $logicalQuantityId = $first->quantities[0]['quantity_id'];
+            self::assertStringStartsWith('quantity:', $logicalQuantityId);
+            self::assertCount(1, $repository->derivedQuantityHistory(...[...$scope, $logicalQuantityId]));
 
             $this->saveOperands($repository, $scope, $evidenceId, 'v2', '12', '8', 2, 'v1');
             $secondService = new RunGeometryExpert(
@@ -105,13 +107,13 @@ final class GeometryExpertPostgresTest extends TestCase
             $current = $repository->currentDerivedQuantities(...$scope);
             self::assertCount(1, $current);
             self::assertSame('96', $current[0]->value);
-            self::assertCount(2, $repository->derivedQuantityHistory(...[...$scope, 'floor:1:area']));
+            self::assertCount(2, $repository->derivedQuantityHistory(...[...$scope, $logicalQuantityId]));
             self::assertSame(1, DB::table('estimate_generation_project_model_derived_quantity_projections')
                 ->where('organization_id', $scope[0])
                 ->where('project_id', $scope[1])
                 ->where('session_id', $scope[2])
                 ->where('source_version', $scope[3])
-                ->where('logical_key', 'floor:1:area')
+                ->where('logical_key', $logicalQuantityId)
                 ->count());
         } finally {
             DB::rollBack();

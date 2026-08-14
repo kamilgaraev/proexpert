@@ -58,11 +58,7 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         $owner = AiOperationContext::deterministicId('project-synthesis-owner|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)));
         $claim = $this->runs->claim($runInput, $owner);
         if ($claim->disposition === 'replay' && $claim->result !== null) {
-            return $this->validateSelection(
-                ProjectSynthesisSelection::fromArray($claim->result->payload['result'] ?? []),
-                $candidateLinks,
-                $candidateQuestions,
-            );
+            return ProjectSynthesisSelection::fromArray($claim->result->payload['result'] ?? []);
         }
         if ($claim->disposition !== 'owned' || $claim->ownerUuid === null) {
             throw new RuntimeException('project_engineer_role_run_'.$claim->disposition);
@@ -81,15 +77,16 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
             if ($physicalAttemptId === null) {
                 throw new UsageInvariantViolation('Project engineer returned without a physical attempt identity.');
             }
-            $selection = $this->validateSelection(
-                ProjectSynthesisSelection::fromArray($raw),
-                $candidateLinks,
-                $candidateQuestions,
-            );
+            $projection = $this->projectSelection($raw, $candidateLinks, $candidateQuestions);
+            $selection = $projection['selection'];
             $this->runs->complete($claim->runId, $claim->ownerUuid, new AiRoleRunResult([
                 'schema_version' => 1,
                 'role' => AiAnalysisRole::ProjectEngineer->value,
                 'result' => $selection->toArray(),
+                'quarantined_intents' => $projection['quarantined'],
+                'result_state' => $selection->questionConflictIds !== []
+                    ? 'questions'
+                    : ($projection['quarantined'] === [] ? 'ready' : 'partial'),
             ], $physicalAttemptId));
 
             return $selection;
@@ -104,16 +101,33 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         }
     }
 
-    /** @param list<array<string, mixed>> $links @param list<array<string, mixed>> $questions */
-    private function validateSelection(
-        ProjectSynthesisSelection $selection,
+    /**
+     * @param  list<array<string, mixed>>  $links
+     * @param  list<array<string, mixed>>  $questions
+     * @return array{selection:ProjectSynthesisSelection,quarantined:list<array{field:string,index:int,reason:string}>}
+     */
+    private function projectSelection(
+        mixed $payload,
         array $links,
         array $questions,
-    ): ProjectSynthesisSelection {
+    ): array {
+        if (! is_array($payload) || array_is_list($payload)
+            || ! is_array($payload['accepted_link_ids'] ?? null)
+            || ! array_is_list($payload['accepted_link_ids'])
+            || count($payload['accepted_link_ids']) > 10000
+            || ! is_array($payload['question_conflict_ids'] ?? null)
+            || ! array_is_list($payload['question_conflict_ids'])
+            || count($payload['question_conflict_ids']) > 10000) {
+            throw new InvalidArgumentException('project_synthesis_selection_invalid');
+        }
         $linkIds = [];
+        $confirmedLinkIds = [];
         foreach ($links as $link) {
             if (is_string($link['id'] ?? null)) {
                 $linkIds[$link['id']] = true;
+                if (($link['status'] ?? null) === 'confirmed') {
+                    $confirmedLinkIds[$link['id']] = true;
+                }
             }
         }
         $conflictIds = [];
@@ -122,27 +136,25 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
                 $conflictIds[$question['conflict_id']] = true;
             }
         }
-        foreach ($selection->acceptedLinkIds as $id) {
-            if (! isset($linkIds[$id])) {
-                throw new InvalidArgumentException('project_synthesis_invented_link');
+        $acceptedLinkIds = $confirmedLinkIds;
+        $quarantined = [];
+        foreach ($payload['accepted_link_ids'] as $index => $id) {
+            if (! is_string($id) || ! isset($linkIds[$id])) {
+                $quarantined[] = ['field' => 'accepted_link_ids', 'index' => $index, 'reason' => 'project_synthesis_invented_link'];
+
+                continue;
             }
+            $acceptedLinkIds[$id] = true;
         }
-        foreach ($selection->questionConflictIds as $id) {
-            if (! isset($conflictIds[$id])) {
-                throw new InvalidArgumentException('project_synthesis_invented_question');
-            }
-        }
-        if (array_diff(array_keys($conflictIds), $selection->questionConflictIds) !== []) {
-            throw new InvalidArgumentException('project_synthesis_question_suppressed');
-        }
-        foreach ($links as $link) {
-            if (($link['status'] ?? null) === 'confirmed'
-                && is_string($link['id'] ?? null)
-                && ! in_array($link['id'], $selection->acceptedLinkIds, true)) {
-                throw new InvalidArgumentException('project_synthesis_confirmed_link_suppressed');
+        foreach ($payload['question_conflict_ids'] as $index => $id) {
+            if (! is_string($id) || ! isset($conflictIds[$id])) {
+                $quarantined[] = ['field' => 'question_conflict_ids', 'index' => $index, 'reason' => 'project_synthesis_invented_question'];
             }
         }
 
-        return $selection;
+        return [
+            'selection' => new ProjectSynthesisSelection(array_keys($acceptedLinkIds), array_keys($conflictIds)),
+            'quarantined' => $quarantined,
+        ];
     }
 }

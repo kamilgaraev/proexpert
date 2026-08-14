@@ -45,7 +45,20 @@ final readonly class RunEstimateComposer
         $owner = AiOperationContext::deterministicId('estimate-composer-owner|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)));
         $claim = $this->runs->claim($runInput, $owner);
         if ($claim->disposition === 'replay' && $claim->result !== null) {
-            return $this->validate($claim->result->payload['work_intents'] ?? null, $input);
+            $stored = $claim->result->payload['work_intents'] ?? null;
+            if (! is_array($stored) || ! array_is_list($stored)) {
+                throw new RuntimeException('estimate_composer_replay_invalid');
+            }
+
+            $replayed = [];
+            foreach ($stored as $intent) {
+                if (! is_array($intent)) {
+                    throw new RuntimeException('estimate_composer_replay_invalid');
+                }
+                $replayed[] = EstimateWorkIntent::fromArray($intent)->toArray();
+            }
+
+            return $replayed;
         }
         if ($claim->disposition !== 'owned' || $claim->ownerUuid === null) {
             throw new RuntimeException('estimate_composer_role_run_'.$claim->disposition);
@@ -65,14 +78,16 @@ final readonly class RunEstimateComposer
             if (array_keys($raw) !== ['work_intents']) {
                 throw new InvalidArgumentException('estimate_composer_result_shape_invalid');
             }
-            $intents = $this->validate($raw['work_intents'], $input);
+            $projection = $this->project($raw['work_intents'], $input);
             $this->runs->complete($claim->runId, $claim->ownerUuid, new AiRoleRunResult([
                 'schema_version' => 1,
                 'role' => AiAnalysisRole::EstimateComposer->value,
-                'work_intents' => $intents,
+                'work_intents' => $projection['intents'],
+                'quarantined_intents' => $projection['quarantined'],
+                'result_state' => $projection['quarantined'] === [] ? 'ready' : 'partial',
             ], $physicalAttemptId));
 
-            return $intents;
+            return $projection['intents'];
         } catch (Throwable $exception) {
             $this->runs->fail($claim->runId, $claim->ownerUuid, new AiRoleRunFailure(
                 code: 'estimate_composer_failed',
@@ -84,18 +99,31 @@ final readonly class RunEstimateComposer
         }
     }
 
-    /** @return list<array<string, mixed>> */
-    private function validate(mixed $payload, EstimateComposerInput $input): array
+    /** @return array{intents:list<array<string,mixed>>,quarantined:list<array{index:int,reason:string}>} */
+    private function project(mixed $payload, EstimateComposerInput $input): array
     {
-        if (! is_array($payload) || ! array_is_list($payload)) {
+        if (! is_array($payload) || ! array_is_list($payload) || count($payload) > 1000) {
             throw new InvalidArgumentException('estimate_composer_result_shape_invalid');
         }
         $candidateById = [];
+        $intentsById = [];
         foreach ($input->candidates as $candidate) {
             if (isset($candidateById[$candidate['candidate_id']])) {
                 throw new InvalidArgumentException('estimate_composer_input_candidate_duplicate');
             }
             $candidateById[$candidate['candidate_id']] = $candidate;
+            $intentsById[$candidate['candidate_id']] = (new EstimateWorkIntent(
+                'existing',
+                $candidate['candidate_id'],
+                null,
+                null,
+                null,
+                $candidate['source_fact_ids'],
+                $candidate['technology_package_candidate'],
+                [],
+                [],
+                [],
+            ))->toArray();
         }
         $allowedFactIds = array_fill_keys(array_column($input->facts, 'id'), true);
         $allowedQuantityIds = array_fill_keys(array_column($input->derivedQuantities, 'id'), true);
@@ -104,58 +132,84 @@ final readonly class RunEstimateComposer
             'is_string',
         )), true);
         $candidateWorkKeys = array_fill_keys(array_column($input->candidates, 'work_key'), true);
-        $intentsById = [];
         $supplementaryById = [];
         $supplementaryWorkKeys = [];
-        foreach ($payload as $record) {
-            if (! is_array($record)) {
-                throw new InvalidArgumentException('estimate_work_intent_shape_invalid');
-            }
-            $intent = EstimateWorkIntent::fromArray($record);
-            if (isset($intentsById[$intent->candidateId]) || isset($supplementaryById[$intent->candidateId])) {
-                throw new InvalidArgumentException('estimate_composer_candidate_duplicate');
-            }
-            foreach ($intent->sourceFactIds as $factId) {
-                if (! isset($allowedFactIds[$factId])) {
-                    throw new InvalidArgumentException('estimate_composer_source_fact_invalid');
+        $seenCandidateIds = [];
+        $quarantined = [];
+        foreach ($payload as $index => $record) {
+            try {
+                if (! is_array($record) || array_is_list($record)) {
+                    throw new InvalidArgumentException('estimate_work_intent_shape_invalid');
                 }
-            }
-            if ($intent->kind === 'supplementary') {
-                if ($intent->workKey === null
-                    || isset($candidateWorkKeys[$intent->workKey])
-                    || isset($supplementaryWorkKeys[$intent->workKey])) {
-                    throw new InvalidArgumentException('estimate_composer_supplementary_duplicate');
+                $kind = $record['kind'] ?? null;
+                $candidate = $kind === 'existing' && is_string($record['candidate_id'] ?? null)
+                    ? ($candidateById[$record['candidate_id']] ?? null)
+                    : null;
+                if ($kind === 'existing' && $candidate === null) {
+                    throw new InvalidArgumentException('estimate_composer_candidate_coverage_invalid');
                 }
-                if ($intent->derivedQuantityId !== null && ! isset($allowedQuantityIds[$intent->derivedQuantityId])) {
-                    throw new InvalidArgumentException('estimate_composer_derived_quantity_invalid');
+                $projected = [
+                    'kind' => $kind,
+                    'candidate_id' => $kind === 'supplementary'
+                        ? 'supplementary:'.substr(hash('sha256', json_encode([
+                            $input->fingerprint(), $index, $record['work_key'] ?? null,
+                            $record['source_fact_ids'] ?? null,
+                        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)), 0, 32)
+                        : ($candidate['candidate_id'] ?? null),
+                    'work_key' => $kind === 'existing' ? null : ($record['work_key'] ?? null),
+                    'name' => $kind === 'existing' ? null : ($record['name'] ?? null),
+                    'derived_quantity_id' => $kind === 'existing' ? null : ($record['derived_quantity_id'] ?? null),
+                    'source_fact_ids' => $kind === 'existing'
+                        ? ($candidate['source_fact_ids'] ?? [])
+                        : ($record['source_fact_ids'] ?? null),
+                    'technology_package_candidate' => $kind === 'existing'
+                        ? ($candidate['technology_package_candidate'] ?? null)
+                        : ($record['technology_package_candidate'] ?? null),
+                    'assumptions' => $record['assumptions'] ?? null,
+                    'exclusions' => $record['exclusions'] ?? null,
+                    'missing_document_recommendations' => $record['missing_document_recommendations'] ?? null,
+                ];
+                $intent = EstimateWorkIntent::fromArray($projected);
+                if (isset($seenCandidateIds[$intent->candidateId]) || isset($supplementaryById[$intent->candidateId])) {
+                    throw new InvalidArgumentException('estimate_composer_candidate_duplicate');
                 }
-                if ($intent->technologyPackageCandidate !== null
-                    && ! isset($allowedTechnologyCandidates[$intent->technologyPackageCandidate])) {
-                    throw new InvalidArgumentException('estimate_composer_technology_candidate_invalid');
+                foreach ($intent->sourceFactIds as $factId) {
+                    if (! isset($allowedFactIds[$factId])) {
+                        throw new InvalidArgumentException('estimate_composer_source_fact_invalid');
+                    }
                 }
-                $supplementaryWorkKeys[$intent->workKey] = true;
-                $supplementaryById[$intent->candidateId] = $intent->toArray();
+                if ($intent->kind === 'supplementary') {
+                    if ($intent->workKey === null
+                        || isset($candidateWorkKeys[$intent->workKey])
+                        || isset($supplementaryWorkKeys[$intent->workKey])) {
+                        throw new InvalidArgumentException('estimate_composer_supplementary_duplicate');
+                    }
+                    if ($intent->derivedQuantityId !== null && ! isset($allowedQuantityIds[$intent->derivedQuantityId])) {
+                        throw new InvalidArgumentException('estimate_composer_derived_quantity_invalid');
+                    }
+                    if ($intent->technologyPackageCandidate !== null
+                        && ! isset($allowedTechnologyCandidates[$intent->technologyPackageCandidate])) {
+                        throw new InvalidArgumentException('estimate_composer_technology_candidate_invalid');
+                    }
+                    $supplementaryWorkKeys[$intent->workKey] = true;
+                    $supplementaryById[$intent->candidateId] = $intent->toArray();
 
-                continue;
+                    continue;
+                }
+                $seenCandidateIds[$intent->candidateId] = true;
+                $intentsById[$intent->candidateId] = $intent->toArray();
+            } catch (InvalidArgumentException $exception) {
+                $quarantined[] = ['index' => $index, 'reason' => $exception->getMessage()];
             }
-            $candidate = $candidateById[$intent->candidateId] ?? null;
-            if ($candidate === null) {
-                throw new InvalidArgumentException('estimate_composer_candidate_coverage_invalid');
-            }
-            if ($intent->technologyPackageCandidate !== $candidate['technology_package_candidate']) {
-                throw new InvalidArgumentException('estimate_composer_technology_candidate_invalid');
-            }
-            $intentsById[$intent->candidateId] = $intent->toArray();
         }
-        if (array_diff_key($candidateById, $intentsById) !== [] || count($candidateById) !== count($intentsById)) {
-            throw new InvalidArgumentException('estimate_composer_candidate_coverage_invalid');
-        }
-
         ksort($supplementaryById, SORT_STRING);
 
-        return [...array_map(
-            static fn (array $candidate): array => $intentsById[$candidate['candidate_id']],
-            $input->candidates,
-        ), ...array_values($supplementaryById)];
+        return [
+            'intents' => [...array_map(
+                static fn (array $candidate): array => $intentsById[$candidate['candidate_id']],
+                $input->candidates,
+            ), ...array_values($supplementaryById)],
+            'quarantined' => $quarantined,
+        ];
     }
 }

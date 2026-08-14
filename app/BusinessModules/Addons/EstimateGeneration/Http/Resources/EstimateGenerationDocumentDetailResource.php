@@ -174,6 +174,26 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         $vision = is_array($payload['vision_analysis'] ?? null) ? $payload['vision_analysis'] : [];
         $elements = is_array($vision['elements'] ?? null) ? array_values(array_filter($vision['elements'], 'is_array')) : [];
         $completion = is_array($payload['role_completion'] ?? null) ? $payload['role_completion'] : [];
+        $arbitration = is_array($payload['document_arbitration'] ?? null) ? $payload['document_arbitration'] : [];
+        $decisions = is_array($arbitration['decisions'] ?? null) ? $arbitration['decisions'] : [];
+        $facts = [];
+        foreach ($decisions as $decision) {
+            $canonical = is_array($decision) ? ($decision['canonical_claim'] ?? null) : null;
+            if (! is_array($canonical) || ! in_array($decision['status'] ?? null, ['accepted', 'candidate'], true)) {
+                continue;
+            }
+            $facts[] = [
+                'entityKey' => $canonical['entity_key'] ?? null,
+                'factType' => $canonical['fact_type'] ?? null,
+                'value' => $canonical['value'] ?? null,
+                'unit' => $canonical['unit'] ?? null,
+            ];
+        }
+        $geometry = is_array($payload['geometry_expert'] ?? null) ? $payload['geometry_expert'] : [];
+        $quarantined = array_values(array_filter([
+            ...(is_array($arbitration['quarantined_intents'] ?? null) ? $arbitration['quarantined_intents'] : []),
+            ...(is_array($geometry['quarantined_intents'] ?? null) ? $geometry['quarantined_intents'] : []),
+        ], 'is_array'));
         $questions = array_map(
             static fn ($question): array => $question->toArray(),
             app(ClarificationQuestionProjector::class)->projectPages([$payload]),
@@ -187,7 +207,9 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'evidence_ref' => is_string($item['evidence_ref'] ?? null) ? $item['evidence_ref'] : null,
                 'region' => is_array($item['polygon'] ?? null) ? $item['polygon'] : [],
             ], $elements)),
+            'facts' => $facts,
             'questions' => $questions,
+            'quarantined_items' => $quarantined,
         ];
     }
 

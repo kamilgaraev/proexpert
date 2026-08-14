@@ -32,6 +32,7 @@ final class DeterministicGeometryCalculator
         $conflicts = [];
         $questions = [];
         $skippedSheets = [];
+        $quarantinedIntents = [];
         foreach ($input->sheets as $sheet) {
             if (! is_array($sheet) || ! in_array($sheet['sheet_role'] ?? null, [
                 'plan', 'section', 'facade', 'roof', 'explication', 'specification',
@@ -41,7 +42,19 @@ final class DeterministicGeometryCalculator
 
                 continue;
             }
-            foreach ($this->interpretations($sheet) as $interpretation) {
+            foreach ($this->interpretations($sheet) as $interpretationIndex => $interpretation) {
+                try {
+                    $interpretation = $this->projectIntentSources($sheet, $interpretation);
+                    $interpretation = $this->projectIntentIdentity($input, $interpretation);
+                } catch (InvalidArgumentException $exception) {
+                    $quarantinedIntents[] = [
+                        'sheet_id' => is_string($sheet['sheet_id'] ?? null) ? $sheet['sheet_id'] : 'unknown',
+                        'index' => $interpretationIndex,
+                        'reason' => $exception->getMessage(),
+                    ];
+
+                    continue;
+                }
                 $locators = array_column(is_array($interpretation['operands'] ?? null) ? $interpretation['operands'] : [], 'physical_locator');
                 if (count($locators) !== count(array_unique($locators))) {
                     $conflicts[] = [
@@ -93,9 +106,20 @@ final class DeterministicGeometryCalculator
 
                     continue;
                 }
+                try {
+                    $projectedQuantity = $this->quantity($interpretation);
+                } catch (InvalidArgumentException $exception) {
+                    $quarantinedIntents[] = [
+                        'sheet_id' => is_string($sheet['sheet_id'] ?? null) ? $sheet['sheet_id'] : 'unknown',
+                        'index' => $interpretationIndex,
+                        'reason' => $exception->getMessage(),
+                    ];
+
+                    continue;
+                }
                 $quantities[] = [
                     'quantity' => [
-                        ...$this->quantity($interpretation),
+                        ...$projectedQuantity,
                         'sheet_ids' => [(string) ($sheet['sheet_id'] ?? '')],
                         'source_version' => is_string($sheet['source_version'] ?? null)
                             ? $sheet['source_version'] : $input->sourceVersion,
@@ -110,7 +134,7 @@ final class DeterministicGeometryCalculator
         $conflicts = [...$conflicts, ...$crossSheetConflicts];
         $questions = [...$questions, ...$crossSheetQuestions];
 
-        return new GeometryExpertResult($quantities, $conflicts, $questions, $skippedSheets);
+        return new GeometryExpertResult($quantities, $conflicts, $questions, $skippedSheets, $quarantinedIntents);
     }
 
     /**
@@ -122,6 +146,7 @@ final class DeterministicGeometryCalculator
         $conflicts = [];
         $questions = [];
         $skipped = [];
+        $quarantined = [];
         foreach ($pages as $page) {
             if (! ($page['result'] ?? null) instanceof GeometryExpertResult) {
                 throw new InvalidArgumentException('geometry_reconciliation_page_invalid');
@@ -143,6 +168,7 @@ final class DeterministicGeometryCalculator
             $conflicts = [...$conflicts, ...$result->conflicts];
             $questions = [...$questions, ...$result->questions];
             $skipped = [...$skipped, ...$result->skippedSheets];
+            $quarantined = [...$quarantined, ...$result->quarantinedIntents];
         }
         [$quantities, $crossConflicts, $crossQuestions] = $this->reconcile($candidates);
 
@@ -151,6 +177,7 @@ final class DeterministicGeometryCalculator
             [...$conflicts, ...$crossConflicts],
             [...$questions, ...$crossQuestions],
             array_values(array_unique($skipped)),
+            $quarantined,
         );
     }
 
@@ -288,6 +315,94 @@ final class DeterministicGeometryCalculator
             'rounding_scale' => $scale,
             'evidence_ids' => array_values(array_unique($evidence)),
         ];
+    }
+
+    /** @param array<string,mixed> $interpretation @return array<string,mixed> */
+    private function projectIntentIdentity(
+        GeometryExpertInput $input,
+        array $interpretation,
+    ): array {
+        $quantityRef = $interpretation['quantity_ref'] ?? $interpretation['quantity_id'] ?? null;
+        $entityRef = $interpretation['entity_ref'] ?? $interpretation['entity_id'] ?? null;
+        if (! is_string($quantityRef) || trim($quantityRef) === '' || mb_strlen($quantityRef) > 200
+            || ! is_string($entityRef) || trim($entityRef) === '' || mb_strlen($entityRef) > 200) {
+            throw new InvalidArgumentException('geometry_intent_reference_invalid');
+        }
+        $scope = implode('|', [
+            $input->organizationId,
+            $input->projectId,
+            $input->sessionId,
+            $input->sourceVersion,
+        ]);
+
+        return [
+            ...$interpretation,
+            'quantity_id' => 'quantity:'.substr(hash('sha256', $scope.'|'.trim($quantityRef)), 0, 32),
+            'entity_id' => 'entity:'.substr(hash('sha256', $scope.'|'.trim($entityRef)), 0, 32),
+        ];
+    }
+
+    /** @param array<string,mixed> $sheet @param array<string,mixed> $interpretation @return array<string,mixed> */
+    private function projectIntentSources(array $sheet, array $interpretation): array
+    {
+        $arbitration = $sheet['arbitration'] ?? null;
+        if (! is_array($arbitration)) {
+            return $interpretation;
+        }
+        $decisions = $arbitration['decisions'] ?? null;
+        $operands = $interpretation['operands'] ?? null;
+        if (! is_array($decisions) || ! array_is_list($decisions)
+            || ! is_array($operands) || ! array_is_list($operands) || count($operands) > 64) {
+            throw new InvalidArgumentException('geometry_source_projection_invalid');
+        }
+        $claims = [];
+        foreach ($decisions as $decision) {
+            $canonical = is_array($decision) ? ($decision['canonical_claim'] ?? null) : null;
+            $claimId = is_array($canonical) ? ($canonical['source_claim_id'] ?? null) : null;
+            if (! is_string($claimId) || ($decision['status'] ?? null) !== 'accepted') {
+                continue;
+            }
+            $claims[$claimId] = [
+                'canonical' => $canonical,
+                'evidence' => is_array($decision['evidence_refs'] ?? null) ? $decision['evidence_refs'] : [],
+            ];
+        }
+        $projectedOperands = [];
+        foreach ($operands as $operand) {
+            $claimRef = is_array($operand) ? ($operand['claim_ref'] ?? null) : null;
+            $evidenceRef = is_array($operand) ? ($operand['evidence_ref'] ?? null) : null;
+            $name = is_array($operand) ? ($operand['name'] ?? null) : null;
+            if (! is_string($claimRef) || ! isset($claims[$claimRef])
+                || ! is_string($evidenceRef) || ! in_array($evidenceRef, $claims[$claimRef]['evidence'], true)
+                || ! is_string($name)) {
+                throw new InvalidArgumentException('geometry_source_reference_not_allowlisted');
+            }
+            $canonical = $claims[$claimRef]['canonical'];
+            $value = is_array($canonical['value'] ?? null) ? ($canonical['value']['data'] ?? null) : null;
+            $unit = $canonical['unit'] ?? null;
+            if ((! is_string($value) && ! is_int($value)) || ! is_string($unit)) {
+                throw new InvalidArgumentException('geometry_source_value_invalid');
+            }
+            $projectedOperands[] = [
+                'name' => $name,
+                'value' => (string) $value,
+                'unit' => $unit,
+                'evidence_id' => $evidenceRef,
+                'physical_locator' => implode(':', [
+                    'source',
+                    $sheet['document_id'] ?? 'unknown',
+                    $sheet['page_id'] ?? 'unknown',
+                    $sheet['processing_unit_id'] ?? 'unknown',
+                    $sheet['source_version'] ?? 'unknown',
+                    $evidenceRef,
+                ]),
+            ];
+        }
+        $interpretation['operands'] = $projectedOperands;
+        $interpretation['output_unit'] = 'm2';
+        $interpretation['rounding_scale'] = 6;
+
+        return $interpretation;
     }
 
     /** @param array<string,list<BigDecimal>> $values */

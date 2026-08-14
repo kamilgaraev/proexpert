@@ -1,0 +1,34 @@
+{
+  "schema_version": "3",
+  "decisions": [
+    {
+      "claim_id": "literal:2",
+      "status": "unresolved",
+      "supporting_claim_ids": ["literal:2"],
+      "evidence_refs": ["page-2-evidence"],
+      "reason_code": "scale_evidence_missing",
+      "canonical_claim": {
+        "entity_key": "provider-sheet",
+        "fact_type": "scale",
+        "value": {"type": "string", "data": "не определён"},
+        "unit": null,
+        "source_claim_id": "literal:2"
+      },
+      "question": {
+        "code": "SCALE_REQUIRED",
+        "subject": "Масштаб листа",
+        "reason": "Масштаб не найден в штампе или примечаниях.",
+        "impact": "Линейные размеры нельзя получать по пикселям.",
+        "recommendation": "Указать масштаб листа.",
+        "choices": ["Указать масштаб", "Использовать только явные размеры"],
+        "source_locator": {
+          "page_id": 998,
+          "page_number": 2,
+          "processing_unit_id": 998,
+          "source_version": "stale",
+          "coordinate_space": "provider"
+        }
+      }
+    }
+  ]
+}

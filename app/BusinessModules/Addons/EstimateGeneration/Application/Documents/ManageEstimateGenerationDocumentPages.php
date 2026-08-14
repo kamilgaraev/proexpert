@@ -436,6 +436,7 @@ final class ManageEstimateGenerationDocumentPages
             $pages->map(static fn (EstimateGenerationDocumentPage $page): array => [
                 'processing_unit_id' => (int) $page->processing_unit_id,
                 'status' => (string) $page->status,
+                'quality_flags' => is_array($page->quality_flags) ? $page->quality_flags : [],
             ])->values()->all(),
             $units->map(static fn (EstimateGenerationProcessingUnit $unit): array => [
                 'id' => (int) $unit->id,

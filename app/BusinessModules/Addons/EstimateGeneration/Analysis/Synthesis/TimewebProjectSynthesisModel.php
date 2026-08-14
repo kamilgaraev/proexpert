@@ -82,7 +82,7 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
             }
             $status = 'succeeded';
 
-            return ProjectSynthesisSelection::fromArray($decoded)->toArray();
+            return $decoded;
         } catch (RerankWireException $exception) {
             $status = $exception->attemptStatus;
             $httpCode = $exception->httpCode;
@@ -97,7 +97,8 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
         return 'Ты инженер единой модели строительного проекта. Сопоставь факты разных документов, геометрические производные и решения оператора. '
             .'Не вычисляй стоимость и не изобретай факты, ссылки или идентификаторы. Учитывай материал кровли из общих данных, площадь из плана кровли '
             .'и визуальное подтверждение совместно; не объединяй повтор одного физического проёма; условные конструкции оставляй вопросом. '
-            .'Верни только JSON ровно с ключами accepted_link_ids и question_conflict_ids. Значения — массивы только существующих идентификаторов кандидатов.';
+            .'Верни только JSON ровно с ключами accepted_link_ids и question_conflict_ids. Значения — массивы только существующих идентификаторов кандидатов. '
+            .'Сервер сам добавит обязательные confirmed-связи и вопросы по всем известным конфликтам; не повторяй их ради полноты.';
     }
 
     private function normalizedContent(string $content): string

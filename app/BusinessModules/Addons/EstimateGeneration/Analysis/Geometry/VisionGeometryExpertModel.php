@@ -59,7 +59,9 @@ final readonly class VisionGeometryExpertModel implements GeometryExpertModel
                 'document_id' => $source->documentId,
                 'page_id' => $source->pageId,
                 'page_number' => $source->pageNumber,
+                'processing_unit_id' => $source->processingUnitId,
                 'source_version' => $source->sourceVersion,
+                'arbitration' => $arbitration,
                 'interpretations' => $analysis->rawObserverFacts,
             ];
         }

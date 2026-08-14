@@ -9,12 +9,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisDat
 
 final readonly class VisionAnalysisData
 {
-    private const CONTRACT_REPAIRS = [
-        'schema_version_string_to_integer',
-        'sheet_analysis_v2_to_v3',
-        'arbiter_canonical_claim_from_allowlist',
-    ];
-
     public const MAX_RAW_OBSERVATION_BYTES = 131_072;
 
     public const SCHEMA_VERSION = 1;
@@ -45,7 +39,6 @@ final readonly class VisionAnalysisData
         public ?ProjectSheetAnalysisData $projectSheetAnalysis = null,
         public array $quarantinedItems = [],
         public array $rawObserverFacts = [],
-        public array $contractRepairs = [],
     ) {
         if (! in_array($sheetType, self::SHEET_TYPES, true) || $evidence === [] || count($evidence) > 256 || count($elements) > 500 || count($scaleCandidates) > 32
             || array_diff($warnings, self::WARNINGS) !== [] || count($warnings) !== count(array_unique($warnings))
@@ -56,10 +49,7 @@ final readonly class VisionAnalysisData
             || ($usageStatus === 'unavailable') !== ($inputTokens === null && $outputTokens === null)
             || ($inputTokens !== null && $inputTokens < 0) || ($outputTokens !== null && $outputTokens < 0)
             || count($rawObserverFacts) > 64
-            || strlen(json_encode($rawObserverFacts, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)) > self::MAX_RAW_OBSERVATION_BYTES
-            || array_filter($contractRepairs, static fn (mixed $repair): bool => ! is_string($repair)) !== []
-            || array_diff($contractRepairs, self::CONTRACT_REPAIRS) !== []
-            || count($contractRepairs) !== count(array_unique($contractRepairs))) {
+            || strlen(json_encode($rawObserverFacts, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)) > self::MAX_RAW_OBSERVATION_BYTES) {
             throw new VisionContractException('invalid_analysis_metadata');
         }
         foreach ($rawObserverFacts as $fact) {
@@ -128,7 +118,7 @@ final readonly class VisionAnalysisData
     }
 
     /** @param array<string, mixed> $data @param list<string> $nativeReferences */
-    public static function fromProviderArray(array $data, string $provider, string $requestedModel, string $reportedModel, string $modelVersion, string $usageStatus, ?int $inputTokens, ?int $outputTokens, int $maxElements, ?int $maxFacts = null, array $nativeReferences = [], array $contractRepairs = []): self
+    public static function fromProviderArray(array $data, string $provider, string $requestedModel, string $reportedModel, string $modelVersion, string $usageStatus, ?int $inputTokens, ?int $outputTokens, int $maxElements, ?int $maxFacts = null, array $nativeReferences = []): self
     {
         $maxFacts ??= $maxElements;
         $schemaVersion = $data['schema_version'] ?? null;
@@ -208,13 +198,13 @@ final readonly class VisionAnalysisData
             $projectSheetAnalysis,
             [...$elementQuarantine, ...$scaleQuarantine, ...$visualQuarantine, ...$semanticQuarantine],
             self::boundedRawObserverFacts($data['project_sheet_analysis']['facts'] ?? []),
-            $contractRepairs,
         );
     }
 
     /** @param array<string, mixed> $data */
     public static function fromStoredArray(array $data): self
     {
+        unset($data['contract_repairs']);
         $schemaVersion = $data['schema_version'] ?? null;
         $contractKeys = match ($schemaVersion) {
             self::PROJECT_SHEET_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'provider', 'requested_model', 'reported_model', 'model_version', 'usage', 'visual_attributes', 'project_sheet_analysis'],
@@ -222,10 +212,6 @@ final readonly class VisionAnalysisData
             self::SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'provider', 'requested_model', 'reported_model', 'model_version', 'usage'],
             default => [],
         };
-        $contractRepairs = $data['contract_repairs'] ?? [];
-        if (array_key_exists('contract_repairs', $data)) {
-            $contractKeys[] = 'contract_repairs';
-        }
         $usage = $data['usage'] ?? null;
         if ($contractKeys === [] || ! self::hasExactKeys($data, $contractKeys)
             || ! is_string($data['sheet_type'] ?? null)
@@ -238,7 +224,6 @@ final readonly class VisionAnalysisData
             || ! is_string($data['reported_model'] ?? null)
             || ! is_string($data['model_version'] ?? null)
             || ! is_array($usage)
-            || ! is_array($contractRepairs)
             || ! self::hasExactKeys($usage, ['status', 'input_tokens', 'output_tokens'])) {
             throw new VisionContractException('invalid_stored_analysis_schema');
         }
@@ -290,7 +275,6 @@ final readonly class VisionAnalysisData
             $projectSheetAnalysis,
             [],
             [],
-            array_values($contractRepairs),
         );
     }
 
@@ -392,7 +376,6 @@ final readonly class VisionAnalysisData
                 ...$primary->rawObserverFacts,
                 ...self::boundedRawObserverFacts($data['project_sheet_analysis']['facts'] ?? []),
             ]),
-            $primary->contractRepairs,
         );
     }
 
@@ -414,7 +397,6 @@ final readonly class VisionAnalysisData
             $this->projectSheetAnalysis?->mapPolygonsToSource($transform),
             $this->quarantinedItems,
             $this->rawObserverFacts,
-            $this->contractRepairs,
         );
     }
 
@@ -473,9 +455,6 @@ final readonly class VisionAnalysisData
         }
         if ($this->projectSheetAnalysis !== null) {
             $payload['project_sheet_analysis'] = $this->projectSheetAnalysis->toArray();
-        }
-        if ($this->contractRepairs !== []) {
-            $payload['contract_repairs'] = $this->contractRepairs;
         }
 
         return $payload;

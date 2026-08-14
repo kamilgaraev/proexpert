@@ -100,6 +100,31 @@ final class ProjectSynthesisTest extends TestCase
         self::assertSame($this->input()->fingerprint(), $runs->inputs[0]->inputFingerprint);
     }
 
+    public function test_project_engineer_quarantines_unknown_refs_and_keeps_server_required_selection(): void
+    {
+        $runs = new SynthesisRoleRunMemoryRepository;
+        $runner = new RunProjectSynthesis($runs, new RecordedProjectSynthesisModel([
+            'accepted_link_ids' => ['link:roof', 'link:invented'],
+            'question_conflict_ids' => ['conflict:invented'],
+        ]), 'openai/gpt-5-mini');
+
+        $selection = $runner->run($this->input(), [[
+            'id' => 'link:roof',
+            'status' => 'confirmed',
+            'fact_ids' => ['fact:roof-area', 'fact:roof-material'],
+        ]], [[
+            'conflict_id' => 'conflict:foundation',
+            'fact_ids' => ['fact:foundation-condition'],
+            'reason_code' => 'foundation_condition_missing',
+            'source_locator' => ['document_id' => 12, 'page' => 3],
+        ]]);
+
+        self::assertSame(['link:roof'], $selection->acceptedLinkIds);
+        self::assertSame(['conflict:foundation'], $selection->questionConflictIds);
+        self::assertCount(2, $runs->lastResult?->payload['quarantined_intents'] ?? []);
+        self::assertSame('questions', $runs->lastResult?->payload['result_state']);
+    }
+
     private function input(
         ?array $sourceVersions = null,
         ?array $roleFingerprints = null,
@@ -162,6 +187,8 @@ final class SynthesisRoleRunMemoryRepository implements AiRoleRunRepository
 {
     public array $inputs = [];
 
+    public ?AiRoleRunResult $lastResult = null;
+
     private ?AiRoleRunResult $result = null;
 
     public function claim(AiRoleRunInput $input, string $ownerUuid): AiRoleRunClaim
@@ -178,6 +205,7 @@ final class SynthesisRoleRunMemoryRepository implements AiRoleRunRepository
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
     {
         $this->result = $result;
+        $this->lastResult = $result;
     }
 
     public function fail(int $runId, string $ownerUuid, AiRoleRunFailure $failure): void {}

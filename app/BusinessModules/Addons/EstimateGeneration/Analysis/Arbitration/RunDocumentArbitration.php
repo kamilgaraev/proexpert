@@ -70,13 +70,22 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
             if ($physicalAttemptId === null) {
                 throw new RuntimeException('arbitration_physical_attempt_missing');
             }
-            $decisions = array_map(
-                static fn (array $intent): ArbitrationDecision => ArbitrationDecision::fromProviderIntent($intent, $built['claims']),
+            $ingestion = (new ArbitrationIntentIngestor)->ingest(
                 $analysis->rawObserverFacts,
+                $built['claims'],
+                $source,
             );
-            if ($decisions === []) {
-                throw new RuntimeException('arbitration_decisions_missing');
+            $decisions = $ingestion->accepted;
+            if ($decisions === [] && $ingestion->quarantined === []) {
+                $ingestion = new ArbitrationIntentIngestionResult([], [[
+                    'index' => null,
+                    'reason' => 'arbitration_decisions_missing',
+                ]]);
             }
+            $questions = array_values(array_filter(array_map(
+                static fn (ArbitrationDecision $decision): ?array => $decision->question,
+                $decisions,
+            )));
             $result = new AiRoleRunResult([
                 'schema_version' => 3,
                 'role' => AiAnalysisRole::Arbiter->value,
@@ -93,16 +102,19 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
                     'supporting_claim_ids' => $decision->supportingClaimIds,
                     'evidence_refs' => $decision->evidenceRefs,
                     'reason_code' => $decision->reasonCode,
+                    'reason' => $decision->reason,
                     'canonical_claim' => $decision->canonicalClaim,
                     'question' => $decision->question,
                 ], $decisions),
-                'contract_repairs' => $analysis->contractRepairs,
-                'questions' => array_values(array_filter(array_map(
-                    static fn (ArbitrationDecision $decision): ?array => $decision->question,
-                    $decisions,
-                ))),
+                'quarantined_intents' => $ingestion->quarantined,
+                'result_state' => $questions !== []
+                    ? 'questions'
+                    : ($ingestion->quarantined !== [] ? 'partial' : 'ready'),
+                'questions' => $questions,
             ], $physicalAttemptId);
-            $this->writer?->writeArbitration($built['claims'], $decisions, $source->documentId, $source->pageNumber);
+            if ($decisions !== []) {
+                $this->writer?->writeArbitration($built['claims'], $decisions, $source->documentId, $source->pageNumber);
+            }
             $this->runs->complete($claim->runId, $claim->ownerUuid, $result);
 
             return $result;
