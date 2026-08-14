@@ -15,22 +15,29 @@ final class InMemoryAiRoleRunRepository implements AiRoleRunRepository
     /** @var list<AiRoleRunInput> */
     public array $inputs = [];
 
-    private ?AiRoleRunResult $result = null;
+    /** @var array<string, AiRoleRunResult> */
+    private array $results = [];
+
+    /** @var array<int, string> */
+    private array $identities = [];
 
     public function claim(AiRoleRunInput $input, string $ownerUuid): AiRoleRunClaim
     {
         $this->inputs[] = $input;
+        $identity = $input->identityFingerprint();
+        $runId = count($this->identities) + 1;
+        $this->identities[$runId] = $identity;
 
-        return $this->result === null
-            ? new AiRoleRunClaim(1, 'owned', $ownerUuid)
-            : new AiRoleRunClaim(1, 'replay', result: $this->result);
+        return ! isset($this->results[$identity])
+            ? new AiRoleRunClaim($runId, 'owned', $ownerUuid)
+            : new AiRoleRunClaim($runId, 'replay', result: $this->results[$identity]);
     }
 
     public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId): void {}
 
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
     {
-        $this->result = $result;
+        $this->results[$this->identities[$runId]] = $result;
     }
 
     public function fail(int $runId, string $ownerUuid, AiRoleRunFailure $failure): void {}

@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
@@ -467,7 +472,25 @@ final class PipelineStageFunctionalTest extends TestCase
             new AssembleResourcesStage(new AssembleMatchedResources, $results),
             new ResolvePricesStage(new EstimatePricingService, $results),
             new BuildDraftStage($results),
-            new ValidateDraftStage(new EstimateValidationService, new DraftReadinessProjector, $results),
+            new ValidateDraftStage(
+                new EstimateValidationService,
+                new DraftReadinessProjector,
+                $results,
+                new ApplyComposerCorrectionCycle(new RunEstimateAudit(
+                    new InMemoryAiRoleRunRepository,
+                    new class implements EstimateAuditModel
+                    {
+                        public function audit(EstimateAuditInput $input, callable $onAttemptStarted): array
+                        {
+                            $onAttemptStarted('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+
+                            return ['accepted' => true, 'findings' => []];
+                        }
+                    },
+                    'test-model',
+                )),
+                new EstimateAuditInputFactory(new InMemoryProjectModelRepository, 10000),
+            ),
         ];
         $base = 'sha256:'.str_repeat('a', 64);
         $attempt = '00000000-0000-4000-8000-000000000001';
@@ -561,5 +584,8 @@ final class PipelineStageFunctionalTest extends TestCase
 
         $payload = $state->priorOutputs($seed)->payload(ProcessingStage::ValidateDraft);
         self::assertArrayHasKey('quality_summary', $payload['draft']);
+        self::assertSame('accepted', $payload['draft']['independent_audit']['status']);
+        self::assertSame(0, $payload['draft']['independent_audit']['correction_cycles']);
+        self::assertSame([], $payload['draft']['audit_review_items']);
     }
 }

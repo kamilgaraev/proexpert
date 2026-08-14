@@ -8,6 +8,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\TimewebEstimateAuditModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
@@ -682,6 +687,25 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
             (int) config('estimate-generation.estimate_composer.max_facts'),
         ));
+        $this->app->singleton(EstimateAuditModel::class, static fn ($app): EstimateAuditModel => new TimewebEstimateAuditModel(
+            $app->make(RerankWireClient::class),
+            $app->make(AiUsageStore::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
+            (string) config('estimate-generation.estimate_auditor.model'),
+            (int) config('estimate-generation.estimate_auditor.max_input_bytes'),
+            (int) config('estimate-generation.estimate_auditor.max_output_tokens'),
+            (int) config('estimate-generation.estimate_auditor.timeout_seconds'),
+        ));
+        $this->app->singleton(RunEstimateAudit::class, static fn ($app): RunEstimateAudit => new RunEstimateAudit(
+            $app->make(AiRoleRunRepository::class),
+            $app->make(EstimateAuditModel::class),
+            (string) config('estimate-generation.estimate_auditor.model'),
+        ));
+        $this->app->singleton(EstimateAuditInputFactory::class, static fn ($app): EstimateAuditInputFactory => new EstimateAuditInputFactory(
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+            (int) config('estimate-generation.estimate_auditor.max_facts'),
+        ));
+        $this->app->singleton(ApplyComposerCorrectionCycle::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore::class,
