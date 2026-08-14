@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use DateTimeImmutable;
+use DateTimeZone;
 use Illuminate\Database\Connection;
 
 final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysicalAttemptStore
@@ -25,6 +26,8 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
         DateTimeImmutable $now,
         DateTimeImmutable $leaseExpiresAt,
     ): VisionPhysicalAttemptSnapshot {
+        $databaseNow = $this->databaseTime($now);
+        $databaseLeaseExpiresAt = $this->databaseTime($leaseExpiresAt);
         $this->database->table(self::TABLE)->insertOrIgnore([
             'attempt_id' => $context->attemptId,
             'request_fingerprint' => $requestFingerprint,
@@ -36,10 +39,10 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             'unit_id' => $context->unitId,
             'state' => 'pre_wire',
             'owner_token' => $ownerToken,
-            'lease_expires_at' => $leaseExpiresAt,
+            'lease_expires_at' => $databaseLeaseExpiresAt,
             'usage_recorded' => false,
-            'created_at' => $now,
-            'updated_at' => $now,
+            'created_at' => $databaseNow,
+            'updated_at' => $databaseNow,
         ]);
 
         return $this->database->transaction(function () use (
@@ -59,8 +62,8 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             if ($decision->action === 'takeover') {
                 $query->update([
                     'owner_token' => $ownerToken,
-                    'lease_expires_at' => $leaseExpiresAt,
-                    'updated_at' => $now,
+                    'lease_expires_at' => $this->databaseTime($leaseExpiresAt),
+                    'updated_at' => $this->databaseTime($now),
                 ]);
 
                 return new VisionPhysicalAttemptSnapshot(
@@ -75,14 +78,14 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
                     'state' => 'ambiguous',
                     'owner_token' => null,
                     'lease_expires_at' => null,
-                    'ambiguous_at' => $now,
+                    'ambiguous_at' => $this->databaseTime($now),
                     'terminal_reason' => $snapshot->state === 'reserved'
                         ? 'legacy_reserved_outcome_unknown'
                         : 'wire_outcome_unknown_after_lease_expiry',
                     'status' => 'ambiguous',
                     'duration_ms' => 0,
                     'price_snapshot' => '{}',
-                    'updated_at' => $now,
+                    'updated_at' => $this->databaseTime($now),
                 ]);
 
                 return new VisionPhysicalAttemptSnapshot(
@@ -106,17 +109,18 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
         DateTimeImmutable $now,
         DateTimeImmutable $leaseExpiresAt,
     ): void {
+        $databaseNow = $this->databaseTime($now);
         $updated = $this->database->table(self::TABLE)
             ->where('attempt_id', $attemptId)
             ->where('request_fingerprint', $requestFingerprint)
             ->where('state', 'pre_wire')
             ->where('owner_token', $ownerToken)
-            ->where('lease_expires_at', '>', $now)
+            ->where('lease_expires_at', '>', $databaseNow)
             ->update([
                 'state' => 'wire_started',
-                'wire_started_at' => $now,
-                'lease_expires_at' => $leaseExpiresAt,
-                'updated_at' => $now,
+                'wire_started_at' => $databaseNow,
+                'lease_expires_at' => $this->databaseTime($leaseExpiresAt),
+                'updated_at' => $databaseNow,
             ]);
         if ($updated !== 1) {
             throw new UsageInvariantViolation('Vision physical attempt wire claim lost.');
@@ -134,6 +138,7 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
         ?string $reportedModel,
         array $priceSnapshot,
     ): void {
+        $databaseNow = $this->databaseTime(new DateTimeImmutable);
         $updated = $this->database->table(self::TABLE)
             ->where('attempt_id', $attemptId)
             ->where('request_fingerprint', $requestFingerprint)
@@ -149,8 +154,8 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
                 'duration_ms' => $durationMs,
                 'reported_model' => $reportedModel,
                 'price_snapshot' => json_encode($priceSnapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
-                'response_received_at' => new DateTimeImmutable,
-                'updated_at' => new DateTimeImmutable,
+                'response_received_at' => $databaseNow,
+                'updated_at' => $databaseNow,
             ]);
         if ($updated !== 1) {
             $row = $this->database->table(self::TABLE)->where('attempt_id', $attemptId)->first();
@@ -173,6 +178,7 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
         ?string $reportedModel,
         array $priceSnapshot,
     ): void {
+        $databaseNow = $this->databaseTime($now);
         $updated = $this->database->table(self::TABLE)
             ->where('attempt_id', $attemptId)
             ->where('request_fingerprint', $requestFingerprint)
@@ -182,14 +188,14 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
                 'state' => 'ambiguous',
                 'owner_token' => null,
                 'lease_expires_at' => null,
-                'ambiguous_at' => $now,
+                'ambiguous_at' => $databaseNow,
                 'terminal_reason' => $reason,
                 'status' => 'ambiguous',
                 'http_code' => $httpCode,
                 'duration_ms' => $durationMs,
                 'reported_model' => $reportedModel,
                 'price_snapshot' => json_encode($priceSnapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
-                'updated_at' => $now,
+                'updated_at' => $databaseNow,
             ]);
         if ($updated !== 1) {
             throw new UsageInvariantViolation('Vision physical attempt ambiguous state collision.');
@@ -206,7 +212,7 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             ->update([
                 'state' => $this->database->raw("CASE WHEN state = 'response_received' THEN 'completed' ELSE state END"),
                 'usage_recorded' => true,
-                'updated_at' => new DateTimeImmutable,
+                'updated_at' => $this->databaseTime(new DateTimeImmutable),
             ]);
         if ($updated !== 1) {
             throw new UsageInvariantViolation('Vision physical attempt usage state collision.');
@@ -229,6 +235,11 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             $row->lease_expires_at === null ? null : new DateTimeImmutable((string) $row->lease_expires_at),
             $row->terminal_reason === null ? null : (string) $row->terminal_reason,
         );
+    }
+
+    private function databaseTime(DateTimeImmutable $time): string
+    {
+        return $time->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.uP');
     }
 
     /** @return array<string, mixed> */

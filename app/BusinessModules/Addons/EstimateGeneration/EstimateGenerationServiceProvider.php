@@ -390,6 +390,22 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             [],
         ));
         $this->app->singleton(RasterPreprocessor::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionIngestor::class,
+            static fn (): \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionIngestor => new \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionIngestor(
+                maxRegions: (int) config('estimate-generation.vision.adaptive_analysis.max_regions_per_page'),
+                maxAggregatePixels: (int) config('estimate-generation.vision.adaptive_analysis.max_region_pixels_per_page'),
+                maxSourcePixels: (int) config('estimate-generation.vision.preprocessing.max_pixels'),
+            ),
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionCropper::class,
+            static fn (): \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionCropper => new \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionCropper(
+                maxRegions: (int) config('estimate-generation.vision.adaptive_analysis.max_regions_per_page'),
+                maxAggregateBytes: (int) config('estimate-generation.vision.adaptive_analysis.max_region_bytes_per_page'),
+                maxLongEdge: (int) config('estimate-generation.vision.adaptive_analysis.max_region_long_edge'),
+            ),
+        );
         $this->app->singleton(GeometryResourceLimits::class, static fn (): GeometryResourceLimits => new GeometryResourceLimits(
             memoryLimitKiB: (int) config('estimate-generation.vision.geometry_runtime.memory_limit_kib'),
             cpuLimitSeconds: (int) config('estimate-generation.vision.geometry_runtime.cpu_limit_seconds'),
@@ -642,6 +658,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(VisionProvider::class),
             $app->make(ObserverInputBuilder::class),
             (string) config('estimate-generation.vision.model'),
+            $app->make(ArbitrationInputBuilder::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class),
         ));
         $this->app->alias(RunIndependentObservers::class, DocumentObserverRunner::class);
         $this->app->singleton(RunDocumentArbitration::class, static fn ($app): RunDocumentArbitration => new RunDocumentArbitration(

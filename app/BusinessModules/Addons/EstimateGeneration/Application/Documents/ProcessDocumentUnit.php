@@ -24,6 +24,7 @@ final readonly class ProcessDocumentUnit
         private DocumentUnitAggregateReconciler $reconciler,
         private FailureRecorder $failureRecorder,
         private ?DocumentUnitExhaustionHandler $exhaustion = null,
+        private ?DispatchDocumentProcessingUnits $dispatcher = null,
     ) {}
 
     public function handle(int $unitId, string $sourceVersion): DocumentUnitProcessOutcome
@@ -41,6 +42,7 @@ final readonly class ProcessDocumentUnit
             $record = $this->store->find($unitId);
             if ($record !== null) {
                 $this->reconciler->reconcile($record->documentId, $sourceVersion);
+                $this->dispatcher?->forDocument($record->documentId, $sourceVersion);
             }
 
             return new DocumentUnitProcessOutcome($claim->status);
@@ -50,6 +52,7 @@ final readonly class ProcessDocumentUnit
             $record = $this->store->find($unitId);
             if ($record?->failureCategory !== null && $record->failureCategory !== FailureCategory::Recoverable) {
                 $this->reconciler->reconcile($record->documentId, $sourceVersion);
+                $this->dispatcher?->forDocument($record->documentId, $sourceVersion);
 
                 return new DocumentUnitProcessOutcome(match ($record->failureCategory) {
                     FailureCategory::Terminal => DocumentProcessingUnitClaimStatus::Terminal,
@@ -118,16 +121,10 @@ final readonly class ProcessDocumentUnit
                     $failure->category,
                     $failure->category === FailureCategory::Terminal
                         && in_array($failure->code, [
-                            'document_unit_processing_failed',
-                            'document_unit_pre_wire_failed',
                             'vision_operation_settings_failed',
-                            'vision_request_preparation_failed',
                             'vision_physical_claim_failed',
                             'vision_physical_attempt_persistence_failed',
-                            'vision_provider_response_invalid',
                             'unexpected_internal_failure',
-                            'document_representation_contract_invalid',
-                            'document_representation_source_mismatch',
                             'vision_provider_request_rejected',
                             'vision_http_failed',
                         ], true),
@@ -157,6 +154,7 @@ final readonly class ProcessDocumentUnit
             }
 
             $this->reconciler->reconcile($context->documentId, $sourceVersion);
+            $this->dispatcher?->forDocument($context->documentId, $sourceVersion);
 
             return new DocumentUnitProcessOutcome(match ($failure->category) {
                 FailureCategory::Terminal => DocumentProcessingUnitClaimStatus::Terminal,
@@ -166,6 +164,7 @@ final readonly class ProcessDocumentUnit
         }
 
         $this->reconciler->reconcile($context->documentId, $sourceVersion);
+        $this->dispatcher?->forDocument($context->documentId, $sourceVersion);
 
         return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::Acquired);
     }

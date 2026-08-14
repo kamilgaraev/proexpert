@@ -1,34 +1,11 @@
 {
-  "schema_version": "3",
   "decisions": [
     {
       "claim_id": "literal:1",
-      "status": "unresolved",
-      "supporting_claim_ids": ["literal:1"],
+      "status": "accepted",
+      "supporting_claim_ids": [],
       "evidence_refs": ["page-1-evidence"],
-      "reason_code": "dimensioned_façade_evidence_missing",
-      "canonical_claim": {
-        "entity_key": "ai-building",
-        "fact_type": "wrong-copy",
-        "value": {"type": "string", "data": "неавторитетная копия"},
-        "unit": null,
-        "source_claim_id": "literal:1"
-      },
-      "question": {
-        "code": "FACADE_DIMENSIONS_REQUIRED",
-        "subject": "Размеры фасада",
-        "reason": "На фасаде нет полной размерной цепочки.",
-        "impact": "Площадь фасада нельзя подтвердить.",
-        "recommendation": "Уточнить ширину и высоту фасада.",
-        "choices": ["Указать размеры", "Оставить нерешённым"],
-        "source_locator": {
-          "page_id": 999,
-          "page_number": 1,
-          "processing_unit_id": 999,
-          "source_version": "stale",
-          "coordinate_space": "provider"
-        }
-      }
+      "reason": "На титульном листе непосредственно указано название раздела."
     }
   ]
 }

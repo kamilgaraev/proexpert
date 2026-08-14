@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\DTO;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoutingDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisData;
+use InvalidArgumentException;
 
 final readonly class VisionAnalysisData
 {
@@ -16,6 +18,8 @@ final readonly class VisionAnalysisData
     public const CURRENT_SCHEMA_VERSION = 2;
 
     public const PROJECT_SHEET_SCHEMA_VERSION = 3;
+
+    public const ADAPTIVE_ROUTING_SCHEMA_VERSION = 4;
 
     private const SHEET_TYPES = ['floor_plan', 'elevation', 'section', 'detail', 'site_plan', 'schedule', 'sketch', 'photo', 'unknown'];
 
@@ -39,6 +43,7 @@ final readonly class VisionAnalysisData
         public ?ProjectSheetAnalysisData $projectSheetAnalysis = null,
         public array $quarantinedItems = [],
         public array $rawObserverFacts = [],
+        public ?PageAnalysisRoutingDecision $analysisRouting = null,
     ) {
         if (! in_array($sheetType, self::SHEET_TYPES, true) || $evidence === [] || count($evidence) > 256 || count($elements) > 500 || count($scaleCandidates) > 32
             || array_diff($warnings, self::WARNINGS) !== [] || count($warnings) !== count(array_unique($warnings))
@@ -123,16 +128,19 @@ final readonly class VisionAnalysisData
         $maxFacts ??= $maxElements;
         $schemaVersion = $data['schema_version'] ?? null;
         $expectedKeys = match ($schemaVersion) {
+            self::ADAPTIVE_ROUTING_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'visual_attributes', 'project_sheet_analysis', 'analysis_routing'],
             self::PROJECT_SHEET_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'visual_attributes', 'project_sheet_analysis'],
             self::CURRENT_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'visual_attributes'],
             default => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings'],
         };
         if (! self::hasExactKeys($data, $expectedKeys)
-            || ! in_array($schemaVersion, [self::SCHEMA_VERSION, self::CURRENT_SCHEMA_VERSION, self::PROJECT_SHEET_SCHEMA_VERSION], true)
+            || ! in_array($schemaVersion, [self::SCHEMA_VERSION, self::CURRENT_SCHEMA_VERSION, self::PROJECT_SHEET_SCHEMA_VERSION, self::ADAPTIVE_ROUTING_SCHEMA_VERSION], true)
             || ! is_string($data['sheet_type'])
             || ! is_array($data['evidence']) || ! is_array($data['elements']) || ! is_array($data['scale_candidates']) || ! is_array($data['warnings'])
             || ($schemaVersion === self::CURRENT_SCHEMA_VERSION && ! is_array($data['visual_attributes']))
-            || ($schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION && (! is_array($data['visual_attributes']) || ! is_array($data['project_sheet_analysis'])))
+            || (in_array($schemaVersion, [self::PROJECT_SHEET_SCHEMA_VERSION, self::ADAPTIVE_ROUTING_SCHEMA_VERSION], true)
+                && (! is_array($data['visual_attributes']) || ! is_array($data['project_sheet_analysis'])))
+            || ($schemaVersion === self::ADAPTIVE_ROUTING_SCHEMA_VERSION && ! is_array($data['analysis_routing']))
             || $maxElements < 1 || $maxElements > 500
             || $maxFacts < 1 || $maxFacts > 500
             || count($data['elements']) > $maxElements) {
@@ -148,7 +156,7 @@ final readonly class VisionAnalysisData
         [$scales, $scaleQuarantine] = self::providerScales($data['scale_candidates'], $evidenceKeys, $elements);
         $semanticQuarantine = [];
         $projectSheetAnalysis = null;
-        if ($schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION) {
+        if (in_array($schemaVersion, [self::PROJECT_SHEET_SCHEMA_VERSION, self::ADAPTIVE_ROUTING_SCHEMA_VERSION], true)) {
             try {
                 $projectSheetAnalysis = ProjectSheetAnalysisData::fromProviderArray($data['project_sheet_analysis'], $evidenceKeys, $maxFacts, $nativeReferences);
                 $semanticQuarantine = $projectSheetAnalysis->quarantinedItems;
@@ -181,6 +189,21 @@ final readonly class VisionAnalysisData
             $evidenceKeys,
         );
 
+        $routing = null;
+        $routingQuarantine = [];
+        if ($schemaVersion === self::ADAPTIVE_ROUTING_SCHEMA_VERSION) {
+            try {
+                $routing = PageAnalysisRoutingDecision::fromProviderArray($data['analysis_routing']);
+            } catch (InvalidArgumentException $exception) {
+                $routing = PageAnalysisRoutingDecision::failOpen('invalid_routing_contract');
+                $routingQuarantine[] = [
+                    'section' => 'analysis_routing',
+                    'index' => 0,
+                    'reason' => $exception->getMessage(),
+                ];
+            }
+        }
+
         return new self(
             $data['sheet_type'],
             $evidence,
@@ -196,17 +219,18 @@ final readonly class VisionAnalysisData
             $outputTokens,
             $visualAttributes,
             $projectSheetAnalysis,
-            [...$elementQuarantine, ...$scaleQuarantine, ...$visualQuarantine, ...$semanticQuarantine],
+            [...$elementQuarantine, ...$scaleQuarantine, ...$visualQuarantine, ...$semanticQuarantine, ...$routingQuarantine],
             self::boundedRawObserverFacts($data['project_sheet_analysis']['facts'] ?? []),
+            $routing,
         );
     }
 
     /** @param array<string, mixed> $data */
     public static function fromStoredArray(array $data): self
     {
-        unset($data['contract_repairs']);
         $schemaVersion = $data['schema_version'] ?? null;
         $contractKeys = match ($schemaVersion) {
+            self::ADAPTIVE_ROUTING_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'provider', 'requested_model', 'reported_model', 'model_version', 'usage', 'visual_attributes', 'project_sheet_analysis', 'analysis_routing'],
             self::PROJECT_SHEET_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'provider', 'requested_model', 'reported_model', 'model_version', 'usage', 'visual_attributes', 'project_sheet_analysis'],
             self::CURRENT_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'provider', 'requested_model', 'reported_model', 'model_version', 'usage', 'visual_attributes'],
             self::SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'provider', 'requested_model', 'reported_model', 'model_version', 'usage'],
@@ -236,7 +260,7 @@ final readonly class VisionAnalysisData
         );
         $elements = array_map(
             static fn (mixed $item): VisionElementData => is_array($item)
-                ? VisionElementData::fromArray(self::normalizeStoredElement($item))
+                ? VisionElementData::fromArray($item)
                 : throw new VisionContractException('invalid_element'),
             $data['elements'],
         );
@@ -251,7 +275,7 @@ final readonly class VisionAnalysisData
                 throw new VisionContractException('invalid_warning');
             }
         }
-        $projectSheetAnalysis = $schemaVersion === self::PROJECT_SHEET_SCHEMA_VERSION
+        $projectSheetAnalysis = in_array($schemaVersion, [self::PROJECT_SHEET_SCHEMA_VERSION, self::ADAPTIVE_ROUTING_SCHEMA_VERSION], true)
             ? ProjectSheetAnalysisData::fromStoredArray(
                 $data['project_sheet_analysis'],
                 array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence),
@@ -275,24 +299,10 @@ final readonly class VisionAnalysisData
             $projectSheetAnalysis,
             [],
             [],
+            $schemaVersion === self::ADAPTIVE_ROUTING_SCHEMA_VERSION && is_array($data['analysis_routing'] ?? null)
+                ? PageAnalysisRoutingDecision::fromProviderArray($data['analysis_routing'])
+                : null,
         );
-    }
-
-    /** @param array<string, mixed> $element @return array<string, mixed> */
-    private static function normalizeStoredElement(array $element): array
-    {
-        $keys = array_keys($element);
-        sort($keys);
-        $expected = ['confidence', 'evidence_ref', 'key', 'polygon', 'type'];
-        sort($expected);
-        if ($keys === $expected) {
-            return [...$element, 'label' => null];
-        }
-
-        $opening = [...$expected, 'geometry'];
-        sort($opening);
-
-        return $keys === $opening ? [...$element, 'label' => null] : $element;
     }
 
     /**
@@ -376,6 +386,7 @@ final readonly class VisionAnalysisData
                 ...$primary->rawObserverFacts,
                 ...self::boundedRawObserverFacts($data['project_sheet_analysis']['facts'] ?? []),
             ]),
+            $primary->analysisRouting,
         );
     }
 
@@ -397,6 +408,7 @@ final readonly class VisionAnalysisData
             $this->projectSheetAnalysis?->mapPolygonsToSource($transform),
             $this->quarantinedItems,
             $this->rawObserverFacts,
+            $this->analysisRouting,
         );
     }
 
@@ -438,7 +450,11 @@ final readonly class VisionAnalysisData
     public function toArray(): array
     {
         $payload = [
-            'schema_version' => $this->projectSheetAnalysis === null ? ($this->visualAttributes === [] ? self::SCHEMA_VERSION : self::CURRENT_SCHEMA_VERSION) : self::PROJECT_SHEET_SCHEMA_VERSION,
+            'schema_version' => $this->analysisRouting !== null
+                ? self::ADAPTIVE_ROUTING_SCHEMA_VERSION
+                : ($this->projectSheetAnalysis === null
+                    ? ($this->visualAttributes === [] ? self::SCHEMA_VERSION : self::CURRENT_SCHEMA_VERSION)
+                    : self::PROJECT_SHEET_SCHEMA_VERSION),
             'sheet_type' => $this->sheetType,
             'evidence' => array_map(static fn (VisionEvidenceData $item): array => $item->toArray(), $this->evidence),
             'elements' => array_map(static fn (VisionElementData $item): array => $item->toArray(), $this->elements),
@@ -455,6 +471,9 @@ final readonly class VisionAnalysisData
         }
         if ($this->projectSheetAnalysis !== null) {
             $payload['project_sheet_analysis'] = $this->projectSheetAnalysis->toArray();
+        }
+        if ($this->analysisRouting !== null) {
+            $payload['analysis_routing'] = $this->analysisRouting->toArray();
         }
 
         return $payload;

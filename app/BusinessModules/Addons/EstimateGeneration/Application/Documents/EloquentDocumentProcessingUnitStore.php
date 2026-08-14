@@ -67,6 +67,12 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
 
             $pageId = $this->pageIdentity($unit);
 
+            $locator = (array) $unit->locator;
+            $metadata = is_array($unit->metadata) ? $unit->metadata : [];
+            if (($metadata['analysis_escalation_reason'] ?? null) === 'cross_document_reference') {
+                $locator['analysis_escalation_reason'] = 'cross_document_reference';
+            }
+
             return new DocumentUnitExecutionContext(
                 (int) $unit->id,
                 (int) $unit->organization_id,
@@ -76,7 +82,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 $unit->unit_type,
                 (int) $unit->unit_index,
                 (string) $unit->source_version,
-                (array) $unit->locator,
+                $locator,
                 (string) $unit->document->storage_path,
                 (string) ($unit->document->mime_type ?: 'application/octet-stream'),
                 (string) $unit->document->filename,
@@ -170,18 +176,12 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             $systemicFailureCount = (int) ((clone $scopeQuery)
                 ->where('status', DocumentProcessingUnitStatus::Failed->value)
                 ->whereIn('failure_code', [
-                    'document_unit_processing_failed',
                     'unexpected_internal_failure',
-                    'document_representation_contract_invalid',
-                    'document_representation_source_mismatch',
                     'vision_provider_request_rejected',
                     'vision_http_failed',
-                    'document_unit_pre_wire_failed',
                     'vision_operation_settings_failed',
-                    'vision_request_preparation_failed',
                     'vision_physical_claim_failed',
                     'vision_physical_attempt_persistence_failed',
-                    'vision_provider_response_invalid',
                 ])
                 ->selectRaw('count(*) as aggregate')
                 ->groupBy('failure_fingerprint')

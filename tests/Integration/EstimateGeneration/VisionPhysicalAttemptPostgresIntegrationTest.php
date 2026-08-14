@@ -130,6 +130,54 @@ final class VisionPhysicalAttemptPostgresIntegrationTest extends TestCase
         }
     }
 
+    public function test_http_200_raw_and_parsed_envelope_replay_without_a_second_physical_attempt(): void
+    {
+        [$first, $second, $schema] = $this->fixture();
+        $context = $this->context();
+        $fingerprint = hash('sha256', 'durable-http-200');
+        $owner = '11111111-1111-4111-8111-111111111111';
+        $competitor = '22222222-2222-4222-8222-222222222222';
+        $now = new DateTimeImmutable('2026-08-10T10:00:00+03:00');
+        $parsed = ['model' => 'openai/gpt-5.6-luna', 'choices' => [['finish_reason' => 'stop']]];
+        $raw = json_encode($parsed, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+
+        try {
+            $store = new EloquentVisionPhysicalAttemptStore($first);
+            $store->claim($context, $fingerprint, $owner, $now, $now->modify('+1 minute'));
+            $store->markWireStarted($context->attemptId, $fingerprint, $owner, $now, $now->modify('+1 minute'));
+            $store->storeResponse(
+                $context->attemptId,
+                $fingerprint,
+                $owner,
+                ['raw_body_base64' => base64_encode($raw), 'parsed_envelope' => $parsed],
+                'response_received',
+                200,
+                43_000,
+                null,
+                ['status' => 'available', 'currency' => 'USD'],
+            );
+            $store->markUsageRecorded($context->attemptId, $fingerprint);
+
+            $replay = (new EloquentVisionPhysicalAttemptStore($second))->claim(
+                $context,
+                $fingerprint,
+                $competitor,
+                $now->modify('+2 minutes'),
+                $now->modify('+3 minutes'),
+            );
+
+            self::assertSame('completed', $replay->state);
+            self::assertSame(200, $replay->httpCode);
+            self::assertSame(43_000, $replay->durationMs);
+            self::assertTrue($replay->usageRecorded);
+            self::assertSame($parsed, $replay->responsePayload['parsed_envelope'] ?? null);
+            self::assertSame($raw, base64_decode((string) ($replay->responsePayload['raw_body_base64'] ?? ''), true));
+            self::assertSame(1, $first->table('estimate_generation_vision_physical_attempts')->count());
+        } finally {
+            $this->cleanup($first, $second, $schema);
+        }
+    }
+
     /** @return array{PostgresConnection, PostgresConnection, string, array<string, string>} */
     private function fixture(): array
     {

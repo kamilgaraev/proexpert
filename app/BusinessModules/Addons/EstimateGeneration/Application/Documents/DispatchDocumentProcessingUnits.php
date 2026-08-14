@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 final readonly class DispatchDocumentProcessingUnits
 {
-    public const BATCH_SIZE = 500;
+    public const BATCH_SIZE = 16;
 
     public const RECOVERY_DELAY_SECONDS = 300;
 

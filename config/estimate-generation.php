@@ -51,6 +51,15 @@ return [
         'max_elements' => (int) env('ESTIMATE_GENERATION_VISION_MAX_ELEMENTS', 500),
         'max_depth' => (int) env('ESTIMATE_GENERATION_VISION_MAX_DEPTH', 16),
         'image_detail' => env('ESTIMATE_GENERATION_VISION_IMAGE_DETAIL', 'high'),
+        'adaptive_analysis' => [
+            'max_provider_calls_per_page' => 4,
+            'max_regions_per_page' => 8,
+            'max_region_pixels_per_page' => 12_000_000,
+            'max_region_bytes_per_page' => 12_000_000,
+            'max_region_long_edge' => 2400,
+            'max_region_depth' => 1,
+            'max_in_flight_units_per_document' => 16,
+        ],
         'preprocessing' => [
             'max_bytes' => (int) env('ESTIMATE_GENERATION_VISION_MAX_IMAGE_BYTES', 20_000_000),
             'max_pixels' => (int) env('ESTIMATE_GENERATION_VISION_MAX_IMAGE_PIXELS', 20_000_000),

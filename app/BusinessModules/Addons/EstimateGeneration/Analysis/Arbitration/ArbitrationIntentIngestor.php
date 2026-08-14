@@ -64,7 +64,7 @@ final readonly class ArbitrationIntentIngestor
         $reason = $intent['reason'] ?? $intent['reason_code'] ?? null;
         if (! is_string($claimId) || ! isset($claimsById[$claimId])
             || ! in_array($status, ['accepted', 'candidate', 'unresolved'], true)
-            || ! is_array($support) || ! array_is_list($support) || $support === [] || count($support) > 3
+            || ! is_array($support) || ! array_is_list($support) || count($support) > 16
             || ! is_array($evidence) || ! array_is_list($evidence) || count($evidence) > 8
             || ! is_string($reason) || trim($reason) === '' || mb_strlen($reason) > 1000
             || count($support) !== count(array_unique($support))
@@ -72,7 +72,7 @@ final readonly class ArbitrationIntentIngestor
             throw new InvalidArgumentException('arbitration_intent_invalid');
         }
 
-        foreach ($support as $id) {
+        foreach (array_values(array_unique([$claimId, ...$support])) as $id) {
             if (! is_string($id) || ! isset($claimsById[$id])) {
                 throw new InvalidArgumentException('arbitration_claim_not_allowlisted');
             }
@@ -85,7 +85,7 @@ final readonly class ArbitrationIntentIngestor
 
         $supportingEvidence = [];
         $hasExplicitEvidence = false;
-        foreach ($support as $id) {
+        foreach (array_values(array_unique([$claimId, ...$support])) as $id) {
             $supportingClaim = $claimsById[$id];
             if ($supportingClaim->evidenceRef !== null) {
                 $supportingEvidence[$supportingClaim->evidenceRef] = true;
@@ -118,7 +118,7 @@ final readonly class ArbitrationIntentIngestor
         return new ArbitrationDecision(
             $claimId,
             $status,
-            array_values($support),
+            array_values(array_unique([$claimId, ...$support])),
             array_values($evidence),
             'arbiter_reason_'.substr(hash('sha256', $claimId.'|'.trim($reason)), 0, 16),
             $canonicalClaim,

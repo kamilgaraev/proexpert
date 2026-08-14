@@ -33,7 +33,10 @@ final readonly class RunGeometryExpert implements GeometryExpertRunner
         ]));
         $claim = $this->runs->claim($runInput, $ownerUuid);
         if ($claim->disposition === 'replay' && $claim->result !== null) {
-            return GeometryExpertResult::fromArray($claim->result->payload['result'] ?? []);
+            return GeometryExpertResult::fromArray(
+                $claim->result->payload['result'] ?? [],
+                $claim->result->physicalAttemptId,
+            );
         }
         if ($claim->disposition !== 'owned' || $claim->ownerUuid === null) {
             throw new RuntimeException('geometry_role_run_'.$claim->disposition);
@@ -50,13 +53,21 @@ final readonly class RunGeometryExpert implements GeometryExpertRunner
             if ($physicalAttemptId === null) {
                 throw new UsageInvariantViolation('Geometry provider returned without a physical attempt identity.');
             }
-            $result = $this->calculator->calculate(new GeometryExpertInput(
+            $calculated = $this->calculator->calculate(new GeometryExpertInput(
                 $input->organizationId,
                 $input->projectId,
                 $input->sessionId,
                 $input->sourceVersion,
                 $sheets,
             ));
+            $result = new GeometryExpertResult(
+                $calculated->quantities,
+                $calculated->conflicts,
+                $calculated->questions,
+                $calculated->skippedSheets,
+                $calculated->quarantinedIntents,
+                $physicalAttemptId,
+            );
             $stored = new AiRoleRunResult([
                 'schema_version' => 1,
                 'role' => AiAnalysisRole::GeometryExpert->value,

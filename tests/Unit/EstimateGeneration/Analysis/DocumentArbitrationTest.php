@@ -31,7 +31,7 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class DocumentArbitrationTest extends TestCase
 {
     #[Test]
-    public function both_production_arbiter_responses_are_ingested_without_trusting_repeated_server_fields(): void
+    public function both_production_arbiter_responses_are_ingested_without_requiring_server_fields(): void
     {
         $fixtures = [
             ['arbiter-production-page-1.json', $this->claim('literal:1', 'facade_dimensions', 'Размеры фасада не указаны', 'page-1-evidence')],
@@ -46,9 +46,29 @@ final class DocumentArbitrationTest extends TestCase
             self::assertCount(1, $result->accepted, $fixture);
             self::assertSame([], $result->quarantined, $fixture);
             self::assertSame($claim->entityKey, $result->accepted[0]->canonicalClaim['entity_key'], $fixture);
-            self::assertSame($this->version(), $result->accepted[0]->question['source_locator']['source_version'], $fixture);
-            self::assertStringStartsWith('arbiter_question_', $result->accepted[0]->question['code'], $fixture);
+            self::assertSame('accepted', $result->accepted[0]->status, $fixture);
+            self::assertSame([$result->accepted[0]->claimId], $result->accepted[0]->supportingClaimIds, $fixture);
         }
+    }
+
+    #[Test]
+    public function production_shaped_decision_can_reference_six_supporting_claims_without_becoming_invalid(): void
+    {
+        $claims = [$this->claim('literal:1', 'sheet_index', 'Рабочие листы', 'index-table')];
+        for ($index = 1; $index <= 6; $index++) {
+            $claims[] = $this->claim('risk:'.$index, 'sheet_reference', 'Лист '.$index, 'risk-'.$index);
+        }
+
+        $result = (new ArbitrationIntentIngestor)->ingest([[
+            'claim_id' => 'literal:1',
+            'status' => 'accepted',
+            'supporting_claim_ids' => array_map(static fn (int $index): string => 'risk:'.$index, range(1, 6)),
+            'evidence_refs' => ['index-table'],
+            'reason' => 'Ведомость перечисляет связанные планы, фасады, разрезы и спецификации.',
+        ]], $claims, $this->sourceInput());
+
+        self::assertCount(1, $result->accepted);
+        self::assertSame([], $result->quarantined);
     }
 
     #[Test]
@@ -374,6 +394,23 @@ final class DocumentArbitrationTest extends TestCase
         self::assertEqualsCanonicalizing(['candidate', 'confirmed', 'unresolved'], array_values(array_unique(array_column($models->facts, 'status'))));
         self::assertCount(3, $models->facts);
         self::assertCount(3, $models->evidence);
+    }
+
+    #[Test]
+    public function independent_observations_are_preserved_as_non_calculable_candidates_per_page(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        $claim = $this->claim('literal:1', 'sheet_context', 'Архитектурные решения', 'title');
+
+        $writer->writeIndependentObservations([$claim], 13, 1);
+        $writer->writeIndependentObservations([$claim], 13, 1);
+        $writer->writeIndependentObservations([$claim], 13, 2);
+
+        self::assertCount(2, $models->facts);
+        self::assertSame(['candidate'], array_values(array_unique(array_column($models->facts, 'status'))));
+        self::assertSame([0.0], array_values(array_unique(array_column($models->facts, 'confidence'))));
+        self::assertCount(2, $models->evidence);
     }
 
     #[Test]

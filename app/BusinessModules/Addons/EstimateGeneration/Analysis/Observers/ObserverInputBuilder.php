@@ -76,6 +76,7 @@ final class ObserverInputBuilder
                     'max_evidence' => 128,
                 ],
             ],
+            regionImages: $profile === ObserverProfile::Literal ? [] : $source->regionImages,
             onPhysicalAttemptReserved: $onPhysicalAttemptReserved,
         );
     }

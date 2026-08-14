@@ -400,7 +400,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
-    public function second_identical_systemic_terminal_failure_stops_remaining_document_units(): void
+    public function repeated_local_projection_failure_does_not_open_the_document_breaker(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
         $units = [];
@@ -435,9 +435,9 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertSame(2, $processor->calls);
         foreach (array_slice($units, 2) as $unit) {
             $record = $store->find($unit->id);
-            self::assertSame(DocumentProcessingUnitStatus::Failed, $record?->status);
-            self::assertSame(ProcessDocumentUnit::MAX_ATTEMPTS, $record?->attemptCount);
-            self::assertSame('breaker_stopped', $record?->failureCode);
+            self::assertSame(DocumentProcessingUnitStatus::Pending, $record?->status);
+            self::assertSame(0, $record?->attemptCount);
+            self::assertNull($record?->failureCode);
         }
         self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($otherDocument->id)?->status);
     }
@@ -1014,6 +1014,48 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
+    public function production_sized_documents_dispatch_only_a_bounded_window(): void
+    {
+        $store = new class implements DocumentUnitDispatchStore
+        {
+            public int $requestedLimit = 0;
+
+            public function dueForDocument(int $documentId, string $sourceVersion, DateTimeImmutable $now, int $limit): array
+            {
+                $this->requestedLimit = $limit;
+
+                return array_map(
+                    static fn (int $id): DocumentUnitDispatchCandidate => new DocumentUnitDispatchCandidate($id, $sourceVersion),
+                    range(1, min(200, $limit)),
+                );
+            }
+
+            public function dueForRecovery(DateTimeImmutable $now, int $limit): array
+            {
+                return [];
+            }
+
+            public function markDispatched(int $unitId, DateTimeImmutable $now, DateTimeImmutable $nextDispatchAt): void {}
+        };
+        $jobs = new class implements EstimateGenerationUnitJobDispatcher
+        {
+            public int $calls = 0;
+
+            public function dispatch(int $unitId, string $sourceVersion, bool $priority = false): void
+            {
+                $this->calls++;
+            }
+        };
+
+        $dispatched = (new DispatchDocumentProcessingUnits($store, $jobs))->forDocument(17, 'source');
+
+        self::assertSame(16, DispatchDocumentProcessingUnits::BATCH_SIZE);
+        self::assertSame(16, $store->requestedLimit);
+        self::assertSame(16, $dispatched);
+        self::assertSame(16, $jobs->calls);
+    }
+
+    #[Test]
     public function busy_unit_is_released_until_lease_then_reclaimed(): void
     {
         Carbon::setTestNow('2026-07-11 10:00:00');
@@ -1166,7 +1208,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringContainsString("'page_count' => \$models->pluck('unit_index')->unique()->count()", $creator);
         self::assertStringContainsString('ManageEstimateGenerationDocumentPages::STATUS_QUEUED', $creator);
         self::assertIsString($detail);
-        self::assertStringContainsString('self::pageStatus($page)', $detail);
+        self::assertStringContainsString('self::pageStatus($page,', $detail);
         self::assertStringContainsString('ManageEstimateGenerationDocumentPages::STATUS_QUEUED', $detail);
     }
 
