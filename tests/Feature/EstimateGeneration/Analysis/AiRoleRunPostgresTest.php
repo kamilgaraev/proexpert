@@ -44,9 +44,12 @@ final class AiRoleRunPostgresTest extends TestCase
             $repository->startPhysicalAttempt(
                 $claim->runId,
                 $claim->ownerUuid,
-                $result->physicalAttemptId,
+                'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
             );
+            $repository->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $result->physicalAttemptId);
             $repository->complete($claim->runId, $claim->ownerUuid, $result);
+            self::assertSame($result->physicalAttemptId, $connection->table('estimate_generation_ai_role_runs')
+                ->where('id', $claim->runId)->value('physical_attempt_id'));
 
             $replay = $repository->claim($input, '22222222-2222-4222-8222-222222222222');
             self::assertSame('replay', $replay->disposition);

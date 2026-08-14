@@ -198,7 +198,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     $exception,
                 );
             }
-            if ($wireAttempt === 1 && $input->onPhysicalAttemptReserved !== null) {
+            if ($input->onPhysicalAttemptReserved !== null) {
                 try {
                     ($input->onPhysicalAttemptReserved)($physicalContext->attemptId);
                 } catch (Throwable $exception) {

@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceAttribute;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceNode;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceProducer;
@@ -44,30 +45,38 @@ final readonly class ProjectModelEvidenceWriter
             $domainEvidence = [];
             foreach ($decisions as $decision) {
                 $claim = $byId[$decision->claimId] ?? throw new InvalidArgumentException('Arbitration claim is absent.');
-                if ($claim->organizationId !== $scope->organizationId || $claim->projectId !== $scope->projectId
-                    || $claim->sessionId !== $scope->sessionId || $claim->sourceVersion !== $scope->sourceVersion) {
-                    throw new InvalidArgumentException('Arbitration claims do not share an exact scope.');
+                $this->assertScope($claim, $scope);
+                $evidenceIds = [];
+                foreach ($decision->supportingClaimIds as $supportingClaimId) {
+                    $supportingClaim = $byId[$supportingClaimId]
+                        ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
+                    $this->assertScope($supportingClaim, $scope);
+                    if ($supportingClaim->evidenceRef === null
+                        || ! in_array($supportingClaim->evidenceRef, $decision->evidenceRefs, true)) {
+                        continue;
+                    }
+                    $hash = hash('sha256', $supportingClaim->id.'|'.$supportingClaim->sourceVersion.'|'.$supportingClaim->evidenceRef);
+                    $node = $this->evidence->insertOrGet(new EvidenceData(
+                        $scope->organizationId,
+                        $scope->projectId,
+                        $scope->sessionId,
+                        EvidenceType::SourceFact,
+                        EvidenceSourceType::Document,
+                        'document:'.$documentId,
+                        $scope->sourceVersion,
+                        $this->evidenceLocator($supportingClaim, $documentId, $pageNumber, $hash),
+                        [
+                            'fact_key' => $this->evidenceFactKey($supportingClaim),
+                            'fact_value' => $this->evidenceScalar($supportingClaim),
+                        ],
+                        $decision->status === 'accepted' && $supportingClaim->explicitEvidence ? 1.0 : 0.0,
+                        EvidenceProducer::DrawingAnalyzer->value,
+                        'sha256:'.hash('sha256', 'document-arbitration:v1'),
+                    ));
+                    $evidenceId = 'evidence:'.$node->id;
+                    $evidenceIds[] = $evidenceId;
+                    $domainEvidence[$evidenceId] = $this->domainEvidence($node);
                 }
-                $hash = hash('sha256', $claim->id.'|'.$claim->sourceVersion.'|'.$claim->evidenceRef);
-                $node = $this->evidence->insertOrGet(new EvidenceData(
-                    $scope->organizationId,
-                    $scope->projectId,
-                    $scope->sessionId,
-                    EvidenceType::SourceFact,
-                    EvidenceSourceType::Document,
-                    'document:'.$documentId,
-                    $scope->sourceVersion,
-                    ['document_id' => $documentId, 'page' => $pageNumber, 'element_key' => 'element:'.$hash],
-                    [
-                        'fact_key' => 'material_code',
-                        'fact_value' => $this->evidenceScalar($claim),
-                    ],
-                    $decision->status === 'accepted' ? 1.0 : 0.0,
-                    EvidenceProducer::DrawingAnalyzer->value,
-                    'sha256:'.hash('sha256', 'document-arbitration:v1'),
-                ));
-                $evidenceId = 'evidence:'.$node->id;
-                $domainEvidence[$evidenceId] = $this->domainEvidence($node);
                 $entityId = 'entity:'.hash('sha256', $claim->entityKey);
                 $entities[$entityId] = new Entity(
                     $entityId,
@@ -97,7 +106,7 @@ final readonly class ProjectModelEvidenceWriter
                         'candidate' => 'candidate',
                         'unresolved' => 'unresolved',
                     },
-                    [$evidenceId],
+                    $evidenceIds,
                 );
             }
             $this->models->saveSourceModel(array_values($entities), array_values($facts), array_values($domainEvidence));
@@ -112,6 +121,51 @@ final readonly class ProjectModelEvidenceWriter
         }
 
         return 'material:'.hash('sha256', json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+    }
+
+    /** @return array<string,mixed> */
+    private function evidenceLocator(ObservationClaim $claim, int $documentId, int $pageNumber, string $hash): array
+    {
+        $locator = [
+            'document_id' => $documentId,
+            'page' => $pageNumber,
+            'element_key' => 'element:'.$hash,
+        ];
+        foreach (['unit_type', 'unit_index', 'sheet', 'region_key', 'bbox', 'source_key'] as $field) {
+            if (array_key_exists($field, $claim->locator)) {
+                $locator[$field] = $claim->locator[$field];
+            }
+        }
+
+        return $locator;
+    }
+
+    private function evidenceFactKey(ObservationClaim $claim): string
+    {
+        $type = mb_strtolower($claim->factType);
+        $native = EvidenceAttribute::tryFrom($type);
+        if ($native !== null) {
+            return $native->value;
+        }
+
+        return match (true) {
+            str_contains($type, 'material'), str_contains($type, 'finish') => EvidenceAttribute::MaterialCode->value,
+            str_contains($type, 'room') && str_contains($type, 'area') => EvidenceAttribute::RoomArea->value,
+            str_contains($type, 'area') => EvidenceAttribute::Area->value,
+            str_contains($type, 'perimeter') => EvidenceAttribute::Perimeter->value,
+            str_contains($type, 'width') => EvidenceAttribute::OpeningWidth->value,
+            str_contains($type, 'height') => EvidenceAttribute::WallHeight->value,
+            str_contains($type, 'count'), str_contains($type, 'quantity') => EvidenceAttribute::Quantity->value,
+            default => EvidenceAttribute::ElementTypeCode->value,
+        };
+    }
+
+    private function assertScope(ObservationClaim $claim, ObservationClaim $scope): void
+    {
+        if ($claim->organizationId !== $scope->organizationId || $claim->projectId !== $scope->projectId
+            || $claim->sessionId !== $scope->sessionId || $claim->sourceVersion !== $scope->sourceVersion) {
+            throw new InvalidArgumentException('Arbitration claims do not share an exact scope.');
+        }
     }
 
     private function entityType(ObservationClaim $claim): string

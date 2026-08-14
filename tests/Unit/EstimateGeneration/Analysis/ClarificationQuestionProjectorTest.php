@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Analysis;
 
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ClarificationQuestionProjector;
-use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class ClarificationQuestionProjectorTest extends TestCase
@@ -35,7 +35,11 @@ final class ClarificationQuestionProjectorTest extends TestCase
     #[Test]
     public function project_details_own_materials_and_visualization_is_only_corroboration(): void
     {
-        $questions = (new ClarificationQuestionProjector(static fn (string $key): string => $key))->projectPages([
+        $questions = (new ClarificationQuestionProjector(static fn (string $key): string => match ($key) {
+            'estimate_generation.ai_questions.other' => 'Другое',
+            'estimate_generation.ai_questions.leave_unresolved' => 'Оставить нерешённым',
+            default => $key,
+        }))->projectPages([
             $this->page(4, 'facade_material_required', 'В общих данных материал не указан.', ['Штукатурка']),
             $this->page(18, 'facade_material_required', 'На визуализации видна штукатурка.', ['Штукатурка'], 'corroboration'),
             $this->page(19, 'facade_material_required', 'В узле указан материал фасада.', ['Кирпич'], 'explicit_document'),
@@ -62,6 +66,30 @@ final class ClarificationQuestionProjectorTest extends TestCase
         yield ['needs clarification'];
         yield ['нужно уточнить'];
         yield ['openai timeout'];
+    }
+
+    #[Test]
+    public function provider_text_is_rejected_in_subject_and_choice_labels(): void
+    {
+        $projector = new ClarificationQuestionProjector(static fn (string $key): string => match ($key) {
+            'estimate_generation.ai_questions.other' => 'Другое',
+            'estimate_generation.ai_questions.leave_unresolved' => 'Оставить нерешённым',
+            default => $key,
+        });
+        $invalidSubject = $this->page(4, 'invalid_subject', 'На листе есть расхождение.', ['Да', 'Нет']);
+        $invalidSubject['document_arbitration']['questions'][0]['subject'] = 'Timeweb timeout';
+
+        try {
+            $projector->projectPages([$invalidSubject]);
+            self::fail('Provider subject was accepted.');
+        } catch (\InvalidArgumentException) {
+            self::addToAssertionCount(1);
+        }
+
+        $this->expectException(\InvalidArgumentException::class);
+        $projector->projectPages([
+            $this->page(4, 'invalid_choice', 'На листе есть расхождение.', ['Да', 'Timeweb timeout']),
+        ]);
     }
 
     /** @return array<string,mixed> */

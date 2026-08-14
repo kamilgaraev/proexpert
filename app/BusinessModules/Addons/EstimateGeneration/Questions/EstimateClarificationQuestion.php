@@ -24,7 +24,7 @@ final readonly class EstimateClarificationQuestion
             || $sourceLocator === [] || array_is_list($sourceLocator)) {
             throw new InvalidArgumentException('estimate_clarification_question_invalid');
         }
-        foreach ([$reason, $impact, $recommendation] as $text) {
+        foreach ([$subject, $reason, $impact, $recommendation] as $text) {
             self::assertBusinessText($text);
         }
         foreach ($choices as $choice) {

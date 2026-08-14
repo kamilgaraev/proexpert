@@ -228,6 +228,12 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         $semanticSummary = (new DocumentSemanticUnderstandingSummarizer)->summarize([$output->normalizedPayload]);
         self::assertSame(1, $semanticSummary['pages_checked']);
         self::assertTrue($semanticSummary['analysis_roles_complete']);
+        self::assertSame([
+            'observer_literal' => true,
+            'observer_construction' => true,
+            'observer_risk' => true,
+            'arbiter' => true,
+        ], $output->normalizedPayload['role_completion']);
         self::assertSame($sourceVersion, $output->normalizedPayload['document_representation']['source_version']);
         self::assertGreaterThan(0, $output->normalizedPayload['document_representation']['resource_usage']['duration_ms']);
         self::assertSame(
@@ -815,7 +821,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                     'raw_facts' => [],
                 ];
                 $results = [];
-                foreach (['observer_analysis_literal', 'observer_codes_symbols', 'observer_materials_tables'] as $role) {
+                foreach (['observer_literal', 'observer_construction', 'observer_risk'] as $role) {
                     $results[$role] = new AiRoleRunResult([
                         'schema_version' => 1,
                         'role' => $role,

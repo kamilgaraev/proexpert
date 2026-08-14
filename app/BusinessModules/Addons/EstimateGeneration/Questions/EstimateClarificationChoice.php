@@ -17,6 +17,11 @@ final readonly class EstimateClarificationChoice
             || ! in_array($kind, ['option', 'other', 'leave_unresolved'], true)) {
             throw new InvalidArgumentException('estimate_clarification_choice_invalid');
         }
+        $normalized = mb_strtolower(trim($label));
+        if (preg_match('/[А-Яа-яЁё]/u', $label) !== 1
+            || preg_match('/needs? clarification|нужно уточнить|openai|timeweb|provider|fallback|payload|exception|timeout/ui', $normalized) === 1) {
+            throw new InvalidArgumentException('estimate_clarification_business_text_invalid');
+        }
     }
 
     /** @return array{value:string,label:string,kind:string} */

@@ -56,9 +56,18 @@ final readonly class ArbitrationDecision
                 throw new InvalidArgumentException('arbitration_evidence_not_allowlisted');
             }
         }
+        $supportingEvidence = [];
         $hasExplicitEvidence = false;
         foreach ($support as $id) {
-            $hasExplicitEvidence = $hasExplicitEvidence || $claimsById[$id]->explicitEvidence;
+            $supportingClaim = $claimsById[$id];
+            if ($supportingClaim->evidenceRef !== null) {
+                $supportingEvidence[$supportingClaim->evidenceRef] = true;
+            }
+            $hasExplicitEvidence = $hasExplicitEvidence
+                || ($supportingClaim->explicitEvidence && in_array($supportingClaim->evidenceRef, $evidence, true));
+        }
+        if (array_diff($evidence, array_keys($supportingEvidence)) !== []) {
+            throw new InvalidArgumentException('arbitration_evidence_not_supported');
         }
         if ($status === 'accepted' && ($evidence === [] || ! $hasExplicitEvidence)) {
             throw new InvalidArgumentException('arbitration_confirmation_without_explicit_evidence');

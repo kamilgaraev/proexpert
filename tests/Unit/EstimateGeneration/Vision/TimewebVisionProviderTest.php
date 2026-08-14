@@ -462,11 +462,17 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     public function it_retries_only_retryable_physical_calls_without_model_fallback(): void
     {
         Http::fakeSequence()->pushStatus(409)->pushStatus(429)->push($this->response());
+        $reservedAttempts = [];
 
-        $this->provider()->analyze($this->input());
+        $this->provider()->analyze($this->input(
+            onPhysicalAttemptReserved: static function (string $attemptId) use (&$reservedAttempts): void {
+                $reservedAttempts[] = $attemptId;
+            },
+        ));
 
         self::assertSame(['http_failed', 'http_failed', 'succeeded'], array_map(fn (AiUsageData $row): string => $row->status, $this->attempts));
         self::assertCount(3, array_unique(array_map(fn (AiUsageData $row): string => $row->context->attemptId, $this->attempts)));
+        self::assertSame(array_map(fn (AiUsageData $row): string => $row->context->attemptId, $this->attempts), $reservedAttempts);
         self::assertSame(['openai/gpt-5.6-luna'], array_values(array_unique(array_map(fn (AiUsageData $row): string => $row->requestedModel, $this->attempts))));
     }
 
@@ -1637,6 +1643,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         array $nativeReferences = [],
         ?string $auxiliaryText = null,
         array $auxiliaryMetadata = [],
+        ?\Closure $onPhysicalAttemptReserved = null,
     ): VisionDocumentInput {
         $image = imagecreatetruecolor(2, 2);
         imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
@@ -1659,6 +1666,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             nativeReferences: $nativeReferences,
             auxiliaryText: $auxiliaryText,
             auxiliaryMetadata: $auxiliaryMetadata,
+            onPhysicalAttemptReserved: $onPhysicalAttemptReserved,
         );
     }
 

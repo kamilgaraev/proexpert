@@ -533,7 +533,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         AiRoleRunResult $arbitrationResult,
     ): DocumentUnitOutput {
         $observerPayloads = array_map(static fn (AiRoleRunResult $result): array => $result->payload, $observerResults);
-        $literalPayload = $observerPayloads['observer_analysis_literal']['observation'] ?? null;
+        $literalPayload = $observerPayloads['observer_literal']['observation'] ?? null;
         if (! is_array($literalPayload)) {
             throw new DocumentUnitProcessingException('literal_observer_result_missing');
         }
@@ -572,9 +572,9 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             ? $arbitrationResult->payload['questions']
             : [];
         $roleCompletion = [
-            'observer_analysis_literal' => isset($observerPayloads['observer_analysis_literal']),
-            'observer_codes_symbols' => isset($observerPayloads['observer_codes_symbols']),
-            'observer_materials_tables' => isset($observerPayloads['observer_materials_tables']),
+            'observer_literal' => isset($observerPayloads['observer_literal']),
+            'observer_construction' => isset($observerPayloads['observer_construction']),
+            'observer_risk' => isset($observerPayloads['observer_risk']),
             'arbiter' => ($arbitrationResult->payload['role'] ?? null) === 'arbiter',
         ];
 

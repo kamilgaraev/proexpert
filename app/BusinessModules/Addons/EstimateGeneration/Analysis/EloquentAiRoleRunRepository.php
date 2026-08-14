@@ -111,16 +111,12 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
             ->where('status', 'running')
             ->where('owner_uuid', $ownerUuid)
             ->where('lease_expires_at', '>', $now)
-            ->whereNull('physical_attempt_id')
             ->update([
                 'physical_attempt_id' => $physicalAttemptId,
                 'updated_at' => $now,
             ]);
         if ($updated !== 1) {
-            $existing = $this->database->table(self::TABLE)->where('id', $runId)->value('physical_attempt_id');
-            if (! is_string($existing) || ! hash_equals($existing, $physicalAttemptId)) {
-                throw new UsageInvariantViolation('AI role run physical attempt collision.');
-            }
+            throw new UsageInvariantViolation('AI role run physical attempt ownership lost.');
         }
     }
 

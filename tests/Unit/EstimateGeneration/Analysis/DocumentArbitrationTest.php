@@ -201,6 +201,54 @@ final class DocumentArbitrationTest extends TestCase
         self::assertCount(3, $models->evidence);
     }
 
+    #[Test]
+    public function accepted_fact_keeps_all_allowlisted_supporting_evidence_and_uses_its_real_fact_type(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $evidence = new InMemoryEvidenceRepository;
+        $writer = new ProjectModelEvidenceWriter($models, $evidence);
+        $claims = [
+            $this->claim('literal:1', 'wall_material', 'газобетон', 'visual-region', false),
+            $this->claim('construction:1', 'wall_material', 'газобетон', 'native-note', true),
+        ];
+        $decision = ArbitrationDecision::fromProviderIntent([
+            'claim_id' => 'literal:1',
+            'status' => 'accepted',
+            'supporting_claim_ids' => ['literal:1', 'construction:1'],
+            'evidence_refs' => ['visual-region', 'native-note'],
+            'reason_code' => 'explicit_note_confirms_visual_observation',
+        ], $claims);
+
+        $writer->writeArbitration($claims, [$decision], 13, 4);
+
+        self::assertCount(1, $models->facts);
+        $fact = array_values($models->facts)[0];
+        self::assertCount(2, $fact->evidenceIds);
+        self::assertCount(2, $models->evidence);
+        foreach ($fact->evidenceIds as $evidenceId) {
+            $node = $evidence->node(7, 9, 11, (int) str_replace('evidence:', '', $evidenceId));
+            self::assertSame('material_code', $node?->value['fact_key']);
+        }
+    }
+
+    #[Test]
+    public function arbitration_rejects_evidence_not_owned_by_a_supporting_claim(): void
+    {
+        $claims = [
+            $this->claim('literal:1', 'material', 'газобетон', 'visual-region', false),
+            $this->claim('construction:1', 'material', 'кирпич', 'native-note', true),
+        ];
+
+        $this->expectException(InvalidArgumentException::class);
+        ArbitrationDecision::fromProviderIntent([
+            'claim_id' => 'literal:1',
+            'status' => 'accepted',
+            'supporting_claim_ids' => ['literal:1'],
+            'evidence_refs' => ['native-note'],
+            'reason_code' => 'unrelated_evidence',
+        ], $claims);
+    }
+
     private function claim(string $id, string $type, string $value, ?string $evidenceRef, bool $explicit = true): ObservationClaim
     {
         return new ObservationClaim(
