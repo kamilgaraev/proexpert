@@ -5,14 +5,11 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration\ProjectModel;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelLocatorFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelUnitData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\StoredBuildingModel;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
@@ -277,13 +274,22 @@ final class ProjectModelExactBindingOnlineMigrationPostgresTest extends TestCase
             'extractor:v1',
         ));
         $context = new BuildingModelOperationContext((int) $organization->id, (int) $project->id, (int) $session->id, 'sha256:'.str_repeat('b', 64));
-        $model = (new BuildingModelRepository(
-            new EloquentBuildingModelStore(DB::connection()),
-            new EloquentEvidenceRepository(DB::connection()),
-            new EloquentProjectModelRepository(app('db')),
-        ))->store($context, new NormalizedBuildingModelData('m', 'confirmed', 0.01, [
-            new FloorData('floor-1', 0, 2.8, [], [], [], [], [$evidence->id], 1, 'confirmed'),
-        ], [], 'building-model:v1'));
+        $contentVersion = 'sha256:'.str_repeat('c', 64);
+        $modelId = (int) DB::table('estimate_generation_building_models')->insertGetId([
+            'organization_id' => $context->organizationId,
+            'project_id' => $context->projectId,
+            'session_id' => $context->sessionId,
+            'input_version' => $context->inputVersion,
+            'model_version' => 'building-model:v1',
+            'content_version' => $contentVersion,
+            'scale_status' => 'confirmed',
+            'scale_meters_per_unit' => '0.01',
+            'model' => json_encode(['unit' => 'm', 'floors' => [], 'assumptions' => [], 'metrics' => []], JSON_THROW_ON_ERROR),
+            'assumptions' => '[]',
+            'metrics' => '[]',
+            'created_at' => now(),
+        ]);
+        $model = new StoredBuildingModel($modelId, $context, 'building-model:v1', $contentVersion, true);
 
         $fixture = [
             'organization_id' => (int) $organization->id,

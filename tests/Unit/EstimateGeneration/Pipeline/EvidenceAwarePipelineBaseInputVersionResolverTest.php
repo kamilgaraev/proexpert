@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
-use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\BuildingModelReadDataSource;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\BoundedSourceVersionHasher;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalProjectModelPipelineProjection;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EvidenceAwarePipelineBaseInputVersionResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineBaseInputVersion;
 use Illuminate\Database\Eloquent\Collection;
@@ -17,20 +19,15 @@ use PHPUnit\Framework\TestCase;
 final class EvidenceAwarePipelineBaseInputVersionResolverTest extends TestCase
 {
     #[Test]
-    public function active_area_evidence_is_part_of_session_and_projection_versions(): void
+    public function canonical_project_model_snapshot_is_part_of_projection_version(): void
     {
-        $area = [
-            'amount' => '180.000000',
-            'evidence_id' => 901,
-            'confidence' => 0.95,
-            'floor_count' => 2,
-            'source_version' => 'sha256:'.str_repeat('c', 64),
-            'fingerprint' => str_repeat('d', 64),
-            'invalidation_version' => 0,
-            'active' => true,
-        ];
-        $data = new FixedAreaBuildingModelReadDataSource($area);
-        $resolver = new EvidenceAwarePipelineBaseInputVersionResolver($data);
+        $token = 'sha256:'.str_repeat('d', 64);
+        $repository = $this->createMock(ProjectModelRepository::class);
+        $repository->expects(self::once())->method('snapshotForUnderstanding')->with(10, 20, 30, 10_000)->willReturn([
+            'snapshot' => new ProjectModelSnapshot([], [], [], []),
+            'token' => $token,
+        ]);
+        $resolver = new EvidenceAwarePipelineBaseInputVersionResolver(new CanonicalProjectModelPipelineProjection($repository));
         $session = $this->session();
         $documents = $this->documentsProjection($session);
         $projectionVersion = $resolver->fromProjection(
@@ -42,46 +39,12 @@ final class EvidenceAwarePipelineBaseInputVersionResolverTest extends TestCase
         );
 
         self::assertSame(
-            PipelineBaseInputVersion::fromProjection($session->input_payload, $documents, $area),
+            PipelineBaseInputVersion::fromProjection($session->input_payload, $documents, $token),
             $projectionVersion,
         );
         self::assertNotSame(
             PipelineBaseInputVersion::fromProjection($session->input_payload, $documents),
             $projectionVersion,
-        );
-        self::assertSame([[10, 20, 30]], $data->areaRequests);
-        self::assertSame([[10, 20, 30]], $data->modelRequests);
-    }
-
-    #[Test]
-    public function confirmed_geometry_is_part_of_the_generation_input_version(): void
-    {
-        $model = [
-            'content_version' => 'sha256:'.str_repeat('e', 64),
-            'model' => [
-                'scale_status' => 'confirmed',
-                'evidence_ids' => [903, 902, 903],
-            ],
-        ];
-        $data = new FixedAreaBuildingModelReadDataSource(null, $model);
-        $resolver = new EvidenceAwarePipelineBaseInputVersionResolver($data);
-        $session = $this->session();
-        $documents = $this->documentsProjection($session);
-        $version = $resolver->fromProjection(
-            $session->input_payload,
-            $documents,
-            10,
-            20,
-            30,
-        );
-
-        self::assertSame(
-            PipelineBaseInputVersion::fromProjection($session->input_payload, $documents, null, $model),
-            $version,
-        );
-        self::assertNotSame(
-            PipelineBaseInputVersion::fromProjection($session->input_payload, $documents),
-            $version,
         );
     }
 
@@ -148,45 +111,5 @@ final class EvidenceAwarePipelineBaseInputVersionResolverTest extends TestCase
             'status' => (string) $document->status,
             'derived_version' => $derivedVersions[(int) $document->getKey()],
         ])->all();
-    }
-}
-
-final class FixedAreaBuildingModelReadDataSource implements BuildingModelReadDataSource
-{
-    /** @var list<array{int, int, int}> */
-    public array $areaRequests = [];
-
-    /** @var list<array{int, int, int}> */
-    public array $modelRequests = [];
-
-    public function __construct(private readonly ?array $area, private readonly ?array $model = null) {}
-
-    public function latestModel(int $organizationId, int $projectId, int $sessionId): ?array
-    {
-        $this->modelRequests[] = [$organizationId, $projectId, $sessionId];
-
-        return $this->model;
-    }
-
-    public function evidenceForIds(int $organizationId, int $projectId, int $sessionId, array $ids): array
-    {
-        return [];
-    }
-
-    public function evidence(int $organizationId, int $projectId, int $sessionId, int $evidenceId): ?array
-    {
-        return null;
-    }
-
-    public function documentNames(int $organizationId, int $projectId, int $sessionId, array $documentIds): array
-    {
-        return [];
-    }
-
-    public function totalArea(int $organizationId, int $projectId, int $sessionId): ?array
-    {
-        $this->areaRequests[] = [$organizationId, $projectId, $sessionId];
-
-        return $this->area;
     }
 }

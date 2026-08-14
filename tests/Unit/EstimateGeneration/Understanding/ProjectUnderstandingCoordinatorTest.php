@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Understanding;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisSelection;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactArbitratorFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ExpectedArbitrationFailure;
@@ -11,6 +15,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\Proj
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
@@ -316,8 +322,57 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         self::assertSame($result->links, $unchanged->currentUnderstanding(1, 2, 3)['links']);
     }
 
-    private function coordinator(InMemoryProjectModelRepository $models, RecordingArbitratorFactory $factory, ?ProjectUnderstandingBudget $budget = null): ProjectUnderstandingCoordinator
+    #[Test]
+    public function canonical_geometry_quantity_is_sent_to_project_synthesis_once(): void
     {
+        $models = new InMemoryProjectModelRepository;
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $operand = [
+            'fact_id' => 'fact:left',
+            'entity_id' => 'entity:left',
+            'role' => 'plan_area',
+            'projection_version' => 1,
+            'status' => 'confirmed',
+            'current' => true,
+            'value' => '18.4',
+            'source_value' => '18.4',
+            'unit' => 'm2',
+            'evidence_ids' => ['evidence:1'],
+            'evidence' => [],
+            'decision_id' => null,
+        ];
+        $logicalId = 'floor:1:area';
+        $prototype = new DerivedQuantity(
+            $logicalId, 1, 2, 3, $this->modelSource(), 'entity:left', 'floor_area:geometry-formulas:v2',
+            [$operand], '18.4', 'm2', 'half_up', 2, ['evidence:1'], 'confirmed',
+            'floor_area', DeterministicGeometryCalculator::FORMULA_VERSION,
+            logicalId: $logicalId,
+        );
+        $identity = DerivedQuantityIdentity::for($prototype);
+        $quantity = new DerivedQuantity(
+            'quantityv:'.$identity, 1, 2, 3, $this->modelSource(), 'entity:left',
+            'floor_area:geometry-formulas:v2', [$operand], '18.4', 'm2', 'half_up', 2,
+            ['evidence:1'], 'confirmed', 'floor_area', DeterministicGeometryCalculator::FORMULA_VERSION,
+            logicalId: $logicalId, exactIdentity: $identity,
+        );
+        $models->replaceDerivedQuantityFormulaProjectionSet(
+            1, 2, 3, DeterministicGeometryCalculator::FORMULA_VERSION, [$quantity],
+        );
+        $synthesis = new RecordingProjectSynthesisRunner;
+
+        $this->coordinator($models, new RecordingArbitratorFactory, synthesis: $synthesis)
+            ->refresh(1, 2, 3, $this->token(), 1);
+
+        self::assertInstanceOf(ProjectSynthesisInput::class, $synthesis->input);
+        self::assertSame([$quantity->id], array_column($synthesis->input->derivedQuantities, 'id'));
+    }
+
+    private function coordinator(
+        InMemoryProjectModelRepository $models,
+        RecordingArbitratorFactory $factory,
+        ?ProjectUnderstandingBudget $budget = null,
+        ?ProjectSynthesisRunner $synthesis = null,
+    ): ProjectUnderstandingCoordinator {
         $translator = static fn (string $key, array $replace): string => strtr($key, $replace);
 
         return new ProjectUnderstandingCoordinator(
@@ -325,6 +380,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
             new TargetedConflictResolver($translator),
             $factory,
             $budget ?? ProjectUnderstandingBudget::defaults(),
+            $synthesis ?? new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner,
         );
     }
 
@@ -375,6 +431,24 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
     private function token(): string
     {
         return '123e4567-e89b-42d3-a456-426614174000';
+    }
+}
+
+final class RecordingProjectSynthesisRunner implements ProjectSynthesisRunner
+{
+    public ?ProjectSynthesisInput $input = null;
+
+    public function run(
+        ProjectSynthesisInput $input,
+        array $candidateLinks,
+        array $candidateQuestions,
+    ): ProjectSynthesisSelection {
+        $this->input = $input;
+
+        return new ProjectSynthesisSelection(
+            array_values(array_filter(array_column($candidateLinks, 'id'), 'is_string')),
+            array_values(array_filter(array_column($candidateQuestions, 'conflict_id'), 'is_string')),
+        );
     }
 }
 

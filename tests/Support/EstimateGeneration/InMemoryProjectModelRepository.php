@@ -41,6 +41,8 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 
     public array $currentQuantities = [];
 
+    public array $synthesisRoleFingerprints = ['arbiter' => [], 'geometry_expert' => []];
+
     public array $links = [];
 
     public array $understanding = [];
@@ -289,6 +291,70 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         return array_slice($items, 0, $limit);
     }
 
+    public function replaceDerivedQuantityFormulaProjectionSet(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        array $quantities,
+    ): void {
+        foreach ($this->currentQuantities as $key => $quantity) {
+            if ([$quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->formulaVersion]
+                === [$organizationId, $projectId, $sessionId, $formulaVersion]) {
+                unset($this->currentQuantities[$key]);
+            }
+        }
+        foreach ($quantities as $quantity) {
+            if (! $quantity instanceof DerivedQuantity
+                || [$quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->formulaVersion]
+                    !== [$organizationId, $projectId, $sessionId, $formulaVersion]) {
+                throw new InvalidArgumentException('Derived quantity formula projection scope is invalid.');
+            }
+        }
+        $this->appendDerivedQuantities($quantities);
+    }
+
+    public function currentDerivedQuantitiesForFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        int $limit = 200,
+    ): array {
+        $items = array_values(array_filter(
+            $this->currentQuantities,
+            static fn (DerivedQuantity $quantity): bool => [
+                $quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->formulaVersion,
+            ] === [$organizationId, $projectId, $sessionId, $formulaVersion],
+        ));
+        usort($items, static fn (DerivedQuantity $left, DerivedQuantity $right): int => $left->logicalId <=> $right->logicalId);
+
+        return array_slice($items, 0, $limit);
+    }
+
+    public function currentDerivedQuantityLogicalIdsByFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $formulaVersion,
+    ): array {
+        $items = array_values(array_filter(
+            $this->currentQuantities,
+            static fn (DerivedQuantity $quantity): bool => [
+                $quantity->organizationId,
+                $quantity->projectId,
+                $quantity->sessionId,
+                $quantity->sourceVersion,
+                $quantity->formulaVersion,
+            ] === [$organizationId, $projectId, $sessionId, $sourceVersion, $formulaVersion],
+        ));
+        $logicalIds = array_map(static fn (DerivedQuantity $quantity): string => (string) $quantity->logicalId, $items);
+        sort($logicalIds, SORT_STRING);
+
+        return $logicalIds;
+    }
+
     public function deactivateDerivedQuantityProjectionScope(
         int $organizationId,
         int $projectId,
@@ -449,6 +515,15 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         ));
     }
 
+    public function completedSynthesisRoleFingerprints(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        array $sourceVersions,
+    ): array {
+        return $this->synthesisRoleFingerprints;
+    }
+
     public function currentConflicts(int $organizationId, int $projectId, int $sessionId): array
     {
         return array_values(array_filter(
@@ -464,6 +539,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
         array $links,
         array $conflicts,
         array $questions,
@@ -475,7 +551,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             $this->beforeUnderstandingSave = null;
             $hook();
         }
-        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+        if (! hash_equals($snapshotToken, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
             return false;
         }
         $scope = implode(':', [$organizationId, $projectId, $sessionId]);
@@ -519,8 +595,9 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
     ): ?array {
-        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+        if (! hash_equals($snapshotToken, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
             return null;
         }
         $scope = implode(':', [$organizationId, $projectId, $sessionId]);
@@ -939,6 +1016,32 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 ];
             }
         }
+        $derivedQuantities = [];
+        foreach ($this->currentQuantities as $quantity) {
+            if (! $quantity instanceof DerivedQuantity
+                || $this->scope($quantity) !== [$organizationId, $projectId, $sessionId]) {
+                continue;
+            }
+            $derivedQuantities[] = [
+                'source_version' => $quantity->sourceVersion,
+                'logical_key' => $quantity->logicalId,
+                'exact_identity' => $quantity->exactIdentity,
+                'formula_version' => $quantity->formulaVersion,
+                'snapshot_identity' => $quantity->snapshotIdentity,
+            ];
+        }
+        usort($derivedQuantities, static fn (array $left, array $right): int => [
+            $left['source_version'], $left['logical_key'],
+        ] <=> [$right['source_version'], $right['logical_key']]);
+        $roleRuns = [];
+        foreach ($this->synthesisRoleFingerprints as $role => $fingerprints) {
+            foreach ($fingerprints as $fingerprint) {
+                $roleRuns[] = ['role' => $role, 'input_fingerprint' => $fingerprint];
+            }
+        }
+        usort($roleRuns, static fn (array $left, array $right): int => [
+            $left['role'], $left['input_fingerprint'],
+        ] <=> [$right['role'], $right['input_fingerprint']]);
 
         return ProjectUnderstandingInputFingerprint::fromExactState([
             'scope' => compact('organizationId', 'projectId', 'sessionId'),
@@ -948,6 +1051,8 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             'bindings' => $bindings,
             'evidence' => array_values($evidence),
             'decisions' => $decisions,
+            'derived_quantities' => $derivedQuantities,
+            'role_runs' => $roleRuns,
         ]);
     }
 }

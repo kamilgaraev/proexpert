@@ -35,6 +35,15 @@ interface ProjectModelRepository
         array $inactiveLogicalIds,
     ): void;
 
+    /** @param list<DerivedQuantity> $quantities */
+    public function replaceDerivedQuantityFormulaProjectionSet(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        array $quantities,
+    ): void;
+
     public function deactivateDerivedQuantityProjectionScope(
         int $organizationId,
         int $projectId,
@@ -48,6 +57,24 @@ interface ProjectModelRepository
         int $projectId,
         int $sessionId,
         string $sourceVersion,
+        int $limit = 200,
+    ): array;
+
+    /** @return list<string> */
+    public function currentDerivedQuantityLogicalIdsByFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $formulaVersion,
+    ): array;
+
+    /** @return list<DerivedQuantity> */
+    public function currentDerivedQuantitiesForFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
         int $limit = 200,
     ): array;
 
@@ -98,6 +125,14 @@ interface ProjectModelRepository
     /** @return list<Decision> */
     public function decisionsForSelectedFacts(int $organizationId, int $projectId, int $sessionId, array $factIds): array;
 
+    /** @param list<string> $sourceVersions @return array{arbiter:list<string>,geometry_expert:list<string>} */
+    public function completedSynthesisRoleFingerprints(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        array $sourceVersions,
+    ): array;
+
     public function currentConflicts(int $organizationId, int $projectId, int $sessionId): array;
 
     public function replaceUnderstanding(
@@ -106,6 +141,7 @@ interface ProjectModelRepository
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
         array $links,
         array $conflicts,
         array $questions,
@@ -119,6 +155,7 @@ interface ProjectModelRepository
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
     ): ?array;
 
     public function currentUnderstanding(int $organizationId, int $projectId, int $sessionId): ?array;

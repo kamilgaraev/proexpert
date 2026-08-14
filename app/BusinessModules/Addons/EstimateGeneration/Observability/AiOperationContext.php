@@ -36,7 +36,8 @@ final readonly class AiOperationContext
                 throw new InvalidArgumentException('Optional usage scope identifiers must be positive.');
             }
         }
-        $valid = ($stage === 'understand_documents' && in_array($operation, ['ocr', 'vision'], true))
+        $valid = ($stage === 'understand_documents' && in_array($operation, ['ocr', 'vision', 'project_synthesis'], true))
+            || ($stage === 'checking_geometry' && $operation === 'vision')
             || ($stage === 'match_normatives' && $operation === 'rerank')
             || ($stage === 'validate_draft' && $operation === 'completeness_review');
         if (! $valid) {

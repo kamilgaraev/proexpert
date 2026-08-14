@@ -247,6 +247,7 @@ final class CompletenessExclusionDecisionServiceTest extends TestCase
                 new TargetedConflictResolver($translator),
                 new ExclusionNoopArbitratorFactory,
                 ProjectUnderstandingBudget::defaults(),
+                new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner,
             ),
             new ProjectPlanningCoordinator(
                 $repository,

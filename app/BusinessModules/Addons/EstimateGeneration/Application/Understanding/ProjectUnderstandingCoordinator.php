@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Understanding;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\RunProjectSynthesis;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
-use InvalidArgumentException;
 
 final readonly class ProjectUnderstandingCoordinator
 {
@@ -15,6 +19,7 @@ final readonly class ProjectUnderstandingCoordinator
         private TargetedConflictResolver $conflicts,
         private CrossDocumentFactArbitratorFactory $arbitrators,
         private ProjectUnderstandingBudget $budget,
+        private ProjectSynthesisRunner $synthesis,
     ) {}
 
     public function refresh(
@@ -44,7 +49,7 @@ final readonly class ProjectUnderstandingCoordinator
             $this->budget->maxFacts + 1,
         );
         $snapshot = $capture['snapshot'];
-        $inputFingerprint = $capture['token'];
+        $snapshotToken = $capture['token'];
         $verified = $this->models->understandingPreflight(
             $organizationId,
             $projectId,
@@ -65,16 +70,89 @@ final readonly class ProjectUnderstandingCoordinator
             static fn (Fact $fact): string => $fact->sourceVersion,
             $snapshot->facts,
         )));
-        if (count($sourceVersions) !== 1) {
-            throw new InvalidArgumentException('Current project model contains mixed source versions.');
+        sort($sourceVersions, SORT_STRING);
+        $quantities = [];
+        foreach ($sourceVersions as $version) {
+            $quantities = [
+                ...$quantities,
+                ...array_values(array_filter($this->models->currentDerivedQuantities(
+                    $organizationId,
+                    $projectId,
+                    $sessionId,
+                    $version,
+                    $this->budget->maxFacts,
+                ), static fn (DerivedQuantity $quantity): bool => $quantity->formulaVersion
+                    !== DeterministicGeometryCalculator::FORMULA_VERSION)),
+            ];
         }
-        $sourceVersion = $sourceVersions[0];
+        $quantities = [
+            ...$quantities,
+            ...$this->models->currentDerivedQuantitiesForFormulaVersion(
+                $organizationId,
+                $projectId,
+                $sessionId,
+                DeterministicGeometryCalculator::FORMULA_VERSION,
+                $this->budget->maxFacts,
+            ),
+        ];
+        $roleFingerprints = $this->models->completedSynthesisRoleFingerprints(
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersions,
+        );
+        $factIds = array_map(static fn (Fact $fact): string => $fact->id, $snapshot->facts);
+        $decisions = $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, $factIds);
+        $synthesisInput = new ProjectSynthesisInput(
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersions,
+            array_map(static fn (Fact $fact): array => [
+                'id' => $fact->id,
+                'entity_id' => $fact->entityId,
+                'type' => $fact->type,
+                'value' => $fact->value,
+                'unit' => $fact->unit,
+                'status' => $fact->status,
+                'origin' => $fact->origin,
+                'evidence_ids' => $fact->evidenceIds,
+                'source_version' => $fact->sourceVersion,
+                'version' => $fact->version,
+                'current' => $fact->status !== 'invalidated',
+            ], $snapshot->facts),
+            array_map(static fn (DerivedQuantity $quantity): array => [
+                'id' => $quantity->id,
+                'logical_id' => $quantity->logicalId,
+                'entity_id' => $quantity->entityId,
+                'formula_identity' => $quantity->formulaIdentity,
+                'formula_version' => $quantity->formulaVersion,
+                'value' => $quantity->value,
+                'unit' => $quantity->unit,
+                'status' => $quantity->status,
+                'source_version' => $quantity->sourceVersion,
+                'exact_identity' => $quantity->exactIdentity,
+            ], $quantities),
+            array_map(static fn ($decision): array => [
+                'id' => $decision->id,
+                'version' => $decision->version,
+                'selected_fact_id' => $decision->selectedFactId,
+            ], $decisions),
+            [
+                'arbiter' => $roleFingerprints['arbiter'],
+                'geometry_expert' => $roleFingerprints['geometry_expert'],
+            ],
+            RunProjectSynthesis::PROMPT_CONTRACT,
+        );
+        $sourceVersion = $synthesisInput->aggregateSourceVersion();
+        $inputFingerprint = $synthesisInput->fingerprint();
         $replayed = $this->models->replayUnderstanding(
             $organizationId,
             $projectId,
             $sessionId,
             $sourceVersion,
             $inputFingerprint,
+            $snapshotToken,
         );
         if ($replayed !== null) {
             return $this->persistedResult(
@@ -101,17 +179,31 @@ final readonly class ProjectUnderstandingCoordinator
             $this->budget,
         );
         $result = $linker->link($snapshot->entities, $snapshot->facts, $snapshot->evidence);
+        $selection = $this->synthesis->run($synthesisInput, $result->links, $result->questions);
+        $acceptedLinks = array_values(array_filter(
+            $result->links,
+            static fn (array $link): bool => in_array($link['id'] ?? null, $selection->acceptedLinkIds, true),
+        ));
+        $questions = array_values(array_filter(
+            $result->questions,
+            static fn (array $question): bool => in_array(
+                $question['conflict_id'] ?? null,
+                $selection->questionConflictIds,
+                true,
+            ),
+        ));
         $saved = $this->models->replaceUnderstanding(
             $organizationId,
             $projectId,
             $sessionId,
             $sourceVersion,
             $inputFingerprint,
-            $result->links,
+            $snapshotToken,
+            $acceptedLinks,
             $result->conflicts,
-            $result->questions,
+            $questions,
             $result->limitations,
-            $result->providerCalls,
+            $result->providerCalls + 1,
         );
         if (! $saved) {
             return ProjectUnderstandingResult::stale([$this->conflicts->staleSnapshot()], $result->providerCalls);
@@ -120,11 +212,11 @@ final readonly class ProjectUnderstandingCoordinator
         return $this->persistedResult(
             $sourceVersion,
             $inputFingerprint,
-            $result->links,
+            $acceptedLinks,
             $result->conflicts,
-            $result->questions,
+            $questions,
             $result->limitations,
-            $result->providerCalls,
+            $result->providerCalls + 1,
             $this->hasOnlyPlanningUnresolvedFacts($snapshot->facts),
         );
     }

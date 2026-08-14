@@ -8,7 +8,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEs
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionActionResult;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentSessionBuildingModelBridge;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
@@ -27,7 +26,6 @@ final class RequestEstimateGeneration
         private EstimateGenerationMutationPolicy $policy,
         private AdvanceEstimateGeneration $advance,
         private DocumentGenerationReadinessService $readiness,
-        private EloquentSessionBuildingModelBridge $buildingModels,
         private EstimateGenerationRegionalContextResolver $regionalContextResolver,
         private SelectedRegionalPriceContext $selectedRegionalPriceContext,
         private EstimateGenerationActionAuthorizer $authorizer,
@@ -108,7 +106,6 @@ final class RequestEstimateGeneration
             return new SessionActionResult($session, false, 'estimate_generation.input_required', 422, ['documents_summary' => $readiness['summary']]);
         }
 
-        $this->buildingModels->rebuildForGeneration((int) $session->getKey());
         $session = $this->advance->documentsReady($session);
         $attemptId = (string) Str::uuid();
         $session = $this->advance->generationStarted($session, $attemptId, $generationInput);

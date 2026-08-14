@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use DateTimeImmutable;
 use Illuminate\Database\Connection;
@@ -203,6 +204,40 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
             $status === 'completed' ? $this->result($row) : null,
             $this->nullableString($row->failure_code),
         );
+    }
+
+    public function completedFingerprints(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        array $roles,
+        array $sourceVersions,
+    ): array {
+        $roleValues = array_map(static fn (AiAnalysisRole $role): string => $role->value, $roles);
+        $rows = $roleValues === [] || $sourceVersions === [] ? collect() : $this->database
+            ->table(self::TABLE)
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('status', 'completed')
+            ->whereIn('role', $roleValues)
+            ->whereIn('subject_version', $sourceVersions)
+            ->orderBy('role')
+            ->orderBy('input_fingerprint')
+            ->get(['role', 'input_fingerprint']);
+        $result = [];
+        foreach ($roles as $role) {
+            $result[$role->value] = [];
+        }
+        foreach ($rows as $row) {
+            $result[(string) $row->role][] = (string) $row->input_fingerprint;
+        }
+        foreach ($result as &$fingerprints) {
+            $fingerprints = array_values(array_unique($fingerprints));
+        }
+        unset($fingerprints);
+
+        return $result;
     }
 
     /** @return array<string, mixed> */

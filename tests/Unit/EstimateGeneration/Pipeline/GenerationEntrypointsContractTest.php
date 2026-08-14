@@ -24,39 +24,28 @@ final class GenerationEntrypointsContractTest extends TestCase
         self::assertStringContainsString('generationStarted(', $rebuild);
     }
 
-    public function test_generation_rebuilds_the_derived_building_model_before_starting_the_attempt(): void
+    public function test_generation_uses_the_canonical_project_model_without_a_legacy_rebuild(): void
     {
         $request = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Application/Generation/RequestEstimateGeneration.php');
 
         self::assertIsString($request);
-        self::assertStringContainsString('EloquentSessionBuildingModelBridge $buildingModels', $request);
-        $rebuild = strpos($request, '$this->buildingModels->rebuildForGeneration(');
-        $start = strpos($request, '$this->advance->generationStarted(');
-
-        self::assertIsInt($rebuild);
-        self::assertIsInt($start);
-        self::assertLessThan($start, $rebuild);
+        self::assertStringNotContainsString('SessionBuildingModelBridge', $request);
+        self::assertStringNotContainsString('rebuildForGeneration(', $request);
+        self::assertStringContainsString('$this->advance->generationStarted(', $request);
     }
 
-    public function test_generation_refresh_preserves_the_latest_user_confirmed_geometry(): void
+    public function test_legacy_building_model_bridge_is_removed(): void
     {
-        $bridge = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/BuildingModel/EloquentSessionBuildingModelBridge.php');
-
-        self::assertIsString($bridge);
-        self::assertStringContainsString('public function rebuildForGeneration(', $bridge);
-        self::assertStringContainsString("->where('evidence.source_type', 'user_input')", $bridge);
-        self::assertStringContainsString("->where('evidence.producer_name', 'user_input_normalizer')", $bridge);
-        self::assertStringContainsString("->whereNull('evidence.invalidated_at')", $bridge);
-        self::assertStringContainsString('->preservesLatestModel(', $bridge);
-        self::assertStringContainsString('$this->rebuild($sessionId);', $bridge);
+        self::assertFileDoesNotExist(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/BuildingModel/EloquentSessionBuildingModelBridge.php');
     }
 
-    public function test_document_processing_keeps_the_forced_building_model_rebuild(): void
+    public function test_document_processing_does_not_write_a_second_building_model(): void
     {
         $reconciler = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/EloquentDocumentUnitAggregateReconciler.php');
 
         self::assertIsString($reconciler);
-        self::assertStringContainsString('$this->buildingModels->rebuild(', $reconciler);
+        self::assertStringNotContainsString('buildingModels', $reconciler);
+        self::assertStringNotContainsString('SessionBuildingModelBridge', $reconciler);
         self::assertStringNotContainsString('rebuildForGeneration(', $reconciler);
     }
 }

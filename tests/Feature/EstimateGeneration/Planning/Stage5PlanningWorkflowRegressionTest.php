@@ -350,6 +350,7 @@ final class Stage5PlanningWorkflowRegressionTest extends TestCase
                 new TargetedConflictResolver($translator),
                 new PlanningWorkflowNoopArbitratorFactory,
                 ProjectUnderstandingBudget::defaults(),
+                new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner,
             ),
             new ProjectPlanningCoordinator(
                 $repository,

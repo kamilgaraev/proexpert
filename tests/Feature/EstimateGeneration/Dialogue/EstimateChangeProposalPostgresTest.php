@@ -15,13 +15,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateP
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\PreviewEstimateChange;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
@@ -55,6 +53,25 @@ final class EstimateChangeProposalPostgresTest extends TestCase
     {
         parent::setUp();
         self::assertSame('pgsql', DB::getDriverName());
+        if (! Schema::hasColumn('estimate_generation_sessions', 'state_version')) {
+            DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN state_version bigint NOT NULL DEFAULT 0');
+        }
+        if (! Schema::hasTable('estimate_generation_documents')) {
+            Schema::create('estimate_generation_documents', function ($table): void {
+                $table->bigIncrements('id');
+                $table->unsignedBigInteger('session_id');
+                $table->string('source_version')->nullable();
+                $table->string('checksum_sha256', 64)->nullable();
+                $table->timestampTz('updated_at')->nullable();
+            });
+        }
+        if (! Schema::hasTable('estimate_generation_technology_planning_runs')) {
+            (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000700_create_technology_planning_projections.php'))->up();
+        }
+        if (! Schema::hasTable('estimate_generation_completeness_runs')) {
+            (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000710_create_completeness_planning_projections.php'))->up();
+        }
+        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000200_detach_project_model_from_building_model.php'))->up();
         $migration = require database_path('migrations/2026_08_12_000002_create_estimate_change_proposals.php');
         $hardening = require database_path('migrations/2026_08_12_000003_add_interpretation_attempts_and_cost_state.php');
         if (Schema::hasTable('estimate_change_proposals')) {
@@ -249,42 +266,23 @@ final class EstimateChangeProposalPostgresTest extends TestCase
             'pdf_geometry',
             'extractor:v1',
         ));
-        $model = (new BuildingModelRepository(
-            new EloquentBuildingModelStore(DB::connection()),
-            $evidenceRepository,
-            new EloquentProjectModelRepository(app('db')),
-        ))->store(
-            new BuildingModelOperationContext((int) $organization->id, (int) $project->id, (int) $session->id, $sourceVersion),
-            new NormalizedBuildingModelData('m', 'confirmed', 0.01, [
-                new FloorData('floor-1', 0, 2.8, [], [], [], [], [$evidence->id], 1, 'confirmed'),
-            ], [], 'building-model:v1'),
-        );
-        $entityId = (int) DB::table('estimate_generation_project_model_entities')->insertGetId([
-            'building_model_id' => $model->id,
-            'organization_id' => $organization->id,
-            'project_id' => $project->id,
-            'session_id' => $session->id,
-            'source_version' => $model->contentVersion,
-            'stable_key' => 'dimension:race-height',
-            'entity_kind' => 'dimension',
-            'payload' => json_encode(['kind' => 'dimension', 'key' => 'dimension:race-height', 'value' => 2.8, 'unit' => 'm'], JSON_THROW_ON_ERROR),
-            'confidence' => 1,
-            'created_at' => now(),
-        ]);
+        $modelId = (int) $session->id;
         $assertionKey = 'assertion:race-height';
-        DB::table('estimate_generation_project_model_assertions')->insert([
-            'building_model_id' => $model->id,
-            'organization_id' => $organization->id,
-            'project_id' => $project->id,
-            'session_id' => $session->id,
-            'source_version' => $model->contentVersion,
-            'stable_key' => $assertionKey,
-            'entity_id' => $entityId,
-            'assertion_type' => 'dimension',
-            'payload' => json_encode(['source' => 'cad', 'value' => 2.8, 'unit' => 'm'], JSON_THROW_ON_ERROR),
-            'confidence' => 1,
-            'created_at' => now(),
-        ]);
+        $domainEvidence = new Evidence(
+            'evidence:'.$evidence->id,
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+            $sourceVersion,
+            'document:1',
+            'cad',
+            1,
+        );
+        (new EloquentProjectModelRepository(app('db')))->saveSourceModel(
+            [new Entity('dimension:race-height', (int) $organization->id, (int) $project->id, (int) $session->id, $sourceVersion, 'dimension', 'dimension:race-height', ['value' => 2.8, 'unit' => 'm'])],
+            [new Fact($assertionKey, (int) $organization->id, (int) $project->id, (int) $session->id, $sourceVersion, 'dimension:race-height', 'dimension', 2.8, 'm', 1.0, 'document', 'confirmed', [$domainEvidence->id])],
+            [$domainEvidence],
+        );
         $payload = $this->scopedProposal(
             $id,
             $session,
@@ -294,7 +292,7 @@ final class EstimateChangeProposalPostgresTest extends TestCase
         );
         $payload['idempotency_key'] = 'race-'.$id;
         $payload['after_payload'] = [
-            'source_version' => $model->contentVersion,
+            'source_version' => $sourceVersion,
             'value_fingerprint' => ProjectModelValueFingerprint::for(['value' => 2.8, 'unit' => 'm']),
             'assertion_stable_key' => $assertionKey,
             'value' => ['value' => 3.0, 'unit' => 'm'],
@@ -324,7 +322,7 @@ final class EstimateChangeProposalPostgresTest extends TestCase
         self::assertContains($status, ['applied', 'cancelled']);
         self::assertSame([$status, $status], array_column($outcomes, 'status'));
         $correctionsBeforeReplay = $status === 'applied' ? 1 : 0;
-        self::assertSame($correctionsBeforeReplay, DB::table('estimate_generation_project_model_corrections')->where('building_model_id', $model->id)->count());
+        self::assertSame($correctionsBeforeReplay, DB::table('estimate_generation_project_model_corrections')->where('building_model_id', $modelId)->count());
 
         $replayId = (string) \Illuminate\Support\Str::uuid();
         $currentValue = $status === 'applied'
@@ -339,7 +337,7 @@ final class EstimateChangeProposalPostgresTest extends TestCase
         );
         $replayPayload['idempotency_key'] = 'race-replay-'.$replayId;
         $replayPayload['after_payload'] = [
-            'source_version' => $model->contentVersion,
+            'source_version' => $sourceVersion,
             'value_fingerprint' => ProjectModelValueFingerprint::for($currentValue),
             'assertion_stable_key' => $assertionKey,
             'value' => ['value' => 3.2, 'unit' => 'm'],
@@ -361,7 +359,7 @@ final class EstimateChangeProposalPostgresTest extends TestCase
             $this->raceOutcome($firstApply),
             $this->raceOutcome($secondApply),
         ], 'status'));
-        self::assertSame($correctionsBeforeReplay + 1, DB::table('estimate_generation_project_model_corrections')->where('building_model_id', $model->id)->count());
+        self::assertSame($correctionsBeforeReplay + 1, DB::table('estimate_generation_project_model_corrections')->where('building_model_id', $modelId)->count());
     }
 
     public function test_two_concurrent_interpret_requests_reserve_once_before_provider_wire(): void

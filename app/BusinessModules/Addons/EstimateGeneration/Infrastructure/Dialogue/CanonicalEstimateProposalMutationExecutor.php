@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Corrections\ApplyProjectFactCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalMutationExecutor;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ApplyProjectModelCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendationDecisionService;
@@ -15,7 +15,7 @@ use RuntimeException;
 
 final readonly class CanonicalEstimateProposalMutationExecutor implements EstimateProposalMutationExecutor
 {
-    public function __construct(private ApplyProjectModelCorrection $corrections, private TechnologyRecommendationDecisionService $technologies) {}
+    public function __construct(private ApplyProjectFactCorrection $corrections, private TechnologyRecommendationDecisionService $technologies) {}
 
     public function apply(User $actor, EstimateGenerationSession $session, EstimateChangeProposal $proposal): array
     {

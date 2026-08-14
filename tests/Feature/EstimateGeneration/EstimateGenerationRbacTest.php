@@ -62,6 +62,7 @@ class EstimateGenerationRbacTest extends TestCase
             'analyze' => ['POST', "{$prefix}/{session}/analyze", 'estimate_generation.generate'],
             'generate' => ['POST', "{$prefix}/{session}/generate", 'estimate_generation.generate'],
             'confirm input' => ['POST', "{$prefix}/{session}/confirm-input", 'estimate_generation.review'],
+            'analysis basis' => ['GET', "{$prefix}/{session}/analysis-basis", 'estimate_generation.view'],
             'retry session' => ['POST', "{$prefix}/{session}/retry", 'estimate_generation.generate'],
             'cancel session' => ['POST', "{$prefix}/{session}/cancel", 'estimate_generation.generate'],
             'archive session' => ['POST', "{$prefix}/{session}/archive", 'estimate_generation.generate'],

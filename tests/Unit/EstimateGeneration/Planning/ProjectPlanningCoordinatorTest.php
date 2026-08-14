@@ -120,7 +120,7 @@ final class ProjectPlanningCoordinatorTest extends TestCase
         self::assertFalse($missing->isReadyForCompleteness());
         self::assertSame(0, $repository->technologyPlanningWriteCount);
 
-        $repository->replaceUnderstanding(10, 20, 30, self::SOURCE_VERSION, $capture['token'], [], [], [], [], 0);
+        $repository->replaceUnderstanding(10, 20, 30, self::SOURCE_VERSION, $capture['token'], $capture['token'], [], [], [], [], 0);
         $repository->removeProjection('fact:roof-material');
         $stale = $this->coordinator(
             $repository,
@@ -229,6 +229,7 @@ final class ProjectPlanningCoordinatorTest extends TestCase
             20,
             30,
             self::SOURCE_VERSION,
+            $capture['token'],
             $capture['token'],
             [],
             [],

@@ -6,6 +6,9 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
@@ -102,6 +105,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $reader,
             $this->observerRunner($vision),
             $this->arbitrator(),
+            $this->geometryRunner(),
         );
         foreach ($paths as $offset => $path) {
             $index = $offset + 1;
@@ -192,6 +196,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $reader,
             $this->observerRunner($vision),
             $this->arbitrator(),
+            $this->geometryRunner(),
         );
         $locator = $unit->locator;
         $locator['document_representation']['capabilities'] = array_reverse(
@@ -233,6 +238,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             'observer_construction' => true,
             'observer_risk' => true,
             'arbiter' => true,
+            'geometry_expert' => true,
         ], $output->normalizedPayload['role_completion']);
         self::assertSame($sourceVersion, $output->normalizedPayload['document_representation']['source_version']);
         self::assertGreaterThan(0, $output->normalizedPayload['document_representation']['resource_usage']['duration_ms']);
@@ -299,6 +305,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $reader,
             $this->observerRunner($vision),
             $this->arbitrator(),
+            $this->geometryRunner(),
         );
         $context = new DocumentUnitExecutionContext(
             1,
@@ -606,6 +613,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             new BoundedVersionedS3ObjectReader($files),
             $this->observerRunner(),
             $this->arbitrator(),
+            $this->geometryRunner(),
         );
     }
 
@@ -643,6 +651,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $reader,
             $this->observerRunner(error: $error),
             $this->arbitrator(),
+            $this->geometryRunner(),
         );
     }
 
@@ -721,6 +730,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             new BoundedVersionedS3ObjectReader($files),
             $this->observerRunner(),
             $this->arbitrator(),
+            $this->geometryRunner(),
         );
         $context = new DocumentUnitExecutionContext(
             1, 2, 3, 4, 5, DocumentUnitType::CadDrawing, 1,
@@ -785,6 +795,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             new BoundedVersionedS3ObjectReader($files),
             $this->observerRunner(),
             $this->arbitrator(),
+            $this->geometryRunner(),
             cadRepresentationPublisher: new CadRepresentationPublisher($files),
         );
 
@@ -850,6 +861,17 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                     'decisions' => [],
                     'questions' => [],
                 ], null);
+            }
+        };
+    }
+
+    private function geometryRunner(): GeometryExpertRunner
+    {
+        return new class implements GeometryExpertRunner
+        {
+            public function run(GeometryExpertInput $input): GeometryExpertResult
+            {
+                return new GeometryExpertResult([], [], [], []);
             }
         };
     }

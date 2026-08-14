@@ -20,7 +20,7 @@ final class PipelineBaseInputVersionTest extends TestCase
 {
     public function test_document_floor_identity_contract_has_its_own_cache_generation(): void
     {
-        self::assertSame(7, PipelineBaseInputVersion::SCHEMA_VERSION);
+        self::assertSame(8, PipelineBaseInputVersion::SCHEMA_VERSION);
     }
 
     public function test_schema_version_is_part_of_base_input_version(): void
@@ -37,14 +37,13 @@ final class PipelineBaseInputVersionTest extends TestCase
             'schema_version' => PipelineBaseInputVersion::SCHEMA_VERSION,
             'input' => $input,
             'documents' => $documents,
-            'document_total_area_evidence' => null,
-            'building_model' => null,
+            'project_model_snapshot_token' => null,
         ]));
 
         self::assertSame($expected, PipelineBaseInputVersion::fromProjection($input, $documents));
     }
 
-    public function test_selected_area_evidence_changes_cache_version_independently_of_generation_attempt(): void
+    public function test_project_model_snapshot_changes_cache_version_independently_of_generation_attempt(): void
     {
         $documents = [[
             'id' => 10,
@@ -52,13 +51,7 @@ final class PipelineBaseInputVersionTest extends TestCase
             'status' => 'ready',
             'derived_version' => 'sha256:'.str_repeat('b', 64),
         ]];
-        $selected = [
-            'evidence_id' => 901,
-            'source_version' => 'sha256:'.str_repeat('c', 64),
-            'fingerprint' => str_repeat('d', 64),
-            'invalidation_version' => 0,
-            'active' => true,
-        ];
+        $selected = 'sha256:'.str_repeat('d', 64);
 
         $first = PipelineBaseInputVersion::fromProjection(
             ['description' => 'Дом', 'generation_attempt_id' => 'attempt-a'],
@@ -73,22 +66,7 @@ final class PipelineBaseInputVersionTest extends TestCase
         $replacement = PipelineBaseInputVersion::fromProjection(
             ['description' => 'Дом', 'generation_attempt_id' => 'attempt-b'],
             $documents,
-            [...$selected, 'evidence_id' => 902, 'fingerprint' => str_repeat('e', 64)],
-        );
-        $newInvalidationVersion = PipelineBaseInputVersion::fromProjection(
-            ['description' => 'house', 'generation_attempt_id' => 'attempt-b'],
-            $documents,
-            [...$selected, 'invalidation_version' => 1],
-        );
-        $inactive = PipelineBaseInputVersion::fromProjection(
-            ['description' => 'house', 'generation_attempt_id' => 'attempt-b'],
-            $documents,
-            [...$selected, 'active' => false],
-        );
-        $inactiveBaseline = PipelineBaseInputVersion::fromProjection(
-            ['description' => 'house', 'generation_attempt_id' => 'attempt-c'],
-            $documents,
-            null,
+            'sha256:'.str_repeat('e', 64),
         );
         $invalidated = PipelineBaseInputVersion::fromProjection(
             ['description' => 'Дом', 'generation_attempt_id' => 'attempt-b'],
@@ -98,12 +76,10 @@ final class PipelineBaseInputVersionTest extends TestCase
 
         self::assertSame($first, $retry);
         self::assertNotSame($first, $replacement);
-        self::assertNotSame($first, $newInvalidationVersion);
-        self::assertSame($inactive, $inactiveBaseline);
         self::assertNotSame($first, $invalidated);
     }
 
-    public function test_effective_project_model_corrections_change_the_rebuild_input_without_mutating_the_raw_model_version(): void
+    public function test_project_model_decision_changes_the_rebuild_input_through_snapshot_token(): void
     {
         $documents = [[
             'id' => 10,
@@ -111,25 +87,9 @@ final class PipelineBaseInputVersionTest extends TestCase
             'status' => 'ready',
             'derived_version' => 'sha256:'.str_repeat('b', 64),
         ]];
-        $raw = [
-            'content_version' => 'sha256:'.str_repeat('c', 64),
-            'model' => ['scale_status' => 'confirmed', 'evidence_ids' => [1]],
-        ];
-        $applied = [...$raw, 'effective_values' => [[
-            'entity_stable_key' => 'room-1',
-            'assertion_stable_key' => 'assertion:room-1:area',
-            'assertion_type' => 'area',
-            'value' => ['value' => 19.5, 'unit' => 'm2'],
-            'correction_stable_key' => 'correction:'.str_repeat('d', 64),
-        ]]];
-
         self::assertNotSame(
-            PipelineBaseInputVersion::fromProjection([], $documents, null, $raw),
-            PipelineBaseInputVersion::fromProjection([], $documents, null, $applied),
-        );
-        self::assertSame(
-            PipelineBaseInputVersion::fromProjection([], $documents, null, $raw),
-            PipelineBaseInputVersion::fromProjection([], $documents, null, [...$applied, 'effective_values' => []]),
+            PipelineBaseInputVersion::fromProjection([], $documents, 'sha256:'.str_repeat('c', 64)),
+            PipelineBaseInputVersion::fromProjection([], $documents, 'sha256:'.str_repeat('d', 64)),
         );
     }
 

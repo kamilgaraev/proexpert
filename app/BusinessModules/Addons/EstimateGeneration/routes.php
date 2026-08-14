@@ -3,13 +3,10 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationBuildingModelController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationAnalysisBasisController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDialogueController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationGeometryController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationProjectModelCorrectionController;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationProjectModelReviewController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationReviewController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Http\Controllers\EstimateNormativeStatusController;
@@ -40,13 +37,7 @@ Route::middleware([
         Route::post('/{session}/analyze', [EstimateGenerationActionController::class, 'analyze'])->middleware('authorize:estimate_generation.generate,project,project')->name('analyze');
         Route::post('/{session}/generate', [EstimateGenerationActionController::class, 'generate'])->middleware('authorize:estimate_generation.generate,project,project')->name('generate');
         Route::post('/{session}/confirm-input', [EstimateGenerationActionController::class, 'confirmInput'])->middleware('authorize:estimate_generation.review,project,project')->name('confirm-input');
-        Route::get('/{session}/geometry', [EstimateGenerationGeometryController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('geometry.show');
-        Route::post('/{session}/geometry/confirm', [EstimateGenerationGeometryController::class, 'confirm'])->middleware('authorize:estimate_generation.review,project,project')->name('geometry.confirm');
-        Route::get('/{session}/building-model', [EstimateGenerationBuildingModelController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('building-model.show');
-        Route::get('/{session}/project-model/review', [EstimateGenerationProjectModelReviewController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('project-model.review.show');
-        Route::get('/{session}/evidence/{evidence}', [EstimateGenerationBuildingModelController::class, 'evidence'])->whereNumber('evidence')->middleware('authorize:estimate_generation.view,project,project')->name('evidence.show');
-        Route::post('/{session}/project-model/corrections', [EstimateGenerationProjectModelCorrectionController::class, 'store'])->middleware('authorize:estimate_generation.review,project,project')->name('project-model.corrections.store');
-        Route::post('/{session}/project-model/corrections/revert', [EstimateGenerationProjectModelCorrectionController::class, 'revert'])->middleware('authorize:estimate_generation.review,project,project')->name('project-model.corrections.revert');
+        Route::get('/{session}/analysis-basis', [EstimateGenerationAnalysisBasisController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('analysis-basis.show');
         Route::post('/{session}/retry', [EstimateGenerationActionController::class, 'retry'])->middleware('authorize:estimate_generation.generate,project,project')->name('retry');
         Route::post('/{session}/cancel', [EstimateGenerationActionController::class, 'cancel'])->middleware('authorize:estimate_generation.generate,project,project')->name('cancel');
         Route::post('/{session}/archive', [EstimateGenerationActionController::class, 'archive'])->middleware('authorize:estimate_generation.generate,project,project')->name('archive');

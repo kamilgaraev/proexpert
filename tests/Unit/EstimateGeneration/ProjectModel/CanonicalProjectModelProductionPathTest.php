@@ -4,56 +4,24 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\ProjectModel;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\InMemoryBuildingModelStore;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelBridge;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelUnitData;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Corrections\ApplyProjectFactCorrection;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionConflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ApplyProjectModelDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\ProjectModelReadProjection;
-use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class CanonicalProjectModelProductionPathTest extends TestCase
 {
-    #[Test]
-    public function bridge_writes_domain_records_and_replay_repairs_a_missing_current_projection(): void
+    public function test_correction_creates_an_immutable_decision_and_new_current_fact_visible_to_readers(): void
     {
-        [$bridge, $models, $read] = $this->path();
-        $context = $this->context();
-
-        $bridge->store($context, [$this->unit()]);
-
-        self::assertContainsOnlyInstancesOf(Entity::class, $models->entities);
-        self::assertContainsOnlyInstancesOf(Fact::class, $models->facts);
-        self::assertContainsOnlyInstancesOf(Evidence::class, $models->evidence);
-        $first = $read->forScope(10, 20, 30);
-        self::assertCount(1, $first['facts']);
-        self::assertSame(['value' => '7.94', 'unit' => 'm2'], $first['effective_values'][0]['value']);
-
-        $models->removeProjection($first['facts'][0]->id);
-        self::assertSame([], $read->forScope(10, 20, 30)['facts']);
-
-        $bridge->store($context, [$this->unit()]);
-
-        self::assertCount(1, $read->forScope(10, 20, 30)['facts']);
-    }
-
-    #[Test]
-    public function correction_creates_an_immutable_decision_and_new_current_fact_visible_to_readers(): void
-    {
-        [$bridge, $models, $read] = $this->path();
-        $bridge->store($this->context(), [$this->unit()]);
+        [$models, $read] = $this->path();
         $before = $read->forScope(10, 20, 30)['facts'][0];
 
         $decision = (new ApplyProjectModelDecision($models))->apply(
@@ -78,11 +46,9 @@ final class CanonicalProjectModelProductionPathTest extends TestCase
         self::assertSame('user_assumption', $after['facts'][0]->origin);
     }
 
-    #[Test]
-    public function read_projection_is_tenant_scoped_and_exposes_unresolved_conflicts(): void
+    public function test_read_projection_is_tenant_scoped_and_exposes_unresolved_conflicts(): void
     {
-        [$bridge, $models, $read] = $this->path();
-        $bridge->store($this->context(), [$this->unit()]);
+        [$models, $read] = $this->path();
         $current = $models->currentFacts(10, 20, 30)[0];
         $other = new Fact(
             'fact:conflicting-area', 10, 20, 30, $current->sourceVersion, $current->entityId,
@@ -100,75 +66,47 @@ final class CanonicalProjectModelProductionPathTest extends TestCase
         self::assertCount(1, $read->forScope(10, 20, 30)['facts']);
         self::assertCount(1, $read->forScope(10, 20, 30)['conflicts']);
         self::assertSame([], $read->forScope(99, 20, 30)['facts']);
-        self::assertArrayHasKey('conflicts', $read->forScope(10, 20, 30));
     }
 
-    private function path(): array
+    public function test_dialogue_correction_is_value_fenced_and_rejects_stale_replay(): void
     {
-        $evidence = new InMemoryEvidenceRepository;
-        $models = new InMemoryProjectModelRepository;
-        $buildingModels = new BuildingModelRepository(new InMemoryBuildingModelStore, $evidence, $models);
-        $writer = new ProjectModelEvidenceWriter($models, $evidence);
-        $bridge = new SessionBuildingModelBridge(
-            $evidence,
-            new GeometryBuildingModelInputMapper,
-            new BuildingModelAssembler,
-            $buildingModels,
-            $writer,
+        [$models] = $this->path();
+        $correction = new ApplyProjectFactCorrection($models, new ApplyProjectModelDecision($models));
+        $fingerprint = ProjectModelValueFingerprint::for(['value' => '7.94', 'unit' => 'm2']);
+
+        $result = $correction->apply(
+            10, 20, 30, 42, 'sha256:'.str_repeat('a', 64), $fingerprint,
+            'fact:room:1:area', ['value' => '8.1', 'unit' => 'm2'],
+            'Проверено по экспликации помещений', 'dialogue-request-1', 0,
         );
 
-        return [$bridge, $models, new ProjectModelReadProjection($models)];
+        self::assertTrue($result['reanalysis_requested']);
+        self::assertCount(1, $models->decisions);
+        $this->expectException(EstimateDecisionConflict::class);
+        $correction->apply(
+            10, 20, 30, 42, 'sha256:'.str_repeat('a', 64), $fingerprint,
+            'fact:room:1:area', ['value' => '8.2', 'unit' => 'm2'],
+            'Устаревшее повторное изменение', 'dialogue-request-2', 0,
+        );
     }
 
-    private function context(): BuildingModelOperationContext
+    /** @return array{InMemoryProjectModelRepository,ProjectModelReadProjection} */
+    private function path(): array
     {
-        return new BuildingModelOperationContext(10, 20, 30, $this->sourceVersion('f'));
-    }
+        $models = new InMemoryProjectModelRepository;
+        $sourceVersion = 'sha256:'.str_repeat('a', 64);
+        $evidence = new Evidence(
+            'evidence:1', 10, 20, 30, $sourceVersion, 'document:1', 'document', 1,
+        );
+        $models->saveSourceModel(
+            [new Entity('room:1', 10, 20, 30, $sourceVersion, 'room', 'room:1')],
+            [new Fact(
+                'fact:room:1:area', 10, 20, 30, $sourceVersion, 'room:1', 'area', '7.94', 'm2',
+                1.0, 'document', 'confirmed', [$evidence->id],
+            )],
+            [$evidence],
+        );
 
-    private function unit(): SessionBuildingModelUnitData
-    {
-        $source = $this->sourceVersion('a');
-
-        return new SessionBuildingModelUnitData(101, 501, 601, 'sketch', 1, $source, 0.95, [
-            'source_kind' => 'sketch',
-            'floor_key' => 'floor-1',
-            'vision_analysis' => [
-                'schema_version' => 1,
-                'sheet_type' => 'floor_plan',
-                'evidence' => [['key' => 'vision-page', 'locator' => [
-                    'page_id' => 601,
-                    'page_number' => 1,
-                    'processing_unit_id' => 101,
-                    'source_version' => $source,
-                    'coordinate_space' => 'normalized_source_v1',
-                ]]],
-                'elements' => [[
-                    'key' => 'room_101',
-                    'type' => 'room',
-                    'label' => 'Кабинет 7,94',
-                    'polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
-                    'confidence' => 0.95,
-                    'evidence_ref' => 'vision-page',
-                ]],
-                'scale_candidates' => [[
-                    'source' => 'manual_reference',
-                    'meters_per_unit' => 0.001,
-                    'confidence' => 1.0,
-                    'evidence_ref' => 'vision-page',
-                    'detail' => 'confirmed_control_dimension',
-                ]],
-                'warnings' => [],
-                'provider' => 'timeweb',
-                'requested_model' => 'vision/model',
-                'reported_model' => 'vision/model',
-                'model_version' => 'provider:v1',
-                'usage' => ['status' => 'unavailable', 'input_tokens' => null, 'output_tokens' => null],
-            ],
-        ]);
-    }
-
-    private function sourceVersion(string $character): string
-    {
-        return 'sha256:'.str_repeat($character, 64);
+        return [$models, new ProjectModelReadProjection($models)];
     }
 }

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
-use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\BuildingModelReadDataSource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 
@@ -12,7 +11,7 @@ final readonly class EvidenceAwarePipelineBaseInputVersionResolver
 {
     private const MAX_DOCUMENT_PROJECTIONS = 500;
 
-    public function __construct(private BuildingModelReadDataSource $buildingModelReadData) {}
+    public function __construct(private CanonicalProjectModelPipelineProjection $projectModel) {}
 
     /**
      * @param  list<array{id: int, source_version: string, status: string, derived_version: string}>  $documents
@@ -24,12 +23,9 @@ final readonly class EvidenceAwarePipelineBaseInputVersionResolver
         int $projectId,
         int $sessionId,
     ): string {
-        return PipelineBaseInputVersion::fromProjection(
-            $input,
-            $documents,
-            $this->buildingModelReadData->totalArea($organizationId, $projectId, $sessionId),
-            $this->buildingModelReadData->latestModel($organizationId, $projectId, $sessionId),
-        );
+        $projectModel = $this->projectModel->forScope($organizationId, $projectId, $sessionId);
+
+        return PipelineBaseInputVersion::fromProjection($input, $documents, $projectModel['token']);
     }
 
     public function fromSession(EstimateGenerationSession $session): string

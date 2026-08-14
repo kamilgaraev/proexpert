@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentSessionBuildingModelBridge;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DocumentVisualAttributeSummaryBuilder;
@@ -19,7 +18,6 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
     public function __construct(
         private ReconcileEstimateGenerationDocuments $sessions,
         private Connection $database,
-        private EloquentSessionBuildingModelBridge $buildingModels,
         private DocumentVisualAttributeSummaryBuilder $visualAttributes = new DocumentVisualAttributeSummaryBuilder,
         private DocumentProcessingOutcomeResolver $outcomes = new DocumentProcessingOutcomeResolver,
         private DocumentResourceUsageSummarizer $resourceUsage = new DocumentResourceUsageSummarizer,
@@ -50,7 +48,6 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                 return null;
             }
 
-            $shouldRebuildBuildingModel = false;
             if ((string) $document->units_finalized_source_version !== $sourceVersion) {
                 $units = (clone $base)->get(['id', 'status', 'attempt_count', 'output_count', 'failure_code', 'failure_fingerprint', 'metadata']);
                 $currentUnitIds = $units->pluck('id');
@@ -81,7 +78,6 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     ])->all(),
                 );
                 $status = $outcome->documentStatus;
-                $shouldRebuildBuildingModel = $outcome->processedPages > 0;
                 $qualitySignals = $this->qualitySignals($includedPages->pluck('normalized_payload')->all());
                 $visualAttributes = $this->visualAttributes->summarize($includedPages->pluck('normalized_payload')->all());
                 $resourceUsage = $this->resourceUsage->summarize(
@@ -136,7 +132,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     'facts_summary' => [
                         'processing_outcome' => $outcome->toArray(),
                         'resource_usage' => $resourceUsage,
-                        'semantic_understanding' => $semanticUnderstanding,
+                        ...$semanticUnderstanding,
                         ...($qualitySignals === [] ? [] : ['quality_signals' => $qualitySignals]),
                         ...$visualAttributes,
                     ],
@@ -146,13 +142,6 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     'ocr_finished_at' => now(),
                     'meta' => $documentMeta,
                 ]);
-            } else {
-                $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
-                $processingOutcome = is_array($factsSummary['processing_outcome'] ?? null)
-                    ? $factsSummary['processing_outcome']
-                    : [];
-                $counts = is_array($processingOutcome['counts'] ?? null) ? $processingOutcome['counts'] : [];
-                $shouldRebuildBuildingModel = (int) ($counts['ready'] ?? 0) > 0;
             }
 
             $token = (string) Str::uuid();
@@ -161,19 +150,16 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                 'units_reconcile_lease_expires_at' => now()->addMinutes(5),
             ])->save();
 
-            return [$document->session, $token, $shouldRebuildBuildingModel];
+            return [$document->session, $token];
         }, 3);
 
         if ($claim === null) {
             return;
         }
 
-        [$session, $token, $shouldRebuildBuildingModel] = $claim;
+        [$session, $token] = $claim;
 
         try {
-            if ($shouldRebuildBuildingModel) {
-                $this->buildingModels->rebuild((int) $session->getKey());
-            }
             $marked = $this->documentQuery()
                 ->whereKey($documentId)
                 ->where('source_version', $sourceVersion)

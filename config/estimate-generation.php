@@ -11,6 +11,12 @@ $visionModelOverride = $envValue('ESTIMATE_GENERATION_VISION_MODEL');
 $visionModelDefault = 'openai/gpt-5.6-luna';
 
 return [
+    'project_engineer' => [
+        'model' => $envValue('ESTIMATE_GENERATION_PROJECT_ENGINEER_MODEL', 'openai/gpt-5-mini'),
+        'max_input_bytes' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_MAX_INPUT_BYTES', 524_288),
+        'max_output_tokens' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_MAX_OUTPUT_TOKENS', 4096),
+        'timeout_seconds' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_TIMEOUT_SECONDS', 120),
+    ],
     'vision' => [
         'provider' => env('ESTIMATE_GENERATION_VISION_PROVIDER', 'timeweb'),
         'model_override' => $visionModelOverride,
@@ -221,6 +227,14 @@ return [
                 'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_NANO_PRICE_EFFECTIVE_AT', '2026-07-20T00:00:00+00:00'),
             ]],
         ]],
+        'project_synthesis' => ['timeweb' => [(string) $envValue('ESTIMATE_GENERATION_PROJECT_ENGINEER_MODEL', 'openai/gpt-5-mini') => [[
+            'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_INPUT_PER_MILLION', ''),
+            'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CACHED_INPUT_PER_MILLION', ''),
+            'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_OUTPUT_PER_MILLION', ''),
+            'currency' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CURRENCY', ''),
+            'version' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_VERSION', ''),
+            'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_EFFECTIVE_AT', ''),
+        ]]]],
         'completeness_review' => ['timeweb' => [(string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_MODEL', 'openai/gpt-5-mini') => [[
             'input_per_million' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_INPUT_PER_MILLION', ''),
             'cached_input_per_million' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_CACHED_INPUT_PER_MILLION', ''),

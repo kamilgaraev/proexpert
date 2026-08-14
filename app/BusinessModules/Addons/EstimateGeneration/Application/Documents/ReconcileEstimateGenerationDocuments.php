@@ -21,6 +21,7 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
         private AdvanceEstimateGeneration $advance,
         private DocumentGenerationReadinessService $readiness,
         private ProjectPlanningPipeline $planning,
+        private ?ReconcileSessionGeometryProjection $geometry = null,
     ) {}
 
     public function changed(EstimateGenerationSession $session): EstimateGenerationSession
@@ -76,6 +77,12 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
         }
 
         $readiness = $this->readiness->evaluate($session);
+        if ((int) ($readiness['summary']['pending_count'] ?? 0) === 0
+            && (int) ($readiness['summary']['system_failure_count'] ?? 0) === 0
+            && $this->geometry?->reconcile($session) === true) {
+            $session = $session->fresh(['documents.processingUnits']) ?? $session;
+            $readiness = $this->readiness->evaluate($session);
+        }
         if (! $readiness['can_generate']) {
             if ((int) ($readiness['summary']['pending_count'] ?? 0) === 0
                 && (int) ($readiness['summary']['system_failure_count'] ?? 0) > 0) {

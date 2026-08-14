@@ -92,6 +92,24 @@ final class ClarificationQuestionProjectorTest extends TestCase
         ]);
     }
 
+    #[Test]
+    public function canonical_page_questions_include_geometry_questions_without_a_second_projection(): void
+    {
+        $payload = $this->page(4, 'partial_opening_geometry_abc123', 'На разрезе не указана высота проёма.', ['Указать высоту', 'Не учитывать проём']);
+        $payload['ai_questions'] = $payload['document_arbitration']['questions'];
+        unset($payload['document_arbitration']);
+
+        $questions = (new ClarificationQuestionProjector(static fn (string $key): string => match ($key) {
+            'estimate_generation.ai_questions.other' => 'Другое',
+            'estimate_generation.ai_questions.leave_unresolved' => 'Оставить нерешённым',
+            default => $key,
+        }))->projectPages([$payload]);
+
+        self::assertCount(1, $questions);
+        self::assertSame('partial_opening_geometry_abc123', $questions[0]->code);
+        self::assertSame([4], $questions[0]->sourceLocator['page_numbers']);
+    }
+
     /** @return array<string,mixed> */
     private function page(int $page, string $code, string $reason, array $choices, string $authority = 'explicit_document'): array
     {

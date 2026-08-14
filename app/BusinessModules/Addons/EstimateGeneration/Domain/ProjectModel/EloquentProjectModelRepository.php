@@ -342,8 +342,7 @@ SQL, [
             && (int) $row->evidence_count <= $maxEvidenceItems
             && (int) $row->max_evidence_per_fact <= $maxEvidencePerFact
             && (int) $row->total_payload_bytes <= $maxEvidencePayloadBytes
-            && (int) $row->max_payload_bytes <= $maxEvidenceBytesPerItem
-            && (int) $row->source_version_count <= 1;
+            && (int) $row->max_payload_bytes <= $maxEvidenceBytesPerItem;
 
         return [
             'within_budget' => $withinBudget,
@@ -365,9 +364,9 @@ SQL, [
                     if (! $entity instanceof Entity) {
                         throw new InvalidArgumentException('Project model entity batch is invalid.');
                     }
-                    $buildingModelId = $this->buildingModelId($entity);
+                    $projectionScopeId = $this->projectionScopeId($entity);
                     $this->database->table('estimate_generation_project_model_entities')->insertOrIgnore([
-                        'building_model_id' => $buildingModelId,
+                        'building_model_id' => $projectionScopeId,
                         'organization_id' => $entity->organizationId,
                         'project_id' => $entity->projectId,
                         'session_id' => $entity->sessionId,
@@ -397,14 +396,14 @@ SQL, [
                     if (! $fact instanceof Fact) {
                         throw new InvalidArgumentException('Project model fact batch is invalid.');
                     }
-                    $buildingModelId = $this->buildingModelId($fact);
+                    $projectionScopeId = $this->projectionScopeId($fact);
                     $entity = $this->entityRow($fact);
                     $payload = ['source' => $this->legacySource($fact->origin), 'value' => $fact->value];
                     if ($fact->unit !== null) {
                         $payload['unit'] = $fact->unit;
                     }
                     $this->database->table('estimate_generation_project_model_assertions')->insertOrIgnore([
-                        'building_model_id' => $buildingModelId,
+                        'building_model_id' => $projectionScopeId,
                         'organization_id' => $fact->organizationId,
                         'project_id' => $fact->projectId,
                         'session_id' => $fact->sessionId,
@@ -440,7 +439,7 @@ SQL, [
                         ]);
                     }
                     if (in_array($fact->status, ['confirmed', 'conflicted', 'unresolved'], true)) {
-                        $this->projectCurrentFact($fact, $buildingModelId, (int) $entity->id);
+                        $this->projectCurrentFact($fact, $projectionScopeId, (int) $entity->id);
                     }
                 }
             }, 3);
@@ -501,7 +500,7 @@ SQL, [
                             && (! ctype_digit($decision->actorId) || (int) $decision->actorId <= 0))) {
                         throw new InvalidArgumentException('Project model decision batch is invalid.');
                     }
-                    $buildingModelId = $this->buildingModelId($decision);
+                    $projectionScopeId = $this->projectionScopeId($decision);
                     $selectedFact = $this->factRow($decision, $decision->selectedFactId);
                     if ($decision->actorType === 'system'
                         && ((string) $selectedFact->fact_status !== 'confirmed'
@@ -513,7 +512,7 @@ SQL, [
                     }
                     $value = $this->decode($selectedFact->fact_value ?? null);
                     $this->database->table('estimate_generation_project_model_corrections')->insertOrIgnore([
-                        'building_model_id' => $buildingModelId,
+                        'building_model_id' => $projectionScopeId,
                         'organization_id' => $decision->organizationId,
                         'project_id' => $decision->projectId,
                         'session_id' => $decision->sessionId,
@@ -673,7 +672,7 @@ SQL, [
         string $sourceVersion,
         int $limit = 200,
     ): array {
-        $this->assertChunkSize($limit);
+        $this->assertReadLimit($limit);
         $rows = $this->database->table('estimate_generation_project_model_derived_quantity_projections as projection')
             ->join('estimate_generation_project_model_derived_quantities as quantity', 'quantity.id', '=', 'projection.derived_quantity_id')
             ->where('projection.organization_id', $organizationId)
@@ -685,6 +684,87 @@ SQL, [
             ->get('quantity.*');
 
         return $rows->map(fn (object $row): DerivedQuantity => $this->derivedQuantityFromRow($row))->all();
+    }
+
+    public function replaceDerivedQuantityFormulaProjectionSet(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        array $quantities,
+    ): void {
+        $this->database->connection()->transaction(function () use (
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $formulaVersion,
+            $quantities,
+        ): void {
+            $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $quantityIds = $this->database->table('estimate_generation_project_model_derived_quantities')
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('session_id', $sessionId)
+                ->where('formula_version', $formulaVersion)
+                ->pluck('id');
+            if ($quantityIds->isNotEmpty()) {
+                $this->database->table('estimate_generation_project_model_derived_quantity_projections')
+                    ->where('organization_id', $organizationId)
+                    ->where('project_id', $projectId)
+                    ->where('session_id', $sessionId)
+                    ->whereIn('derived_quantity_id', $quantityIds)
+                    ->delete();
+            }
+            foreach ($quantities as $quantity) {
+                if (! $quantity instanceof DerivedQuantity
+                    || [$quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->formulaVersion]
+                        !== [$organizationId, $projectId, $sessionId, $formulaVersion]) {
+                    throw new InvalidArgumentException('Derived quantity formula projection scope is invalid.');
+                }
+            }
+            $this->appendDerivedQuantities($quantities, 200);
+        }, 3);
+    }
+
+    public function currentDerivedQuantitiesForFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $formulaVersion,
+        int $limit = 200,
+    ): array {
+        $this->assertReadLimit($limit);
+        $rows = $this->database->table('estimate_generation_project_model_derived_quantity_projections as projection')
+            ->join('estimate_generation_project_model_derived_quantities as quantity', 'quantity.id', '=', 'projection.derived_quantity_id')
+            ->where('projection.organization_id', $organizationId)
+            ->where('projection.project_id', $projectId)
+            ->where('projection.session_id', $sessionId)
+            ->where('quantity.formula_version', $formulaVersion)
+            ->orderBy('projection.logical_key')
+            ->limit($limit)
+            ->get('quantity.*');
+
+        return $rows->map(fn (object $row): DerivedQuantity => $this->derivedQuantityFromRow($row))->all();
+    }
+
+    public function currentDerivedQuantityLogicalIdsByFormulaVersion(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $formulaVersion,
+    ): array {
+        return $this->database->table('estimate_generation_project_model_derived_quantity_projections as projection')
+            ->join('estimate_generation_project_model_derived_quantities as quantity', 'quantity.id', '=', 'projection.derived_quantity_id')
+            ->where('projection.organization_id', $organizationId)
+            ->where('projection.project_id', $projectId)
+            ->where('projection.session_id', $sessionId)
+            ->where('projection.source_version', $sourceVersion)
+            ->where('quantity.formula_version', $formulaVersion)
+            ->orderBy('projection.logical_key')
+            ->pluck('projection.logical_key')
+            ->map(static fn (mixed $logicalId): string => (string) $logicalId)
+            ->all();
     }
 
     public function deactivateDerivedQuantityProjectionScope(
@@ -1185,6 +1265,39 @@ SQL, [
         return $this->mapDecisionRows($rows);
     }
 
+    public function completedSynthesisRoleFingerprints(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        array $sourceVersions,
+    ): array {
+        $roles = ['arbiter', 'geometry_expert'];
+        $rows = $sourceVersions === [] ? collect() : $this->database
+            ->table('estimate_generation_ai_role_runs')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('status', 'completed')
+            ->whereIn('role', $roles)
+            ->whereIn('subject_version', $sourceVersions)
+            ->orderBy('role')
+            ->orderBy('input_fingerprint')
+            ->get(['role', 'input_fingerprint']);
+        $result = ['arbiter' => [], 'geometry_expert' => []];
+        foreach ($rows as $row) {
+            $role = (string) $row->role;
+            if (isset($result[$role])) {
+                $result[$role][] = (string) $row->input_fingerprint;
+            }
+        }
+        foreach ($result as &$fingerprints) {
+            $fingerprints = array_values(array_unique($fingerprints));
+        }
+        unset($fingerprints);
+
+        return $result;
+    }
+
     private function mapDecisionRows(iterable $rows): array
     {
         return collect($rows)->map(function ($row): Decision {
@@ -1218,6 +1331,7 @@ SQL, [
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
         array $links,
         array $conflicts,
         array $questions,
@@ -1226,6 +1340,7 @@ SQL, [
     ): bool {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         if ($providerCalls < 0 || preg_match('/^[a-f0-9]{64}$/D', $inputFingerprint) !== 1
+            || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
             || ! array_is_list($questions) || ! array_is_list($limitations)) {
             throw new InvalidArgumentException('Project understanding result is invalid.');
         }
@@ -1245,6 +1360,7 @@ SQL, [
             $sessionId,
             $sourceVersion,
             $inputFingerprint,
+            $snapshotToken,
             $links,
             $conflicts,
             $questions,
@@ -1254,7 +1370,7 @@ SQL, [
             $encodedPayload,
         ): bool {
             $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
-            if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            if (! hash_equals($snapshotToken, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
                 return false;
             }
             $existing = $this->database->table('estimate_generation_project_understanding_runs')
@@ -1316,9 +1432,11 @@ SQL, [
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
     ): ?array {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
-        if (preg_match('/^[a-f0-9]{64}$/D', $inputFingerprint) !== 1) {
+        if (preg_match('/^[a-f0-9]{64}$/D', $inputFingerprint) !== 1
+            || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1) {
             throw new InvalidArgumentException('Project understanding input fingerprint is invalid.');
         }
 
@@ -1328,9 +1446,10 @@ SQL, [
             $sessionId,
             $sourceVersion,
             $inputFingerprint,
+            $snapshotToken,
         ): ?array {
             $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
-            if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+            if (! hash_equals($snapshotToken, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
                 return null;
             }
             $row = $this->database->table('estimate_generation_project_understanding_runs')
@@ -1476,6 +1595,41 @@ SQL, [
             ];
             $sourceVersions[] = (string) $entity->source_version;
         }
+        $sourceVersions = array_values(array_unique($sourceVersions));
+        sort($sourceVersions, SORT_STRING);
+        $derivedQuantities = $sourceVersions === [] ? collect() : $this->database
+            ->table('estimate_generation_project_model_derived_quantity_projections as projection')
+            ->join(
+                'estimate_generation_project_model_derived_quantities as quantity',
+                'quantity.id',
+                '=',
+                'projection.derived_quantity_id',
+            )
+            ->where('projection.organization_id', $organizationId)
+            ->where('projection.project_id', $projectId)
+            ->where('projection.session_id', $sessionId)
+            ->whereIn('projection.source_version', $sourceVersions)
+            ->orderBy('projection.source_version')
+            ->orderBy('projection.logical_key')
+            ->get([
+                'projection.source_version',
+                'projection.logical_key',
+                'quantity.exact_identity',
+                'quantity.formula_version',
+                'quantity.snapshot_identity',
+            ]);
+        $roleRuns = $sourceVersions === [] ? collect() : $this->database
+            ->table('estimate_generation_ai_role_runs')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('status', 'completed')
+            ->whereIn('role', ['arbiter', 'geometry_expert'])
+            ->whereIn('subject_version', $sourceVersions)
+            ->orderBy('role')
+            ->orderBy('subject_version')
+            ->orderBy('input_fingerprint')
+            ->get(['role', 'subject_version', 'input_fingerprint']);
 
         return ProjectUnderstandingInputFingerprint::fromExactState([
             'scope' => ['organization_id' => $organizationId, 'project_id' => $projectId, 'session_id' => $sessionId],
@@ -1488,6 +1642,18 @@ SQL, [
                 'id' => (int) $decision->id,
                 'selected_fact_id' => (string) $decision->selected_fact_stable_key,
                 'version' => (int) $decision->version,
+            ])->all(),
+            'derived_quantities' => $derivedQuantities->map(fn ($quantity): array => [
+                'source_version' => (string) $quantity->source_version,
+                'logical_key' => (string) $quantity->logical_key,
+                'exact_identity' => (string) $quantity->exact_identity,
+                'formula_version' => (string) $quantity->formula_version,
+                'snapshot_identity' => $this->decode($quantity->snapshot_identity),
+            ])->all(),
+            'role_runs' => $roleRuns->map(static fn ($run): array => [
+                'role' => (string) $run->role,
+                'subject_version' => (string) $run->subject_version,
+                'input_fingerprint' => (string) $run->input_fingerprint,
             ])->all(),
         ]);
     }
@@ -2235,10 +2401,10 @@ SQL, [
         ];
     }
 
-    private function projectCurrentFact(Fact $fact, int $buildingModelId, int $entityDatabaseId): void
+    private function projectCurrentFact(Fact $fact, int $projectionScopeId, int $entityDatabaseId): void
     {
         $factDatabaseId = $this->database->table('estimate_generation_project_model_assertions')
-            ->where('building_model_id', $buildingModelId)->where('stable_key', $fact->id)->value('id');
+            ->where('building_model_id', $projectionScopeId)->where('stable_key', $fact->id)->value('id');
         $current = $this->database->table('estimate_generation_project_model_fact_projections as projection')
             ->join('estimate_generation_project_model_assertions as current_fact', 'current_fact.id', '=', 'projection.fact_id')
             ->where('projection.organization_id', $fact->organizationId)
@@ -2247,13 +2413,13 @@ SQL, [
             ->where('projection.entity_stable_key', $fact->entityId)
             ->where('projection.fact_type', $fact->type)
             ->where('projection.is_current', true)->lockForUpdate()
-            ->first(['projection.*', 'current_fact.building_model_id as current_building_model_id']);
+            ->first(['projection.*']);
         if ($current !== null && (int) $current->fact_id === (int) $factDatabaseId) {
             return;
         }
-        if ($current !== null && ((int) $current->current_building_model_id > $buildingModelId
-            || ((int) $current->current_building_model_id === $buildingModelId
-                && (int) $current->projection_version >= $fact->version))) {
+        if ($current !== null
+            && (string) $current->source_version === $fact->sourceVersion
+            && (int) $current->projection_version >= $fact->version) {
             return;
         }
         if ($current !== null) {
@@ -2278,17 +2444,13 @@ SQL, [
         ]);
     }
 
-    private function buildingModelId(object $record): int
+    private function projectionScopeId(object $record): int
     {
-        $id = $this->database->table('estimate_generation_building_models')
-            ->where('organization_id', $record->organizationId)->where('project_id', $record->projectId)
-            ->where('session_id', $record->sessionId)->where('content_version', $record->sourceVersion)
-            ->value('id');
-        if (! is_int($id) && ! ctype_digit((string) $id)) {
+        if (! isset($record->sessionId) || ! is_int($record->sessionId) || $record->sessionId < 1) {
             throw new InvalidArgumentException('Project model source version is outside the requested scope.');
         }
 
-        return (int) $id;
+        return $record->sessionId;
     }
 
     private function entityRow(Fact $fact): object
@@ -2571,22 +2733,14 @@ SQL, [
         $factIds = [];
         foreach ($groups as $scopeKey => $group) {
             $scope = $group['scope'];
-            $buildingModelExists = $this->database->table('estimate_generation_building_models')
-                ->where('organization_id', $scope['organization_id'])
-                ->where('project_id', $scope['project_id'])
-                ->where('session_id', $scope['session_id'])
-                ->where('content_version', $scope['source_version'])
-                ->exists();
-            if (! $buildingModelExists) {
-                throw new InvalidArgumentException('Cross-document link source version is outside the requested scope.');
-            }
-            foreach ($this->database->table('estimate_generation_project_model_assertions')
-                ->where('organization_id', $scope['organization_id'])
-                ->where('project_id', $scope['project_id'])
-                ->where('session_id', $scope['session_id'])
-                ->where('source_version', $scope['source_version'])
-                ->whereIn('stable_key', array_values($group['ids']))
-                ->get(['id', 'stable_key']) as $row) {
+            foreach ($this->database->table('estimate_generation_project_model_fact_projections as projection')
+                ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
+                ->where('projection.organization_id', $scope['organization_id'])
+                ->where('projection.project_id', $scope['project_id'])
+                ->where('projection.session_id', $scope['session_id'])
+                ->where('projection.is_current', true)
+                ->whereIn('fact.stable_key', array_values($group['ids']))
+                ->get(['fact.id', 'fact.stable_key']) as $row) {
                 $factIds[$scopeKey.':'.$row->stable_key] = (int) $row->id;
             }
             foreach ($group['ids'] as $stableKey) {
@@ -2687,6 +2841,13 @@ SQL, [
     {
         if ($chunkSize < 1 || $chunkSize > 1000) {
             throw new InvalidArgumentException('Project model chunk size is invalid.');
+        }
+    }
+
+    private function assertReadLimit(int $limit): void
+    {
+        if ($limit < 1 || $limit > 10_000) {
+            throw new InvalidArgumentException('Project model read limit is invalid.');
         }
     }
 
