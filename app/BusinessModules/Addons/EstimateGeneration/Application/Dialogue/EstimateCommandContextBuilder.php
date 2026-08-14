@@ -152,6 +152,7 @@ final class EstimateCommandContextBuilder
             'session_id' => $fact->sessionId,
             'stable_key' => $fact->id,
             'assertion_stable_key' => $fact->id,
+            'entity_id' => $fact->entityId,
             'label' => $this->factLabel($fact->type),
             'type' => $fact->type,
             'value' => $fact->value,
@@ -287,7 +288,7 @@ final class EstimateCommandContextBuilder
     private function fact(array $fact): array
     {
         return array_intersect_key($fact, array_flip([
-            'stable_key', 'assertion_stable_key', 'label', 'type', 'value', 'unit', 'status', 'version',
+            'stable_key', 'assertion_stable_key', 'entity_id', 'label', 'type', 'value', 'unit', 'status', 'version',
             'source_version', 'value_fingerprint', 'decision_version', 'evidence_ids',
         ]));
     }

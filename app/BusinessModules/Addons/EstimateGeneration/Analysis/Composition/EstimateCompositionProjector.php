@@ -62,16 +62,21 @@ final readonly class EstimateCompositionProjector
         return $candidates;
     }
 
-    /** @param list<array<string, mixed>> $intents */
-    public function attach(array $localEstimates, array $intents): array
+    /** @param list<array<string, mixed>> $intents @param list<array<string, mixed>> $derivedQuantities */
+    public function apply(array $localEstimates, array $intents, array $derivedQuantities): array
     {
         $byId = [];
+        $supplementary = [];
         foreach ($intents as $intent) {
             if (! is_array($intent) || ! is_string($intent['candidate_id'] ?? null)
-                || isset($byId[$intent['candidate_id']])) {
+                || isset($byId[$intent['candidate_id']]) || isset($supplementary[$intent['candidate_id']])) {
                 throw new InvalidArgumentException('estimate_composer_intent_projection_invalid');
             }
-            $byId[$intent['candidate_id']] = $intent;
+            if (($intent['kind'] ?? null) === 'supplementary') {
+                $supplementary[$intent['candidate_id']] = $intent;
+            } else {
+                $byId[$intent['candidate_id']] = $intent;
+            }
         }
         $attached = 0;
         foreach ($localEstimates as $estimateIndex => $estimate) {
@@ -105,7 +110,68 @@ final readonly class EstimateCompositionProjector
             throw new InvalidArgumentException('estimate_composer_intent_projection_incomplete');
         }
 
+        if ($supplementary !== []) {
+            $localEstimates[] = [
+                'key' => 'ai-composer-supplementary',
+                'title' => trans_message('estimate_generation.composition.supplementary_title'),
+                'scope_type' => 'supplementary',
+                'source_refs' => $this->sourceRefs($supplementary),
+                'sections' => [[
+                    'key' => 'ai-composer-supplementary',
+                    'title' => trans_message('estimate_generation.composition.supplementary_section'),
+                    'work_items' => $this->supplementaryItems($supplementary, $derivedQuantities),
+                ]],
+            ];
+        }
+
         return $localEstimates;
+    }
+
+    /** @param array<string, array<string, mixed>> $supplementary @param list<array<string, mixed>> $derivedQuantities */
+    private function supplementaryItems(array $supplementary, array $derivedQuantities): array
+    {
+        $quantities = [];
+        foreach ($derivedQuantities as $quantity) {
+            if (is_array($quantity) && is_string($quantity['id'] ?? null)) {
+                $quantities[$quantity['id']] = $quantity;
+            }
+        }
+        $items = [];
+        foreach ($supplementary as $intent) {
+            $quantity = is_string($intent['derived_quantity_id'] ?? null)
+                ? ($quantities[$intent['derived_quantity_id']] ?? null)
+                : null;
+            $technology = $this->identifier($intent['technology_package_candidate'] ?? null);
+            $items[] = [
+                'key' => $intent['work_key'],
+                'name' => $intent['name'],
+                'item_type' => 'priced_work',
+                'unit' => is_array($quantity) ? $this->boundedString($quantity['unit'] ?? null, 32) : null,
+                'quantity' => is_array($quantity) ? $this->positiveDecimal($quantity['value'] ?? null) : null,
+                'quantity_formula' => is_array($quantity) ? $this->boundedString($quantity['id'] ?? null, 300) : null,
+                'source_refs' => array_map(
+                    static fn (string $factId): array => ['fact_id' => $factId],
+                    $intent['source_fact_ids'],
+                ),
+                'metadata' => $technology === null ? [] : ['technology_package_id' => $technology],
+                'composition_intent' => $intent,
+            ];
+        }
+
+        return $items;
+    }
+
+    /** @param array<string, array<string, mixed>> $supplementary */
+    private function sourceRefs(array $supplementary): array
+    {
+        $refs = [];
+        foreach ($supplementary as $intent) {
+            foreach ($intent['source_fact_ids'] as $factId) {
+                $refs[$factId] = ['fact_id' => $factId];
+            }
+        }
+
+        return array_values($refs);
     }
 
     private function identifier(mixed $value): ?string

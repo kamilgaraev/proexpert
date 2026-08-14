@@ -81,12 +81,15 @@ final readonly class PipelineStagePayload
         }
         self::assertList($data['local_estimates']);
         if (! is_array($data['estimate_composition'])
-            || array_keys($data['estimate_composition']) !== ['schema_version', 'snapshot_token', 'input_fingerprint', 'intents_count']
+            || array_keys($data['estimate_composition']) !== ['schema_version', 'snapshot_token', 'input_fingerprint', 'intents_count', 'derived_quantities']
             || $data['estimate_composition']['schema_version'] !== 1
             || preg_match('/^[a-f0-9]{64}$/D', (string) $data['estimate_composition']['snapshot_token']) !== 1
             || preg_match('/^[a-f0-9]{64}$/D', (string) $data['estimate_composition']['input_fingerprint']) !== 1
             || ! is_int($data['estimate_composition']['intents_count'])
-            || $data['estimate_composition']['intents_count'] < 1) {
+            || $data['estimate_composition']['intents_count'] < 1
+            || ! is_array($data['estimate_composition']['derived_quantities'])
+            || ! array_is_list($data['estimate_composition']['derived_quantities'])
+            || count($data['estimate_composition']['derived_quantities']) > 2000) {
             throw new InvalidArgumentException('Pipeline estimate composition is invalid.');
         }
         self::assertCanonicalQuantityEvidence($data['local_estimates']);

@@ -140,12 +140,17 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $this->missingDocuments($coverageWarnings, $stage6Context),
         );
         $intents = $this->composer->run($composerInput);
-        $payload['local_estimates'] = $this->compositionProjector->attach($payload['local_estimates'], $intents);
+        $payload['local_estimates'] = $this->compositionProjector->apply(
+            $payload['local_estimates'],
+            $intents,
+            $composerInput->derivedQuantities,
+        );
         $payload['estimate_composition'] = [
             'schema_version' => 1,
             'snapshot_token' => $composerInput->snapshotToken,
             'input_fingerprint' => $composerInput->fingerprint(),
             'intents_count' => count($intents),
+            'derived_quantities' => $composerInput->derivedQuantities,
         ];
         $this->logProgress($context, 'estimate_composed');
         $this->renewAfterProgress($heartbeat);

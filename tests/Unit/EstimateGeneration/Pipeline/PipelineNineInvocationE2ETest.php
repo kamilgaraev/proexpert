@@ -91,6 +91,7 @@ final class PipelineNineInvocationE2ETest extends TestCase
                     'snapshot_token' => str_repeat('c', 64),
                     'input_fingerprint' => str_repeat('d', 64),
                     'intents_count' => 1,
+                    'derived_quantities' => [],
                 ],
             ],
             ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices => [

@@ -10,8 +10,17 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditIn
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\TimewebEstimateAuditModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence as ProjectEvidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
@@ -126,6 +135,7 @@ final class EstimateAuditTest extends TestCase
         ]);
         $cycles = new ApplyComposerCorrectionCycle(
             new RunEstimateAudit(new InMemoryAiRoleRunRepository, $model, 'openai/gpt-5-mini'),
+            $this->corrector(),
         );
 
         $result = $cycles->apply($this->input($draft));
@@ -155,6 +165,7 @@ final class EstimateAuditTest extends TestCase
         ]);
         $cycles = new ApplyComposerCorrectionCycle(
             new RunEstimateAudit(new InMemoryAiRoleRunRepository, $model, 'openai/gpt-5-mini'),
+            $this->corrector(),
         );
 
         $result = $cycles->apply($this->input($this->draft([$a, $b, $c])));
@@ -172,6 +183,7 @@ final class EstimateAuditTest extends TestCase
         $model = new RecordedEstimateAuditModel([['accepted' => false, 'findings' => [$finding]]]);
         $cycles = new ApplyComposerCorrectionCycle(
             new RunEstimateAudit(new InMemoryAiRoleRunRepository, $model, 'openai/gpt-5-mini'),
+            $this->corrector(),
         );
 
         $result = $cycles->apply($this->input($this->draft([$this->item('work:a')])));
@@ -180,6 +192,61 @@ final class EstimateAuditTest extends TestCase
         self::assertSame(0, $result['audit']['correction_cycles']);
         self::assertSame('review_required', $result['audit']['status']);
         self::assertSame('finding:omission', $result['draft']['audit_review_items'][0]['finding_id']);
+    }
+
+    public function test_composer_correction_applies_omission_quantity_and_unit_changes_before_reaudit(): void
+    {
+        foreach (['add_work', 'replace_quantity', 'replace_unit'] as $operation) {
+            $item = $this->item('work:a');
+            $findingType = $operation === 'add_work' ? 'omission' : ($operation === 'replace_unit' ? 'invalid_unit' : 'quantity_mismatch');
+            $finding = $this->finding('finding:'.$operation, $findingType);
+            $correction = $operation === 'add_work'
+                ? [
+                    'operation' => 'add_work',
+                    'finding_id' => $finding['finding_id'],
+                    'work_key' => 'work:roof-safety',
+                    'name' => 'Монтаж временного ограждения кровли',
+                    'derived_quantity_id' => 'quantity:corrected',
+                    'source_fact_ids' => ['fact:foundation'],
+                ]
+                : [
+                    'operation' => $operation,
+                    'finding_id' => $finding['finding_id'],
+                    'target_item_key' => 'work:a',
+                    'expected_target_fingerprint' => ApplyComposerCorrectionCycle::itemFingerprint($item),
+                    'derived_quantity_id' => 'quantity:corrected',
+                ];
+            $auditor = new RecordedEstimateAuditModel([
+                ['accepted' => false, 'findings' => [$finding]],
+                ['accepted' => true, 'findings' => []],
+            ]);
+            $cycles = new ApplyComposerCorrectionCycle(
+                new RunEstimateAudit(new InMemoryAiRoleRunRepository, $auditor, 'openai/gpt-5-mini'),
+                $this->corrector([$correction]),
+            );
+
+            $result = $cycles->apply($this->input(
+                $this->draft([$item]),
+                derivedQuantities: [['id' => 'quantity:corrected', 'value' => '12.7500', 'unit' => 'м2']],
+            ));
+
+            self::assertSame('accepted', $result['audit']['status'], $operation);
+            self::assertSame(1, $result['audit']['correction_cycles'], $operation);
+            $items = array_merge(...array_map(
+                static fn (array $estimate): array => array_merge(...array_map(
+                    static fn (array $section): array => $section['work_items'],
+                    $estimate['sections'],
+                )),
+                $result['draft']['local_estimates'],
+            ));
+            if ($operation === 'add_work') {
+                self::assertContains('work:roof-safety', array_column($items, 'key'));
+            } elseif ($operation === 'replace_quantity') {
+                self::assertSame('12.7500', $items[0]['quantity']);
+            } else {
+                self::assertSame('м2', $items[0]['unit']);
+            }
+        }
     }
 
     public function test_factory_captures_exact_project_snapshot_and_source_navigation(): void
@@ -194,11 +261,71 @@ final class EstimateAuditTest extends TestCase
             'fact_id' => 'fact:foundation', 'document_id' => 7, 'page' => 2,
         ];
 
-        $input = (new EstimateAuditInputFactory($models, 10000))->capture(10, 20, 30, $draft);
+        $input = (new EstimateAuditInputFactory(
+            $models,
+            new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository,
+            10000,
+        ))->capture(10, 20, 30, $draft);
 
         self::assertSame($models->snapshotForPlanning(10, 20, 30, 10001)['token'], $input->snapshotToken);
         self::assertSame('10.2500', $input->facts[0]['value']);
         self::assertSame(['document_id' => 7, 'page' => 2], $input->evidence[0]['locator']);
+    }
+
+    public function test_factory_exposes_canonical_evidence_for_an_omitted_fact_without_a_draft_row(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $evidence = new InMemoryEvidenceRepository;
+        $source = 'sha256:'.str_repeat('d', 64);
+        $node = $evidence->insertOrGet(new EvidenceData(
+            10,
+            20,
+            30,
+            EvidenceType::SourceFact,
+            EvidenceSourceType::Document,
+            'document:9',
+            $source,
+            ['document_id' => 9, 'page' => 3],
+            ['fact_key' => 'roof_area', 'fact_value' => 120.125, 'unit' => 'm2'],
+            1.0,
+            'test',
+            'test:abcdef',
+        ));
+        $entity = new Entity('entity:roof', 10, 20, 30, $source, 'quantity', 'roof');
+        $fact = new Fact(
+            'fact:roof', 10, 20, 30, $source, $entity->id, 'roof_area', '120.1250', 'м2',
+            1.0, 'document', 'confirmed', ['evidence:'.$node->id],
+        );
+        $models->saveSourceModel([$entity], [$fact], [new ProjectEvidence(
+            'evidence:'.$node->id,
+            10,
+            20,
+            30,
+            $source,
+            'document:9',
+            'document',
+            3,
+        )]);
+        $input = (new EstimateAuditInputFactory($models, $evidence, 10000))->capture(
+            10,
+            20,
+            30,
+            $this->draft([]),
+        );
+        $locator = $input->evidence[0]['locator'];
+        $finding = $this->finding('finding:roof-omission', 'omission');
+        $finding['source_fact_ids'] = ['fact:roof'];
+        $finding['source_locator'] = $locator;
+
+        $result = (new RunEstimateAudit(
+            new InMemoryAiRoleRunRepository,
+            new RecordedEstimateAuditModel([['accepted' => false, 'findings' => [$finding]]]),
+            'openai/gpt-5-mini',
+        ))->run($input);
+
+        self::assertSame('finding:roof-omission', $result['findings'][0]['finding_id']);
+        self::assertSame(3, $locator['page']);
+        self::assertSame('document:9', $locator['source_artifact_id']);
     }
 
     public function test_timeweb_auditor_uses_only_pinned_model_and_independent_bounded_contract(): void
@@ -206,7 +333,9 @@ final class EstimateAuditTest extends TestCase
         $wire = new class implements RerankWireClient
         {
             public string $model = '';
+
             public array $messages = [];
+
             public array $options = [];
 
             public function provider(): string
@@ -265,7 +394,86 @@ final class EstimateAuditTest extends TestCase
         self::assertCount(1, $usage->records);
     }
 
-    private function input(array $draft, int $cycle = 0): EstimateAuditInput
+    public function test_timeweb_composer_correction_uses_the_pinned_model_and_journals_the_correction_operation(): void
+    {
+        $correction = [
+            'operation' => 'add_work',
+            'finding_id' => 'finding:roof',
+            'work_key' => 'work:roof',
+            'name' => 'Устройство кровли',
+            'derived_quantity_id' => 'quantity:foundation',
+            'source_fact_ids' => ['fact:foundation'],
+        ];
+        $wire = new class($correction) implements RerankWireClient
+        {
+            public string $model = '';
+
+            public array $messages = [];
+
+            public array $options = [];
+
+            public function __construct(private readonly array $correction) {}
+
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                $this->model = $model;
+                $this->messages = $messages;
+                $this->options = $options;
+
+                return [
+                    'content' => json_encode(['corrections' => [$this->correction]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                    'model' => $model,
+                    'usage_available' => true,
+                    'input_tokens' => 50,
+                    'output_tokens' => 10,
+                ];
+            }
+        };
+        $usage = new class implements AiUsageStore
+        {
+            public array $records = [];
+
+            public function record(AiUsageData $data): void
+            {
+                $this->records[] = $data;
+            }
+        };
+        $prices = new class implements AiPriceSnapshotResolver
+        {
+            public ?AiOperationContext $context = null;
+
+            public function resolve(AiOperationContext $context, string $provider, string $model): AiPriceSnapshot
+            {
+                $this->context = $context;
+
+                return AiPriceSnapshot::fromArray([]);
+            }
+        };
+        $model = new TimewebEstimateComposerModel($wire, $usage, $prices, 'openai/gpt-5-mini', 100000, 4000, 60);
+        $input = new EstimateComposerCorrectionInput(
+            $this->input($this->draft([$this->item('work:a')])),
+            [$this->finding('finding:roof', 'coverage_gap')],
+        );
+
+        $result = $model->correct($input, static function (string $attemptId): void {
+            self::assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $attemptId);
+        });
+
+        self::assertSame(['corrections' => [$correction]], $result);
+        self::assertSame('openai/gpt-5-mini', $wire->model);
+        self::assertSame('json', $wire->options['profile']);
+        self::assertArrayNotHasKey('fallback_models', $wire->options);
+        self::assertStringContainsString('точечные исправления', $wire->messages[0]['content']);
+        self::assertSame('estimate_composer_correction', $prices->context?->operation);
+        self::assertCount(1, $usage->records);
+    }
+
+    private function input(array $draft, int $cycle = 0, ?array $derivedQuantities = null): EstimateAuditInput
     {
         return new EstimateAuditInput(
             organizationId: 10,
@@ -274,6 +482,7 @@ final class EstimateAuditTest extends TestCase
             snapshotToken: str_repeat('a', 64),
             cycle: $cycle,
             facts: [['id' => 'fact:foundation', 'status' => 'confirmed']],
+            derivedQuantities: $derivedQuantities ?? [['id' => 'quantity:foundation', 'value' => '10.2500', 'unit' => 'м3']],
             draft: $draft,
             evidence: [['fact_id' => 'fact:foundation', 'locator' => ['document_id' => 7, 'page' => 2]]],
             contractVersion: RunEstimateAudit::PROMPT_CONTRACT,
@@ -333,6 +542,15 @@ final class EstimateAuditTest extends TestCase
             'expected_retained_fingerprint' => ApplyComposerCorrectionCycle::itemFingerprint($retained),
         ];
     }
+
+    private function corrector(array $results = []): RunEstimateComposerCorrection
+    {
+        return new RunEstimateComposerCorrection(
+            new InMemoryAiRoleRunRepository,
+            new RecordedEstimateComposerCorrectionModel($results),
+            'openai/gpt-5-mini',
+        );
+    }
 }
 
 final class RecordedEstimateAuditModel implements EstimateAuditModel
@@ -346,5 +564,19 @@ final class RecordedEstimateAuditModel implements EstimateAuditModel
         $onAttemptStarted('00000000-0000-4000-8000-00000000000'.($this->calls + 1));
 
         return $this->results[$this->calls++];
+    }
+}
+
+final class RecordedEstimateComposerCorrectionModel implements EstimateComposerCorrectionModel
+{
+    private int $calls = 0;
+
+    public function __construct(private readonly array $results) {}
+
+    public function correct(EstimateComposerCorrectionInput $input, callable $onPhysicalAttemptReserved): array
+    {
+        $onPhysicalAttemptReserved('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+
+        return ['corrections' => $this->calls++ === 0 ? $this->results : []];
     }
 }

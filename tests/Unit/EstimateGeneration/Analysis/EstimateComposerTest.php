@@ -50,6 +50,36 @@ final class EstimateComposerTest extends TestCase
         self::assertSame($input->fingerprint(), $runs->inputs[0]->inputFingerprint);
     }
 
+    public function test_composer_adds_a_fact_bounded_supplementary_work_without_price_or_double_count(): void
+    {
+        $input = $this->input();
+        $result = $this->validResult($input);
+        $result['work_intents'][] = [
+            'kind' => 'supplementary',
+            'candidate_id' => 'supplementary:roof-safety',
+            'work_key' => 'roof_safety_barrier',
+            'name' => 'Монтаж временного ограждения кровли',
+            'derived_quantity_id' => 'quantity:roof',
+            'source_fact_ids' => ['fact:roof'],
+            'technology_package_candidate' => null,
+            'assumptions' => [],
+            'exclusions' => [],
+            'missing_document_recommendations' => [],
+        ];
+
+        $intents = (new RunEstimateComposer(
+            new ComposerRoleRunMemoryRepository,
+            new RecordedEstimateComposerModel($result),
+            'openai/gpt-5-mini',
+        ))->run($input);
+        $intent = $intents[array_key_last($intents)];
+        self::assertSame('supplementary', $intent['kind']);
+        self::assertSame('roof_safety_barrier', $intent['work_key']);
+        self::assertSame('quantity:roof', $intent['derived_quantity_id']);
+        self::assertArrayNotHasKey('unit_price', $intent);
+        self::assertSame(['fact:roof'], $intent['source_fact_ids']);
+    }
+
     #[DataProvider('invalidResultProvider')]
     public function test_composer_rejects_suppression_duplicates_invented_sources_and_provider_prices(
         callable $mutate,
@@ -110,6 +140,33 @@ final class EstimateComposerTest extends TestCase
                 return $result;
             },
             'estimate_composer_technology_candidate_invalid',
+        ];
+        yield 'raw provider assumption' => [
+            static function (array $result): array {
+                $result['work_intents'][0]['assumptions'] = ['Provider payload is valid.'];
+
+                return $result;
+            },
+            'estimate_work_intent_text_invalid',
+        ];
+        yield 'english supplementary work name' => [
+            static function (array $result): array {
+                $result['work_intents'][] = [
+                    'kind' => 'supplementary',
+                    'candidate_id' => 'supplementary:roof-barrier',
+                    'work_key' => 'roof_safety_barrier',
+                    'name' => 'Install roof safety barrier',
+                    'derived_quantity_id' => 'quantity:roof',
+                    'source_fact_ids' => ['fact:roof'],
+                    'technology_package_candidate' => null,
+                    'assumptions' => [],
+                    'exclusions' => [],
+                    'missing_document_recommendations' => [],
+                ];
+
+                return $result;
+            },
+            'estimate_work_intent_text_invalid',
         ];
     }
 
@@ -247,7 +304,11 @@ final class EstimateComposerTest extends TestCase
         self::assertSame('package:site-logistics', $candidates[9]['technology_package_candidate']);
 
         $intents = array_map(static fn (array $candidate): array => [
+            'kind' => 'existing',
             'candidate_id' => $candidate['candidate_id'],
+            'work_key' => null,
+            'name' => null,
+            'derived_quantity_id' => null,
             'source_fact_ids' => $candidate['source_fact_ids'],
             'technology_package_candidate' => $candidate['technology_package_candidate'],
             'assumptions' => [],
@@ -256,7 +317,7 @@ final class EstimateComposerTest extends TestCase
                 ? ['Нужна недостающая ведомость объёмов.']
                 : [],
         ], $candidates);
-        $projected = $projector->attach($estimates, $intents);
+        $projected = $projector->apply($estimates, $intents, []);
 
         self::assertSame('10.2500', $projected[0]['sections'][0]['work_items'][0]['quantity']);
         self::assertSame('999.99', $projected[0]['sections'][0]['work_items'][0]['unit_price']);
@@ -282,7 +343,9 @@ final class EstimateComposerTest extends TestCase
         $wire = new class($result) implements RerankWireClient
         {
             public string $requestedModel = '';
+
             public array $messages = [];
+
             public array $options = [];
 
             public function __construct(private readonly array $result) {}
@@ -391,7 +454,11 @@ final class EstimateComposerTest extends TestCase
         return [
             'work_intents' => array_map(
                 static fn (array $candidate): array => [
+                    'kind' => 'existing',
                     'candidate_id' => $candidate['candidate_id'],
+                    'work_key' => null,
+                    'name' => null,
+                    'derived_quantity_id' => null,
                     'source_fact_ids' => str_contains($candidate['work_key'], 'foundation') ? ['fact:foundation'] : [],
                     'technology_package_candidate' => $candidate['technology_package_candidate'],
                     'assumptions' => [],

@@ -29,10 +29,8 @@ final readonly class PreviewUndoEstimateChangeProposal
             (int) $session->project_id,
             (int) $session->getKey(),
         );
-        $interpretation = $this->resolver->resolve(
-            $this->factory->make($original),
-            $this->contexts->build($session),
-        );
+        $context = $this->contexts->build($session);
+        $interpretation = $this->resolver->resolve($this->factory->make($original, $context), $context);
 
         return $this->preview->handle(
             $session,

@@ -46,7 +46,7 @@ final class EstimateChangeProposalResourceTest extends TestCase
         self::assertSame(['area' => '100.0000', 'decision_key' => 'decision:roof', 'selected_option' => 'roof:metal'], $payload['before_payload']);
         self::assertSame(['area' => '110.0000', 'decision_key' => 'decision:roof', 'response' => 'roof:soft'], $payload['after_payload']);
         self::assertSame([['artifact_id' => 7, 'source_version' => 'source-v2', 'page' => 2, 'native_reference' => 'АР-2']], $payload['evidence']);
-        self::assertSame('v1', $payload['interpretation_version']);
+        self::assertArrayNotHasKey('interpretation_version', $payload);
         self::assertSame(['quantity:room'], $payload['dependency_keys']);
         self::assertArrayNotHasKey('version_fence', $payload);
         self::assertArrayNotHasKey('result', $payload);

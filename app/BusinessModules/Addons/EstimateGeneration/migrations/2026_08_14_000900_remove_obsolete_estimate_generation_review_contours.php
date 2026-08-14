@@ -51,8 +51,13 @@ return new class extends Migration
             'estimate_generation_project_model_evidence_bindings',
             'eg_project_model_evidence_provenance_fk',
         );
+        $this->assertConstraint(
+            'estimate_generation_project_model_evidence_bindings',
+            'eg_project_model_evidence_model_scope_fk',
+        );
 
         DB::statement('ALTER TABLE estimate_generation_project_model_evidence_bindings DROP CONSTRAINT eg_project_model_evidence_provenance_fk');
+        DB::statement('ALTER TABLE estimate_generation_project_model_evidence_bindings DROP CONSTRAINT eg_project_model_evidence_model_scope_fk');
         DB::statement('DROP TRIGGER IF EXISTS eg_project_model_evidence_binding_guard_trg ON estimate_generation_project_model_evidence_bindings');
         DB::statement('DROP FUNCTION IF EXISTS eg_project_model_evidence_binding_guard()');
         DB::statement('DROP INDEX IF EXISTS eg_sheet_analysis_audit_transition_uq');

@@ -15,6 +15,7 @@ final readonly class EstimateAuditInput
         public string $snapshotToken,
         public int $cycle,
         public array $facts,
+        public array $derivedQuantities,
         public array $draft,
         public array $evidence,
         public string $contractVersion,
@@ -24,6 +25,7 @@ final readonly class EstimateAuditInput
             || $cycle < 0 || $cycle > 2
             || preg_match('/^[a-z0-9][a-z0-9._:-]{0,159}$/D', $contractVersion) !== 1
             || ! array_is_list($facts) || count($facts) > 10000
+            || ! array_is_list($derivedQuantities) || count($derivedQuantities) > 2000
             || ! array_is_list($evidence) || count($evidence) > 20000
             || $draft === [] || array_is_list($draft)) {
             throw new InvalidArgumentException('estimate_audit_input_invalid');
@@ -58,6 +60,7 @@ final readonly class EstimateAuditInput
             'snapshot_token' => $this->snapshotToken,
             'cycle' => $this->cycle,
             'facts' => $this->facts,
+            'derived_quantities' => $this->derivedQuantities,
             'draft' => $this->draft,
             'evidence' => $this->evidence,
             'contract_version' => $this->contractVersion,
@@ -78,6 +81,7 @@ final readonly class EstimateAuditInput
             $this->snapshotToken,
             $cycle,
             $this->facts,
+            $this->derivedQuantities,
             $draft,
             $this->evidence,
             $this->contractVersion,

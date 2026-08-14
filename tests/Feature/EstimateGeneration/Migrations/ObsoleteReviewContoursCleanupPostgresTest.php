@@ -86,4 +86,83 @@ final class ObsoleteReviewContoursCleanupPostgresTest extends TestCase
             }
         }
     }
+
+    #[Test]
+    public function deployed_block_b_schema_drops_the_historical_model_scope_foreign_key_forward_only(): void
+    {
+        $schema = 'most_cleanup_upgrade_'.bin2hex(random_bytes(8));
+        DB::unprepared('CREATE SCHEMA "'.$schema.'"');
+        DB::unprepared('SET search_path TO "'.$schema.'"');
+
+        try {
+            $this->createTextTable('estimate_generation_sheet_analysis_operations', [
+                'analysis_payload', 'attempt_count', 'completed_at', 'created_at', 'document_id',
+                'failure_reason', 'final_routing', 'initial_routing', 'kind', 'lease_expires_at',
+                'lease_token', 'operation_id', 'organization_id', 'project_id', 'session_id',
+                'source_version', 'status', 'unit_id', 'updated_at',
+            ]);
+            $this->createTextTable('estimate_generation_geometry_regeneration_outbox', [
+                'attempt_count', 'available_at', 'created_at', 'delivered_at', 'generation_attempt_id',
+                'id', 'idempotency_key', 'input_version', 'last_error_code', 'model_version',
+                'organization_id', 'previous_input_version', 'project_id', 'session_id', 'state_version',
+                'status', 'updated_at',
+            ]);
+            $this->createTextTable('estimate_generation_geometry_confirmations', [
+                'actor_id', 'confirmed_at', 'confirmed_building_model_id', 'confirmed_content_version',
+                'confirmed_input_version', 'created_at', 'evidence_id', 'id', 'organization_id',
+                'previous_building_model_id', 'previous_content_version', 'previous_input_version',
+                'project_id', 'reviewer_ref', 'semantic_payload', 'session_id', 'source_class', 'updated_at',
+            ]);
+            DB::statement('CREATE TABLE estimate_generation_building_models (
+                id bigint, organization_id bigint, project_id bigint, session_id bigint, content_version text,
+                assumptions text, created_at text, input_version text, metrics text, model text,
+                model_version text, scale_meters_per_unit text, scale_status text,
+                UNIQUE (id, organization_id, project_id, session_id, content_version)
+            )');
+            DB::statement('CREATE TABLE estimate_generation_building_model_evidence (
+                building_model_id bigint, evidence_id bigint, organization_id bigint, project_id bigint,
+                session_id bigint, created_at text,
+                UNIQUE (building_model_id, evidence_id, organization_id, project_id, session_id)
+            )');
+            DB::statement('CREATE TABLE estimate_generation_project_model_evidence_bindings (
+                building_model_id bigint, evidence_id bigint, organization_id bigint, project_id bigint,
+                session_id bigint, source_version text,
+                CONSTRAINT eg_project_model_evidence_model_scope_fk FOREIGN KEY
+                    (building_model_id, organization_id, project_id, session_id, source_version)
+                    REFERENCES estimate_generation_building_models
+                    (id, organization_id, project_id, session_id, content_version),
+                CONSTRAINT eg_project_model_evidence_provenance_fk FOREIGN KEY
+                    (building_model_id, evidence_id, organization_id, project_id, session_id)
+                    REFERENCES estimate_generation_building_model_evidence
+                    (building_model_id, evidence_id, organization_id, project_id, session_id)
+            )');
+
+            $migration = require app_path(
+                'BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000900_remove_obsolete_estimate_generation_review_contours.php',
+            );
+            $migration->up();
+
+            self::assertNull(DB::selectOne("SELECT to_regclass('estimate_generation_building_models') AS relation")->relation);
+            self::assertSame(
+                'estimate_generation_project_model_evidence_bindings',
+                DB::selectOne("SELECT to_regclass('estimate_generation_project_model_evidence_bindings')::text AS relation")->relation,
+            );
+            self::assertSame(0, DB::table('pg_constraint')->whereIn('conname', [
+                'eg_project_model_evidence_model_scope_fk',
+                'eg_project_model_evidence_provenance_fk',
+            ])->count());
+        } finally {
+            DB::unprepared('SET search_path TO public');
+            if (preg_match('/^most_cleanup_upgrade_[a-f0-9]{16}$/D', $schema) === 1) {
+                DB::unprepared('DROP SCHEMA "'.$schema.'" CASCADE');
+            }
+        }
+    }
+
+    /** @param list<string> $columns */
+    private function createTextTable(string $table, array $columns): void
+    {
+        $definition = implode(', ', array_map(static fn (string $column): string => '"'.$column.'" text', $columns));
+        DB::statement('CREATE TABLE "'.$table.'" ('.$definition.')');
+    }
 }

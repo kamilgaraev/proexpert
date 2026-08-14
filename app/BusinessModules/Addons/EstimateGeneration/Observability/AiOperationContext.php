@@ -40,7 +40,7 @@ final readonly class AiOperationContext
             || ($stage === 'checking_geometry' && $operation === 'vision')
             || ($stage === 'plan_work_items' && $operation === 'estimate_composition')
             || ($stage === 'match_normatives' && $operation === 'rerank')
-            || ($stage === 'validate_draft' && in_array($operation, ['completeness_review', 'estimate_audit'], true));
+            || ($stage === 'validate_draft' && in_array($operation, ['completeness_review', 'estimate_audit', 'estimate_composer_correction'], true));
         if (! $valid) {
             throw new InvalidArgumentException('Invalid usage operation context.');
         }

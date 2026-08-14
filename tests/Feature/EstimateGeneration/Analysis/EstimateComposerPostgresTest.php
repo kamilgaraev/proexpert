@@ -153,7 +153,11 @@ final class PostgresRecordedEstimateComposerModel implements EstimateComposerMod
         $onPhysicalAttemptReserved('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 
         return ['work_intents' => array_map(static fn (array $candidate): array => [
+            'kind' => 'existing',
             'candidate_id' => $candidate['candidate_id'],
+            'work_key' => null,
+            'name' => null,
+            'derived_quantity_id' => null,
             'source_fact_ids' => $candidate['source_fact_ids'],
             'technology_package_candidate' => $candidate['technology_package_candidate'],
             'assumptions' => [],

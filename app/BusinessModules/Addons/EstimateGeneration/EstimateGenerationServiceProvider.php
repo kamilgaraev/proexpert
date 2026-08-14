@@ -675,7 +675,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (string) config('estimate-generation.project_engineer.model'),
         ));
         $this->app->alias(RunProjectSynthesis::class, ProjectSynthesisRunner::class);
-        $this->app->singleton(EstimateComposerModel::class, static fn ($app): EstimateComposerModel => new TimewebEstimateComposerModel(
+        $this->app->singleton(TimewebEstimateComposerModel::class, static fn ($app): TimewebEstimateComposerModel => new TimewebEstimateComposerModel(
             $app->make(RerankWireClient::class),
             $app->make(AiUsageStore::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
@@ -684,6 +684,11 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (int) config('estimate-generation.estimate_composer.max_output_tokens'),
             (int) config('estimate-generation.estimate_composer.timeout_seconds'),
         ));
+        $this->app->alias(TimewebEstimateComposerModel::class, EstimateComposerModel::class);
+        $this->app->alias(
+            TimewebEstimateComposerModel::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel::class,
+        );
         $this->app->singleton(RunEstimateComposer::class, static fn ($app): RunEstimateComposer => new RunEstimateComposer(
             $app->make(AiRoleRunRepository::class),
             $app->make(EstimateComposerModel::class),
@@ -693,6 +698,14 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
             (int) config('estimate-generation.estimate_composer.max_facts'),
         ));
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection => new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection(
+                $app->make(AiRoleRunRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel::class),
+                (string) config('estimate-generation.estimate_composer.model'),
+            ),
+        );
         $this->app->singleton(EstimateAuditModel::class, static fn ($app): EstimateAuditModel => new TimewebEstimateAuditModel(
             $app->make(RerankWireClient::class),
             $app->make(AiUsageStore::class),
@@ -709,6 +722,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         ));
         $this->app->singleton(EstimateAuditInputFactory::class, static fn ($app): EstimateAuditInputFactory => new EstimateAuditInputFactory(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class),
             (int) config('estimate-generation.estimate_auditor.max_facts'),
         ));
         $this->app->singleton(ApplyComposerCorrectionCycle::class);

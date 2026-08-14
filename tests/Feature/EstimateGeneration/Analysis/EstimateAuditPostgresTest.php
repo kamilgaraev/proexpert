@@ -41,7 +41,10 @@ final class EstimateAuditPostgresTest extends TestCase
         try {
             $model = new PostgresRecordedEstimateAuditModel;
             $repository = new EloquentAiRoleRunRepository($connection, 180);
-            $cycles = new ApplyComposerCorrectionCycle(new RunEstimateAudit($repository, $model, 'openai/gpt-5-mini'));
+            $cycles = new ApplyComposerCorrectionCycle(
+                new RunEstimateAudit($repository, $model, 'openai/gpt-5-mini'),
+                $this->corrector(),
+            );
             $input = $this->input();
 
             $first = $cycles->apply($input);
@@ -49,7 +52,7 @@ final class EstimateAuditPostgresTest extends TestCase
                 new EloquentAiRoleRunRepository($connection, 180),
                 $model,
                 'openai/gpt-5-mini',
-            )))->apply($input);
+            ), $this->corrector()))->apply($input);
 
             self::assertSame($first, $replay);
             self::assertSame(3, $model->calls);
@@ -99,10 +102,14 @@ final class EstimateAuditPostgresTest extends TestCase
                 ['understand_documents', 'project_synthesis'],
                 ['plan_work_items', 'estimate_composition'],
                 ['validate_draft', 'estimate_audit'],
+                ['validate_draft', 'estimate_composer_correction'],
             ] as [$stage, $operation]) {
+                if ($operation === 'estimate_composer_correction') {
+                    (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000800_extend_ai_usage_for_composer_corrections.php'))->up();
+                }
                 $connection->table('estimate_generation_ai_usage')->insert(compact('stage', 'operation'));
             }
-            self::assertSame(3, $connection->table('estimate_generation_ai_usage')->count());
+            self::assertSame(4, $connection->table('estimate_generation_ai_usage')->count());
 
             try {
                 $connection->table('estimate_generation_ai_usage')->insert([
@@ -110,7 +117,7 @@ final class EstimateAuditPostgresTest extends TestCase
                 ]);
                 self::fail('Invalid stage/operation pair must be rejected.');
             } catch (QueryException) {
-                self::assertSame(3, $connection->table('estimate_generation_ai_usage')->count());
+                self::assertSame(4, $connection->table('estimate_generation_ai_usage')->count());
             }
         } finally {
             $this->cleanup($connection, $schema);
@@ -207,6 +214,25 @@ final class EstimateAuditPostgresTest extends TestCase
         $connection->unprepared('DROP SCHEMA "'.$schema.'" CASCADE');
     }
 
+    private function corrector(): \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection
+    {
+        return new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection(
+            new \Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository,
+            new class implements \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel
+            {
+                public function correct(
+                    \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput $input,
+                    callable $onPhysicalAttemptReserved,
+                ): array {
+                    $onPhysicalAttemptReserved('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+
+                    return ['corrections' => []];
+                }
+            },
+            'openai/gpt-5-mini',
+        );
+    }
+
     private function input(): EstimateAuditInput
     {
         $items = array_map(static fn (string $key): array => [
@@ -226,6 +252,7 @@ final class EstimateAuditPostgresTest extends TestCase
             str_repeat('a', 64),
             0,
             [['id' => 'fact:foundation', 'status' => 'confirmed']],
+            [['id' => 'quantity:foundation', 'value' => '10.2500', 'unit' => 'м3']],
             ['local_estimates' => [[
                 'key' => 'estimate:house',
                 'sections' => [['key' => 'section:works', 'work_items' => $items]],

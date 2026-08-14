@@ -8,10 +8,15 @@ use RuntimeException;
 
 final class CanonicalEstimateCommandProposalResolver
 {
+    public function __construct(
+        private readonly SafeEstimateDialoguePresentation $presentation = new SafeEstimateDialoguePresentation,
+    ) {}
+
     /** @param array<string, mixed> $context */
     public function resolve(EstimateCommandInterpretation $interpretation, array $context): EstimateCommandInterpretation
     {
         $payload = $interpretation->payload;
+        $payload = $this->presentation->sanitize($payload);
         $payload['context_fingerprint'] = $context['fingerprint'] ?? null;
         unset($payload['cost_delta'], $payload['cost_delta_known']);
 
@@ -30,7 +35,13 @@ final class CanonicalEstimateCommandProposalResolver
             if ($fact === null || ! is_scalar($payload['value'] ?? null)) {
                 throw new RuntimeException('estimate_generation.command_reference_invalid');
             }
-            $payload['before'] = ['stable_key' => $target, 'value' => $fact['value'] ?? null, 'unit' => $fact['unit'] ?? null];
+            $payload['before'] = [
+                'stable_key' => $target,
+                'entity_id' => $fact['entity_id'] ?? null,
+                'type' => $fact['type'] ?? null,
+                'value' => $fact['value'] ?? null,
+                'unit' => $fact['unit'] ?? null,
+            ];
             $payload['after'] = [
                 'source_version' => $fact['source_version'] ?? null,
                 'value_fingerprint' => $fact['value_fingerprint'] ?? null,

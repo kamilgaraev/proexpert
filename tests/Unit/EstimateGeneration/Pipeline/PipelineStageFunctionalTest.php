@@ -153,6 +153,7 @@ final class PipelineStageFunctionalTest extends TestCase
                 'snapshot_token' => str_repeat('c', 64),
                 'input_fingerprint' => str_repeat('d', 64),
                 'intents_count' => 1,
+                'derived_quantities' => [],
             ],
             'local_estimates' => [[
                 'key' => 'roof',
@@ -281,6 +282,7 @@ final class PipelineStageFunctionalTest extends TestCase
                 'snapshot_token' => str_repeat('c', 64),
                 'input_fingerprint' => str_repeat('d', 64),
                 'intents_count' => 1,
+                'derived_quantities' => [],
             ],
             'local_estimates' => [[
                 'key' => 'roof',
@@ -504,7 +506,11 @@ final class PipelineStageFunctionalTest extends TestCase
                             $onPhysicalAttemptReserved('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 
                             return ['work_intents' => array_map(static fn (array $candidate): array => [
+                                'kind' => 'existing',
                                 'candidate_id' => $candidate['candidate_id'],
+                                'work_key' => null,
+                                'name' => null,
+                                'derived_quantity_id' => null,
                                 'source_fact_ids' => [],
                                 'technology_package_candidate' => $candidate['technology_package_candidate'],
                                 'assumptions' => [],
@@ -538,8 +544,26 @@ final class PipelineStageFunctionalTest extends TestCase
                         }
                     },
                     'test-model',
+                ), new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection(
+                    new InMemoryAiRoleRunRepository,
+                    new class implements \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel
+                    {
+                        public function correct(
+                            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput $input,
+                            callable $onPhysicalAttemptReserved,
+                        ): array {
+                            $onPhysicalAttemptReserved('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+
+                            return ['corrections' => []];
+                        }
+                    },
+                    'test-model',
                 )),
-                new EstimateAuditInputFactory($projectModels, 10000),
+                new EstimateAuditInputFactory(
+                    $projectModels,
+                    new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository,
+                    10000,
+                ),
             ),
         ];
         $attempt = '00000000-0000-4000-8000-000000000001';

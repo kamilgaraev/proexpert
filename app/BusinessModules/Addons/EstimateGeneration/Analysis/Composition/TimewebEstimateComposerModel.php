@@ -16,7 +16,7 @@ use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
 
-final readonly class TimewebEstimateComposerModel implements EstimateComposerModel
+final readonly class TimewebEstimateComposerModel implements EstimateComposerCorrectionModel, EstimateComposerModel
 {
     public function __construct(
         private RerankWireClient $wire,
@@ -87,14 +87,80 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerMod
         }
     }
 
+    public function correct(EstimateComposerCorrectionInput $input, callable $onPhysicalAttemptReserved): array
+    {
+        $payload = json_encode(
+            ['correction_context' => $input->canonicalPayload()],
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        );
+        if (strlen($payload) > $this->maxInputBytes) {
+            throw new InvalidArgumentException('estimate_composer_correction_input_limit_exceeded');
+        }
+        $attemptId = AiOperationContext::deterministicId(
+            'estimate-composer-correction-attempt|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)),
+        );
+        $onPhysicalAttemptReserved($attemptId);
+        $audit = $input->audit;
+        $context = new AiOperationContext(
+            AiOperationContext::deterministicId('estimate-composer-correction|'.$input->fingerprint()),
+            $attemptId,
+            $audit->organizationId,
+            $audit->projectId,
+            $audit->sessionId,
+            'validate_draft',
+            'estimate_composer_correction',
+            $audit->cycle + 1,
+        );
+        $price = $this->prices->resolve($context, $this->wire->provider(), $this->modelName);
+        $response = [];
+        $status = 'connection_failed';
+        $httpCode = null;
+        $started = hrtime(true);
+        try {
+            $response = $this->wire->call($this->modelName, [
+                ['role' => 'system', 'content' => $this->correctionPrompt()],
+                ['role' => 'user', 'content' => $payload],
+            ], [
+                'profile' => 'json',
+                'temperature' => 0,
+                'max_tokens' => $this->maxOutputTokens,
+                'timeout' => $this->timeoutSeconds,
+            ]);
+            $decoded = json_decode($this->normalizedContent((string) ($response['content'] ?? '')), true);
+            if (! is_array($decoded) || ($response['model'] ?? null) !== $this->modelName) {
+                throw new RerankWireException('malformed_response');
+            }
+            $status = 'succeeded';
+
+            return $decoded;
+        } catch (RerankWireException $exception) {
+            $status = $exception->attemptStatus;
+            $httpCode = $exception->httpCode;
+            throw $exception;
+        } finally {
+            $this->record($context, $status, $httpCode, $response, $started, $price);
+        }
+    }
+
     private function prompt(): string
     {
-        return 'Ты составитель строительной сметы. Для каждого переданного детерминированного кандидата верни ровно одно смысловое намерение; '
-            .'не добавляй и не пропускай работы. Используй только существующие source fact ids и указанный technology package candidate. '
+        return 'Ты составитель строительной сметы. Для каждого переданного детерминированного кандидата верни ровно одно намерение kind=existing. '
+            .'Если подтверждённый факт модели требует отсутствующей в кандидатах работы, добавь bounded намерение kind=supplementary с новым candidate_id, work_key, русским name и при наличии точного объёма derived_quantity_id. '
+            .'Используй только существующие source fact ids, derived quantity ids и technology package candidates. Не дублируй существующие work_key. '
             .'Не вычисляй и не возвращай цены, суммы, стоимость, проценты уверенности или нормативы: их определяет канонический код. '
             .'Для недостаточных данных укажи конкретные допущения, исключения и рекомендации по недостающим документам, не подставляя нулевые объёмы. '
-            .'Верни только JSON с единственным ключом work_intents. Каждый элемент содержит ровно candidate_id, source_fact_ids, '
+            .'Верни только JSON с единственным ключом work_intents. Каждый элемент содержит ровно kind, candidate_id, work_key, name, derived_quantity_id, source_fact_ids, '
             .'technology_package_candidate, assumptions, exclusions, missing_document_recommendations.';
+    }
+
+    private function correctionPrompt(): string
+    {
+        return 'Ты составитель строительной сметы, выполняющий только точечные исправления замечаний независимого аудитора. '
+            .'Верни corrections только для исправимых замечаний и используй лишь переданные fact id, derived quantity id и item key. '
+            .'Допустимы операции add_work, replace_quantity и replace_unit. Значение и единицу бери только через derived_quantity_id; цены, суммы, нормативы и уверенность не возвращай. '
+            .'Для add_work верни ровно operation, finding_id, work_key, русское name, derived_quantity_id, source_fact_ids. '
+            .'Для replace_quantity или replace_unit верни ровно operation, finding_id, target_item_key, expected_target_fingerprint, derived_quantity_id. '
+            .'Верни только JSON с единственным ключом corrections.';
     }
 
     private function normalizedContent(string $content): string

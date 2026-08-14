@@ -17,13 +17,18 @@ final class EstimateUndoInterpretationFactoryTest extends TestCase
             'id' => 'proposal-1',
             'status' => 'applied',
             'intent' => 'correct_fact',
-            'before_payload' => ['stable_key' => 'fact:room:area', 'value' => '42.5000'],
-        ]));
+            'before_payload' => [
+                'stable_key' => 'fact:room:area',
+                'entity_id' => 'entity:room',
+                'type' => 'area',
+                'value' => '42.5000',
+            ],
+        ]), $this->context('fact:room:area:v2', 'entity:room', 'area'));
 
         self::assertSame([
             'kind' => 'correct_fact',
             'version' => 'undo:v1',
-            'target_key' => 'fact:room:area',
+            'target_key' => 'fact:room:area:v2',
             'value' => '42.5000',
         ], $interpretation->payload);
     }
@@ -35,7 +40,7 @@ final class EstimateUndoInterpretationFactoryTest extends TestCase
             'status' => 'applied',
             'intent' => 'select_technology',
             'before_payload' => ['decision_key' => 'decision:roof', 'selected_option' => 'roof:metal'],
-        ]));
+        ]), ['facts' => []]);
 
         self::assertSame('select_technology', $interpretation->kind());
         self::assertSame('roof:metal', $interpretation->payload['option_id']);
@@ -49,9 +54,11 @@ final class EstimateUndoInterpretationFactoryTest extends TestCase
             'intent' => 'correct_fact',
             'before_payload' => [
                 'stable_key' => 'fact:decision:previous',
+                'entity_id' => 'entity:room',
+                'type' => 'area',
                 'value' => ['value' => '51.2500', 'unit' => 'm2'],
             ],
-        ]));
+        ]), $this->context('fact:decision:current', 'entity:room', 'area'));
 
         self::assertSame('51.2500', $interpretation->payload['value']);
     }
@@ -63,11 +70,23 @@ final class EstimateUndoInterpretationFactoryTest extends TestCase
             ['status' => 'applied', 'intent' => 'select_technology', 'before_payload' => ['decision_key' => 'decision:roof', 'selected_option' => null]],
         ] as $payload) {
             try {
-                (new EstimateUndoInterpretationFactory)->make(new EstimateChangeProposal(['id' => 'proposal-x', ...$payload]));
+                (new EstimateUndoInterpretationFactory)->make(
+                    new EstimateChangeProposal(['id' => 'proposal-x', ...$payload]),
+                    ['facts' => []],
+                );
                 self::fail('Unavailable undo must not create a proposal.');
             } catch (RuntimeException $exception) {
                 self::assertSame('estimate_generation.proposal_undo_unavailable', $exception->getMessage());
             }
         }
+    }
+
+    private function context(string $stableKey, string $entityId, string $type): array
+    {
+        return ['facts' => [[
+            'stable_key' => $stableKey,
+            'entity_id' => $entityId,
+            'type' => $type,
+        ]]];
     }
 }

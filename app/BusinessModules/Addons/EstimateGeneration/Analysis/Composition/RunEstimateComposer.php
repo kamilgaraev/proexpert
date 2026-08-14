@@ -17,7 +17,7 @@ use Throwable;
 
 final readonly class RunEstimateComposer
 {
-    public const PROMPT_CONTRACT = 'estimate-composer:v1';
+    public const PROMPT_CONTRACT = 'estimate-composer:v2';
 
     public function __construct(
         private AiRoleRunRepository $runs,
@@ -98,23 +98,49 @@ final readonly class RunEstimateComposer
             $candidateById[$candidate['candidate_id']] = $candidate;
         }
         $allowedFactIds = array_fill_keys(array_column($input->facts, 'id'), true);
+        $allowedQuantityIds = array_fill_keys(array_column($input->derivedQuantities, 'id'), true);
+        $allowedTechnologyCandidates = array_fill_keys(array_values(array_filter(
+            array_column($input->candidates, 'technology_package_candidate'),
+            'is_string',
+        )), true);
+        $candidateWorkKeys = array_fill_keys(array_column($input->candidates, 'work_key'), true);
         $intentsById = [];
+        $supplementaryById = [];
+        $supplementaryWorkKeys = [];
         foreach ($payload as $record) {
             if (! is_array($record)) {
                 throw new InvalidArgumentException('estimate_work_intent_shape_invalid');
             }
             $intent = EstimateWorkIntent::fromArray($record);
-            if (isset($intentsById[$intent->candidateId])) {
+            if (isset($intentsById[$intent->candidateId]) || isset($supplementaryById[$intent->candidateId])) {
                 throw new InvalidArgumentException('estimate_composer_candidate_duplicate');
-            }
-            $candidate = $candidateById[$intent->candidateId] ?? null;
-            if ($candidate === null) {
-                throw new InvalidArgumentException('estimate_composer_candidate_coverage_invalid');
             }
             foreach ($intent->sourceFactIds as $factId) {
                 if (! isset($allowedFactIds[$factId])) {
                     throw new InvalidArgumentException('estimate_composer_source_fact_invalid');
                 }
+            }
+            if ($intent->kind === 'supplementary') {
+                if ($intent->workKey === null
+                    || isset($candidateWorkKeys[$intent->workKey])
+                    || isset($supplementaryWorkKeys[$intent->workKey])) {
+                    throw new InvalidArgumentException('estimate_composer_supplementary_duplicate');
+                }
+                if ($intent->derivedQuantityId !== null && ! isset($allowedQuantityIds[$intent->derivedQuantityId])) {
+                    throw new InvalidArgumentException('estimate_composer_derived_quantity_invalid');
+                }
+                if ($intent->technologyPackageCandidate !== null
+                    && ! isset($allowedTechnologyCandidates[$intent->technologyPackageCandidate])) {
+                    throw new InvalidArgumentException('estimate_composer_technology_candidate_invalid');
+                }
+                $supplementaryWorkKeys[$intent->workKey] = true;
+                $supplementaryById[$intent->candidateId] = $intent->toArray();
+
+                continue;
+            }
+            $candidate = $candidateById[$intent->candidateId] ?? null;
+            if ($candidate === null) {
+                throw new InvalidArgumentException('estimate_composer_candidate_coverage_invalid');
             }
             if ($intent->technologyPackageCandidate !== $candidate['technology_package_candidate']) {
                 throw new InvalidArgumentException('estimate_composer_technology_candidate_invalid');
@@ -125,9 +151,11 @@ final readonly class RunEstimateComposer
             throw new InvalidArgumentException('estimate_composer_candidate_coverage_invalid');
         }
 
-        return array_map(
+        ksort($supplementaryById, SORT_STRING);
+
+        return [...array_map(
             static fn (array $candidate): array => $intentsById[$candidate['candidate_id']],
             $input->candidates,
-        );
+        ), ...array_values($supplementaryById)];
     }
 }

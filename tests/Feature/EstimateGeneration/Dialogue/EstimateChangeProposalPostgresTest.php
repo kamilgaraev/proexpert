@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration\Dialogue;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\ApplyEstimateChangeProposal;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CanonicalEstimateCommandProposalResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeProposal;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateChangeSimulation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandContextBuilder;
@@ -12,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateC
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpreter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalMutationExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateProposalVersionFence;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateUndoInterpretationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\PreviewEstimateChange;
@@ -247,6 +249,91 @@ final class EstimateChangeProposalPostgresTest extends TestCase
             (int) $project->id + 1,
             (int) $session->id,
         ));
+    }
+
+    public function test_applied_fact_change_builds_undo_against_the_new_current_fact_projection(): void
+    {
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $actor->id,
+            'status' => 'ready_to_generate',
+            'processing_stage' => 'analysis',
+            'processing_progress' => 50,
+            'input_payload' => [],
+            'analysis_payload' => [],
+            'draft_payload' => [],
+            'problem_flags' => [],
+            'state_version' => 1,
+        ]);
+        $sourceVersion = 'sha256:'.hash('sha256', 'undo-current-projection');
+        $models = app(EloquentProjectModelRepository::class);
+        $entityId = 'entity:undo:area';
+        $originalFactId = 'fact:undo:area:v1';
+        $models->saveSourceModel(
+            [new Entity(
+                $entityId,
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->id,
+                $sourceVersion,
+                'quantity',
+                $entityId,
+                ['value' => 42.5, 'unit' => 'm2'],
+            )],
+            [new Fact(
+                $originalFactId,
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->id,
+                $sourceVersion,
+                $entityId,
+                'area',
+                '42.5000',
+                'm2',
+                1.0,
+                'user_assumption',
+                'confirmed',
+                [],
+            )],
+            [],
+        );
+        (new ApplyProjectModelDecision($models))->apply(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+            $sourceVersion,
+            $originalFactId,
+            '50.0000',
+            'm2',
+            (string) $actor->id,
+            'Подтверждённое изменение площади',
+            'decision:undo:'.hash('sha256', 'apply'),
+        );
+        $context = (new EstimateCommandContextBuilder($models))->build($session->fresh());
+        $currentFactId = $context['facts'][0]['stable_key'];
+        self::assertNotSame($originalFactId, $currentFactId);
+        $original = new EstimateChangeProposal([
+            'id' => 'proposal:undo:'.hash('sha256', 'original'),
+            'status' => 'applied',
+            'intent' => 'correct_fact',
+            'before_payload' => [
+                'stable_key' => $originalFactId,
+                'entity_id' => $entityId,
+                'type' => 'area',
+                'value' => '42.5000',
+                'unit' => 'm2',
+            ],
+        ]);
+        $inverse = (new EstimateUndoInterpretationFactory)->make($original, $context);
+        $resolved = (new CanonicalEstimateCommandProposalResolver)->resolve($inverse, $context);
+
+        self::assertSame($currentFactId, $resolved->payload['target_key']);
+        self::assertSame('42.5000', $resolved->payload['after']['value']['value']);
+        self::assertSame($context['facts'][0]['value_fingerprint'], $resolved->payload['after']['value_fingerprint']);
     }
 
     public function test_apply_is_atomic_idempotent_version_fenced_and_marks_stale_expired_or_failed(): void

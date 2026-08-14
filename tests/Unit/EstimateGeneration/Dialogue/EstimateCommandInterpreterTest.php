@@ -232,6 +232,36 @@ final class EstimateCommandInterpreterTest extends TestCase
         }
     }
 
+    public function test_dialogue_presentation_rejects_raw_provider_text_and_strips_provider_identity(): void
+    {
+        $resolver = new CanonicalEstimateCommandProposalResolver;
+        $context = [
+            'fingerprint' => 'sha256:'.str_repeat('a', 64),
+            'facts' => [],
+            'recommendations' => [],
+            'evidence' => [],
+            'allowed_references' => ['decision_keys' => [], 'evidence_ids' => []],
+        ];
+        $safe = $resolver->resolve(new EstimateCommandInterpretation([
+            'kind' => 'explain',
+            'version' => 'openai/gpt-5-mini',
+            'explanation' => 'Расчёт основан на подтверждённой площади кровли.',
+            'evidence_ids' => [],
+            'provider_model' => 'openai/gpt-5-mini',
+        ]), $context);
+        self::assertArrayNotHasKey('provider_model', $safe->payload);
+        self::assertSame('estimate-command:v1', $safe->payload['version']);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('estimate_generation.dialogue_presentation_invalid');
+        $resolver->resolve(new EstimateCommandInterpretation([
+            'kind' => 'explain',
+            'version' => 'v1',
+            'explanation' => 'Provider payload says the roof estimate is valid.',
+            'evidence_ids' => [],
+        ]), $context);
+    }
+
     public function test_server_resolves_area_and_roof_proposals_from_allowlisted_registry(): void
     {
         $context = [

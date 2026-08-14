@@ -10,14 +10,19 @@ final readonly class EstimateWorkIntent
 {
     /** @param list<string> $sourceFactIds @param list<string> $assumptions @param list<string> $exclusions @param list<string> $missingDocumentRecommendations */
     public function __construct(
+        public string $kind,
         public string $candidateId,
+        public ?string $workKey,
+        public ?string $name,
+        public ?string $derivedQuantityId,
         public array $sourceFactIds,
         public ?string $technologyPackageCandidate,
         public array $assumptions,
         public array $exclusions,
         public array $missingDocumentRecommendations,
     ) {
-        if (! self::identifier($candidateId)
+        if (! in_array($kind, ['existing', 'supplementary'], true)
+            || ! self::identifier($candidateId)
             || ($technologyPackageCandidate !== null && ! self::identifier($technologyPackageCandidate))) {
             throw new InvalidArgumentException('estimate_work_intent_value_invalid');
         }
@@ -25,13 +30,32 @@ final readonly class EstimateWorkIntent
         self::assertStringList($assumptions, 20, 500, false);
         self::assertStringList($exclusions, 20, 500, false);
         self::assertStringList($missingDocumentRecommendations, 20, 800, false);
+        if ($kind === 'existing' && ($workKey !== null || $name !== null || $derivedQuantityId !== null)) {
+            throw new InvalidArgumentException('estimate_work_intent_existing_shape_invalid');
+        }
+        if ($kind === 'supplementary' && (
+            ! str_starts_with($candidateId, 'supplementary:')
+            || ! self::identifier($workKey ?? '')
+            || ! is_string($name) || trim($name) === '' || strlen($name) > 300
+            || ($derivedQuantityId !== null && ! self::identifier($derivedQuantityId))
+            || $sourceFactIds === []
+        )) {
+            throw new InvalidArgumentException('estimate_work_intent_supplementary_shape_invalid');
+        }
+        if ($kind === 'supplementary' && ! self::humanReadable((string) $name)) {
+            throw new InvalidArgumentException('estimate_work_intent_text_invalid');
+        }
     }
 
     public static function fromArray(array $payload): self
     {
         $actualKeys = array_keys($payload);
         $expectedKeys = [
+            'kind',
             'candidate_id',
+            'work_key',
+            'name',
+            'derived_quantity_id',
             'source_fact_ids',
             'technology_package_candidate',
             'assumptions',
@@ -45,7 +69,11 @@ final readonly class EstimateWorkIntent
         }
 
         return new self(
+            kind: is_string($payload['kind']) ? $payload['kind'] : '',
             candidateId: is_string($payload['candidate_id']) ? $payload['candidate_id'] : '',
+            workKey: is_string($payload['work_key'] ?? null) ? $payload['work_key'] : null,
+            name: is_string($payload['name'] ?? null) ? $payload['name'] : null,
+            derivedQuantityId: is_string($payload['derived_quantity_id'] ?? null) ? $payload['derived_quantity_id'] : null,
             sourceFactIds: is_array($payload['source_fact_ids']) ? $payload['source_fact_ids'] : [''],
             technologyPackageCandidate: is_string($payload['technology_package_candidate'] ?? null)
                 ? $payload['technology_package_candidate']
@@ -62,7 +90,11 @@ final readonly class EstimateWorkIntent
     public function toArray(): array
     {
         return [
+            'kind' => $this->kind,
             'candidate_id' => $this->candidateId,
+            'work_key' => $this->workKey,
+            'name' => $this->name,
+            'derived_quantity_id' => $this->derivedQuantityId,
             'source_fact_ids' => $this->sourceFactIds,
             'technology_package_candidate' => $this->technologyPackageCandidate,
             'assumptions' => $this->assumptions,
@@ -81,7 +113,17 @@ final readonly class EstimateWorkIntent
                 || ($identifier && ! self::identifier($value))) {
                 throw new InvalidArgumentException('estimate_work_intent_list_invalid');
             }
+            if (! $identifier && ! self::humanReadable($value)) {
+                throw new InvalidArgumentException('estimate_work_intent_text_invalid');
+            }
         }
+    }
+
+    private static function humanReadable(string $value): bool
+    {
+        return preg_match('/\p{Cyrillic}/u', $value) === 1
+            && preg_match('/\b(?:provider|payload|dto|exception|sql|constraint|fallback|legacy|openai|timeweb|gpt|confidence|model[_ -]?version)\b/iu', $value) !== 1
+            && preg_match('/^нужно уточнить[.!]?$/iu', trim($value)) !== 1;
     }
 
     private static function identifier(string $value): bool

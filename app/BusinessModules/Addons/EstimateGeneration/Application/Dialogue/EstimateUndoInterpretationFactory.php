@@ -8,7 +8,8 @@ use RuntimeException;
 
 final class EstimateUndoInterpretationFactory
 {
-    public function make(EstimateChangeProposal $proposal): EstimateCommandInterpretation
+    /** @param array<string,mixed> $context */
+    public function make(EstimateChangeProposal $proposal, array $context): EstimateCommandInterpretation
     {
         if (($proposal->payload['status'] ?? null) !== 'applied') {
             throw new RuntimeException('estimate_generation.proposal_undo_unavailable');
@@ -18,20 +19,29 @@ final class EstimateUndoInterpretationFactory
             : [];
 
         return match ($proposal->payload['intent'] ?? null) {
-            'correct_fact' => $this->fact($before),
+            'correct_fact' => $this->fact($before, $context),
             'select_technology' => $this->technology($before),
             default => throw new RuntimeException('estimate_generation.proposal_undo_unavailable'),
         };
     }
 
-    private function fact(array $before): EstimateCommandInterpretation
+    private function fact(array $before, array $context): EstimateCommandInterpretation
     {
-        $target = $before['stable_key'] ?? null;
+        $entityId = $before['entity_id'] ?? null;
+        $type = $before['type'] ?? null;
+        $target = null;
+        foreach ($context['facts'] ?? [] as $fact) {
+            if (is_array($fact) && ($fact['entity_id'] ?? null) === $entityId && ($fact['type'] ?? null) === $type) {
+                $target = $fact['stable_key'] ?? null;
+                break;
+            }
+        }
         $value = $before['value'] ?? null;
         if (is_array($value) && is_scalar($value['value'] ?? null)) {
             $value = $value['value'];
         }
-        if (! is_string($target) || $target === '' || ! is_scalar($value)) {
+        if (! is_string($entityId) || $entityId === '' || ! is_string($type) || $type === ''
+            || ! is_string($target) || $target === '' || ! is_scalar($value)) {
             throw new RuntimeException('estimate_generation.proposal_undo_unavailable');
         }
 

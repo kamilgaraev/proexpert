@@ -66,6 +66,14 @@ return [
     'confirmed_correction_reason' => 'Подтверждённое изменение через AI-сметчика',
     'confirmed_technology_reason' => 'Подтверждённый выбор технологии через AI-сметчика',
     'geometry_coverage_review' => 'Подтвердите полноту геометрии и наличие проёмов для указанного элемента.',
+    'composition' => [
+        'supplementary_title' => 'Дополнительные работы по модели проекта',
+        'supplementary_section' => 'Работы, выявленные AI-составителем',
+    ],
+    'audit' => [
+        'corrections_title' => 'Исправления по независимой проверке',
+        'corrections_section' => 'Работы, уточнённые после проверки черновика',
+    ],
     'stage6' => [
         'quantity_not_proven' => 'Объём работ нельзя подтвердить по текущим исходным данным.',
         'normative_not_compatible' => 'Для позиции не найден единственный применимый норматив.',
