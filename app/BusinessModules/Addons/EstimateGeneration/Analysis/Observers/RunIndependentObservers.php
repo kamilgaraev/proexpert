@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
@@ -25,17 +27,25 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
         private VisionProvider $vision,
         private ObserverInputBuilder $inputs,
         private string $model,
+        private ?ArbitrationInputBuilder $claimProjector = null,
+        private ?ProjectModelEvidenceWriter $evidenceWriter = null,
     ) {
         if (preg_match('#^[A-Za-z0-9._/-]{1,160}$#D', $model) !== 1) {
             throw new \InvalidArgumentException('observer_model_invalid');
         }
     }
 
-    /** @return array<string, AiRoleRunResult> */
-    public function run(VisionDocumentInput $source): array
+    /** @param list<ObserverProfile> $profiles @return array<string, AiRoleRunResult> */
+    public function run(VisionDocumentInput $source, array $profiles): array
     {
+        if ($profiles === [] || count($profiles) !== count(array_unique(array_map(
+            static fn (ObserverProfile $profile): string => $profile->value,
+            $profiles,
+        )))) {
+            throw new \InvalidArgumentException('observer_profiles_invalid');
+        }
         $results = [];
-        foreach (ObserverProfile::cases() as $profile) {
+        foreach ($profiles as $profile) {
             $ownerUuid = AiOperationContext::deterministicId(implode('|', [
                 'observer-owner',
                 $source->operationContext->attemptId,
@@ -59,6 +69,7 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
             $claim = $this->runs->claim($runInput, $ownerUuid);
             if ($claim->disposition === 'replay' && $claim->result !== null) {
                 $results[$profile->role()->value] = $claim->result;
+                $this->preserveObservation($source, $profile, $claim->result);
 
                 continue;
             }
@@ -79,6 +90,7 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
                     $physicalAttemptId,
                 );
                 $this->runs->complete($claim->runId, $claim->ownerUuid, $result);
+                $this->preserveObservation($source, $profile, $result);
                 $results[$profile->role()->value] = $result;
             } catch (VisionContractException|VisionProviderException $exception) {
                 $this->runs->fail($claim->runId, $claim->ownerUuid, new AiRoleRunFailure(
@@ -92,6 +104,18 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
         }
 
         return $results;
+    }
+
+    private function preserveObservation(
+        VisionDocumentInput $source,
+        ObserverProfile $profile,
+        AiRoleRunResult $result,
+    ): void {
+        if ($this->claimProjector === null || $this->evidenceWriter === null) {
+            return;
+        }
+        $claims = $this->claimProjector->claims($source, [$profile->role()->value => $result]);
+        $this->evidenceWriter->writeIndependentObservations($claims, $source->documentId, $source->pageNumber);
     }
 
     private function runInput(VisionDocumentInput $input, ObserverProfile $profile): AiRoleRunInput
@@ -112,6 +136,7 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
                 'derivative_hash' => $input->derivativeHash,
                 'native_references' => $input->nativeReferences,
                 'auxiliary_text_sha256' => hash('sha256', $input->auxiliaryText ?? ''),
+                'semantic_region_hashes' => array_column($input->regionImages, 'sha256'),
                 'observer' => $input->auxiliaryMetadata['observer'] ?? null,
             ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)),
         );
@@ -140,6 +165,7 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
                 'warnings' => $analysis->warnings,
                 'quarantined_items' => array_slice($analysis->quarantinedItems, 0, 64),
                 'raw_facts' => $analysis->rawObserverFacts,
+                'analysis_routing' => $analysis->analysisRouting?->toArray(),
             ],
             'claims' => array_slice($analysis->projectSheetAnalysis?->facts ?? [], 0, 64),
             'evidence' => array_slice(array_map(

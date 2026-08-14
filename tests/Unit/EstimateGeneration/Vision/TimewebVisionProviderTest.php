@@ -209,6 +209,42 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function literal_observer_returns_durable_adaptive_routing_and_semantic_regions(): void
+    {
+        Http::fake(fn () => Http::response($this->response([
+            'schema_version' => 4,
+            'analysis_routing' => [
+                'page_kind' => 'drawing',
+                'requested_depth' => 'dense_ambiguous',
+                'information_density' => 'high',
+                'readability' => 'medium',
+                'confidence' => 0.93,
+                'ambiguous' => true,
+                'material_risk' => true,
+                'reasons' => ['Совмещены план, фасад и мелкие размерные цепочки.'],
+                'semantic_regions' => [[
+                    'label' => 'Размерная цепочка фасада',
+                    'purpose' => 'microtext',
+                    'box' => [0.1, 0.1, 0.6, 0.35],
+                ]],
+            ],
+        ])));
+
+        $analysis = $this->provider()->analyze((new ObserverInputBuilder)->build(
+            $this->input(claim: 203),
+            ObserverProfile::Literal,
+            static function (): void {},
+        ));
+
+        self::assertSame('dense_ambiguous', $analysis->analysisRouting?->effectiveRoute->value);
+        self::assertSame('Размерная цепочка фасада', $analysis->analysisRouting?->semanticRegions[0]['label']);
+        Http::assertSent(static fn ($request): bool => str_contains(
+            (string) $request['messages'][0]['content'],
+            'analysis_routing',
+        ));
+    }
+
+    #[Test]
     public function independent_observer_rejects_an_effective_model_that_differs_from_authoritative_config(): void
     {
         config()->set('estimate-generation.vision.model', 'gemini/gemini-3.5-flash');

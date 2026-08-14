@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpe
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadDocumentAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CadRepresentationPublisher;
@@ -240,6 +241,8 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             'arbiter' => true,
             'geometry_expert' => true,
         ], $output->normalizedPayload['role_completion']);
+        self::assertSame(4, $output->normalizedPayload['analysis_routing']['physical_provider_call_count']);
+        self::assertCount(4, $output->normalizedPayload['analysis_routing']['physical_provider_attempt_ids']);
         self::assertSame($sourceVersion, $output->normalizedPayload['document_representation']['source_version']);
         self::assertGreaterThan(0, $output->normalizedPayload['document_representation']['resource_usage']['duration_ms']);
         self::assertSame(
@@ -817,7 +820,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                 private readonly ?\Throwable $error,
             ) {}
 
-            public function run(VisionDocumentInput $source): array
+            public function run(VisionDocumentInput $source, array $profiles): array
             {
                 if ($this->error !== null) {
                     throw $this->error;
@@ -830,9 +833,24 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                     'warnings' => $analysis?->warnings ?? ['scale_missing'],
                     'quarantined_items' => [],
                     'raw_facts' => [],
+                    'analysis_routing' => [
+                        'page_kind' => 'drawing',
+                        'requested_depth' => 'dense_ambiguous',
+                        'information_density' => 'high',
+                        'readability' => 'medium',
+                        'confidence' => 0.95,
+                        'ambiguous' => false,
+                        'material_risk' => true,
+                        'reasons' => ['test_dense_page'],
+                        'semantic_regions' => [],
+                    ],
                 ];
                 $results = [];
-                foreach (['observer_literal', 'observer_construction', 'observer_risk'] as $role) {
+                foreach ($profiles as $profile) {
+                    if (! $profile instanceof ObserverProfile) {
+                        throw new \InvalidArgumentException('Unexpected observer profile.');
+                    }
+                    $role = $profile->role()->value;
                     $results[$role] = new AiRoleRunResult([
                         'schema_version' => 1,
                         'role' => $role,
@@ -840,7 +858,11 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                         'observation' => $observation,
                         'claims' => [],
                         'evidence' => [],
-                    ], null);
+                    ], match ($role) {
+                        'observer_literal' => '10000000-0000-4000-8000-000000000001',
+                        'observer_construction' => '10000000-0000-4000-8000-000000000002',
+                        'observer_risk' => '10000000-0000-4000-8000-000000000003',
+                    });
                 }
 
                 return $results;
@@ -860,7 +882,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                     'source' => ['page_number' => $source->pageNumber],
                     'decisions' => [],
                     'questions' => [],
-                ], null);
+                ], '10000000-0000-4000-8000-000000000004');
             }
         };
     }

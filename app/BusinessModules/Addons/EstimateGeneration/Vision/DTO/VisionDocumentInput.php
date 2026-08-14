@@ -32,6 +32,8 @@ final readonly class VisionDocumentInput
         public ?string $auxiliaryText = null,
         /** @var array<string, mixed> */
         public array $auxiliaryMetadata = [],
+        /** @var list<array<string, mixed>> */
+        public array $regionImages = [],
         public ?Closure $onPhysicalAttemptReserved = null,
     ) {
         $dimensions = @getimagesizefromstring($imageContent);
@@ -54,6 +56,7 @@ final readonly class VisionDocumentInput
             || count($nativeReferences) !== count(array_unique($nativeReferences))
             || ($auxiliaryText !== null && (mb_strlen($auxiliaryText) > 12_000 || str_contains($auxiliaryText, "\0")))
             || $auxiliaryMetadataBytes > (array_key_exists('arbitration', $auxiliaryMetadata) ? 196_608 : 20_000)
+            || count($regionImages) > 8
             || $operationContext->organizationId !== $organizationId
             || $operationContext->projectId !== $projectId
             || $operationContext->sessionId !== $sessionId
@@ -69,5 +72,51 @@ final readonly class VisionDocumentInput
                 throw new InvalidArgumentException('Invalid vision native reference registry.');
             }
         }
+        $regionBytes = 0;
+        foreach ($regionImages as $region) {
+            $keys = is_array($region) ? array_keys($region) : [];
+            sort($keys);
+            if ($keys !== ['box', 'content_type', 'id', 'image_content', 'label', 'purpose', 'sha256']
+                || ! is_string($region['id']) || preg_match('/^region:[a-f0-9]{24}$/D', $region['id']) !== 1
+                || ! is_string($region['label']) || trim($region['label']) === '' || mb_strlen($region['label']) > 160
+                || ! is_string($region['purpose']) || trim($region['purpose']) === '' || mb_strlen($region['purpose']) > 160
+                || $region['content_type'] !== 'image/png'
+                || ! is_string($region['image_content']) || $region['image_content'] === ''
+                || $region['sha256'] !== 'sha256:'.hash('sha256', $region['image_content'])
+                || ! is_array($region['box']) || count($region['box']) !== 4) {
+                throw new InvalidArgumentException('Invalid vision semantic region image.');
+            }
+            $regionBytes += strlen($region['image_content']);
+        }
+        if ($regionBytes > 12_000_000) {
+            throw new InvalidArgumentException('Vision semantic region byte budget exceeded.');
+        }
+    }
+
+    /** @param list<array<string, mixed>> $regionImages */
+    public function withRegionImages(array $regionImages): self
+    {
+        return new self(
+            $this->organizationId,
+            $this->projectId,
+            $this->sessionId,
+            $this->documentId,
+            $this->pageId,
+            $this->pageNumber,
+            $this->processingUnitId,
+            $this->sourceVersion,
+            $this->derivativeHash,
+            $this->contentType,
+            $this->imageContent,
+            $this->imageDetail,
+            $this->operationContext,
+            $this->sourceTransform,
+            $this->sheetRole,
+            $this->nativeReferences,
+            $this->auxiliaryText,
+            $this->auxiliaryMetadata,
+            $regionImages,
+            $this->onPhysicalAttemptReserved,
+        );
     }
 }

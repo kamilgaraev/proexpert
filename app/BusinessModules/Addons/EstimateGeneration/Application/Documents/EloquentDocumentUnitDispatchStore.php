@@ -15,9 +15,30 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
 
     public function dueForDocument(int $documentId, string $sourceVersion, DateTimeImmutable $now, int $limit): array
     {
+        $inFlight = $this->query()
+            ->where('document_id', $documentId)
+            ->where('source_version', $sourceVersion)
+            ->where(static function (Builder $query) use ($now): void {
+                $query->where(static fn (Builder $running): Builder => $running
+                    ->where('status', DocumentProcessingUnitStatus::Running->value)
+                    ->where('lease_expires_at', '>', $now))
+                    ->orWhere(static fn (Builder $queued): Builder => $queued
+                        ->where('status', DocumentProcessingUnitStatus::Pending->value)
+                        ->where('next_dispatch_at', '>', $now));
+            })
+            ->count();
+        $window = max(1, min(
+            DispatchDocumentProcessingUnits::BATCH_SIZE,
+            (int) config('estimate-generation.vision.adaptive_analysis.max_in_flight_units_per_document', DispatchDocumentProcessingUnits::BATCH_SIZE),
+        ));
+        $available = max(0, min($limit, $window - $inFlight));
+        if ($available === 0) {
+            return [];
+        }
+
         return $this->candidates(
             $this->due($now)->where('document_id', $documentId)->where('source_version', $sourceVersion),
-            $limit,
+            $available,
         );
     }
 

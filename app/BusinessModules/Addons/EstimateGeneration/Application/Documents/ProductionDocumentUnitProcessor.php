@@ -11,6 +11,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpe
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometrySheetRoleResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\ObserverDisagreementDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisPlan;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoutingDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadStructureExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
@@ -25,6 +29,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtr
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionCropper;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionIngestor;
 use App\Models\Organization;
 use InvalidArgumentException;
 use JsonException;
@@ -44,6 +50,9 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private CadStructureExtractor $cadStructure = new CadStructureExtractor,
         private ?CadRepresentationPublisher $cadRepresentationPublisher = null,
         private DocumentRepresentationResourceMeter $resourceMeter = new SystemDocumentRepresentationResourceMeter,
+        private SemanticRegionIngestor $semanticRegions = new SemanticRegionIngestor,
+        private SemanticRegionCropper $semanticRegionCropper = new SemanticRegionCropper,
+        private ObserverDisagreementDetector $observerDisagreement = new ObserverDisagreementDetector,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -183,13 +192,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         if (! is_array($serialized)) {
             return $output;
         }
-        $previousUsage = is_array($serialized['resource_usage'] ?? null) ? $serialized['resource_usage'] : [];
-        $serialized['resource_usage']['duration_ms'] = max(0, (int) ($previousUsage['duration_ms'] ?? 0))
-            + $measurement->durationMs;
-        $serialized['resource_usage']['peak_memory_bytes'] = max(
-            max(0, (int) ($previousUsage['peak_memory_bytes'] ?? 0)),
-            $measurement->incrementalPeakMemoryBytes,
-        );
         $native = is_array($serialized['native_structure'] ?? null) ? $serialized['native_structure'] : [];
         $previousMeasurement = is_array($native['resource_measurement'] ?? null)
             ? $native['resource_measurement']
@@ -200,16 +202,27 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 is_array($previousMeasurement['limitations'] ?? null) ? $previousMeasurement['limitations'] : [],
                 $measurement->limitations,
             ))),
-            'phases' => ['adapter_representation', 'processor'],
+            'phases' => ['adapter_representation'],
         ];
         $serialized['native_structure'] = $native;
         $representation = DocumentRepresentation::fromArray($serialized);
+        $workflowUsage = [
+            'duration_ms' => $measurement->durationMs,
+            'peak_memory_bytes' => $measurement->incrementalPeakMemoryBytes,
+            'memory_metric' => $measurement->memoryMetric,
+            'limitations' => $measurement->limitations,
+            'terminal_response_preserved' => true,
+        ];
 
         return new DocumentUnitOutput(
             version: $output->version,
             text: $output->text,
             confidence: $output->confidence,
-            normalizedPayload: [...$output->normalizedPayload, 'document_representation' => $representation->toArray()],
+            normalizedPayload: [
+                ...$output->normalizedPayload,
+                'document_representation' => $representation->toArray(),
+                'page_workflow_usage' => $workflowUsage,
+            ],
             width: $output->width,
             height: $output->height,
             rotation: $output->rotation,
@@ -316,7 +329,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $context->unitId,
             $context->sourceVersion,
             $preprocessed->derivativeHash,
-            $context->processingAttemptId,
         ]));
         $input = new VisionDocumentInput(
             organizationId: $context->organizationId,
@@ -350,13 +362,71 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             auxiliaryMetadata: $auxiliaryMetadata,
         );
         $context->renewLeaseOrFail();
-        $observerResults = $this->independentObservers->run($input);
-        if (count($observerResults) !== 3) {
-            throw new DocumentUnitProcessingException('document_observers_incomplete');
+        $observerResults = $this->independentObservers->run($input, [ObserverProfile::Literal]);
+        $literalRouting = $observerResults['observer_literal']->payload['observation']['analysis_routing'] ?? null;
+        try {
+            $routing = is_array($literalRouting)
+                ? PageAnalysisRoutingDecision::fromProviderArray($literalRouting)
+                : PageAnalysisRoutingDecision::failOpen('literal_routing_missing');
+        } catch (InvalidArgumentException) {
+            $routing = PageAnalysisRoutingDecision::failOpen('literal_routing_invalid');
         }
-        $context->renewLeaseOrFail();
-        $arbitrationResult = $this->documentArbitration->run($input, $observerResults);
-        $sheetRole = $this->geometrySheetRoleResolver->resolve($observerResults, $arbitrationResult);
+        $plan = PageAnalysisPlan::fromDecision($routing);
+        if (($context->locator['analysis_escalation_reason'] ?? null) === 'cross_document_reference') {
+            $plan = $plan->escalateForCrossDocumentReference();
+        }
+        $this->assertAnalysisPlanBudget($plan);
+        $regionSourceImage = $image;
+        if ($plan->usesSemanticRegions && $routing->semanticRegions !== []) {
+            $regionSourceImage = $this->reader->read(
+                $context->organizationId,
+                $storageKey,
+                max(1, (int) config('estimate-generation.vision.preprocessing.max_bytes', 20_000_000)),
+                $sourceBytes,
+                $sourceSha256,
+            )->body;
+        }
+        $imageDimensions = getimagesizefromstring($regionSourceImage);
+        if (! is_array($imageDimensions)) {
+            throw new DocumentUnitProcessingException('vision_page_image_invalid');
+        }
+        $regionSet = $this->semanticRegions->ingest(
+            $plan->usesSemanticRegions ? $routing->semanticRegions : [],
+            (int) $imageDimensions[0],
+            (int) $imageDimensions[1],
+        );
+        if ($plan->usesSemanticRegions && $regionSet->regions !== []) {
+            $regionImages = $this->semanticRegionCropper->crop($regionSourceImage, $regionSet);
+            $regionSet = $this->renderedRegionSet($regionSet, $regionImages);
+            $input = $input->withRegionImages($regionImages);
+        }
+        unset($regionSourceImage);
+        $remainingProfiles = array_values(array_filter(
+            $plan->observers,
+            static fn (ObserverProfile $profile): bool => $profile !== ObserverProfile::Literal,
+        ));
+        if ($remainingProfiles !== []) {
+            $context->renewLeaseOrFail();
+            $observerResults = [
+                ...$observerResults,
+                ...$this->independentObservers->run($input, $remainingProfiles),
+            ];
+        }
+        if ($plan->route->value === 'structured_textual') {
+            $plan = PageAnalysisPlan::fromDecision(
+                $routing,
+                $this->observerDisagreement->hasMaterialDisagreement($observerResults),
+            );
+            $this->assertAnalysisPlanBudget($plan);
+        }
+        $arbitrationResult = null;
+        if ($plan->requiresArbitration) {
+            $context->renewLeaseOrFail();
+            $arbitrationResult = $this->documentArbitration->run($input, $observerResults);
+        }
+        $sheetRole = $arbitrationResult === null
+            ? null
+            : $this->geometrySheetRoleResolver->resolve($observerResults, $arbitrationResult);
         $geometryResult = null;
         if ($sheetRole !== null) {
             $context->renewLeaseOrFail();
@@ -382,6 +452,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $observerResults,
             $arbitrationResult,
             $geometryResult,
+            $plan,
+            $regionSet,
         );
     }
 
@@ -554,8 +626,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         array $auxiliary,
         DocumentUnitProvenance $provenance,
         array $observerResults,
-        AiRoleRunResult $arbitrationResult,
+        ?AiRoleRunResult $arbitrationResult,
         ?GeometryExpertResult $geometryResult,
+        PageAnalysisPlan $analysisPlan,
+        \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet $semanticRegionSet,
     ): DocumentUnitOutput {
         $observerPayloads = array_map(static fn (AiRoleRunResult $result): array => $result->payload, $observerResults);
         $literalPayload = $observerPayloads['observer_literal']['observation'] ?? null;
@@ -569,7 +643,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             'visual_attributes' => is_array($literalPayload['visual_attributes'] ?? null) ? $literalPayload['visual_attributes'] : [],
             'warnings' => is_array($literalPayload['warnings'] ?? null) ? $literalPayload['warnings'] : [],
             'quarantined_items' => is_array($literalPayload['quarantined_items'] ?? null) ? $literalPayload['quarantined_items'] : [],
-            'arbitration_decisions' => is_array($arbitrationResult->payload['decisions'] ?? null)
+            'arbitration_decisions' => is_array($arbitrationResult?->payload['decisions'] ?? null)
                 ? $arbitrationResult->payload['decisions']
                 : [],
         ];
@@ -593,7 +667,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         ]));
         $nativePdfText = $auxiliary['native_text'];
         $pdfGeometry = $auxiliary['geometry'];
-        $questions = is_array($arbitrationResult->payload['questions'] ?? null)
+        $questions = is_array($arbitrationResult?->payload['questions'] ?? null)
             ? $arbitrationResult->payload['questions']
             : [];
         $questions = [...$questions, ...($geometryResult?->questions ?? [])];
@@ -601,9 +675,17 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             'observer_literal' => isset($observerPayloads['observer_literal']),
             'observer_construction' => isset($observerPayloads['observer_construction']),
             'observer_risk' => isset($observerPayloads['observer_risk']),
-            'arbiter' => ($arbitrationResult->payload['role'] ?? null) === 'arbiter',
-            'geometry_expert' => true,
+            'arbiter' => ($arbitrationResult?->payload['role'] ?? null) === 'arbiter',
+            'geometry_expert' => $geometryResult !== null,
         ];
+        $analysisOutcome = $this->analysisOutcome(
+            $analysisPlan,
+            $observerPayloads,
+            $arbitrationResult,
+            $geometryResult,
+            $questions,
+            $semanticRegionSet,
+        );
 
         return new DocumentUnitOutput(
             version: hash('sha256', json_encode([
@@ -616,7 +698,15 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     static fn (AiRoleRunResult $result): array => $result->payload,
                     $observerResults,
                 ),
-                'document_arbitration' => $arbitrationResult->payload,
+                'document_arbitration' => $arbitrationResult?->payload,
+                'analysis_routing' => $this->analysisRoutingPayload(
+                    $analysisPlan,
+                    $semanticRegionSet,
+                    $observerResults,
+                    $arbitrationResult,
+                    $geometryResult,
+                ),
+                'analysis_outcome' => $analysisOutcome,
                 'geometry_expert' => $geometryResult?->toArray(),
                 'ai_questions' => $questions,
             ], JSON_THROW_ON_ERROR)),
@@ -641,7 +731,15 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     static fn (AiRoleRunResult $result): array => $result->payload,
                     $observerResults,
                 ),
-                'document_arbitration' => $arbitrationResult->payload,
+                'document_arbitration' => $arbitrationResult?->payload,
+                'analysis_routing' => $this->analysisRoutingPayload(
+                    $analysisPlan,
+                    $semanticRegionSet,
+                    $observerResults,
+                    $arbitrationResult,
+                    $geometryResult,
+                ),
+                'analysis_outcome' => $analysisOutcome,
                 'geometry_expert' => $geometryResult?->toArray(),
                 'ai_questions' => $questions,
                 'preprocessing' => [
@@ -672,6 +770,122 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 ],
             ],
         );
+    }
+
+    private function assertAnalysisPlanBudget(PageAnalysisPlan $plan): void
+    {
+        $maximum = max(1, (int) config('estimate-generation.vision.adaptive_analysis.max_provider_calls_per_page', 4));
+        if ($plan->providerCallCount() > $maximum) {
+            throw new DocumentUnitProcessingException('page_analysis_provider_call_budget_exceeded');
+        }
+    }
+
+    /** @param list<array<string, mixed>> $images */
+    private function renderedRegionSet(
+        \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet $proposed,
+        array $images,
+    ): \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet {
+        $renderedIds = array_fill_keys(array_values(array_filter(array_column($images, 'id'), 'is_string')), true);
+        $rendered = [];
+        $quarantined = $proposed->quarantined;
+        foreach ($proposed->regions as $index => $region) {
+            if (isset($renderedIds[$region->id])) {
+                $rendered[] = $region;
+
+                continue;
+            }
+            $quarantined[] = ['index' => $index, 'reason' => 'region_render_budget_exceeded'];
+        }
+
+        return new \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet(
+            $rendered,
+            $quarantined,
+            array_sum(array_map(static fn ($region): int => $region->pixelCount, $rendered)),
+        );
+    }
+
+    /** @param array<string, array<string, mixed>> $observerPayloads @param list<mixed> $questions */
+    private function analysisOutcome(
+        PageAnalysisPlan $plan,
+        array $observerPayloads,
+        ?AiRoleRunResult $arbitration,
+        ?GeometryExpertResult $geometry,
+        array $questions,
+        \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet $semanticRegions,
+    ): string {
+        if ($questions !== []) {
+            return 'partial_review';
+        }
+        foreach ($observerPayloads as $payload) {
+            $quarantined = $payload['observation']['quarantined_items'] ?? [];
+            if (is_array($quarantined) && $quarantined !== []) {
+                return 'partial_review';
+            }
+        }
+        if ($semanticRegions->quarantined !== []
+            || ($plan->route->value === 'dense_ambiguous' && $semanticRegions->regions === [])) {
+            return 'partial_review';
+        }
+        if (in_array($arbitration?->payload['result_state'] ?? null, ['partial', 'questions'], true)
+            || (is_array($geometry?->quarantinedIntents ?? null) && $geometry->quarantinedIntents !== [])) {
+            return 'partial_review';
+        }
+        $decisions = is_array($arbitration?->payload['decisions'] ?? null)
+            ? $arbitration->payload['decisions']
+            : [];
+        foreach ($decisions as $decision) {
+            if (is_array($decision) && in_array($decision['status'] ?? null, ['candidate', 'unresolved'], true)) {
+                return 'partial_review';
+            }
+        }
+
+        return $plan->successfulOutcome();
+    }
+
+    /**
+     * @param  array<string, AiRoleRunResult>  $observerResults
+     * @return array<string, mixed>
+     */
+    private function analysisRoutingPayload(
+        PageAnalysisPlan $plan,
+        \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet $regions,
+        array $observerResults,
+        ?AiRoleRunResult $arbitrationResult,
+        ?GeometryExpertResult $geometryResult,
+    ): array {
+        $physicalAttemptIds = array_values(array_unique(array_filter([
+            ...array_map(
+                static fn (AiRoleRunResult $result): ?string => $result->physicalAttemptId,
+                $observerResults,
+            ),
+            $arbitrationResult?->physicalAttemptId,
+            $geometryResult?->physicalAttemptId,
+        ], 'is_string')));
+
+        return [
+            'route' => $plan->route->value,
+            'reasons' => $plan->routingReasons,
+            'observer_roles' => array_map(
+                static fn (ObserverProfile $profile): string => $profile->role()->value,
+                $plan->observers,
+            ),
+            'arbiter_required' => $plan->requiresArbitration,
+            'semantic_regions_used' => $plan->usesSemanticRegions,
+            'semantic_region_count' => count($regions->regions),
+            'semantic_region_pixels' => $regions->aggregatePixels,
+            'semantic_regions' => array_map(static fn ($region): array => [
+                'id' => $region->id,
+                'label' => $region->label,
+                'purpose' => $region->purpose,
+                'box' => $region->box,
+            ], $regions->regions),
+            'semantic_region_quarantine' => $regions->quarantined,
+            'physical_provider_call_count' => count($physicalAttemptIds),
+            'physical_provider_attempt_ids' => $physicalAttemptIds,
+            'planned_provider_call_count' => $plan->providerCallCount(),
+            'planned_new_provider_call_count' => $plan->additionalProviderCallCount(),
+            'reused_literal_observer' => $plan->reusesLiteralObserver,
+        ];
     }
 
     /**

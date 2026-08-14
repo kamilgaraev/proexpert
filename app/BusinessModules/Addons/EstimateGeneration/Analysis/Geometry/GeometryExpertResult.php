@@ -13,6 +13,7 @@ final readonly class GeometryExpertResult
         public array $questions,
         public array $skippedSheets,
         public array $quarantinedIntents = [],
+        public ?string $physicalAttemptId = null,
     ) {}
 
     /** @return array<string,mixed> */
@@ -28,7 +29,7 @@ final readonly class GeometryExpertResult
     }
 
     /** @param array<string,mixed> $payload */
-    public static function fromArray(array $payload): self
+    public static function fromArray(array $payload, ?string $physicalAttemptId = null): self
     {
         return new self(
             is_array($payload['quantities'] ?? null) ? array_values($payload['quantities']) : [],
@@ -36,6 +37,7 @@ final readonly class GeometryExpertResult
             is_array($payload['questions'] ?? null) ? array_values($payload['questions']) : [],
             is_array($payload['skipped_sheets'] ?? null) ? array_values($payload['skipped_sheets']) : [],
             is_array($payload['quarantined_intents'] ?? null) ? array_values($payload['quarantined_intents']) : [],
+            $physicalAttemptId,
         );
     }
 }

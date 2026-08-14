@@ -174,6 +174,11 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         $vision = is_array($payload['vision_analysis'] ?? null) ? $payload['vision_analysis'] : [];
         $elements = is_array($vision['elements'] ?? null) ? array_values(array_filter($vision['elements'], 'is_array')) : [];
         $completion = is_array($payload['role_completion'] ?? null) ? $payload['role_completion'] : [];
+        $routing = is_array($payload['analysis_routing'] ?? null) ? $payload['analysis_routing'] : [];
+        $outcome = is_string($payload['analysis_outcome'] ?? null) ? $payload['analysis_outcome'] : null;
+        $plannedRoles = is_array($routing['observer_roles'] ?? null)
+            ? array_values(array_filter($routing['observer_roles'], 'is_string'))
+            : [];
         $arbitration = is_array($payload['document_arbitration'] ?? null) ? $payload['document_arbitration'] : [];
         $decisions = is_array($arbitration['decisions'] ?? null) ? $arbitration['decisions'] : [];
         $facts = [];
@@ -190,17 +195,61 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
             ];
         }
         $geometry = is_array($payload['geometry_expert'] ?? null) ? $payload['geometry_expert'] : [];
+        $quality = is_array($payload['semantic_quality'] ?? null) ? $payload['semantic_quality'] : [];
+        $context = [];
+        $independent = is_array($payload['independent_observations'] ?? null)
+            ? $payload['independent_observations']
+            : [];
+        foreach ($independent as $role => $observer) {
+            $claims = is_array($observer) && is_array($observer['claims'] ?? null) ? $observer['claims'] : [];
+            foreach ($claims as $claim) {
+                if (! is_array($claim)) {
+                    continue;
+                }
+                $context[] = [
+                    'role' => is_string($role) ? $role : null,
+                    'entityKey' => $claim['entityKey'] ?? null,
+                    'factType' => $claim['factType'] ?? null,
+                    'value' => $claim['value'] ?? null,
+                    'unit' => $claim['unit'] ?? null,
+                    'evidence_ref' => $claim['evidenceRef'] ?? null,
+                ];
+            }
+        }
         $quarantined = array_values(array_filter([
+            ...(is_array($vision['quarantined_items'] ?? null) ? $vision['quarantined_items'] : []),
             ...(is_array($arbitration['quarantined_intents'] ?? null) ? $arbitration['quarantined_intents'] : []),
             ...(is_array($geometry['quarantined_intents'] ?? null) ? $geometry['quarantined_intents'] : []),
+            ...(is_array($routing['semantic_region_quarantine'] ?? null) ? $routing['semantic_region_quarantine'] : []),
         ], 'is_array'));
         $questions = array_map(
             static fn ($question): array => $question->toArray(),
             app(ClarificationQuestionProjector::class)->projectPages([$payload]),
         );
 
+        $plannedComplete = $plannedRoles !== [];
+        foreach ($plannedRoles as $role) {
+            $plannedComplete = $plannedComplete && ($completion[$role] ?? false) === true;
+        }
+        if (($routing['arbiter_required'] ?? false) === true) {
+            $plannedComplete = $plannedComplete && ($completion['arbiter'] ?? false) === true;
+        }
+
         return [
-            'analysis_complete' => count($completion) === 4 && ! in_array(false, $completion, true),
+            'analysis_complete' => $plannedComplete && in_array($outcome, ['ready_context', 'ready_calculation'], true),
+            'outcome' => $outcome,
+            'route' => is_string($routing['route'] ?? null) ? $routing['route'] : null,
+            'routing_reasons' => is_array($routing['reasons'] ?? null) ? array_values(array_filter($routing['reasons'], 'is_string')) : [],
+            'physical_provider_call_count' => is_int($routing['physical_provider_call_count'] ?? null)
+                ? max(0, $routing['physical_provider_call_count'])
+                : null,
+            'role' => is_string($quality['role'] ?? null) ? $quality['role'] : null,
+            'coverage' => [
+                'checked' => is_array($quality['checked'] ?? null) ? $quality['checked'] : [],
+                'found' => is_array($quality['found'] ?? null) ? $quality['found'] : [],
+                'missing' => is_array($quality['missing'] ?? null) ? $quality['missing'] : [],
+                'needs_targeted' => is_array($quality['needs_targeted'] ?? null) ? $quality['needs_targeted'] : [],
+            ],
             'observations' => array_values(array_map(static fn (array $item): array => [
                 'type' => is_string($item['type'] ?? null) ? $item['type'] : 'unknown',
                 'label' => is_string($item['label'] ?? null) ? $item['label'] : null,
@@ -208,8 +257,12 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'region' => is_array($item['polygon'] ?? null) ? $item['polygon'] : [],
             ], $elements)),
             'facts' => $facts,
+            'context' => $context,
             'questions' => $questions,
             'quarantined_items' => $quarantined,
+            'semantic_regions' => is_array($routing['semantic_regions'] ?? null)
+                ? array_values(array_filter($routing['semantic_regions'], 'is_array'))
+                : [],
         ];
     }
 

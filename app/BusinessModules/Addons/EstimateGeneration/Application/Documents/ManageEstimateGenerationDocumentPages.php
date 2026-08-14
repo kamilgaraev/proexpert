@@ -98,10 +98,15 @@ final class ManageEstimateGenerationDocumentPages
                     'last_dispatched_at' => null,
                     'next_dispatch_at' => null,
                     'metadata' => [
-                        ...(is_array($unit->metadata) ? $unit->metadata : []),
+                        ...array_diff_key(is_array($unit->metadata) ? $unit->metadata : [], [
+                            'analysis_escalation_reason' => true,
+                        ]),
                         'page_retry_requested_at' => now()->toISOString(),
                         'page_retry_reason' => $this->reason($reason),
                         'page_retry_attempt_id' => $attemptId,
+                        ...($reason === 'cross_document_reference'
+                            ? ['analysis_escalation_reason' => 'cross_document_reference']
+                            : []),
                     ],
                 ])->save();
                 $dispatch[] = [(int) $unit->id, $sourceVersion];

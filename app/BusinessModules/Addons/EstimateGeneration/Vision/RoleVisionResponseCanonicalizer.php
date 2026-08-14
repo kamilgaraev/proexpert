@@ -21,10 +21,6 @@ final class RoleVisionResponseCanonicalizer
             return new RoleVisionResponseCanonicalization($payload);
         }
 
-        if (($payload['schema_version'] ?? null) === '3') {
-            $payload['schema_version'] = 3;
-        }
-
         if ($isArbitration || $isGeometry) {
             $facts = $payload['decisions']
                 ?? $payload['interpretations']

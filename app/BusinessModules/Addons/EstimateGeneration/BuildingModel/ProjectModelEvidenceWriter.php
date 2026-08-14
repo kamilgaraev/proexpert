@@ -53,7 +53,13 @@ final readonly class ProjectModelEvidenceWriter
                         || ! in_array($supportingClaim->evidenceRef, $decision->evidenceRefs, true)) {
                         continue;
                     }
-                    $hash = hash('sha256', $supportingClaim->id.'|'.$supportingClaim->sourceVersion.'|'.$supportingClaim->evidenceRef);
+                    $hash = hash('sha256', implode('|', [
+                        $supportingClaim->id,
+                        $supportingClaim->sourceVersion,
+                        (string) $documentId,
+                        (string) $pageNumber,
+                        $supportingClaim->evidenceRef,
+                    ]));
                     $node = $this->evidence->insertOrGet(new EvidenceData(
                         $scope->organizationId,
                         $scope->projectId,
@@ -86,7 +92,13 @@ final readonly class ProjectModelEvidenceWriter
                     $entityId,
                     ['source_key' => $claim->entityKey],
                 );
-                $factId = 'fact:'.hash('sha256', $claim->id.'|'.$decision->status.'|'.$scope->sourceVersion);
+                $factId = 'fact:'.hash('sha256', implode('|', [
+                    $claim->id,
+                    $decision->status,
+                    $scope->sourceVersion,
+                    (string) $documentId,
+                    (string) $pageNumber,
+                ]));
                 $facts[$factId] = new Fact(
                     $factId,
                     $scope->organizationId,
@@ -109,6 +121,25 @@ final readonly class ProjectModelEvidenceWriter
             }
             $this->models->saveSourceModel(array_values($entities), array_values($facts), array_values($domainEvidence));
         });
+    }
+
+    /** @param list<ObservationClaim> $claims */
+    public function writeIndependentObservations(array $claims, int $documentId, int $pageNumber): void
+    {
+        if ($claims === []) {
+            return;
+        }
+        $decisions = array_map(static fn (ObservationClaim $claim): ArbitrationDecision => new ArbitrationDecision(
+            claimId: $claim->id,
+            status: 'candidate',
+            supportingClaimIds: [$claim->id],
+            evidenceRefs: $claim->evidenceRef === null ? [] : [$claim->evidenceRef],
+            reasonCode: 'independent_observation_preserved',
+            canonicalClaim: null,
+            question: null,
+        ), $claims);
+
+        $this->writeArbitration($claims, $decisions, $documentId, $pageNumber);
     }
 
     private function evidenceScalar(ObservationClaim $claim): string|int|float|bool
