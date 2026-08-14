@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Analysis;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
@@ -12,6 +13,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
@@ -19,6 +22,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class IndependentObserversTest extends TestCase
 {
@@ -63,6 +67,27 @@ final class IndependentObserversTest extends TestCase
     }
 
     #[Test]
+    public function explicit_retry_lineages_share_logical_observer_identity_but_not_physical_attempt_identity(): void
+    {
+        $builder = new ObserverInputBuilder;
+        $first = $builder->build(
+            $this->sourceInput(processingLineageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+            ObserverProfile::Literal,
+            static function (): void {},
+        );
+        $second = $builder->build(
+            $this->sourceInput(processingLineageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+            ObserverProfile::Literal,
+            static function (): void {},
+        );
+
+        self::assertSame($first->operationContext->correlationId, $second->operationContext->correlationId);
+        self::assertNotSame($first->operationContext->attemptId, $second->operationContext->attemptId);
+        self::assertSame('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', $first->operationContext->processingLineageId);
+        self::assertSame('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', $second->operationContext->processingLineageId);
+    }
+
+    #[Test]
     public function runner_persists_three_independent_role_results_with_one_pinned_model(): void
     {
         $repository = new InMemoryAiRoleRunRepository;
@@ -74,7 +99,11 @@ final class IndependentObserversTest extends TestCase
             'openai/gpt-5.6-luna',
         );
 
-        $results = $runner->run($this->sourceInput());
+        $results = $runner->run($this->sourceInput(), [
+            ObserverProfile::Literal,
+            ObserverProfile::Construction,
+            ObserverProfile::Risk,
+        ]);
 
         self::assertSame([
             'observer_literal',
@@ -96,12 +125,81 @@ final class IndependentObserversTest extends TestCase
             self::assertLessThanOrEqual(64, count($result->payload['claims']));
             self::assertLessThanOrEqual(128, count($result->payload['evidence']));
         }
-        $replayed = $runner->run($this->sourceInput());
+        $replayed = $runner->run($this->sourceInput(), [
+            ObserverProfile::Literal,
+            ObserverProfile::Construction,
+            ObserverProfile::Risk,
+        ]);
         self::assertCount(3, $provider->inputs);
         self::assertSame(
             array_map(static fn (AiRoleRunResult $result): array => $result->payload, $results),
             array_map(static fn (AiRoleRunResult $result): array => $result->payload, $replayed),
         );
+    }
+
+    #[Test]
+    public function completed_observer_response_reuses_across_exact_lineage_fence_but_source_mismatch_executes_again(): void
+    {
+        $repository = new InMemoryAiRoleRunRepository;
+        $provider = new RecordingObserverVisionProvider($this->analysis());
+        $runner = new RunIndependentObservers(
+            $repository,
+            $provider,
+            new ObserverInputBuilder,
+            'openai/gpt-5.6-luna',
+        );
+
+        $runner->run(
+            $this->sourceInput(processingLineageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+            [ObserverProfile::Literal],
+        );
+        $runner->run(
+            $this->sourceInput(processingLineageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+            [ObserverProfile::Literal],
+        );
+
+        self::assertCount(1, $provider->inputs);
+        self::assertCount(1, $repository->completed);
+        self::assertCount(1, $repository->physicalAttemptIds);
+
+        $runner->run(
+            $this->sourceInput(
+                processingLineageId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                sourceVersion: 'sha256:'.str_repeat('b', 64),
+            ),
+            [ObserverProfile::Literal],
+        );
+
+        self::assertCount(2, $provider->inputs);
+        self::assertCount(2, $repository->completed);
+        self::assertCount(2, $repository->physicalAttemptIds);
+    }
+
+    #[Test]
+    public function production_shaped_two_response_flow_resumes_without_new_provider_calls(): void
+    {
+        $repository = new InMemoryAiRoleRunRepository;
+        $provider = new RecordingObserverVisionProvider($this->analysis());
+        $runner = new RunIndependentObservers(
+            $repository,
+            $provider,
+            new ObserverInputBuilder,
+            'openai/gpt-5.6-luna',
+            new ArbitrationInputBuilder,
+            new ProjectModelEvidenceWriter(new InMemoryProjectModelRepository, new InMemoryEvidenceRepository),
+        );
+        $profiles = [ObserverProfile::Construction, ObserverProfile::Risk];
+
+        $results = $runner->run($this->sourceInput(), $profiles);
+        $replayed = $runner->run($this->sourceInput(), $profiles);
+
+        self::assertSame(['observer_construction', 'observer_risk'], array_keys($results));
+        self::assertSame(
+            array_map(static fn (AiRoleRunResult $result): array => $result->payload, $results),
+            array_map(static fn (AiRoleRunResult $result): array => $result->payload, $replayed),
+        );
+        self::assertCount(2, $provider->inputs);
+        self::assertCount(2, $repository->physicalAttemptIds);
     }
 
     #[Test]
@@ -121,9 +219,41 @@ final class IndependentObserversTest extends TestCase
         self::assertStringNotContainsString('нужно уточнить', mb_strtolower($encoded));
     }
 
-    /** @param array<string, mixed> $auxiliaryMetadata */
-    private function sourceInput(array $auxiliaryMetadata = []): VisionDocumentInput
+    #[Test]
+    public function production_shaped_empty_risk_claims_remain_a_valid_preserved_observation(): void
     {
+        $repository = new InMemoryAiRoleRunRepository;
+        $provider = new RecordingObserverVisionProvider($this->analysis());
+        $models = new InMemoryProjectModelRepository;
+        $runner = new RunIndependentObservers(
+            $repository,
+            $provider,
+            new ObserverInputBuilder,
+            'openai/gpt-5.6-luna',
+            new ArbitrationInputBuilder,
+            new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository),
+        );
+
+        $results = $runner->run($this->sourceInput(), [ObserverProfile::Risk]);
+
+        self::assertSame([], $results['observer_risk']->payload['claims']);
+        self::assertCount(1, $results['observer_risk']->payload['observation']['quarantined_items']);
+        self::assertSame([], $models->entities);
+        self::assertSame([], $models->facts);
+        self::assertCount(1, $provider->inputs);
+
+        $replayed = $runner->run($this->sourceInput(), [ObserverProfile::Risk]);
+
+        self::assertSame([], $replayed['observer_risk']->payload['claims']);
+        self::assertCount(1, $provider->inputs);
+    }
+
+    /** @param array<string, mixed> $auxiliaryMetadata */
+    private function sourceInput(
+        array $auxiliaryMetadata = [],
+        ?string $processingLineageId = null,
+        string $sourceVersion = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    ): VisionDocumentInput {
         $image = imagecreatetruecolor(4, 4);
         imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
         ob_start();
@@ -139,7 +269,7 @@ final class IndependentObserversTest extends TestCase
             pageId: 17,
             pageNumber: 4,
             processingUnitId: 19,
-            sourceVersion: 'sha256:'.str_repeat('a', 64),
+            sourceVersion: $sourceVersion,
             derivativeHash: 'sha256:'.hash('sha256', $content),
             contentType: 'image/png',
             imageContent: $content,
@@ -156,6 +286,7 @@ final class IndependentObserversTest extends TestCase
                 13,
                 17,
                 19,
+                $processingLineageId,
             ),
             sourceTransform: (new ProjectiveTransformFactory)->identity(),
             nativeReferences: ['pdf:page:4/text', 'pdf:page:4/vector'],

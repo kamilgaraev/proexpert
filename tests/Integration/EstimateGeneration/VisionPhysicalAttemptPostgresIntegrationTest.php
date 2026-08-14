@@ -178,18 +178,64 @@ final class VisionPhysicalAttemptPostgresIntegrationTest extends TestCase
         }
     }
 
+    public function test_explicit_retry_lineages_claim_distinct_physical_attempts_for_one_logical_request(): void
+    {
+        [$first, $second, $schema] = $this->fixture();
+        $fingerprint = hash('sha256', 'document-173-page-3-logical-request');
+        $firstContext = $this->context(
+            '09e235ee-65ad-5971-b60d-fa0cf925514e',
+            '6a2fe0cd-49af-4fbc-855f-f989c9ce842e',
+        );
+        $retryContext = $this->context(
+            'dddddddd-dddd-5ddd-8ddd-dddddddddddd',
+            '069e6374-9f47-4d10-9b56-a38000559921',
+        );
+        $now = new DateTimeImmutable('2026-08-14T21:06:24Z');
+
+        try {
+            (new EloquentVisionPhysicalAttemptStore($first))->claim(
+                $firstContext,
+                $fingerprint,
+                '11111111-1111-4111-8111-111111111111',
+                $now,
+                $now->modify('+1 minute'),
+            );
+            (new EloquentVisionPhysicalAttemptStore($second))->claim(
+                $retryContext,
+                $fingerprint,
+                '22222222-2222-4222-8222-222222222222',
+                $now,
+                $now->modify('+1 minute'),
+            );
+
+            self::assertSame(2, $first->table('estimate_generation_vision_physical_attempts')->count());
+            self::assertSame(
+                [$firstContext->processingLineageId, $retryContext->processingLineageId],
+                $first->table('estimate_generation_vision_physical_attempts')
+                    ->orderBy('created_at')
+                    ->pluck('processing_lineage_id')
+                    ->all(),
+            );
+            self::assertSame(1, $first->table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $retryContext->attemptId)
+                ->where('logical_request_fingerprint', $fingerprint)
+                ->count());
+        } finally {
+            $this->cleanup($first, $second, $schema);
+        }
+    }
+
     /** @return array{PostgresConnection, PostgresConnection, string, array<string, string>} */
     private function fixture(): array
     {
-        if (! ExternalIntegrationGate::enabled('MOST_CI_POSTGRES_VISION_ATTEMPT_GATE')) {
-            self::markTestSkipped('Dedicated PostgreSQL physical-attempt gate is CI-only.');
-        }
-        $configuration = [
-            'dsn' => ExternalIntegrationGate::required('MOST_CI_POSTGRES_VISION_ATTEMPT_DSN'),
-            'user' => ExternalIntegrationGate::required('MOST_CI_POSTGRES_VISION_ATTEMPT_USER'),
-            'password' => ExternalIntegrationGate::required('MOST_CI_POSTGRES_VISION_ATTEMPT_PASSWORD'),
-            'database_ack' => ExternalIntegrationGate::required('MOST_CI_POSTGRES_VISION_ATTEMPT_DATABASE_ACK'),
-        ];
+        $configuration = getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'
+            ? [
+                'dsn' => sprintf('pgsql:host=%s;port=%s;dbname=%s', getenv('DB_HOST'), getenv('DB_PORT'), getenv('DB_DATABASE')),
+                'user' => (string) getenv('DB_USERNAME'),
+                'password' => (string) getenv('DB_PASSWORD'),
+                'database_ack' => (string) getenv('DB_DATABASE'),
+            ]
+            : $this->externalConfiguration();
         if (! str_starts_with($configuration['dsn'], 'pgsql:')) {
             self::fail('MOST_CI_POSTGRES_VISION_ATTEMPT_DSN must be a PostgreSQL PDO DSN.');
         }
@@ -215,6 +261,8 @@ final class VisionPhysicalAttemptPostgresIntegrationTest extends TestCase
             CREATE TABLE estimate_generation_vision_physical_attempts (
                 attempt_id uuid PRIMARY KEY,
                 request_fingerprint char(64) NOT NULL,
+                logical_request_fingerprint char(64) NULL,
+                processing_lineage_id uuid NULL,
                 organization_id bigint NOT NULL,
                 project_id bigint NOT NULL,
                 session_id bigint NOT NULL,
@@ -317,7 +365,7 @@ final class VisionPhysicalAttemptPostgresIntegrationTest extends TestCase
             throw new RuntimeException('Unable to start PostgreSQL claim worker.');
         }
         fclose($pipes[0]);
-        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[1], true);
         stream_set_blocking($pipes[2], false);
 
         return [$process, $pipes];
@@ -326,17 +374,9 @@ final class VisionPhysicalAttemptPostgresIntegrationTest extends TestCase
     /** @param resource $process @param array<int, resource> $pipes */
     private function waitForWorkerReady($process, array $pipes): int
     {
-        $deadline = microtime(true) + 5;
-        $buffer = '';
-        while (microtime(true) < $deadline) {
-            $buffer .= stream_get_contents($pipes[1]);
-            if (preg_match('/^READY:([1-9][0-9]*)\R/D', $buffer, $matches) === 1) {
-                return (int) $matches[1];
-            }
-            if (! proc_get_status($process)['running']) {
-                break;
-            }
-            usleep(20_000);
+        $line = fgets($pipes[1]);
+        if (is_string($line) && preg_match('/^READY:([1-9][0-9]*)\R/D', $line, $matches) === 1) {
+            return (int) $matches[1];
         }
 
         throw new RuntimeException('PostgreSQL claim worker did not reach the concurrency barrier: '.stream_get_contents($pipes[2]));
@@ -361,30 +401,15 @@ final class VisionPhysicalAttemptPostgresIntegrationTest extends TestCase
     /** @param resource $process @param array<int, resource> $pipes @return array<string, mixed> */
     private function waitForWorkerResult($process, array $pipes): array
     {
-        $deadline = microtime(true) + 7;
-        $stdout = '';
-        while (microtime(true) < $deadline) {
-            $stdout .= stream_get_contents($pipes[1]);
-            $status = proc_get_status($process);
-            if (! $status['running']) {
-                $stderr = stream_get_contents($pipes[2]);
-                fclose($pipes[1]);
-                fclose($pipes[2]);
-                proc_close($process);
-                if (($status['exitcode'] ?? 1) !== 0) {
-                    throw new RuntimeException('PostgreSQL claim worker failed: '.$stderr);
-                }
-                $decoded = json_decode(trim($stdout), true, 16, JSON_THROW_ON_ERROR);
-                if (! is_array($decoded)) {
-                    throw new RuntimeException('PostgreSQL claim worker returned an invalid result.');
-                }
+        $line = fgets($pipes[1]);
+        $decoded = is_string($line) ? json_decode(trim($line), true) : null;
+        if (is_array($decoded)) {
+            $this->stopWorker($process, $pipes);
 
-                return $decoded;
-            }
-            usleep(20_000);
+            return $decoded;
         }
 
-        throw new RuntimeException('PostgreSQL claim worker exceeded its strict timeout.');
+        throw new RuntimeException('PostgreSQL claim worker failed: '.stream_get_contents($pipes[2]));
     }
 
     /** @param resource|null $process @param array<int, resource> $pipes */
@@ -399,6 +424,14 @@ final class VisionPhysicalAttemptPostgresIntegrationTest extends TestCase
             $status = proc_get_status($process);
             if ($status['running']) {
                 proc_terminate($process);
+                $deadline = microtime(true) + 1;
+                do {
+                    usleep(20_000);
+                    $status = proc_get_status($process);
+                } while ($status['running'] && microtime(true) < $deadline);
+                if ($status['running']) {
+                    throw new RuntimeException('PostgreSQL claim worker did not terminate.');
+                }
             }
             proc_close($process);
         }
@@ -416,8 +449,25 @@ final class VisionPhysicalAttemptPostgresIntegrationTest extends TestCase
         $first->disconnect();
     }
 
-    private function context(string $attemptId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'): AiOperationContext
+    /** @return array<string, string> */
+    private function externalConfiguration(): array
     {
+        if (! ExternalIntegrationGate::enabled('MOST_CI_POSTGRES_VISION_ATTEMPT_GATE')) {
+            self::markTestSkipped('Dedicated PostgreSQL physical-attempt gate is CI-only.');
+        }
+
+        return [
+            'dsn' => ExternalIntegrationGate::required('MOST_CI_POSTGRES_VISION_ATTEMPT_DSN'),
+            'user' => ExternalIntegrationGate::required('MOST_CI_POSTGRES_VISION_ATTEMPT_USER'),
+            'password' => ExternalIntegrationGate::required('MOST_CI_POSTGRES_VISION_ATTEMPT_PASSWORD'),
+            'database_ack' => ExternalIntegrationGate::required('MOST_CI_POSTGRES_VISION_ATTEMPT_DATABASE_ACK'),
+        ];
+    }
+
+    private function context(
+        string $attemptId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        ?string $processingLineageId = null,
+    ): AiOperationContext {
         return new AiOperationContext(
             'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
             $attemptId,
@@ -430,6 +480,7 @@ final class VisionPhysicalAttemptPostgresIntegrationTest extends TestCase
             4,
             5,
             6,
+            $processingLineageId,
         );
     }
 }

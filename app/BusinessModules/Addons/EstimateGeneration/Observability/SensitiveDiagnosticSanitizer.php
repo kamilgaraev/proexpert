@@ -33,6 +33,10 @@ final readonly class SensitiveDiagnosticSanitizer
         'exception_class' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
         'root_exception_class' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
         'execution_boundary' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
+        'sql_state' => ['/\A[0-9A-Z]{5}\z/', 5],
+        'database_invariant' => ['/\Aestimate_generation\.[a-z0-9_.]{1,120}\z/', 140],
+        'constraint_identifier' => ['/\A[a-z][a-z0-9_]{0,62}\z/', 63],
+        'invariant_code' => ['/\A[a-z][a-z0-9_]{0,79}\z/', 80],
         'processing_attempt_id' => ['/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i', 36],
         'requested_model' => ['/\A[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,79})?\z/', 80],
     ];

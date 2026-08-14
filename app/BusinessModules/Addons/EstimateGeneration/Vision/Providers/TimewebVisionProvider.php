@@ -183,8 +183,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $invariantFailure = false;
             $requestFingerprint = hash('sha256', json_encode([
                 'payload' => $payload,
-                'attempt_id' => $physicalContext->attemptId,
-                'request_context' => [],
+                'source_version' => $input->sourceVersion,
+                'derivative_hash' => $input->derivativeHash,
+                'requested_model' => $model,
+                'prompt_contract_fingerprint' => $contractHash,
+                'endpoint_kind' => $endpointKind,
             ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
             $ownerToken = $this->ownerToken();
             $leaseTtl = max(30, min(900, (int) config('estimate-generation.vision.physical_attempt_lease_seconds', 180)));
@@ -1275,6 +1278,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
             AiPhysicalAttemptIdentity::fromParts($context->attemptId, $model, $wireAttempt, self::PROMPT_VERSION.'|'.$contractHash.'|'.$input->derivativeHash),
             $context->organizationId, $context->projectId, $context->sessionId, $context->stage, $context->operation,
             $context->attemptOrdinal + $wireAttempt - 1, $context->documentId, $context->pageId, $context->unitId,
+            $context->processingLineageId,
         );
     }
 

@@ -6,17 +6,40 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
-$commonGitDirectory = (& git -C $root rev-parse --path-format=absolute --git-common-dir).Trim()
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $commonGitDirectory -PathType Container)) {
-    throw 'contract_repository_unavailable'
-}
-$referenceLauncher = Join-Path (Split-Path $commonGitDirectory -Parent) 'tests\Runtime\run-training-benchmark-contract.ps1'
-if (-not (Test-Path -LiteralPath $referenceLauncher -PathType Leaf)) {
-    throw 'contract_reference_launcher_missing'
+
+function Test-ContractReadOnlyAttestation {
+    $containerName = docker inspect -f '{{.Name}}' $Container
+    $imageName = docker inspect -f '{{.Config.Image}}' $Container
+    $hostPort = docker port $Container 5432/tcp
+    $containerAddress = docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $Container
+    if ($LASTEXITCODE -ne 0 -or $containerName -ne ('/' + $Container) -or $imageName -ne 'postgres:16-alpine' -or
+        $hostPort -notmatch ':55432$' -or $null -eq ($containerAddress -as [Net.IPAddress])) {
+        return $false
+    }
+    $sql = @'
+BEGIN READ ONLY;
+SELECT (
+ current_database() = 'most_ai_estimator_contract'
+ AND (SELECT count(*) = 1 FROM contract_guard.instance_identity)
+ AND (SELECT pg_get_userbyid(c.relowner) = 'most_contract_guard' FROM pg_class c WHERE c.oid = 'contract_guard.instance_identity'::regclass)
+ AND (SELECT p.oid::regprocedure::text = 'contract_guard.lock_instance_identity()'
+      AND pg_get_userbyid(p.proowner) = 'most_contract_guard' AND p.prosecdef
+      AND array_to_string(p.proconfig, ',') = 'search_path=pg_catalog, contract_guard'
+      FROM pg_proc p WHERE p.oid = 'contract_guard.lock_instance_identity()'::regprocedure)
+ AND (SELECT NOT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+      AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls
+      FROM pg_roles WHERE rolname = 'most_contract_runner')
+ AND current_user = session_user
+);
+ROLLBACK;
+'@
+    $result = $sql | docker exec -i $Container sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d most_ai_estimator_contract -At -f -'
+    $booleans = @($result | Where-Object { $_ -in @('t', 'f') })
+
+    return $LASTEXITCODE -eq 0 -and $booleans.Count -eq 1 -and $booleans[0] -eq 't'
 }
 
-& $referenceLauncher -Container $Container -AttestOnly
-if ($LASTEXITCODE -ne 0) {
+if (-not (Test-ContractReadOnlyAttestation)) {
     throw 'contract_read_only_attestation_failed'
 }
 
@@ -44,7 +67,7 @@ $environmentNames = @(
     'ESTIMATE_GENERATION_CONTRACT_DB_ROLE', 'ESTIMATE_CONTRACT_INSTANCE_ID',
     'ESTIMATE_CONTRACT_SERVER_ADDR', 'ESTIMATE_CONTRACT_SERVER_PORT',
     'ESTIMATE_CONTRACT_MARKER_OWNER', 'RUN_ESTIMATE_GENERATION_CONTRACT_PROVISIONER',
-    'RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'
+    'RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT', 'ESTIMATE_GENERATION_MODULAR_CONTRACT_BOOTSTRAP'
 )
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
@@ -110,6 +133,7 @@ COMMIT;
     $env:ESTIMATE_CONTRACT_MARKER_OWNER = $parts[1]
     $env:RUN_ESTIMATE_GENERATION_CONTRACT_PROVISIONER = '1'
     $env:RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT = '1'
+    $env:ESTIMATE_GENERATION_MODULAR_CONTRACT_BOOTSTRAP = '1'
 
     Push-Location $root
     try {

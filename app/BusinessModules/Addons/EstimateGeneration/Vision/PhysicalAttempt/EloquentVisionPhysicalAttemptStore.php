@@ -31,6 +31,8 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
         $this->database->table(self::TABLE)->insertOrIgnore([
             'attempt_id' => $context->attemptId,
             'request_fingerprint' => $requestFingerprint,
+            'logical_request_fingerprint' => $requestFingerprint,
+            'processing_lineage_id' => $context->processingLineageId,
             'organization_id' => $context->organizationId,
             'project_id' => $context->projectId,
             'session_id' => $context->sessionId,
@@ -55,7 +57,7 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             $query = $this->database->table(self::TABLE)->where('attempt_id', $context->attemptId);
             $row = $query->lockForUpdate()->first();
             if ($row === null || ! hash_equals((string) $row->request_fingerprint, $requestFingerprint)) {
-                throw new UsageInvariantViolation('Vision physical attempt collision.');
+                throw new VisionPhysicalAttemptCollision;
             }
             $snapshot = $this->snapshot($row);
             $decision = $this->stateMachine->claim($snapshot, $ownerToken, $now);

@@ -31,6 +31,27 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class DocumentArbitrationTest extends TestCase
 {
     #[Test]
+    public function explicit_retry_lineages_keep_logical_arbitration_correlation_and_change_physical_attempt_identity(): void
+    {
+        $builder = new ArbitrationInputBuilder;
+        $first = $builder->build(
+            $this->sourceInput('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+            $this->observerRuns(),
+            static function (): void {},
+        )['input'];
+        $second = $builder->build(
+            $this->sourceInput('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+            $this->observerRuns(),
+            static function (): void {},
+        )['input'];
+
+        self::assertSame($first->operationContext->correlationId, $second->operationContext->correlationId);
+        self::assertNotSame($first->operationContext->attemptId, $second->operationContext->attemptId);
+        self::assertSame('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', $first->operationContext->processingLineageId);
+        self::assertSame('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', $second->operationContext->processingLineageId);
+    }
+
+    #[Test]
     public function both_production_arbiter_responses_are_ingested_without_requiring_server_fields(): void
     {
         $fixtures = [
@@ -357,13 +378,13 @@ final class DocumentArbitrationTest extends TestCase
     }
 
     #[Test]
-    public function accepted_candidate_and_unresolved_claims_are_written_once_to_canonical_model(): void
+    public function only_exact_canonical_material_claim_is_projected_while_finish_observation_stays_out_of_project_model(): void
     {
         $models = new InMemoryProjectModelRepository;
         $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
         $claims = [
             $this->claim('literal:1', 'material', 'газобетон', 'material-note'),
-            $this->claim('construction:1', 'finish', 'штукатурка', 'finish-region'),
+            $this->claim('construction:1', 'finish_zone', 'штукатурка', 'finish-region'),
             $this->claim('risk:1', 'wall_thickness', '375 мм', 'dimension-conflict'),
         ];
         $decisions = [
@@ -391,9 +412,9 @@ final class DocumentArbitrationTest extends TestCase
         $writer->writeArbitration($claims, $decisions, 13, 4);
         $writer->writeArbitration($claims, $decisions, 13, 4);
 
-        self::assertEqualsCanonicalizing(['candidate', 'confirmed'], array_values(array_unique(array_column($models->facts, 'status'))));
-        self::assertCount(2, $models->facts);
-        self::assertCount(2, $models->evidence);
+        self::assertSame(['confirmed'], array_values(array_unique(array_column($models->facts, 'status'))));
+        self::assertCount(1, $models->facts);
+        self::assertCount(1, $models->evidence);
     }
 
     #[Test]
@@ -418,8 +439,8 @@ final class DocumentArbitrationTest extends TestCase
         $evidence = new InMemoryEvidenceRepository;
         $writer = new ProjectModelEvidenceWriter($models, $evidence);
         $claims = [
-            $this->claim('literal:1', 'wall_material', 'газобетон', 'visual-region', false),
-            $this->claim('construction:1', 'wall_material', 'газобетон', 'native-note', true),
+            $this->claim('literal:1', 'material', 'газобетон', 'visual-region', false),
+            $this->claim('construction:1', 'material', 'газобетон', 'native-note', true),
         ];
         $decision = $this->decision([
             'claim_id' => 'literal:1',
@@ -483,7 +504,7 @@ final class DocumentArbitrationTest extends TestCase
         return 'sha256:'.str_repeat('a', 64);
     }
 
-    private function sourceInput(): VisionDocumentInput
+    private function sourceInput(?string $processingLineageId = null): VisionDocumentInput
     {
         $image = imagecreatetruecolor(4, 4);
         imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
@@ -498,7 +519,7 @@ final class DocumentArbitrationTest extends TestCase
             new AiOperationContext(
                 '11111111-1111-5111-8111-111111111111',
                 '22222222-2222-5222-8222-222222222222',
-                7, 9, 11, 'understand_documents', 'vision', 1, 13, 17, 19,
+                7, 9, 11, 'understand_documents', 'vision', 1, 13, 17, 19, $processingLineageId,
             ),
             (new ProjectiveTransformFactory)->identity(),
             nativeReferences: ['pdf:page:4/text'],
