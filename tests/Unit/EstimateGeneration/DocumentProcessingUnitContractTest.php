@@ -407,6 +407,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         foreach (range(1, 5) as $index) {
             $units[] = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, $index, 'source'));
         }
+        $otherDocument = $store->create(1, 2, 3, 5, $this->unit(DocumentUnitType::PdfPage, 1, 'source'));
         $processor = new class implements DocumentUnitProcessor
         {
             public int $calls = 0;
@@ -438,6 +439,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             self::assertSame(ProcessDocumentUnit::MAX_ATTEMPTS, $record?->attemptCount);
             self::assertSame('breaker_stopped', $record?->failureCode);
         }
+        self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($otherDocument->id)?->status);
     }
 
     #[Test]

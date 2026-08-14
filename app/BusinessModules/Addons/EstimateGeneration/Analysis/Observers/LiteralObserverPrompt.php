@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers;
 
 final class LiteralObserverPrompt
 {
-    public const VERSION = 'observer-literal:v1';
+    public const VERSION = 'observer-literal:v3';
 
     public static function text(): string
     {

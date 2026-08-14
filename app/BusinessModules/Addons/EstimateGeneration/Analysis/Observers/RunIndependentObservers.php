@@ -124,7 +124,7 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
         VisionDocumentInput $input,
     ): array {
         return [
-            'schema_version' => 1,
+            'schema_version' => 3,
             'role' => $profile->role()->value,
             'prompt_contract' => $profile->promptContractVersion(),
             'source' => [
@@ -140,6 +140,7 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
                 'warnings' => $analysis->warnings,
                 'quarantined_items' => array_slice($analysis->quarantinedItems, 0, 64),
                 'raw_facts' => $analysis->rawObserverFacts,
+                'contract_repairs' => $analysis->contractRepairs,
             ],
             'claims' => array_slice($analysis->projectSheetAnalysis?->facts ?? [], 0, 64),
             'evidence' => array_slice(array_map(

@@ -184,7 +184,7 @@ final class IndependentObserversTest extends TestCase
             'warnings' => ['scale_missing'],
             'visual_attributes' => [],
             'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2',
+                'contractVersion' => 'sheet-analysis:v3',
                 'role' => 'unknown',
                 'facts' => [],
             ],

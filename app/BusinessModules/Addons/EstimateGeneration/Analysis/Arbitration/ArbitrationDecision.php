@@ -8,20 +8,21 @@ use InvalidArgumentException;
 
 final readonly class ArbitrationDecision
 {
-    /** @param list<string> $supportingClaimIds @param list<string> $evidenceRefs @param array<string,mixed>|null $question */
+    /** @param list<string> $supportingClaimIds @param list<string> $evidenceRefs @param array<string,mixed>|null $canonicalClaim @param array<string,mixed>|null $question */
     public function __construct(
         public string $claimId,
         public string $status,
         public array $supportingClaimIds,
         public array $evidenceRefs,
         public string $reasonCode,
+        public ?array $canonicalClaim,
         public ?array $question,
     ) {}
 
     /** @param array<string,mixed> $intent @param list<ObservationClaim> $claims */
     public static function fromProviderIntent(array $intent, array $claims): self
     {
-        if (array_diff(array_keys($intent), ['claim_id', 'status', 'supporting_claim_ids', 'evidence_refs', 'reason_code', 'question']) !== []) {
+        if (array_diff(array_keys($intent), ['claim_id', 'status', 'supporting_claim_ids', 'evidence_refs', 'reason_code', 'canonical_claim', 'question']) !== []) {
             throw new InvalidArgumentException('arbitration_intent_shape_invalid');
         }
         $claimsById = [];
@@ -37,6 +38,7 @@ final readonly class ArbitrationDecision
         $support = $intent['supporting_claim_ids'] ?? null;
         $evidence = $intent['evidence_refs'] ?? null;
         $reason = $intent['reason_code'] ?? null;
+        $canonicalClaim = $intent['canonical_claim'] ?? null;
         $question = $intent['question'] ?? null;
         if (! is_string($claimId) || ! isset($claimsById[$claimId])
             || ! in_array($status, ['accepted', 'candidate', 'unresolved'], true)
@@ -72,6 +74,15 @@ final readonly class ArbitrationDecision
         if ($status === 'accepted' && ($evidence === [] || ! $hasExplicitEvidence)) {
             throw new InvalidArgumentException('arbitration_confirmation_without_explicit_evidence');
         }
+        if (in_array($status, ['accepted', 'candidate'], true)) {
+            if ($canonicalClaim === null) {
+                $canonicalClaim = self::canonicalClaim($claimsById[$claimId]);
+            } else {
+                self::assertCanonicalClaim($canonicalClaim, $claimsById[$claimId]);
+            }
+        } elseif ($canonicalClaim !== null) {
+            throw new InvalidArgumentException('arbitration_canonical_claim_status_invalid');
+        }
         if ($status === 'unresolved') {
             self::assertQuestion($question);
             $locatorEvidence = $question['source_locator']['evidence_refs'] ?? null;
@@ -85,7 +96,32 @@ final readonly class ArbitrationDecision
             throw new InvalidArgumentException('arbitration_question_status_invalid');
         }
 
-        return new self($claimId, $status, $support, $evidence, $reason, $question);
+        return new self($claimId, $status, $support, $evidence, $reason, $canonicalClaim, $question);
+    }
+
+    private static function assertCanonicalClaim(mixed $canonicalClaim, ObservationClaim $claim): void
+    {
+        if ($canonicalClaim === null
+            || array_keys($canonicalClaim) !== ['entity_key', 'fact_type', 'value', 'unit', 'source_claim_id']
+            || $canonicalClaim['entity_key'] !== $claim->entityKey
+            || $canonicalClaim['fact_type'] !== $claim->factType
+            || $canonicalClaim['value'] !== $claim->value
+            || $canonicalClaim['unit'] !== $claim->unit
+            || $canonicalClaim['source_claim_id'] !== $claim->id) {
+            throw new InvalidArgumentException('arbitration_canonical_claim_invalid');
+        }
+    }
+
+    /** @return array{entity_key:string,fact_type:string,value:array{type:string,data:mixed},unit:?string,source_claim_id:string} */
+    private static function canonicalClaim(ObservationClaim $claim): array
+    {
+        return [
+            'entity_key' => $claim->entityKey,
+            'fact_type' => $claim->factType,
+            'value' => $claim->value,
+            'unit' => $claim->unit,
+            'source_claim_id' => $claim->id,
+        ];
     }
 
     private static function assertQuestion(mixed $question): void

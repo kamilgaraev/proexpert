@@ -25,6 +25,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContra
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionResponseTruncatedException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\RoleVisionResponseCanonicalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisValidator;
 use DateTimeImmutable;
@@ -56,6 +57,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         private ?AiPriceSnapshotResolver $priceResolver = null,
         private ?DocumentRuntimeLimits $documentLimits = null,
         private TimewebProviderErrorInspector $errorInspector = new TimewebProviderErrorInspector,
+        private RoleVisionResponseCanonicalizer $roleResponseCanonicalizer = new RoleVisionResponseCanonicalizer,
     ) {}
 
     public function analyze(VisionDocumentInput $input): VisionAnalysisData
@@ -371,13 +373,17 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     if ($finishReason !== 'stop') {
                         throw new VisionContractException('vision_response_incomplete');
                     }
-                    $analysisPayload = $this->analysisPayload($responsePayload);
+                    $canonicalization = $this->roleResponseCanonicalizer->canonicalize(
+                        $this->analysisPayload($responsePayload),
+                        $input->auxiliaryMetadata,
+                    );
+                    $analysisPayload = $canonicalization->payload;
                     $usage = $this->usage($responsePayload);
                     $version = $modelVersion.':'.str_replace(':', '-', self::PROMPT_VERSION).':'.substr($contractHash, 7, 12);
                     $analysis = VisionAnalysisData::fromProviderArray(
                         $analysisPayload, self::PROVIDER, $model, $reportedModel,
                         $version, $usage['status'], $usage['input'], $usage['output'],
-                        $maxElements, $maxFacts, $input->nativeReferences,
+                        $maxElements, $maxFacts, $input->nativeReferences, $canonicalization->repairs,
                     )->assertProvenance($input, 'normalized_derivative_v1')
                         ->mapPolygonsToSource($input->sourceTransform)
                         ->assertProvenance($input, 'normalized_source_v1');
@@ -408,6 +414,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                                 $analysis->projectSheetAnalysis,
                                 $analysis->quarantinedItems,
                                 $analysis->rawObserverFacts,
+                                $analysis->contractRepairs,
                             );
                         }
                     }
@@ -793,10 +800,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'Agreement is only a signal. Check minority evidence and prefer an explicit dimension, table cell or native note over unsupported visual similarity.',
             'Never accept a claim without an allowlisted evidence_ref. Preserve a unique professional observation as candidate when it is plausible but not conclusive.',
             'Return the normal vision schema_version 3 envelope with at least one exact page evidence locator and no elements or scale candidates.',
-            'Put decision intents only in project_sheet_analysis.facts. Each intent has exactly claim_id, status, supporting_claim_ids, evidence_refs, reason_code and optional question.',
+            'Put decision intents only in project_sheet_analysis.facts. Each intent has exactly claim_id, status, supporting_claim_ids, evidence_refs, reason_code, canonical_claim and question.',
             'status is accepted, candidate or unresolved. Use only claim and evidence identifiers from the supplied allowlist.',
-            'For unresolved, question has exactly code, subject, reason, impact, recommendation, choices and source_locator. Questions must be concrete Russian business text, never generic clarification wording.',
-            'project_sheet_analysis contractVersion is sheet-analysis:v2 and role is unknown. Do not return prices, quantities without evidence, confidence percentages or provider terminology.',
+            'For accepted or candidate, canonical_claim copies exactly entity_key, fact_type, value and unit from one supporting allowlisted claim and adds source_claim_id. For unresolved, canonical_claim is null.',
+            'For unresolved, question has exactly code, subject, reason, impact, recommendation, choices and source_locator. For other statuses, question is null. Questions must be concrete Russian business text, never generic clarification wording.',
+            'project_sheet_analysis contractVersion is sheet-analysis:v3 and role is unknown. Do not return prices, quantities without evidence, confidence percentages or provider terminology.',
         ]);
     }
 
@@ -902,10 +910,10 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'Warnings are unique values only from scale_missing, scale_conflict, low_confidence, perspective_confirmation_required, geometry_incomplete, text_uncertain.',
             'visual_attributes has exactly roof_type. roof_type has exactly value, confidence, evidence_ref.',
             'roof_type value is exactly one of flat, pitched, gable, hip, unknown. Use a visible roof form on an elevation, section or photo; otherwise use unknown. confidence is finite in [0,1] and evidence_ref references an existing evidence key.',
-            'project_sheet_analysis has exactly contractVersion, role, facts. contractVersion is sheet-analysis:v2. role is exactly plan, section, facade, explication, specification or unknown.',
+            'project_sheet_analysis has exactly contractVersion, role, facts. contractVersion is sheet-analysis:v3. role is exactly plan, section, facade, explication, specification or unknown.',
             "The supplied role {$sheetRole} is only a preliminary hint. Classify the full page yourself and return the best supported role with 0..{$maxFacts} evidence-backed facts; unknown may contain generic facts and questions.",
             'Allowed factType values are selected by the returned role: '.self::allRoleFactTypesPrompt().'.',
-            'Each fact has exactly entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion. contractVersion is sheet-analysis:v2.',
+            'Each fact has exactly entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion. contractVersion is sheet-analysis:v3.',
             'entityKey and evidenceRef use the existing key format; evidenceRef references returned evidence. sourcePolygonOrNativeRef is either 2..64 distinct finite [x,y] points normalized to [0,1] or a bounded native source reference.',
             'value has exactly type and data. type is exactly number, string, boolean, enum or unknown. For unknown, data and unit must both be null; this is required whenever the document does not explicitly state a fact. For known values, data must match its declared type and unit is null or a visible unit string.',
             'For facade inspect elevations and floor/ground levels, axes, dimension chains, areas, every opening and mark, roof geometry/type, visible materials and finish zones, notes and explicit cross-sheet references.',

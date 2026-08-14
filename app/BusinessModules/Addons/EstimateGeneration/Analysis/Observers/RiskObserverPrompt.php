@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers;
 
 final class RiskObserverPrompt
 {
-    public const VERSION = 'observer-risk:v1';
+    public const VERSION = 'observer-risk:v3';
 
     public static function text(): string
     {

@@ -232,7 +232,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     {
         $response = $this->response([
             'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2',
+                'contractVersion' => 'sheet-analysis:v3',
                 'role' => 'unknown',
                 'facts' => [[
                     ...$this->semanticFact(
@@ -257,6 +257,59 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function observer_canonicalizes_the_production_v2_envelope_once_without_losing_evidence(): void
+    {
+        Http::fake(fn () => Http::response($this->fixtureResponse('observer-v2-envelope-response.json')));
+
+        $analysis = $this->provider()->analyze((new ObserverInputBuilder)->build(
+            $this->input(claim: 32),
+            ObserverProfile::Literal,
+            static function (): void {},
+        ));
+
+        self::assertSame('facade', $analysis->projectSheetAnalysis?->sheetRole);
+        self::assertSame('sheet-analysis:v3', $analysis->projectSheetAnalysis?->facts[0]['contractVersion']);
+        self::assertSame('Раздел проектных решений', $analysis->projectSheetAnalysis?->facts[0]['value']['data']);
+        self::assertSame(['scale_missing', 'geometry_incomplete'], $analysis->warnings);
+        self::assertSame(
+            ['schema_version_string_to_integer', 'sheet_analysis_v2_to_v3'],
+            $analysis->toArray()['contract_repairs'] ?? null,
+        );
+        Http::assertSentCount(1);
+    }
+
+    #[Test]
+    public function arbiter_canonicalizes_the_production_v2_envelope_and_keeps_decision_intents(): void
+    {
+        Http::fake(fn () => Http::response($this->fixtureResponse('arbiter-v2-envelope-response.json')));
+
+        $analysis = $this->provider()->analyze($this->input(claim: 33, auxiliaryMetadata: [
+            'arbitration' => [
+                'contract' => \App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder::PROMPT_CONTRACT,
+                'source_version' => 'sha256:'.str_repeat('a', 64),
+                'minority_evidence_required' => true,
+                'claims' => [[
+                    'id' => 'literal:1', 'role' => 'observer_literal', 'entity_key' => 'facade-1',
+                    'fact_type' => 'material', 'value' => ['type' => 'string', 'data' => 'Материал по проекту'],
+                    'unit' => null, 'evidence_ref' => 'literal:note-1', 'explicit_evidence' => true,
+                    'locator' => ['page_number' => 2, 'source_version' => 'sha256:'.str_repeat('a', 64)],
+                ], [
+                    'id' => 'literal:2', 'role' => 'observer_literal', 'entity_key' => 'opening-1',
+                    'fact_type' => 'dimension', 'value' => ['type' => 'unknown', 'data' => null],
+                    'unit' => null, 'evidence_ref' => 'literal:note-2', 'explicit_evidence' => true,
+                    'locator' => ['page_number' => 2, 'source_version' => 'sha256:'.str_repeat('a', 64)],
+                ]],
+            ],
+        ]));
+
+        self::assertCount(2, $analysis->rawObserverFacts);
+        self::assertSame('accepted', $analysis->rawObserverFacts[0]['status']);
+        self::assertSame('unresolved', $analysis->rawObserverFacts[1]['status']);
+        self::assertSame(['scale_missing'], $analysis->warnings);
+        Http::assertSentCount(1);
+    }
+
+    #[Test]
     public function arbitration_call_uses_original_image_and_returns_allowlisted_decision_intent(): void
     {
         $intent = [
@@ -268,7 +321,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         ];
         Http::fake(['*' => Http::response($this->response([
             'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2',
+                'contractVersion' => 'sheet-analysis:v3',
                 'role' => 'unknown',
                 'facts' => [$intent],
             ],
@@ -288,7 +341,15 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             ],
         ]));
 
-        self::assertSame([$intent], $analysis->rawObserverFacts);
+        self::assertSame('accepted', $analysis->rawObserverFacts[0]['status']);
+        self::assertSame([
+            'entity_key' => 'foundation-1',
+            'fact_type' => 'foundation_type',
+            'value' => ['type' => 'string', 'data' => 'условный'],
+            'unit' => null,
+            'source_claim_id' => 'risk:1',
+        ], $analysis->rawObserverFacts[0]['canonical_claim']);
+        self::assertSame(['arbiter_canonical_claim_from_allowlist'], $analysis->contractRepairs);
         Http::assertSent(static function ($request): bool {
             $system = (string) $request['messages'][0]['content'];
             $user = (string) $request['messages'][1]['content'][0]['text'];
@@ -319,7 +380,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         ];
         Http::fake(['*' => Http::response($this->response([
             'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2',
+                'contractVersion' => 'sheet-analysis:v3',
                 'role' => 'unknown',
                 'facts' => [$intent],
             ],
@@ -1080,7 +1141,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         $analysis['scale_candidates'][0]['evidence_ref'] = $fixture['scale_candidate_evidence_ref'];
         $analysis['sheet_type'] = $fixture['sheet_type'];
         $analysis['project_sheet_analysis'] = [
-            'contractVersion' => 'sheet-analysis:v2',
+            'contractVersion' => 'sheet-analysis:v3',
             'role' => $fixture['semantic_role'],
             'facts' => [
                 $this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => 0.0], 'm'),
@@ -1123,7 +1184,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     public function unknown_role_hint_self_classifies_a_facade_and_keeps_semantic_facts(): void
     {
         $response = $this->response(['sheet_type' => 'elevation', 'project_sheet_analysis' => [
-            'contractVersion' => 'sheet-analysis:v2',
+            'contractVersion' => 'sheet-analysis:v3',
             'role' => 'facade',
             'facts' => [
                 $this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => 0.0], 'm'),
@@ -1155,7 +1216,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             ['key' => 'valid-text', 'type' => 'text', 'label' => 'Ось 1', 'polygon' => [[0.1, 0.1], [0.2, 0.2]], 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
             ['key' => 'invalid-text', 'type' => 'text', 'label' => 'bad', 'polygon' => [[0.1, 0.1]], 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
         ], 'project_sheet_analysis' => [
-            'contractVersion' => 'sheet-analysis:v2',
+            'contractVersion' => 'sheet-analysis:v3',
             'role' => 'plan',
             'facts' => [
                 $this->semanticFact('axis-1', 'axis', ['type' => 'string', 'data' => '1']),
@@ -1183,7 +1244,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 ]],
             ],
             'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2',
+                'contractVersion' => 'sheet-analysis:v3',
                 'role' => 'plan',
                 'facts' => [
                     $this->semanticFact('room-1', 'room', ['type' => 'string', 'data' => 'Гостиная']),
@@ -1612,7 +1673,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 'coordinate_space' => 'normalized_derivative_v1',
             ]]],
             'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2',
+                'contractVersion' => 'sheet-analysis:v3',
                 'role' => 'plan',
                 'facts' => [[
                     'entityKey' => 'room-1',
@@ -1622,13 +1683,13 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                     'evidenceRef' => 'targeted-page-1',
                     'sourcePolygonOrNativeRef' => $this->responsePolygon(),
                     'confidence' => 0.95,
-                    'contractVersion' => 'sheet-analysis:v2',
+                    'contractVersion' => 'sheet-analysis:v3',
                 ]],
             ],
         ];
         Http::fakeSequence()
             ->push($this->response(['project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2',
+                'contractVersion' => 'sheet-analysis:v3',
                 'role' => 'plan',
                 'facts' => [
                     $this->semanticFact('room-1', 'room', ['type' => 'string', 'data' => 'Комната']),
@@ -1735,13 +1796,13 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 'roof_type' => ['value' => 'pitched', 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
             ],
             'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v2',
+                'contractVersion' => 'sheet-analysis:v3',
                 'role' => 'plan',
                 'facts' => [[
                     'entityKey' => 'room-1', 'factType' => 'room',
                     'value' => ['type' => 'unknown', 'data' => null], 'unit' => null, 'evidenceRef' => 'page-1',
                     'sourcePolygonOrNativeRef' => $this->responsePolygon(), 'confidence' => 0.95,
-                    'contractVersion' => 'sheet-analysis:v2',
+                    'contractVersion' => 'sheet-analysis:v3',
                 ]],
             ],
         ], $analysisOverrides);
@@ -1751,6 +1812,16 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'choices' => [['message' => ['content' => json_encode($analysis, JSON_THROW_ON_ERROR)], 'finish_reason' => 'stop']],
             'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 20, 'total_tokens' => 120],
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function fixtureResponse(string $name): array
+    {
+        $path = base_path('tests/Fixtures/EstimateGeneration/vision/'.$name);
+        $contents = file_get_contents($path);
+        self::assertIsString($contents);
+
+        return json_decode($contents, true, 64, JSON_THROW_ON_ERROR);
     }
 
     /** @return array<string, mixed> */
@@ -1764,7 +1835,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'evidenceRef' => 'page-1',
             'sourcePolygonOrNativeRef' => $this->responsePolygon(),
             'confidence' => 0.9,
-            'contractVersion' => 'sheet-analysis:v2',
+            'contractVersion' => 'sheet-analysis:v3',
         ];
     }
 

@@ -69,6 +69,7 @@ final class DocumentArbitrationTest extends TestCase
 
         self::assertSame('risk:1', $decision->claimId);
         self::assertSame('accepted', $decision->status);
+        self::assertSame('условный', $decision->canonicalClaim['value']['data']);
         self::assertSame('candidate', $unique->status);
     }
 
@@ -302,7 +303,7 @@ final class DocumentArbitrationTest extends TestCase
         foreach (['observer_literal', 'observer_construction', 'observer_risk'] as $role) {
             $short = str_replace('observer_', '', $role);
             $runs[$role] = new AiRoleRunResult([
-                'schema_version' => 1,
+                'schema_version' => 3,
                 'role' => $role,
                 'source' => ['document_id' => 13, 'page_id' => 17, 'page_number' => 4, 'source_version' => $this->version()],
                 'claims' => [[
