@@ -19,16 +19,6 @@ return new class extends Migration
             DB::statement('LOCK TABLE public.estimate_generation_failure_identities IN SHARE ROW EXCLUSIVE MODE');
             DB::statement('ALTER TABLE public.estimate_generation_failure_identities DROP CONSTRAINT eg_failure_identities_fingerprint_uq');
             DB::statement('CREATE INDEX eg_failure_identities_fingerprint_idx ON public.estimate_generation_failure_identities (fingerprint)');
-            DB::statement('ALTER TABLE public.estimate_generation_failure_events DROP CONSTRAINT eg_failure_events_safe_context_privacy_ck');
-            DB::statement(<<<'SQL'
-                ALTER TABLE public.estimate_generation_failure_events
-                ADD CONSTRAINT eg_failure_events_safe_context_privacy_ck CHECK (
-                    NOT jsonb_path_exists(
-                        safe_context,
-                        '$.* ? (@.type() == "string" && @ like_regex "(prompt|request|response|content|filename|file_name|path|authorization|api_key|apikey|token|secret|password|cookie|bearer|eyj[a-z0-9_-]{8,}\\.|akia[0-9a-z]{12,}|gh[pousr]_[0-9a-z]{12,}|sk-[0-9a-z]{8,})" flag "i")'
-                    )
-                )
-                SQL);
         });
     }
 
