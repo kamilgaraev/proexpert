@@ -107,6 +107,14 @@ interface ProjectModelRepository
     /** @return list<Decision> */
     public function decisionsForSelectedFacts(int $organizationId, int $projectId, int $sessionId, array $factIds): array;
 
+    /** @param list<string> $sourceVersions @return array{arbiter:list<string>,geometry_expert:list<string>} */
+    public function completedSynthesisRoleFingerprints(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        array $sourceVersions,
+    ): array;
+
     public function currentConflicts(int $organizationId, int $projectId, int $sessionId): array;
 
     public function replaceUnderstanding(
@@ -115,6 +123,7 @@ interface ProjectModelRepository
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
         array $links,
         array $conflicts,
         array $questions,
@@ -128,6 +137,7 @@ interface ProjectModelRepository
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
     ): ?array;
 
     public function currentUnderstanding(int $organizationId, int $projectId, int $sessionId): ?array;

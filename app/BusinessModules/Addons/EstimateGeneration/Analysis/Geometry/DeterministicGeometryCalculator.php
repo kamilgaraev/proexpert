@@ -95,7 +95,10 @@ final class DeterministicGeometryCalculator
                     continue;
                 }
                 $quantities[] = [
-                    'quantity' => $this->quantity($interpretation),
+                    'quantity' => [
+                        ...$this->quantity($interpretation),
+                        'sheet_ids' => [(string) ($sheet['sheet_id'] ?? '')],
+                    ],
                     'page_number' => $sheet['page_number'] ?? null,
                 ];
             }
@@ -145,7 +148,13 @@ final class DeterministicGeometryCalculator
                 roundingBoundary: $quantity['formula_id'] === 'sloped_roof_area'
                     ? 'irrational_operation_then_formula_result' : 'formula_result',
                 unitCompatibility: 'exact',
-                snapshotIdentity: ['source_version' => $input->sourceVersion],
+                snapshotIdentity: [
+                    'source_version' => $input->sourceVersion,
+                    'sheet_ids' => array_values(array_filter(
+                        is_array($quantity['sheet_ids'] ?? null) ? $quantity['sheet_ids'] : [],
+                        static fn (mixed $sheetId): bool => is_string($sheetId) && $sheetId !== '',
+                    )),
+                ],
                 logicalId: (string) $quantity['quantity_id'],
             );
             $identity = DerivedQuantityIdentity::for($base);
@@ -321,6 +330,9 @@ final class DeterministicGeometryCalculator
                 foreach (array_slice($group, 1) as $candidate) {
                     $quantity['evidence_ids'] = array_values(array_unique([
                         ...$quantity['evidence_ids'], ...$candidate['quantity']['evidence_ids'],
+                    ]));
+                    $quantity['sheet_ids'] = array_values(array_unique([
+                        ...$quantity['sheet_ids'], ...$candidate['quantity']['sheet_ids'],
                     ]));
                 }
                 $quantities[] = $quantity;

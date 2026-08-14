@@ -400,6 +400,11 @@ final class GeometryRoleRunMemoryRepository implements AiRoleRunRepository
     {
         return null;
     }
+
+    public function completedFingerprints(int $organizationId, int $projectId, int $sessionId, array $roles, array $sourceVersions): array
+    {
+        return [];
+    }
 }
 
 final class RecordedGeometryVisionProvider implements VisionProvider

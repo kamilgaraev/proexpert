@@ -10,11 +10,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentA
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\RunGeometryExpert;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\VisionGeometryExpertModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\RunProjectSynthesis;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\TimewebProjectSynthesisModel;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateNumberAllocator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateNumberAllocator;
@@ -49,10 +54,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverS
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SystemDocumentRepresentationResourceMeter;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\EloquentGeometryRegenerationIntentStore;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryConfirmationFaultInjector;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryRegenerationIntentStore;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\NoopGeometryConfirmationFaultInjector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EloquentRetryableEstimateGenerationSessionRepository;
@@ -498,22 +499,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
         $this->app->singleton(DocumentSourceReplacementTransaction::class, LaravelDocumentSourceReplacementTransaction::class);
         $this->app->singleton(DocumentSourceReplacementPageStore::class, EloquentDocumentSourceReplacementPageStore::class);
-        $this->app->singleton(
-            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewDataSource::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EloquentGeometryReviewDataSource::class,
-        );
-        $this->app->singleton(
-            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewPayloadReader::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewPayloadService::class,
-        );
-        $this->app->singleton(
-            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\BuildingModelReadDataSource::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EloquentBuildingModelReadDataSource::class,
-        );
-        $this->app->singleton(
-            \App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EstimateDecisionRepository::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\EloquentEstimateDecisionRepository::class,
-        );
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class,
@@ -614,7 +599,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\AuthoritativePackagePricingGuard::class),
             baseInputVersions: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver::class),
         ));
-        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelStore::class, \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore::class);
         $this->app->singleton(EvidenceSourceReplacementInvalidator::class, EvidenceDocumentSourceReplacementInvalidator::class);
         $this->app->singleton(SessionStateStore::class, EloquentSessionStateStore::class);
         $this->app->singleton(AiEstimateQuotaService::class, fn ($app) => new AiEstimateQuotaService(
@@ -661,6 +645,22 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator::class),
             (string) config('estimate-generation.vision.model'),
         ));
+        $this->app->alias(RunGeometryExpert::class, GeometryExpertRunner::class);
+        $this->app->singleton(ProjectSynthesisModel::class, static fn ($app): ProjectSynthesisModel => new TimewebProjectSynthesisModel(
+            $app->make(RerankWireClient::class),
+            $app->make(AiUsageStore::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
+            (string) config('estimate-generation.project_engineer.model'),
+            (int) config('estimate-generation.project_engineer.max_input_bytes'),
+            (int) config('estimate-generation.project_engineer.max_output_tokens'),
+            (int) config('estimate-generation.project_engineer.timeout_seconds'),
+        ));
+        $this->app->singleton(RunProjectSynthesis::class, static fn ($app): RunProjectSynthesis => new RunProjectSynthesis(
+            $app->make(AiRoleRunRepository::class),
+            $app->make(ProjectSynthesisModel::class),
+            (string) config('estimate-generation.project_engineer.model'),
+        ));
+        $this->app->alias(RunProjectSynthesis::class, ProjectSynthesisRunner::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore::class,
@@ -778,8 +778,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Operations\AdminSessionOperationExecutor::class,
             \App\BusinessModules\Addons\EstimateGeneration\Operations\ApplicationAdminSessionOperationExecutor::class,
         );
-        $this->app->singleton(GeometryRegenerationIntentStore::class, EloquentGeometryRegenerationIntentStore::class);
-        $this->app->singleton(GeometryConfirmationFaultInjector::class, NoopGeometryConfirmationFaultInjector::class);
         $this->app->singleton(GeneratedEstimateWriter::class, LaravelGeneratedEstimateWriter::class);
         $this->app->singleton(EstimateGenerationAuditService::class);
         $this->app->singleton(NormativeScopeRuleCatalog::class);

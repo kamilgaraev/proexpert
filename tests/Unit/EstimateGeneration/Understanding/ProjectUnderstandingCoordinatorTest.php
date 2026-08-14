@@ -325,6 +325,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
             new TargetedConflictResolver($translator),
             $factory,
             $budget ?? ProjectUnderstandingBudget::defaults(),
+            new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner,
         );
     }
 

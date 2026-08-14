@@ -6,6 +6,10 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometrySheetRoleResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadStructureExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
@@ -35,6 +39,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private BoundedVersionedS3ObjectReader $reader,
         private DocumentObserverRunner $independentObservers,
         private DocumentArbitrator $documentArbitration,
+        private GeometryExpertRunner $geometryExpert,
+        private GeometrySheetRoleResolver $geometrySheetRoleResolver = new GeometrySheetRoleResolver,
         private CadStructureExtractor $cadStructure = new CadStructureExtractor,
         private ?CadRepresentationPublisher $cadRepresentationPublisher = null,
         private DocumentRepresentationResourceMeter $resourceMeter = new SystemDocumentRepresentationResourceMeter,
@@ -350,6 +356,23 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         }
         $context->renewLeaseOrFail();
         $arbitrationResult = $this->documentArbitration->run($input, $observerResults);
+        $sheetRole = $this->geometrySheetRoleResolver->resolve($observerResults);
+        $geometryResult = null;
+        if ($sheetRole !== null) {
+            $context->renewLeaseOrFail();
+            $geometryResult = $this->geometryExpert->run(new GeometryExpertInput(
+                organizationId: $context->organizationId,
+                projectId: $context->projectId,
+                sessionId: $context->sessionId,
+                sourceVersion: $context->sourceVersion,
+                sheets: [[
+                    'sheet_id' => 'page:'.$context->pageId,
+                    'sheet_role' => $sheetRole,
+                    'source' => $input,
+                    'arbitration' => $arbitrationResult->payload,
+                ]],
+            ));
+        }
 
         return $this->rasterOutput(
             $context,
@@ -358,6 +381,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $provenance,
             $observerResults,
             $arbitrationResult,
+            $geometryResult,
         );
     }
 
@@ -531,6 +555,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         DocumentUnitProvenance $provenance,
         array $observerResults,
         AiRoleRunResult $arbitrationResult,
+        ?GeometryExpertResult $geometryResult,
     ): DocumentUnitOutput {
         $observerPayloads = array_map(static fn (AiRoleRunResult $result): array => $result->payload, $observerResults);
         $literalPayload = $observerPayloads['observer_literal']['observation'] ?? null;
@@ -576,6 +601,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             'observer_construction' => isset($observerPayloads['observer_construction']),
             'observer_risk' => isset($observerPayloads['observer_risk']),
             'arbiter' => ($arbitrationResult->payload['role'] ?? null) === 'arbiter',
+            'geometry_expert' => true,
         ];
 
         return new DocumentUnitOutput(
@@ -590,6 +616,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $observerResults,
                 ),
                 'document_arbitration' => $arbitrationResult->payload,
+                'geometry_expert' => $geometryResult?->toArray(),
                 'ai_questions' => $questions,
             ], JSON_THROW_ON_ERROR)),
             text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
@@ -614,6 +641,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $observerResults,
                 ),
                 'document_arbitration' => $arbitrationResult->payload,
+                'geometry_expert' => $geometryResult?->toArray(),
                 'ai_questions' => $questions,
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,

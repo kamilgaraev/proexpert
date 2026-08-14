@@ -36,7 +36,13 @@ final readonly class DocumentSemanticUnderstandingSummarizer
             if (($payload['schema_version'] ?? null) === 4) {
                 $completion = is_array($payload['role_completion'] ?? null) ? $payload['role_completion'] : [];
                 $roleRunsComplete = $roleRunsComplete
-                    && count($completion) === 4
+                    && array_diff([
+                        'observer_literal',
+                        'observer_construction',
+                        'observer_risk',
+                        'arbiter',
+                        'geometry_expert',
+                    ], array_keys($completion)) === []
                     && ! in_array(false, $completion, true);
                 $arbitratedPages[] = $payload;
 

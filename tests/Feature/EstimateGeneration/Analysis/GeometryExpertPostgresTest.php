@@ -14,11 +14,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpe
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\RunGeometryExpert;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\VisionGeometryExpertModel;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
@@ -126,6 +121,7 @@ final class GeometryExpertPostgresTest extends TestCase
                 $migration->up();
             }
         }
+        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000200_detach_project_model_from_building_model.php'))->up();
     }
 
     /** @return array{EloquentProjectModelRepository,GeometryExpertInput,array{int,int,int,string},int} */
@@ -164,17 +160,6 @@ final class GeometryExpertPostgresTest extends TestCase
             'pdf_geometry',
             'extractor:v1',
         ));
-        $model = (new BuildingModelRepository(
-            new EloquentBuildingModelStore(DB::connection()),
-            new EloquentEvidenceRepository(DB::connection()),
-            $repository,
-        ))->store(
-            new BuildingModelOperationContext($scope[0], $scope[1], $scope[2], $scope[3]),
-            new NormalizedBuildingModelData('m', 'confirmed', 0.01, [
-                new FloorData('source-floor', 0, 3, [], [], [], [], [$storedEvidence->id], 1, 'confirmed'),
-            ], [], 'building-model:v1'),
-        );
-        $scope[3] = $model->contentVersion;
         $repository->saveSourceModel([
             new Entity('floor:1', $scope[0], $scope[1], $scope[2], $scope[3], 'quantity', 'floor:1', ['value' => 1, 'unit' => 'm2']),
         ], [], []);
@@ -306,5 +291,10 @@ final class PostgresGeometryRoleRunRepository implements AiRoleRunRepository
     public function loadCurrent(AiRoleRunInput $input): ?AiRoleRunClaim
     {
         return null;
+    }
+
+    public function completedFingerprints(int $organizationId, int $projectId, int $sessionId, array $roles, array $sourceVersions): array
+    {
+        return [];
     }
 }

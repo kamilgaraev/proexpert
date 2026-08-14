@@ -123,6 +123,7 @@ final class ProjectPlanningPipelineTest extends TestCase
                 new TargetedConflictResolver($translator),
                 new PipelineNoopArbitratorFactory,
                 ProjectUnderstandingBudget::defaults(),
+                new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner,
             ),
             new ProjectPlanningCoordinator(
                 $repository,

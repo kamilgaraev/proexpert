@@ -49,8 +49,7 @@ final readonly class ProjectPlanningCoordinator
         $inputFingerprint = $capture['token'];
         $currentUnderstanding = $this->models->currentUnderstanding($organizationId, $projectId, $sessionId);
         if ($currentUnderstanding === null
-            || ! hash_equals($understanding->inputFingerprint, $inputFingerprint)
-            || ! hash_equals((string) ($currentUnderstanding['input_fingerprint'] ?? ''), $inputFingerprint)
+            || ! hash_equals($understanding->inputFingerprint, (string) ($currentUnderstanding['input_fingerprint'] ?? ''))
             || ! hash_equals($understanding->sourceVersion, (string) ($currentUnderstanding['source_version'] ?? ''))) {
             return $this->limited($inputFingerprint, 'planning_understanding_not_current', 'unresolved');
         }
@@ -61,10 +60,10 @@ final readonly class ProjectPlanningCoordinator
             static fn (Fact $fact): string => $fact->sourceVersion,
             $snapshot->facts,
         )));
-        if (count($sourceVersions) !== 1) {
-            throw new InvalidArgumentException('Project planning snapshot has no exact source version.');
-        }
-        $sourceVersion = $sourceVersions[0];
+        sort($sourceVersions, SORT_STRING);
+        $sourceVersion = count($sourceVersions) === 1
+            ? $sourceVersions[0]
+            : 'sha256:'.hash('sha256', implode("\0", $sourceVersions));
         if (! hash_equals($understanding->sourceVersion, $sourceVersion)) {
             return $this->limited($inputFingerprint, 'planning_understanding_not_current', 'unresolved');
         }

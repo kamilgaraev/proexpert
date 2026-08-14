@@ -778,6 +778,7 @@ final class TechnologyRecommendationServiceTest extends TestCase
                 new TargetedConflictResolver($translator),
                 new TechnologyRetryNoopArbitratorFactory,
                 ProjectUnderstandingBudget::defaults(),
+                new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner,
             ),
             new ProjectPlanningCoordinator(
                 $repository,

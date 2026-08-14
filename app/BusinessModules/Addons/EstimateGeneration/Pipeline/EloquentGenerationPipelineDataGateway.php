@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
-use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\BuildingModelReadDataSource;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Query\Builder;
@@ -20,7 +19,7 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
 
     public function __construct(
         private DatabaseManager $database,
-        private BuildingModelReadDataSource $buildingModelReadData,
+        private CanonicalProjectModelPipelineProjection $projectModel,
     ) {}
 
     public function manifest(PipelineContext $context): array
@@ -97,7 +96,7 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
             }
         }
 
-        $model = $this->buildingModelReadData->latestModel(
+        $projectModel = $this->projectModel->forScope(
             $context->organizationId,
             $context->projectId,
             $context->sessionId,
@@ -107,13 +106,9 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
             'input' => $this->json($session->input_payload),
             'documents' => array_values($documents),
             'user_id' => $session->user_id === null ? null : (int) $session->user_id,
-            'normalized_building_model' => is_array($model['model'] ?? null) ? $model['model'] : null,
-            'effective_project_model_values' => is_array($model['effective_values'] ?? null) ? $model['effective_values'] : [],
-            'document_total_area' => $this->buildingModelReadData->totalArea(
-                $context->organizationId,
-                $context->projectId,
-                $context->sessionId,
-            ),
+            'normalized_building_model' => null,
+            'effective_project_model_values' => $projectModel['effective_values'],
+            'project_model_snapshot_token' => $projectModel['token'],
         ];
     }
 

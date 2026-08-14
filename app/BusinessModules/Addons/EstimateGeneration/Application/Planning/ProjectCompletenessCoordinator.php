@@ -41,7 +41,11 @@ final readonly class ProjectCompletenessCoordinator
             static fn (Fact $fact): string => $fact->sourceVersion,
             $capture['snapshot']->facts,
         )));
-        if ($sourceVersions !== [$planning->sourceVersion]) {
+        sort($sourceVersions, SORT_STRING);
+        $sourceVersion = count($sourceVersions) === 1
+            ? $sourceVersions[0]
+            : 'sha256:'.hash('sha256', implode("\0", $sourceVersions));
+        if (! hash_equals($sourceVersion, $planning->sourceVersion)) {
             throw new InvalidArgumentException('Completeness snapshot is outside the requested scope.');
         }
         $replayed = $this->models->replayCompleteness(

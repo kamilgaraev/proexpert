@@ -4,14 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\ProjectModel;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelLocatorFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
-use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
@@ -208,21 +202,14 @@ final class EstimateGenerationProjectModelPostgresContractTest extends TestCase
             'pdf_geometry',
             'extractor:v1',
         ));
-        $context = new BuildingModelOperationContext((int) $organization->id, (int) $project->id, (int) $session->id, 'sha256:'.str_repeat('b', 64));
-        $model = (new BuildingModelRepository(
-            new EloquentBuildingModelStore(DB::connection()),
-            new EloquentEvidenceRepository(DB::connection()),
-            new EloquentProjectModelRepository(app('db')),
-        ))->store($context, new NormalizedBuildingModelData('m', 'confirmed', 0.01, [
-            new FloorData('floor-1', 0, 2.8, [], [], [], [], [$evidence->id], 1, 'confirmed'),
-        ], [], 'building-model:v1'));
+        $sourceVersion = 'sha256:'.str_repeat('b', 64);
 
         return [
             'organization_id' => (int) $organization->id,
             'project_id' => (int) $project->id,
             'session_id' => (int) $session->id,
-            'building_model_id' => $model->id,
-            'source_version' => $model->contentVersion,
+            'building_model_id' => (int) $session->id,
+            'source_version' => $sourceVersion,
             'evidence_id' => $evidence->id,
             'evidence_source_version' => 'sha256:'.str_repeat('a', 64),
             'locator' => ['document_id' => 1, 'unit_index' => 2, 'page' => 2, 'handle' => 'cad:room:1'],

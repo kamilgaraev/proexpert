@@ -15,7 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantVi
 use RuntimeException;
 use Throwable;
 
-final readonly class RunGeometryExpert
+final readonly class RunGeometryExpert implements GeometryExpertRunner
 {
     public const PROMPT_CONTRACT = 'geometry-expert:v1';
 
@@ -60,13 +60,28 @@ final readonly class RunGeometryExpert
                 $sheets,
             ));
             $quantities = $this->calculator->domainQuantities($input, $result);
-            $currentLogicalIds = $this->models->currentDerivedQuantityLogicalIdsByFormulaVersion(
-                $input->organizationId,
-                $input->projectId,
-                $input->sessionId,
-                $input->sourceVersion,
-                DeterministicGeometryCalculator::FORMULA_VERSION,
-            );
+            $sheetIds = array_fill_keys(array_values(array_filter(array_map(
+                static fn (mixed $sheet): ?string => is_array($sheet) && is_string($sheet['sheet_id'] ?? null)
+                    ? $sheet['sheet_id']
+                    : null,
+                $input->sheets,
+            ))), true);
+            $currentLogicalIds = array_values(array_map(
+                static fn ($quantity): string => (string) $quantity->logicalId,
+                array_filter($this->models->currentDerivedQuantities(
+                    $input->organizationId,
+                    $input->projectId,
+                    $input->sessionId,
+                    $input->sourceVersion,
+                    10_000,
+                ), static fn ($quantity): bool => $quantity->formulaVersion === DeterministicGeometryCalculator::FORMULA_VERSION
+                    && array_intersect(
+                        array_keys($sheetIds),
+                        is_array($quantity->snapshotIdentity['sheet_ids'] ?? null)
+                            ? $quantity->snapshotIdentity['sheet_ids']
+                            : [],
+                    ) !== []),
+            ));
             $nextLogicalIds = array_fill_keys(array_map(
                 static fn ($quantity): string => (string) $quantity->logicalId,
                 $quantities,

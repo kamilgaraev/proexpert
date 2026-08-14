@@ -4,11 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\ProjectModel;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
@@ -19,10 +14,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepos
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\AnalysisBasisPayloadService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Brick\Math\BigDecimal;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\TestCase;
@@ -47,6 +44,9 @@ final class DerivedQuantityCurrentProjectionPostgresTest extends TestCase
     {
         self::assertSame('pgsql', DB::getDriverName());
         self::assertSame('most_backend_testing', DB::getDatabaseName());
+        if (! Schema::hasColumn('estimate_generation_sessions', 'state_version')) {
+            DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN state_version bigint NOT NULL DEFAULT 0');
+        }
         if (! Schema::hasTable('estimate_generation_project_model_derived_quantities')) {
             if (Schema::hasTable('estimate_generation_project_model_entities')) {
                 $partial = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_01_000200_create_estimate_generation_project_model_tables.php';
@@ -64,6 +64,7 @@ final class DerivedQuantityCurrentProjectionPostgresTest extends TestCase
             }
         }
         $this->resetCurrentProjectionMigration();
+        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000200_detach_project_model_from_building_model.php'))->up();
         $legacyId = DB::table('estimate_generation_project_model_derived_quantities')
             ->where('organization_id', 900000001)
             ->where('stable_key', 'quantity:legacy:fixture')
@@ -195,6 +196,19 @@ SQL);
             self::assertSame($second->id, $current[0]->id);
             self::assertCount(2, $repository->derivedQuantityHistory($scope[0], $scope[1], $scope[2], $scope[3], $second->logicalId));
             self::assertSame([], $repository->currentDerivedQuantities($scope[0] + 1000000, $scope[1], $scope[2], $scope[3]));
+            $basis = (new AnalysisBasisPayloadService(
+                app('db'),
+                $repository,
+                static fn (string $key): string => $key,
+            ))->handle($scope[0], $scope[1], $scope[2], 'quantity', $second->logicalId);
+            self::assertSame(0, BigDecimal::of($second->value)->compareTo(BigDecimal::of((string) ($basis['value'] ?? ''))));
+            self::assertSame('quantity', $basis['type'] ?? null);
+            self::assertSame(1, $basis['sources'][0]['document_id'] ?? null);
+            self::assertNull((new AnalysisBasisPayloadService(
+                app('db'),
+                $repository,
+                static fn (string $key): string => $key,
+            ))->handle($scope[0] + 1000000, $scope[1], $scope[2], 'quantity', $second->logicalId));
 
             $repository->replaceDerivedQuantityProjection($scope[0], $scope[1], $scope[2], $scope[3], [], [$second->logicalId]);
             self::assertSame([], $repository->currentDerivedQuantities($scope[0], $scope[1], $scope[2], $scope[3]));
@@ -335,17 +349,6 @@ SQL);
         ));
         $scope = [(int) $organization->id, (int) $project->id, (int) $session->id, 'sha256:'.str_repeat('b', 64)];
         $repository = new EloquentProjectModelRepository(app('db'));
-        $model = (new BuildingModelRepository(
-            new EloquentBuildingModelStore(DB::connection()),
-            new EloquentEvidenceRepository(DB::connection()),
-            $repository,
-        ))->store(
-            new BuildingModelOperationContext($scope[0], $scope[1], $scope[2], $scope[3]),
-            new NormalizedBuildingModelData('m', 'confirmed', 0.01, [
-                new FloorData('floor-1', 0, 2.8, [], [], [], [], [$storedEvidence->id], 1, 'confirmed'),
-            ], [], 'building-model:v1'),
-        );
-        $scope[3] = $model->contentVersion;
         $entity = new Entity('quantity:1', $scope[0], $scope[1], $scope[2], $scope[3], 'quantity', 'quantity:1', ['value' => 1, 'unit' => 'm2']);
         $evidence = new Evidence(
             'evidence:'.$storedEvidence->id, $scope[0], $scope[1], $scope[2], $scope[3], 'document:1', 'cad', 2,

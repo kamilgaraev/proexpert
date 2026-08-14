@@ -41,6 +41,8 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 
     public array $currentQuantities = [];
 
+    public array $synthesisRoleFingerprints = ['arbiter' => [], 'geometry_expert' => []];
+
     public array $links = [];
 
     public array $understanding = [];
@@ -472,6 +474,15 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         ));
     }
 
+    public function completedSynthesisRoleFingerprints(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        array $sourceVersions,
+    ): array {
+        return $this->synthesisRoleFingerprints;
+    }
+
     public function currentConflicts(int $organizationId, int $projectId, int $sessionId): array
     {
         return array_values(array_filter(
@@ -487,6 +498,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
         array $links,
         array $conflicts,
         array $questions,
@@ -498,7 +510,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             $this->beforeUnderstandingSave = null;
             $hook();
         }
-        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+        if (! hash_equals($snapshotToken, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
             return false;
         }
         $scope = implode(':', [$organizationId, $projectId, $sessionId]);
@@ -542,8 +554,9 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
         int $sessionId,
         string $sourceVersion,
         string $inputFingerprint,
+        string $snapshotToken,
     ): ?array {
-        if (! hash_equals($inputFingerprint, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
+        if (! hash_equals($snapshotToken, $this->understandingSnapshotToken($organizationId, $projectId, $sessionId))) {
             return null;
         }
         $scope = implode(':', [$organizationId, $projectId, $sessionId]);
@@ -962,6 +975,32 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 ];
             }
         }
+        $derivedQuantities = [];
+        foreach ($this->currentQuantities as $quantity) {
+            if (! $quantity instanceof DerivedQuantity
+                || $this->scope($quantity) !== [$organizationId, $projectId, $sessionId]) {
+                continue;
+            }
+            $derivedQuantities[] = [
+                'source_version' => $quantity->sourceVersion,
+                'logical_key' => $quantity->logicalId,
+                'exact_identity' => $quantity->exactIdentity,
+                'formula_version' => $quantity->formulaVersion,
+                'snapshot_identity' => $quantity->snapshotIdentity,
+            ];
+        }
+        usort($derivedQuantities, static fn (array $left, array $right): int => [
+            $left['source_version'], $left['logical_key'],
+        ] <=> [$right['source_version'], $right['logical_key']]);
+        $roleRuns = [];
+        foreach ($this->synthesisRoleFingerprints as $role => $fingerprints) {
+            foreach ($fingerprints as $fingerprint) {
+                $roleRuns[] = ['role' => $role, 'input_fingerprint' => $fingerprint];
+            }
+        }
+        usort($roleRuns, static fn (array $left, array $right): int => [
+            $left['role'], $left['input_fingerprint'],
+        ] <=> [$right['role'], $right['input_fingerprint']]);
 
         return ProjectUnderstandingInputFingerprint::fromExactState([
             'scope' => compact('organizationId', 'projectId', 'sessionId'),
@@ -971,6 +1010,8 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             'bindings' => $bindings,
             'evidence' => array_values($evidence),
             'decisions' => $decisions,
+            'derived_quantities' => $derivedQuantities,
+            'role_runs' => $roleRuns,
         ]);
     }
 }
