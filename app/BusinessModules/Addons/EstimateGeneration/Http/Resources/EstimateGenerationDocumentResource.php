@@ -25,18 +25,20 @@ class EstimateGenerationDocumentResource extends JsonResource
         /** @var EstimateGenerationDocument $document */
         $document = $this->resource;
         $user = $request->user();
+        $processingOutcome = $this->processingOutcome($document);
+        $processingPresentation = $this->processingPresentation($document, $processingOutcome);
 
         return [
             'id' => $document->id,
             'filename' => $document->filename,
             'mime_type' => $document->mime_type,
-            'status' => $document->status ?? 'uploaded',
-            'processing_stage' => $document->processing_stage ?? 'stored',
+            'status' => $processingPresentation['status'],
+            'processing_stage' => $processingPresentation['stage'],
             'lifecycle' => DocumentLifecycleState::forDocument($document),
-            'progress_percent' => (int) ($document->progress_percent ?? 0),
+            'progress_percent' => $processingPresentation['progress_percent'],
             'page_count' => $document->page_count,
             'processed_page_count' => (int) ($document->processed_page_count ?? 0),
-            'processing_outcome' => $this->processingOutcome($document),
+            'processing_outcome' => $processingOutcome,
             'processing_control' => [
                 'status' => (string) ($document->processing_control_status ?? 'active'),
                 'reason' => $document->processing_control_reason,
@@ -66,6 +68,26 @@ class EstimateGenerationDocumentResource extends JsonResource
             'available_actions' => $user instanceof User
                 ? app(EstimateGenerationDocumentActionBuilder::class)->forDocument($document, $user)
                 : [],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $processingOutcome
+     * @return array{status: string, stage: string, progress_percent: int}
+     */
+    private function processingPresentation(
+        EstimateGenerationDocument $document,
+        array $processingOutcome,
+    ): array {
+        $cancelled = (string) ($document->processing_control_status ?? 'active') === 'cancelled'
+            && ($processingOutcome['type'] ?? null) === 'cancelled';
+
+        return [
+            'status' => $cancelled ? 'needs_review' : (string) ($document->status ?? 'uploaded'),
+            'stage' => $cancelled ? 'completed' : (string) ($document->processing_stage ?? 'stored'),
+            'progress_percent' => $cancelled
+                ? (int) ($processingOutcome['execution']['progress_percent'] ?? 100)
+                : (int) ($document->progress_percent ?? 0),
         ];
     }
 
