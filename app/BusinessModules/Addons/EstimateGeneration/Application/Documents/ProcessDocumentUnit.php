@@ -107,6 +107,13 @@ final readonly class ProcessDocumentUnit
             } catch (Throwable) {
             }
         } catch (Throwable $error) {
+            if ($error instanceof DocumentUnitProcessingException
+                && $error->safeCode === 'document_cost_limit_reached'
+                && $this->store->pauseForCostConfirmation($claim, now()->toDateTimeImmutable())) {
+                $this->reconciler->reconcile($context->documentId, $sourceVersion);
+
+                return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::UserActionRequired);
+            }
             $failure = $this->failureRecorder->capture($error, $this->failureContext($context));
             $diagnosticFingerprint = $failure->safeContext['diagnostic_fingerprint'] ?? null;
             $fingerprint = is_string($diagnosticFingerprint)
@@ -146,6 +153,14 @@ final readonly class ProcessDocumentUnit
             }
 
             if (! $persisted) {
+                $record = $this->store->find($unitId);
+                if ($error instanceof DocumentUnitProcessingException
+                    && $error->safeCode === 'document_processing_stopped'
+                    && $record?->status === DocumentProcessingUnitStatus::Superseded) {
+                    $this->reconciler->reconcile($context->documentId, $sourceVersion);
+
+                    return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::Stale);
+                }
                 throw new TypedFailureException(FailureCategory::Recoverable, 'unit_claim_lost', previous: $error);
             }
 

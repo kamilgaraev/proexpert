@@ -36,6 +36,19 @@ class EstimateGenerationDocumentResource extends JsonResource
             'page_count' => $document->page_count,
             'processed_page_count' => (int) ($document->processed_page_count ?? 0),
             'processing_outcome' => $this->processingOutcome($document),
+            'processing_control' => [
+                'status' => (string) ($document->processing_control_status ?? 'active'),
+                'reason' => $document->processing_control_reason,
+                'source_version' => $document->processing_control_source_version,
+                'attempt_id' => $document->processing_control_attempt_id,
+                'changed_at' => $document->processing_control_at?->toISOString(),
+            ],
+            'cost_journal' => [
+                'spent_rub' => $document->getAttribute('processing_cost_spent_rub'),
+                'limit_rub' => $document->processing_cost_limit
+                    ?? (string) config('estimate-generation.generation.document_cost_limit_rub', '50.00'),
+                'confirmation_version' => (int) ($document->processing_cost_confirmation_version ?? 0),
+            ],
             'quality' => [
                 'score' => $document->quality_score,
                 'level' => $document->quality_level,

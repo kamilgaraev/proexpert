@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
@@ -86,9 +87,11 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
                 );
                 $this->runs->complete($claim->runId, $claim->ownerUuid, $result);
                 $results[$profile->role()->value] = $result;
-            } catch (VisionContractException|VisionProviderException $exception) {
+            } catch (DocumentUnitProcessingException|VisionContractException|VisionProviderException $exception) {
                 $this->runs->fail($claim->runId, $claim->ownerUuid, new AiRoleRunFailure(
-                    code: $exception instanceof VisionProviderException ? $exception->reason : 'observer_contract_invalid',
+                    code: $exception instanceof DocumentUnitProcessingException
+                        ? $exception->safeCode
+                        : ($exception instanceof VisionProviderException ? $exception->reason : 'observer_contract_invalid'),
                     ambiguous: $exception instanceof VisionProviderException && $exception->reason === 'vision_wire_outcome_ambiguous',
                     physicalAttemptId: $physicalAttemptId,
                 ));

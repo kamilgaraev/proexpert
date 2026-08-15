@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentWireAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use DateTimeImmutable;
@@ -16,6 +18,7 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
 
     public function __construct(
         private Connection $database,
+        private ?DocumentWireAuthorization $wireAuthorization = null,
         private VisionPhysicalAttemptStateMachine $stateMachine = new VisionPhysicalAttemptStateMachine,
     ) {}
 
@@ -111,21 +114,39 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
         DateTimeImmutable $now,
         DateTimeImmutable $leaseExpiresAt,
     ): void {
-        $databaseNow = $this->databaseTime($now);
-        $updated = $this->database->table(self::TABLE)
-            ->where('attempt_id', $attemptId)
-            ->where('request_fingerprint', $requestFingerprint)
-            ->where('state', 'pre_wire')
-            ->where('owner_token', $ownerToken)
-            ->where('lease_expires_at', '>', $databaseNow)
-            ->update([
-                'state' => 'wire_started',
-                'wire_started_at' => $databaseNow,
-                'lease_expires_at' => $this->databaseTime($leaseExpiresAt),
-                'updated_at' => $databaseNow,
-            ]);
-        if ($updated !== 1) {
-            throw new UsageInvariantViolation('Vision physical attempt wire claim lost.');
+        $denialReason = $this->database->transaction(function () use (
+            $attemptId,
+            $requestFingerprint,
+            $ownerToken,
+            $now,
+            $leaseExpiresAt,
+        ): ?string {
+            $denialReason = $this->wireAuthorization?->denialReason($attemptId, $now);
+            if ($denialReason !== null) {
+                return $denialReason;
+            }
+
+            $databaseNow = $this->databaseTime($now);
+            $updated = $this->database->table(self::TABLE)
+                ->where('attempt_id', $attemptId)
+                ->where('request_fingerprint', $requestFingerprint)
+                ->where('state', 'pre_wire')
+                ->where('owner_token', $ownerToken)
+                ->where('lease_expires_at', '>', $databaseNow)
+                ->update([
+                    'state' => 'wire_started',
+                    'wire_started_at' => $databaseNow,
+                    'lease_expires_at' => $this->databaseTime($leaseExpiresAt),
+                    'updated_at' => $databaseNow,
+                ]);
+            if ($updated !== 1) {
+                throw new UsageInvariantViolation('Vision physical attempt wire claim lost.');
+            }
+
+            return null;
+        }, 3);
+        if ($denialReason !== null) {
+            throw new DocumentUnitProcessingException($denialReason);
         }
     }
 

@@ -14,5 +14,11 @@ interface DocumentUnitDispatchStore
     /** @return list<DocumentUnitDispatchCandidate> */
     public function dueForRecovery(DateTimeImmutable $now, int $limit): array;
 
-    public function markDispatched(int $unitId, DateTimeImmutable $now, DateTimeImmutable $nextDispatchAt): void;
+    /** @param callable(): void $dispatch */
+    public function dispatchIfAllowed(
+        DocumentUnitDispatchCandidate $candidate,
+        DateTimeImmutable $now,
+        DateTimeImmutable $nextDispatchAt,
+        callable $dispatch,
+    ): bool;
 }

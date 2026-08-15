@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
@@ -115,7 +116,9 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
             return $result;
         } catch (Throwable $exception) {
             $this->runs->fail($claim->runId, $claim->ownerUuid, new AiRoleRunFailure(
-                $exception instanceof VisionProviderException ? $exception->reason : 'arbitration_contract_invalid',
+                $exception instanceof DocumentUnitProcessingException
+                    ? $exception->safeCode
+                    : ($exception instanceof VisionProviderException ? $exception->reason : 'arbitration_contract_invalid'),
                 $exception instanceof VisionProviderException && $exception->reason === 'vision_wire_outcome_ambiguous',
                 $physicalAttemptId,
             ));

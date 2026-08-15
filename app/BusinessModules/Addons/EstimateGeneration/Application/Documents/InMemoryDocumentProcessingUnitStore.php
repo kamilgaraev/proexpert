@@ -188,6 +188,24 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         return true;
     }
 
+    public function pauseForCostConfirmation(DocumentProcessingUnitClaim $claim, DateTimeImmutable $now): bool
+    {
+        $record = $this->find($claim->unitId);
+        if (! $this->owns($record, $claim, $now)) {
+            return false;
+        }
+
+        $record->status = DocumentProcessingUnitStatus::Pending;
+        $record->attemptCount = max(0, $record->attemptCount - 1);
+        $record->claimToken = null;
+        $record->leaseExpiresAt = null;
+        $record->failureCode = null;
+        $record->failureFingerprint = null;
+        $record->failureCategory = null;
+
+        return true;
+    }
+
     public function fail(
         DocumentProcessingUnitClaim $claim,
         string $code,
@@ -222,12 +240,13 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         if ($circuitBreaking && $this->matchingTerminalFailures($record, $fingerprint) >= self::SYSTEMIC_FAILURE_THRESHOLD) {
             $attemptId = $record->metadata['processing_attempt_id'] ?? null;
             foreach ($this->records as $candidate) {
-                if (! $this->sameScope($candidate, $record)
+                if (! $this->sameLineageScope($candidate, $record)
                     || ($candidate->metadata['processing_attempt_id'] ?? null) !== $attemptId
                     || $candidate->status !== DocumentProcessingUnitStatus::Pending) {
                     continue;
                 }
 
+                $actualExecutionCount = $candidate->attemptCount;
                 $candidate->status = DocumentProcessingUnitStatus::Failed;
                 $candidate->attemptCount = ProcessDocumentUnit::MAX_ATTEMPTS;
                 $candidate->failureCode = 'breaker_stopped';
@@ -236,7 +255,7 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
                 $candidate->metadata = [
                     ...$candidate->metadata,
                     'failure_category' => FailureCategory::Terminal->value,
-                    'actual_execution_count' => 0,
+                    'actual_execution_count' => $actualExecutionCount,
                 ];
             }
         }
@@ -291,13 +310,18 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
 
     private function sameScope(DocumentProcessingUnitRecord $candidate, DocumentProcessingUnitRecord $scope): bool
     {
+        return $this->sameLineageScope($candidate, $scope)
+            && $candidate->unit->type === $scope->unit->type
+            && ($candidate->unit->locator['content_type'] ?? null) === ($scope->unit->locator['content_type'] ?? null);
+    }
+
+    private function sameLineageScope(DocumentProcessingUnitRecord $candidate, DocumentProcessingUnitRecord $scope): bool
+    {
         return $candidate->organizationId === $scope->organizationId
             && $candidate->projectId === $scope->projectId
             && $candidate->sessionId === $scope->sessionId
             && $candidate->documentId === $scope->documentId
             && $candidate->unit->sourceVersion === $scope->unit->sourceVersion
-            && $candidate->unit->type === $scope->unit->type
-            && ($candidate->unit->locator['content_type'] ?? null) === ($scope->unit->locator['content_type'] ?? null)
             && ($candidate->metadata['processing_attempt_id'] ?? null) === ($scope->metadata['processing_attempt_id'] ?? null);
     }
 

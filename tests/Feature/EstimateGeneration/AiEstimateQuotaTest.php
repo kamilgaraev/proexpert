@@ -22,8 +22,8 @@ use App\Models\Organization;
 use App\Models\OrganizationResourceAllocation;
 use App\Models\Project;
 use App\Models\User;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
@@ -95,7 +95,8 @@ final class AiEstimateQuotaTest extends TestCase
 
         $snapshot = $this->snapshotForOrganization($quota, $first);
         $this->assertNull($snapshot->purchased);
-        $this->assertSame(11, $snapshot->used);
+        $this->assertSame(0, $snapshot->used);
+        $this->assertSame(11, $snapshot->reserved);
         $this->assertNull($snapshot->available);
     }
 
@@ -112,7 +113,8 @@ final class AiEstimateQuotaTest extends TestCase
         }
 
         $snapshot = $this->snapshotForOrganization($quota, $first);
-        $this->assertSame(10, $snapshot->used);
+        $this->assertSame(0, $snapshot->used);
+        $this->assertSame(10, $snapshot->reserved);
         $this->assertSame(0, $snapshot->available);
 
         $eleventh = $this->createSession($organization);
@@ -128,9 +130,10 @@ final class AiEstimateQuotaTest extends TestCase
         $first = $this->reserveSession($quota, $session);
         $second = $this->reserveSession($quota, $session);
 
-        $this->assertSame('confirmed', $first->reservationStatus);
-        $this->assertSame('confirmed', $second->reservationStatus);
-        $this->assertSame(1, $second->used);
+        $this->assertSame('reserved', $first->reservationStatus);
+        $this->assertSame('reserved', $second->reservationStatus);
+        $this->assertSame(0, $second->used);
+        $this->assertSame(1, $second->reserved);
     }
 
     public function test_document_upload_dialogue_and_local_rebuild_keep_one_reservation(): void
@@ -146,8 +149,9 @@ final class AiEstimateQuotaTest extends TestCase
             $session->forceFill(['input_payload' => [...$payload, 'last_lifecycle_step' => $lifecycleStep]])->save();
             $snapshot = $this->reserveSession($quota, $session);
 
-            $this->assertSame(1, $snapshot->used, $lifecycleStep);
-            $this->assertSame('confirmed', $snapshot->reservationStatus, $lifecycleStep);
+            $this->assertSame(0, $snapshot->used, $lifecycleStep);
+            $this->assertSame(1, $snapshot->reserved, $lifecycleStep);
+            $this->assertSame('reserved', $snapshot->reservationStatus, $lifecycleStep);
         }
     }
 
@@ -177,12 +181,52 @@ final class AiEstimateQuotaTest extends TestCase
             'scope_type' => 'building',
             'status' => 'ready_for_review',
         ]);
+        $quota->confirmUsableDraft($session);
 
         $snapshot = $this->releaseTechnicalFailure($quota, $session);
 
         $this->assertSame('confirmed', $snapshot->reservationStatus);
         $this->assertSame(1, $snapshot->used);
         $this->assertSame(9, $snapshot->available);
+    }
+
+    public function test_review_required_canonical_draft_confirms_quota_without_a_published_package(): void
+    {
+        $session = $this->createSession();
+        $quota = app(AiEstimateQuotaService::class);
+        $this->reserveSession($quota, $session);
+        $session->forceFill([
+            'status' => EstimateGenerationStatus::EstimateReviewRequired,
+            'draft_payload' => [
+                'work_items' => [[
+                    'key' => 'review-item',
+                    'name' => 'Review item',
+                    'quantity' => 1,
+                    'unit' => 'item',
+                ]],
+            ],
+        ])->save();
+
+        $quota->confirmUsableDraft($session->fresh());
+
+        self::assertSame('confirmed', $this->reservationStatus($session));
+        self::assertSame(1, $this->confirmedReservations($session));
+        self::assertSame(0, EstimateGenerationPackage::query()->where('session_id', $session->id)->count());
+    }
+
+    public function test_confirmed_generation_is_not_released_after_its_current_package_disappears(): void
+    {
+        $session = $this->createSession();
+        $quota = app(AiEstimateQuotaService::class);
+        $this->reserveSession($quota, $session);
+        $this->createUsableDraft($session);
+        $quota->confirmUsableDraft($session);
+        EstimateGenerationPackage::query()->where('session_id', $session->id)->delete();
+
+        $snapshot = $this->releaseTechnicalFailure($quota, $session);
+
+        self::assertSame('confirmed', $snapshot->reservationStatus);
+        self::assertSame(1, $snapshot->used);
     }
 
     public function test_starting_generation_reserves_one_estimate_only_once_for_the_session(): void
@@ -192,7 +236,7 @@ final class AiEstimateQuotaTest extends TestCase
         app(AiEstimateQuotaService::class)->reserve($session);
         app(AiEstimateQuotaService::class)->reserve($session);
 
-        $this->assertSame(1, $this->confirmedReservations($session));
+        $this->assertSame(1, $this->reservedReservations($session));
     }
 
     public function test_starting_another_session_is_rejected_when_monthly_limit_is_reached(): void
@@ -229,7 +273,7 @@ final class AiEstimateQuotaTest extends TestCase
         ));
 
         $this->assertSame(EstimateGenerationStatus::Generating, $result->status);
-        $this->assertSame(1, $this->confirmedReservations($session));
+        $this->assertSame(1, $this->reservedReservations($session));
     }
 
     public function test_stale_terminal_failure_cannot_release_quota_reconfirmed_by_retry(): void
@@ -261,8 +305,8 @@ final class AiEstimateQuotaTest extends TestCase
         $quota->releaseForTerminalTechnicalFailure($session->fresh(), $failure, 3);
 
         $this->assertSame(EstimateGenerationStatus::Generating, $session->fresh()->status);
-        $this->assertSame('confirmed', $this->reservationStatus($session));
-        $this->assertSame(1, $this->confirmedReservations($session));
+        $this->assertSame('reserved', $this->reservationStatus($session));
+        $this->assertSame(1, $this->reservedReservations($session));
     }
 
     public function test_terminal_technical_failure_before_result_releases_reservation(): void
@@ -293,7 +337,7 @@ final class AiEstimateQuotaTest extends TestCase
 
         $quota->releaseForTerminalTechnicalFailure($session, $this->technicalFailure($session, FailureCategory::UserActionRequired));
 
-        $this->assertSame('confirmed', $this->reservationStatus($session));
+        $this->assertSame('reserved', $this->reservationStatus($session));
     }
 
     public function test_terminal_failure_after_result_keeps_confirmed_reservation(): void
@@ -301,6 +345,8 @@ final class AiEstimateQuotaTest extends TestCase
         $session = $this->createSession();
         $quota = app(AiEstimateQuotaService::class);
         $quota->reserve($session);
+        $this->createUsableDraft($session);
+        $quota->confirmUsableDraft($session);
         $session->forceFill([
             'status' => EstimateGenerationStatus::Failed,
             'resume_status' => EstimateGenerationStatus::Applying,
@@ -323,7 +369,7 @@ final class AiEstimateQuotaTest extends TestCase
         $session->forceFill(['input_payload' => ['generation_attempt_id' => (string) str()->uuid()]])->save();
         $quota->reserve($session->fresh());
 
-        $this->assertSame(1, $this->confirmedReservations($session));
+        $this->assertSame(1, $this->reservedReservations($session));
     }
 
     public function test_commercial_usage_counts_only_current_month_confirmed_reservations(): void
@@ -340,6 +386,8 @@ final class AiEstimateQuotaTest extends TestCase
         $currentSession = $this->createSession($organization);
         $previousMonthSession = $this->createSession($organization);
         $quota->reserve($currentSession);
+        $this->createUsableDraft($currentSession);
+        $quota->confirmUsableDraft($currentSession);
         DB::table('estimate_generation_ai_estimate_quota_reservations')->insert([
             'organization_id' => $session->organization_id,
             'session_id' => $previousMonthSession->id,
@@ -375,8 +423,8 @@ final class AiEstimateQuotaTest extends TestCase
             readinessSummary: ['blockers' => [], 'warnings' => []],
         )->aiEstimateQuota;
 
-        $this->assertSame('confirmed', $listQuota['reservation_status']);
-        $this->assertSame('confirmed', $detailQuota['reservation_status']);
+        $this->assertSame('reserved', $listQuota['reservation_status']);
+        $this->assertSame('reserved', $detailQuota['reservation_status']);
         $this->assertSame(0, $listQuota['used']);
         $this->assertSame(0, $detailQuota['used']);
         $this->assertNull($quota->snapshot((string) $session->organization_id)->reservationStatus);
@@ -419,8 +467,9 @@ final class AiEstimateQuotaTest extends TestCase
         )->toArray();
 
         $this->assertTrue($reservationReadObserved);
-        $this->assertSame('confirmed', $listQuota['reservation_status']);
-        $this->assertSame(1, $listQuota['used']);
+        $this->assertSame('reserved', $listQuota['reservation_status']);
+        $this->assertSame(0, $listQuota['used']);
+        $this->assertSame(1, $listQuota['reserved']);
         $this->assertSame($listQuota['reservation_status'], $detailQuota['reservation_status']);
         $this->assertSame($listQuota['used'], $detailQuota['used']);
         $this->assertSame('released', $this->reservationStatus($session));
@@ -548,7 +597,8 @@ final class AiEstimateQuotaTest extends TestCase
             $table->unsignedBigInteger('session_id');
             $table->date('monthly_period');
             $table->string('status');
-            $table->timestamp('confirmed_at');
+            $table->timestamp('reserved_at')->nullable();
+            $table->timestamp('confirmed_at')->nullable();
             $table->timestamp('released_at')->nullable();
             $table->unique(['organization_id', 'session_id']);
         });
@@ -603,6 +653,27 @@ final class AiEstimateQuotaTest extends TestCase
             ->where('session_id', $session->id)
             ->where('status', 'confirmed')
             ->count();
+    }
+
+    private function reservedReservations(EstimateGenerationSession $session): int
+    {
+        return DB::table('estimate_generation_ai_estimate_quota_reservations')
+            ->where('organization_id', $session->organization_id)
+            ->where('session_id', $session->id)
+            ->where('status', 'reserved')
+            ->count();
+    }
+
+    private function createUsableDraft(EstimateGenerationSession $session): void
+    {
+        EstimateGenerationPackage::query()->create([
+            'session_id' => $session->id,
+            'input_version' => 'sha256:'.hash('sha256', (string) $session->id),
+            'key' => 'main',
+            'title' => 'Основной комплект',
+            'scope_type' => 'building',
+            'status' => 'ready_for_review',
+        ]);
     }
 
     private function reservationStatus(EstimateGenerationSession $session): ?string

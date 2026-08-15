@@ -31,6 +31,8 @@ Route::middleware([
         Route::post('/{session}/documents/reuse', [EstimateGenerationDocumentController::class, 'reuse'])->middleware('authorize:estimate_generation.upload_documents,project,project')->name('documents.reuse');
         Route::get('/{session}/documents/{document}', [EstimateGenerationDocumentController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('documents.show');
         Route::post('/{session}/documents/{document}/retry', [EstimateGenerationDocumentController::class, 'retry'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.retry');
+        Route::post('/{session}/documents/{document}/stop', [EstimateGenerationDocumentController::class, 'stop'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.stop');
+        Route::post('/{session}/documents/{document}/confirm-cost', [EstimateGenerationDocumentController::class, 'confirmCost'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.confirm-cost');
         Route::post('/{session}/documents/{document}/ignore', [EstimateGenerationDocumentController::class, 'ignore'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.ignore');
         Route::post('/{session}/documents/{document}/pages/retry', [EstimateGenerationDocumentController::class, 'retryPages'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.pages.retry');
         Route::post('/{session}/documents/{document}/pages/exclude', [EstimateGenerationDocumentController::class, 'excludePages'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.pages.exclude');

@@ -23,6 +23,8 @@ final readonly class AiEstimateQuotaService
 
     private const TABLE = 'estimate_generation_ai_estimate_quota_reservations';
 
+    private const RESERVED = 'reserved';
+
     private const CONFIRMED = 'confirmed';
 
     private const RELEASED = 'released';
@@ -61,18 +63,18 @@ final readonly class AiEstimateQuotaService
                 ->lockForUpdate()
                 ->first();
 
-            if ($reservation === null || $reservation->status === self::RELEASED) {
+            if ($reservation === null || in_array($reservation->status, [self::RELEASED, self::CONFIRMED], true)) {
                 return;
             }
 
-            if ($reservation->status !== self::CONFIRMED) {
+            if ($reservation->status !== self::RESERVED) {
                 throw new \RuntimeException('estimate_generation.ai_estimate_quota_reservation_invalid');
             }
 
             $released = $this->database->table(self::TABLE)
                 ->where('organization_id', $organizationKey)
                 ->where('session_id', $sessionKey)
-                ->where('status', self::CONFIRMED)
+                ->where('status', self::RESERVED)
                 ->update([
                     'status' => self::RELEASED,
                     'released_at' => now(),
@@ -105,9 +107,42 @@ final readonly class AiEstimateQuotaService
         $this->reserveSession((string) $session->organization_id, (string) $session->getKey());
     }
 
+    public function confirmUsableDraft(EstimateGenerationSession $session): void
+    {
+        [$organizationId, $sessionId] = $this->validatedScope(
+            (string) $session->organization_id,
+            (string) $session->getKey(),
+        );
+        $this->database->transaction(function () use ($organizationId, $sessionId): void {
+            $this->lockedSession($organizationId, $sessionId);
+            if (! $this->hasUsableDraft($sessionId)) {
+                throw new \RuntimeException('estimate_generation.ai_estimate_quota_product_boundary_missing');
+            }
+            $reservation = $this->database->table(self::TABLE)
+                ->where('organization_id', $organizationId)
+                ->where('session_id', $sessionId)
+                ->lockForUpdate()
+                ->first();
+            if ($reservation === null || $reservation->status === self::RELEASED) {
+                throw new \RuntimeException('estimate_generation.ai_estimate_quota_reservation_missing');
+            }
+            if ($reservation->status === self::CONFIRMED) {
+                return;
+            }
+            $updated = $this->database->table(self::TABLE)
+                ->where('organization_id', $organizationId)
+                ->where('session_id', $sessionId)
+                ->where('status', self::RESERVED)
+                ->update(['status' => self::CONFIRMED, 'confirmed_at' => now()]);
+            if ($updated !== 1) {
+                throw new \RuntimeException('estimate_generation.ai_estimate_quota_confirmation_failed');
+            }
+        }, 3);
+    }
+
     /**
      * @param  iterable<EstimateGenerationSession>  $sessions
-     * @return array<int, array{included: int, purchased: int|null, used: int, available: int|null, reservation_status: string|null}>
+     * @return array<int, array{included: int, purchased: int|null, used: int, reserved: int, available: int|null, reservation_status: string|null}>
      */
     public function snapshots(iterable $sessions): array
     {
@@ -138,11 +173,12 @@ final readonly class AiEstimateQuotaService
         $snapshots = [];
 
         foreach ($validSessions as $sessionId => $organizationId) {
-            $summary = $reservationSummaries[$organizationId] ?? ['used' => 0, 'statuses' => []];
+            $summary = $reservationSummaries[$organizationId] ?? ['used' => 0, 'reserved' => 0, 'statuses' => []];
             $snapshots[$sessionId] = $this->makeSnapshot(
                 array_key_exists($organizationId, $limits) ? $limits[$organizationId] : $this->included(),
                 max(0, (int) $summary['used']),
                 $summary['statuses'][$sessionId] ?? null,
+                max(0, (int) $summary['reserved']),
             )->toArray();
         }
 
@@ -221,7 +257,7 @@ final readonly class AiEstimateQuotaService
             ->first();
 
         if ($existing !== null) {
-            if ($existing->status === self::CONFIRMED) {
+            if (in_array($existing->status, [self::RESERVED, self::CONFIRMED], true)) {
                 return;
             }
 
@@ -235,9 +271,10 @@ final readonly class AiEstimateQuotaService
                 ->where('session_id', $sessionId)
                 ->where('status', self::RELEASED)
                 ->update([
-                    'status' => self::CONFIRMED,
+                    'status' => self::RESERVED,
                     'monthly_period' => now()->startOfMonth()->toDateString(),
-                    'confirmed_at' => now(),
+                    'reserved_at' => now(),
+                    'confirmed_at' => null,
                     'released_at' => null,
                 ]);
 
@@ -253,8 +290,9 @@ final readonly class AiEstimateQuotaService
             'organization_id' => $organizationId,
             'session_id' => $sessionId,
             'monthly_period' => now()->startOfMonth()->toDateString(),
-            'status' => self::CONFIRMED,
-            'confirmed_at' => now(),
+            'status' => self::RESERVED,
+            'reserved_at' => now(),
+            'confirmed_at' => null,
             'released_at' => null,
         ]);
     }
@@ -262,7 +300,7 @@ final readonly class AiEstimateQuotaService
     private function assertAvailable(int $organizationId): void
     {
         $limit = $this->limit($organizationId);
-        $used = $this->confirmedReservationsForCurrentMonth($organizationId);
+        $used = $this->activeReservationsForCurrentMonth($organizationId);
 
         if ($limit !== null && $used + 1 > $limit) {
             throw new CommercialQuotaExceededException('ai_estimates_month', $used, $limit, 1);
@@ -290,15 +328,34 @@ final readonly class AiEstimateQuotaService
             ->count();
     }
 
+    private function activeReservationsForCurrentMonth(int $organizationId): int
+    {
+        return $this->database->table(self::TABLE)
+            ->where('organization_id', $organizationId)
+            ->where('monthly_period', now()->startOfMonth()->toDateString())
+            ->whereIn('status', [self::RESERVED, self::CONFIRMED])
+            ->count();
+    }
+
+    private function reservedReservationsForCurrentMonth(int $organizationId): int
+    {
+        return $this->database->table(self::TABLE)
+            ->where('organization_id', $organizationId)
+            ->where('monthly_period', now()->startOfMonth()->toDateString())
+            ->where('status', self::RESERVED)
+            ->count();
+    }
+
     private function snapshotForSession(int $organizationId, int $sessionId): QuotaSnapshot
     {
         $summary = $this->currentMonthReservationSummaries([$organizationId], [$sessionId])[$organizationId]
-            ?? ['used' => 0, 'statuses' => []];
+            ?? ['used' => 0, 'reserved' => 0, 'statuses' => []];
 
         return $this->makeSnapshot(
             $this->limit($organizationId),
             max(0, (int) $summary['used']),
             $summary['statuses'][$sessionId] ?? null,
+            max(0, (int) $summary['reserved']),
         );
     }
 
@@ -308,10 +365,11 @@ final readonly class AiEstimateQuotaService
             $this->limit($organizationId),
             $this->confirmedReservationsForCurrentMonth($organizationId),
             $status,
+            $this->reservedReservationsForCurrentMonth($organizationId),
         );
     }
 
-    private function makeSnapshot(?int $limit, int $used, ?string $status): QuotaSnapshot
+    private function makeSnapshot(?int $limit, int $used, ?string $status, int $reserved = 0): QuotaSnapshot
     {
         $included = $this->included();
 
@@ -319,17 +377,36 @@ final readonly class AiEstimateQuotaService
             included: $included,
             purchased: $limit === null ? null : max(0, $limit - $included),
             used: max(0, $used),
-            available: $limit === null ? null : max(0, $limit - $used),
-            reservationStatus: in_array($status, [self::CONFIRMED, self::RELEASED], true) ? $status : null,
+            reserved: max(0, $reserved),
+            available: $limit === null ? null : max(0, $limit - $used - $reserved),
+            reservationStatus: in_array($status, [self::RESERVED, self::CONFIRMED, self::RELEASED], true) ? $status : null,
         );
     }
 
     private function hasUsableDraft(int $sessionId): bool
     {
-        return EstimateGenerationPackage::query()
+        if (EstimateGenerationPackage::query()
             ->where('session_id', $sessionId)
             ->whereIn('status', ['ready_for_review', 'review_required', 'approved'])
-            ->exists();
+            ->exists()) {
+            return true;
+        }
+
+        $session = EstimateGenerationSession::query()->find($sessionId);
+        if (! $session instanceof EstimateGenerationSession
+            || ! in_array($session->status, [
+                EstimateGenerationStatus::EstimateReviewRequired,
+                EstimateGenerationStatus::ReadyToApply,
+                EstimateGenerationStatus::Applied,
+            ], true)) {
+            return false;
+        }
+
+        $draft = $session->draft_payload;
+
+        return is_array($draft)
+            && is_array($draft['work_items'] ?? null)
+            && $draft['work_items'] !== [];
     }
 
     private function lockedSession(int $organizationId, int $sessionId): EstimateGenerationSession
@@ -362,7 +439,7 @@ final readonly class AiEstimateQuotaService
     /**
      * @param  list<int>  $organizationIds
      * @param  list<int>  $sessionIds
-     * @return array<int, array{used: int, statuses: array<int, string>}>
+     * @return array<int, array{used: int, reserved: int, statuses: array<int, string>}>
      */
     private function currentMonthReservationSummaries(array $organizationIds, array $sessionIds): array
     {
@@ -377,6 +454,10 @@ final readonly class AiEstimateQuotaService
             ->selectRaw(
                 'COALESCE(SUM(CASE WHEN monthly_period = ? AND status = ? THEN 1 ELSE 0 END), 0) AS used',
                 [$currentPeriod, self::CONFIRMED],
+            )
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN monthly_period = ? AND status = ? THEN 1 ELSE 0 END), 0) AS reserved',
+                [$currentPeriod, self::RESERVED],
             );
 
         foreach ($sessionIds as $sessionId) {
@@ -399,6 +480,7 @@ final readonly class AiEstimateQuotaService
 
             $summaries[$organizationId] = [
                 'used' => max(0, (int) $row->used),
+                'reserved' => max(0, (int) $row->reserved),
                 'statuses' => $statuses,
             ];
         }

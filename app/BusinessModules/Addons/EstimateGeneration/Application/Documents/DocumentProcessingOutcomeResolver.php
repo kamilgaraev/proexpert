@@ -28,6 +28,7 @@ final readonly class DocumentProcessingOutcomeResolver
             'system_failed' => 0,
             'processing' => 0,
             'excluded' => 0,
+            'cancelled' => 0,
         ];
         $hasTerminalSystemFailure = false;
         $hasRecoverableSystemFailure = false;
@@ -52,6 +53,9 @@ final readonly class DocumentProcessingOutcomeResolver
             if (in_array($pageStatus, ['queued', 'processing'], true)
                 || in_array($unitStatus, ['pending', 'running'], true)) {
                 $counts['processing']++;
+            } elseif ($unitStatus === 'superseded'
+                && ($metadata['processing_control_status'] ?? null) === 'cancelled') {
+                $counts['cancelled']++;
             } elseif ($category === 'user_action_required') {
                 $counts['needs_user_action']++;
             } elseif ($unitStatus === 'completed'
@@ -80,6 +84,7 @@ final readonly class DocumentProcessingOutcomeResolver
             $counts['processing'] > 0 => ['processing', 'processing'],
             $counts['system_failed'] > 0 && $hasTerminalSystemFailure => ['system_failure', $counts['ready'] > 0 ? 'needs_review' : 'failed'],
             $counts['system_failed'] > 0 && $hasRecoverableSystemFailure => ['temporary_failure', $counts['ready'] > 0 ? 'needs_review' : 'failed'],
+            $counts['cancelled'] > 0 => ['cancelled', 'needs_review'],
             $counts['needs_user_action'] > 0, $counts['included'] === 0 => ['user_action_required', 'needs_review'],
             default => ['ready', 'ready'],
         };
@@ -92,6 +97,8 @@ final readonly class DocumentProcessingOutcomeResolver
             state: match (true) {
                 $type === 'processing' => 'processing',
                 $counts['ready'] > 0 && $counts['system_failed'] > 0 => 'partial',
+                $type === 'cancelled' && $counts['ready'] > 0 => 'partial',
+                $type === 'cancelled' => 'cancelled',
                 $hasQuestionReview => 'questions',
                 $hasPartialReview => 'partial',
                 in_array($type, ['system_failure', 'temporary_failure'], true) => 'system_failure',

@@ -149,6 +149,21 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Stale);
             }
 
+            if (! $unit->document instanceof EstimateGenerationDocument
+                || (string) $unit->document->processing_control_status !== 'active'
+                || ! hash_equals((string) $unit->document->source_version, $sourceVersion)) {
+                if ($unit->status !== DocumentProcessingUnitStatus::Completed) {
+                    $unit->forceFill([
+                        'status' => DocumentProcessingUnitStatus::Superseded,
+                        'claim_token' => null,
+                        'lease_expires_at' => null,
+                        'next_dispatch_at' => null,
+                    ])->save();
+                }
+
+                return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Stale);
+            }
+
             if ($unit->status === DocumentProcessingUnitStatus::Completed) {
                 return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::AlreadyCompleted);
             }
@@ -352,6 +367,64 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             ->update(['lease_expires_at' => $leaseExpiresAt, 'updated_at' => $now]) === 1;
     }
 
+    public function pauseForCostConfirmation(DocumentProcessingUnitClaim $claim, DateTimeImmutable $now): bool
+    {
+        return $this->database->transaction(function () use ($claim, $now): bool {
+            $document = $this->documentQuery()
+                ->whereKey($claim->documentId)
+                ->where('organization_id', $claim->organizationId)
+                ->where('project_id', $claim->projectId)
+                ->where('session_id', $claim->sessionId)
+                ->where('source_version', $claim->sourceVersion)
+                ->lockForUpdate()
+                ->first();
+            if (! $document instanceof EstimateGenerationDocument
+                || (string) $document->processing_control_status !== 'paused'
+                || (string) $document->processing_control_reason !== 'cost_limit_reached') {
+                return false;
+            }
+
+            $unit = $this->claimQuery($claim)
+                ->where('status', DocumentProcessingUnitStatus::Running->value)
+                ->where('claim_token', $claim->token)
+                ->where('lease_expires_at', '>', $now)
+                ->lockForUpdate()
+                ->first();
+            if (! $unit instanceof EstimateGenerationProcessingUnit) {
+                return false;
+            }
+
+            $unitMetadata = is_array($unit->metadata) ? $unit->metadata : [];
+            $processingAttemptId = is_string($unitMetadata['processing_attempt_id'] ?? null)
+                ? $unitMetadata['processing_attempt_id']
+                : null;
+            $this->releasePreWireAttempts((int) $unit->id, $processingAttemptId, $now);
+            $unit->forceFill([
+                'status' => DocumentProcessingUnitStatus::Pending,
+                'attempt_count' => max(0, (int) $unit->attempt_count - 1),
+                'claim_token' => null,
+                'lease_expires_at' => null,
+                'next_dispatch_at' => null,
+                'failure_code' => null,
+                'failure_fingerprint' => null,
+                'updated_at' => $now,
+            ])->save();
+            $updated = true;
+            if ($updated) {
+                $this->pageQuery()
+                    ->where('processing_unit_id', $claim->unitId)
+                    ->where('source_version', $claim->sourceVersion)
+                    ->where('status', ManageEstimateGenerationDocumentPages::STATUS_PROCESSING)
+                    ->update([
+                        'status' => ManageEstimateGenerationDocumentPages::STATUS_QUEUED,
+                        'updated_at' => $now,
+                    ]);
+            }
+
+            return $updated;
+        }, 3);
+    }
+
     public function fail(
         DocumentProcessingUnitClaim $claim,
         string $code,
@@ -426,16 +499,34 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 : null;
             if ($updated && $circuitBreaking
                 && $this->systemicFailureCount($claim, $unit, $fingerprint, $attemptId) >= self::SYSTEMIC_FAILURE_THRESHOLD) {
-                $pendingIds = $this->scopedUnitQuery($claim)
+                $document->forceFill([
+                    'processing_control_status' => 'cancelled',
+                    'processing_control_source_version' => $claim->sourceVersion,
+                    'processing_control_attempt_id' => $attemptId,
+                    'processing_control_reason' => 'systemic_failure',
+                    'processing_control_at' => $now,
+                ])->save();
+                $stoppableIds = $this->scopedUnitQuery($claim)
                     ->where($this->attemptLineagePredicate($attemptId))
-                    ->where($this->processingRoutePredicate($unit))
-                    ->where('status', DocumentProcessingUnitStatus::Pending->value)
+                    ->whereIn('status', [
+                        DocumentProcessingUnitStatus::Pending->value,
+                        DocumentProcessingUnitStatus::Running->value,
+                    ])
                     ->lockForUpdate()
+                    ->get(['id', 'status'])
+                    ->reject(fn (EstimateGenerationProcessingUnit $candidate): bool => $candidate->status === DocumentProcessingUnitStatus::Running
+                        && $this->unitHasWireStarted((int) $candidate->id, $attemptId))
                     ->pluck('id');
-                if ($pendingIds->isNotEmpty()) {
+                if ($stoppableIds->isNotEmpty()) {
+                    foreach ($stoppableIds as $stoppableId) {
+                        $this->releasePreWireAttempts((int) $stoppableId, $attemptId, $now);
+                    }
                     $this->scopedUnitQuery($claim)
-                        ->whereKey($pendingIds)
-                        ->where('status', DocumentProcessingUnitStatus::Pending->value)
+                        ->whereKey($stoppableIds)
+                        ->whereIn('status', [
+                            DocumentProcessingUnitStatus::Pending->value,
+                            DocumentProcessingUnitStatus::Running->value,
+                        ])
                         ->update([
                             'status' => DocumentProcessingUnitStatus::Failed->value,
                             'attempt_count' => ProcessDocumentUnit::MAX_ATTEMPTS,
@@ -454,7 +545,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                         ->where('session_id', $claim->sessionId)
                         ->where('document_id', $claim->documentId)
                         ->where('source_version', $claim->sourceVersion)
-                        ->whereIn('processing_unit_id', $pendingIds)
+                        ->whereIn('processing_unit_id', $stoppableIds)
                         ->where('status', '<>', ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED)
                         ->update([
                             'status' => ManageEstimateGenerationDocumentPages::STATUS_FAILED,
@@ -495,7 +586,67 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
 
     private function terminalFailureMetadataExpression(): \Illuminate\Database\Query\Expression
     {
-        return $this->database->raw("COALESCE(metadata, '{}'::jsonb) || '{\"failure_category\":\"terminal\",\"actual_execution_count\":0}'::jsonb");
+        return $this->database->raw(
+            "COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('failure_category', 'terminal', 'actual_execution_count', attempt_count)",
+        );
+    }
+
+    private function unitHasWireStarted(int $unitId, ?string $attemptId): bool
+    {
+        if ($attemptId === null) {
+            return false;
+        }
+
+        return $this->database->table('estimate_generation_vision_physical_attempts as attempts')
+            ->join('estimate_generation_ai_role_runs as runs', function ($join): void {
+                $join->on('runs.physical_attempt_id', '=', 'attempts.attempt_id')
+                    ->where('runs.status', 'running');
+            })
+            ->where('attempts.unit_id', $unitId)
+            ->where('attempts.processing_lineage_id', $attemptId)
+            ->whereIn('attempts.state', ['wire_started', 'response_received'])
+            ->exists();
+    }
+
+    private function releasePreWireAttempts(int $unitId, ?string $attemptId, DateTimeImmutable $now): void
+    {
+        if ($attemptId === null) {
+            return;
+        }
+
+        $attemptIds = $this->database->table('estimate_generation_vision_physical_attempts')
+            ->where('unit_id', $unitId)
+            ->where('processing_lineage_id', $attemptId)
+            ->where('state', 'pre_wire')
+            ->lockForUpdate()
+            ->pluck('attempt_id');
+        if ($attemptIds->isEmpty()) {
+            return;
+        }
+
+        $this->database->table('estimate_generation_ai_role_runs')
+            ->whereIn('physical_attempt_id', $attemptIds)
+            ->where('status', 'running')
+            ->update([
+                'status' => 'failed',
+                'physical_attempt_id' => null,
+                'failure_code' => 'document_cost_limit_paused',
+                'owner_uuid' => null,
+                'lease_expires_at' => null,
+                'failed_at' => $now,
+                'updated_at' => $now,
+            ]);
+        $this->database->table('estimate_generation_vision_physical_attempts')
+            ->whereIn('attempt_id', $attemptIds)
+            ->whereNotExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('estimate_generation_ai_role_runs')
+                    ->whereColumn(
+                        'estimate_generation_ai_role_runs.physical_attempt_id',
+                        'estimate_generation_vision_physical_attempts.attempt_id',
+                    );
+            })
+            ->delete();
     }
 
     /** @return Builder<EstimateGenerationProcessingUnit> */
@@ -615,7 +766,6 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
     ): int {
         return $this->scopedUnitQuery($claim)
             ->where($this->attemptLineagePredicate($attemptId))
-            ->where($this->processingRoutePredicate($unit))
             ->where('status', DocumentProcessingUnitStatus::Failed->value)
             ->where('failure_fingerprint', $fingerprint)
             ->count();

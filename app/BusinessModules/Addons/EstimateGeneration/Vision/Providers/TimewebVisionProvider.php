@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Providers;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPhysicalAttemptIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
@@ -281,6 +282,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
                             $wireNow,
                             $wireNow->modify('+'.$leaseTtl.' seconds'),
                         );
+                    } catch (DocumentUnitProcessingException $exception) {
+                        throw $exception;
                     } catch (Throwable $exception) {
                         throw $this->physicalPersistenceFailure($model, $exception);
                     }
@@ -437,6 +440,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     }
                     $status = 'succeeded';
                 }
+            } catch (DocumentUnitProcessingException $exception) {
+                throw $exception;
             } catch (VisionContractException $exception) {
                 $status = 'malformed_response';
                 $lastException = $exception;

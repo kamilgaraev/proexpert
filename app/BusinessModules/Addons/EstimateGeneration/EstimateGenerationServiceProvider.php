@@ -741,7 +741,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(ApplyComposerCorrectionCycle::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore::class,
+            static fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore(
+                $app->make('db')->connection(),
+                new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentWireAuthorization(
+                    $app->make('db')->connection(),
+                ),
+            ),
         );
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureRecorderObserver::class, SafeLogFailureRecorderObserver::class);
