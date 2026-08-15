@@ -72,7 +72,6 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
             $ingestion = (new ArbitrationIntentIngestor)->ingest(
                 $analysis->rawObserverFacts,
                 $built['claims'],
-                $source,
             );
             $decisions = $ingestion->accepted;
             if ($decisions === [] && $ingestion->quarantined === []) {
@@ -81,10 +80,10 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
                     'reason' => 'arbitration_decisions_missing',
                 ]]);
             }
-            $questions = array_values(array_filter(array_map(
-                static fn (ArbitrationDecision $decision): ?array => $decision->question,
-                $decisions,
-            )));
+            $hasUnresolved = false;
+            foreach ($decisions as $decision) {
+                $hasUnresolved = $hasUnresolved || $decision->status === 'unresolved';
+            }
             $result = new AiRoleRunResult([
                 'schema_version' => 3,
                 'role' => AiAnalysisRole::Arbiter->value,
@@ -103,13 +102,9 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
                     'reason_code' => $decision->reasonCode,
                     'reason' => $decision->reason,
                     'canonical_claim' => $decision->canonicalClaim,
-                    'question' => $decision->question,
                 ], $decisions),
                 'quarantined_intents' => $ingestion->quarantined,
-                'result_state' => $questions !== []
-                    ? 'questions'
-                    : ($ingestion->quarantined !== [] ? 'partial' : 'ready'),
-                'questions' => $questions,
+                'result_state' => $hasUnresolved || $ingestion->quarantined !== [] ? 'partial' : 'ready',
             ], $physicalAttemptId);
             $this->runs->complete($claim->runId, $claim->ownerUuid, $result);
 

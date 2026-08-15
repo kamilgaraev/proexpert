@@ -19,6 +19,7 @@ final readonly class StopEstimateGenerationDocumentProcessing
     public function __construct(
         private AuthorizationService $authorization,
         private DocumentGenerationReadinessService $readiness,
+        private DocumentUnitAggregateReconciler $reconciler,
     ) {}
 
     public function handle(
@@ -176,6 +177,7 @@ final readonly class StopEstimateGenerationDocumentProcessing
             return [$lockedSession, $lockedDocument, 'accepted', $attemptId];
         }, 3);
 
+        $this->reconciler->reconcile((int) $lockedDocument->id, $expectedSourceVersion);
         $freshSession = $lockedSession->fresh(['documents.processingUnits']) ?? $lockedSession;
 
         return new DocumentActionResult(

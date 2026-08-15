@@ -165,7 +165,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
     }
 
     #[Test]
-    public function production_shaped_active_document_173_reports_terminal_units_cost_and_nonzero_execution_progress(): void
+    public function production_shaped_active_document_reports_execution_and_usefulness_without_public_costs(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->allows('can')->andReturnTrue();
@@ -255,9 +255,68 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
             'cancelled' => 0,
         ], $payload['processing_outcome']['counts']);
         self::assertSame(54, $payload['processing_outcome']['execution_progress_percent']);
-        self::assertSame('209.35611000', $payload['cost_journal']['spent_rub']);
-        self::assertSame('250.00000000', $payload['cost_journal']['limit_rub']);
+        self::assertSame(['completed_pages' => 12, 'total_pages' => 22, 'progress_percent' => 54], $payload['processing_outcome']['execution']);
+        self::assertSame(['usable_pages' => 3, 'total_pages' => 22], $payload['processing_outcome']['usefulness']);
+        self::assertArrayNotHasKey('cost_journal', $payload);
         self::assertContains('stop_document_processing', array_column($payload['available_actions'], 'action'));
+    }
+
+    #[Test]
+    public function stopped_document_174_reports_full_execution_and_two_usable_pages(): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturnTrue();
+        $this->app->instance(
+            EstimateGenerationDocumentActionBuilder::class,
+            new EstimateGenerationDocumentActionBuilder($authorization),
+        );
+        $document = $this->document('needs_review');
+        $document->forceFill([
+            'id' => 174,
+            'page_count' => 22,
+            'processed_page_count' => 2,
+            'progress_percent' => 100,
+            'source_version' => 'sha256:current',
+            'processing_control_status' => 'cancelled',
+            'processing_control_reason' => 'operator_stop',
+        ]);
+        $units = [];
+        $pages = [];
+        for ($page = 1; $page <= 22; $page++) {
+            $unit = new EstimateGenerationProcessingUnit;
+            $unit->forceFill([
+                'id' => 800 + $page,
+                'source_version' => 'sha256:current',
+                'status' => $page <= 2
+                    ? DocumentProcessingUnitStatus::Completed
+                    : DocumentProcessingUnitStatus::Superseded,
+                'output_count' => $page <= 2 ? 1 : 0,
+                'metadata' => $page <= 2 ? [] : ['processing_control_status' => 'cancelled'],
+            ]);
+            $units[] = $unit;
+            $pageProjection = new EstimateGenerationDocumentPage;
+            $pageProjection->forceFill([
+                'processing_unit_id' => 800 + $page,
+                'source_version' => 'sha256:current',
+                'page_number' => $page,
+                'status' => $page <= 2 ? 'ready' : 'needs_review',
+                'quality_flags' => $page <= 2 ? [] : ['processing_cancelled'],
+            ]);
+            $pages[] = $pageProjection;
+        }
+        $document->setRelation('processingUnits', new Collection($units));
+        $document->setRelation('pages', new Collection($pages));
+        $request = Request::create('/documents/174');
+        $user = $this->user(7);
+        $request->setUserResolver(static fn (): User => $user);
+
+        $payload = (new EstimateGenerationDocumentResource($document))->toArray($request);
+
+        self::assertSame('cancelled', $payload['processing_outcome']['type']);
+        self::assertSame('partial', $payload['processing_outcome']['state']);
+        self::assertSame(['completed_pages' => 22, 'total_pages' => 22, 'progress_percent' => 100], $payload['processing_outcome']['execution']);
+        self::assertSame(['usable_pages' => 2, 'total_pages' => 22], $payload['processing_outcome']['usefulness']);
+        self::assertSame('Обработка остановлена, частичный результат сохранён.', $payload['processing_outcome']['message']);
     }
 
     #[Test]

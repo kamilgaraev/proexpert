@@ -4,21 +4,16 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Questions\ClarificationQuestionProjector;
-
 final readonly class DocumentSemanticUnderstandingSummarizer
 {
     private const MAX_FACTS = 500;
 
     private const MAX_ITEMS_PER_GROUP = 128;
 
-    public function __construct(private ClarificationQuestionProjector $questionProjector = new ClarificationQuestionProjector) {}
-
     /** @param list<mixed> $payloads @return array<string, mixed> */
     public function summarize(array $payloads): array
     {
         $facts = [];
-        $questions = [];
         $recommendations = [];
         $coverage = [];
         $entityPages = [];
@@ -27,7 +22,7 @@ final readonly class DocumentSemanticUnderstandingSummarizer
         $upstreamTruncated = false;
         $factOverflow = false;
         $roleRunsComplete = true;
-        $arbitratedPages = [];
+        $arbitratedPageCount = 0;
 
         foreach ($payloads as $payload) {
             if (! is_array($payload)) {
@@ -46,7 +41,7 @@ final readonly class DocumentSemanticUnderstandingSummarizer
                     && $expectedRoles !== []
                     && array_diff($expectedRoles, array_keys($completion)) === []
                     && ! in_array(false, array_intersect_key($completion, array_flip($expectedRoles)), true);
-                $arbitratedPages[] = $payload;
+                $arbitratedPageCount++;
 
                 continue;
             }
@@ -81,9 +76,7 @@ final readonly class DocumentSemanticUnderstandingSummarizer
                 $item = [...$fact, 'page_number' => $page, 'role' => $role];
                 $facts[] = $item;
                 $factType = is_string($fact['factType'] ?? null) ? $fact['factType'] : '';
-                if ($factType === 'unresolved_question') {
-                    $questions[] = $item;
-                } elseif ($factType === 'recommendation' || $factType === 'technology_candidate') {
+                if ($factType === 'recommendation' || $factType === 'technology_candidate') {
                     $recommendations[] = $item;
                 }
                 $entityKey = is_string($fact['entityKey'] ?? null) ? $fact['entityKey'] : '';
@@ -110,27 +103,17 @@ final readonly class DocumentSemanticUnderstandingSummarizer
             }
         }
 
-        $clarificationQuestions = array_map(
-            static fn ($question): array => $question->toArray(),
-            $this->questionProjector->projectPages($arbitratedPages),
-        );
-
         return [
-            'pages_checked' => count($coverage) + count($arbitratedPages),
+            'pages_checked' => count($coverage) + $arbitratedPageCount,
             'roles' => $roles,
             'facts' => $facts,
-            'questions' => $clarificationQuestions === []
-                ? array_slice($questions, 0, self::MAX_ITEMS_PER_GROUP)
-                : $clarificationQuestions,
-            'ai_question_count' => count($clarificationQuestions),
-            'analysis_roles_complete' => $arbitratedPages !== [] && $roleRunsComplete,
+            'analysis_roles_complete' => $arbitratedPageCount > 0 && $roleRunsComplete,
             'recommendations' => array_slice($recommendations, 0, self::MAX_ITEMS_PER_GROUP),
             'coverage' => array_slice($coverage, 0, self::MAX_ITEMS_PER_GROUP),
             'cross_page_connections' => $connections,
             'quarantined_count' => $quarantined,
             'truncated' => $upstreamTruncated
                 || $factOverflow
-                || count($questions) > self::MAX_ITEMS_PER_GROUP
                 || count($recommendations) > self::MAX_ITEMS_PER_GROUP
                 || count($coverage) > self::MAX_ITEMS_PER_GROUP
                 || $connectionOverflow,

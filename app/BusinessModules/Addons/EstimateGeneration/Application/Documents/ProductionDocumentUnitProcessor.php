@@ -665,9 +665,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         ]));
         $nativePdfText = $auxiliary['native_text'];
         $pdfGeometry = $auxiliary['geometry'];
-        $questions = is_array($arbitrationResult?->payload['questions'] ?? null)
-            ? $arbitrationResult->payload['questions']
-            : [];
         $roleCompletion = [];
         foreach ($analysisPlan->observers as $profile) {
             $role = $profile->role()->value;
@@ -680,7 +677,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $analysisPlan,
             $observerPayloads,
             $arbitrationResult,
-            $questions,
             $semanticRegionSet,
         );
 
@@ -703,7 +699,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $arbitrationResult,
                 ),
                 'analysis_outcome' => $analysisOutcome,
-                'ai_questions' => $questions,
             ], JSON_THROW_ON_ERROR)),
             text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
                 static fn (array $element): string => trim((string) ($element['label'] ?? '')),
@@ -734,7 +729,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $arbitrationResult,
                 ),
                 'analysis_outcome' => $analysisOutcome,
-                'ai_questions' => $questions,
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,
                     'derivative_hash' => $preprocessed->derivativeHash,
@@ -755,7 +749,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             sourceVersion: $context->sourceVersion,
             qualitySignals: [
                 'role_completion' => $roleCompletion,
-                'unresolved_question_count' => count($questions),
                 'geometry' => [
                     'hard_blockers' => $hardGeometryWarnings,
                     'evidence_source' => 'arbitrated_observation',
@@ -798,17 +791,13 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         );
     }
 
-    /** @param array<string, array<string, mixed>> $observerPayloads @param list<mixed> $questions */
+    /** @param array<string, array<string, mixed>> $observerPayloads */
     private function analysisOutcome(
         PageAnalysisPlan $plan,
         array $observerPayloads,
         ?AiRoleRunResult $arbitration,
-        array $questions,
         \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet $semanticRegions,
     ): string {
-        if ($questions !== []) {
-            return 'partial_review';
-        }
         foreach ($observerPayloads as $payload) {
             $quarantined = $payload['observation']['quarantined_items'] ?? [];
             if (is_array($quarantined) && $quarantined !== []) {
@@ -819,7 +808,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             || ($plan->route->value === 'dense_ambiguous' && $semanticRegions->regions === [])) {
             return 'partial_review';
         }
-        if (in_array($arbitration?->payload['result_state'] ?? null, ['partial', 'questions'], true)) {
+        if (($arbitration?->payload['result_state'] ?? null) === 'partial') {
             return 'partial_review';
         }
         $decisions = is_array($arbitration?->payload['decisions'] ?? null)

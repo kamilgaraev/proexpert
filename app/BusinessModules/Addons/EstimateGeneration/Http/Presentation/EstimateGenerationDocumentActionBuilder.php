@@ -51,7 +51,10 @@ final readonly class EstimateGenerationDocumentActionBuilder
             ];
         }
         if ((string) $document->processing_control_status === 'paused'
-            && (string) $document->processing_control_reason === 'cost_limit_reached') {
+            && in_array((string) $document->processing_control_reason, [
+                'cost_limit_reached',
+                'session_cost_limit_reached',
+            ], true)) {
             $actions[] = [
                 ...$this->action($document, $session, 'confirm_document_cost', 'confirm-cost', true),
                 'source_version' => (string) $document->source_version,

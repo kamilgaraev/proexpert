@@ -9,12 +9,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContra
 final class ProjectSheetAnalysisValidator
 {
     private const ROLE_FACT_TYPES = [
-        'plan' => ['room', 'wall', 'opening', 'axis', 'dimension_chain', 'area', 'level', 'material', 'finish_zone', 'engineering_element', 'sanitary_fixture', 'furniture', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
-        'section' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'engineering_element', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
-        'facade' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
-        'explication' => ['room', 'area', 'level', 'material', 'finish_zone', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
-        'specification' => ['table', 'structural_element', 'material', 'equipment', 'quantity', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
-        'unknown' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'engineering_element', 'equipment', 'quantity', 'room', 'wall', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unresolved_question', 'recommendation'],
+        'plan' => ['room', 'wall', 'opening', 'axis', 'dimension_chain', 'area', 'level', 'material', 'finish_zone', 'engineering_element', 'sanitary_fixture', 'furniture', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
+        'section' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'engineering_element', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
+        'facade' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
+        'explication' => ['room', 'area', 'level', 'material', 'finish_zone', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
+        'specification' => ['table', 'structural_element', 'material', 'equipment', 'quantity', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
+        'unknown' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'engineering_element', 'equipment', 'quantity', 'room', 'wall', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
     ];
 
     /** @param array<string, mixed> $data @param list<string> $evidenceKeys @param list<string> $nativeReferences */

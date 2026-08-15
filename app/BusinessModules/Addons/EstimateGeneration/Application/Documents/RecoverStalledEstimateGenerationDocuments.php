@@ -91,7 +91,13 @@ final class RecoverStalledEstimateGenerationDocuments
     private function recoverReconciliation(\DateTimeInterface $minimumAge, int $limit): int
     {
         $documents = EstimateGenerationDocument::query()
-            ->whereIn('status', ['ready', 'needs_review'])
+            ->where(static function ($query): void {
+                $query->whereIn('status', ['ready', 'needs_review'])
+                    ->orWhere(static function ($cancelled): void {
+                        $cancelled->where('status', 'processing')
+                            ->where('processing_control_status', 'cancelled');
+                    });
+            })
             ->whereNotNull('source_version')
             ->where('updated_at', '<=', $minimumAge)
             ->where(function ($query): void {

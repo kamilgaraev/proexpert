@@ -11,7 +11,7 @@ use PHPUnit\Framework\TestCase;
 final class DocumentUnitOutputSemanticStateTest extends TestCase
 {
     #[Test]
-    public function semantic_state_is_derived_from_server_projected_questions_and_quarantine(): void
+    public function legacy_questions_do_not_change_document_semantic_state_but_quarantine_does(): void
     {
         $questions = new DocumentUnitOutput('questions-v1', '', normalizedPayload: [
             'document_arbitration' => ['result_state' => 'questions', 'decisions' => []],
@@ -25,7 +25,7 @@ final class DocumentUnitOutputSemanticStateTest extends TestCase
             ],
         ]);
 
-        self::assertSame('questions', $questions->semanticState());
+        self::assertSame('ready', $questions->semanticState());
         self::assertSame('partial', $partial->semanticState());
     }
 }

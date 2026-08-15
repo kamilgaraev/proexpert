@@ -7,7 +7,6 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOperationStore;
@@ -191,7 +190,7 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertSame(['geometry_scale_conflict'], $summary['items'][0]['quality_review_reasons']);
     }
 
-    public function test_multi_agent_readiness_requires_all_roles_and_resolved_questions(): void
+    public function test_multi_agent_document_readiness_requires_roles_but_ignores_legacy_questions(): void
     {
         $document = $this->qualitySignalDocument([]);
         $document->facts_summary = [
@@ -201,8 +200,8 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         ];
 
         $withQuestion = (new DocumentGenerationReadinessService)->summary(new Collection([$document]));
-        self::assertFalse($withQuestion['can_generate']);
-        self::assertSame(1, $withQuestion['ai_question_count']);
+        self::assertTrue($withQuestion['can_generate']);
+        self::assertArrayNotHasKey('ai_question_count', $withQuestion);
 
         $document->facts_summary = [...$document->facts_summary, 'ai_question_count' => 0];
         $resolved = (new DocumentGenerationReadinessService)->summary(new Collection([$document]));
@@ -210,7 +209,7 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertTrue($resolved['can_generate']);
     }
 
-    public function test_canonical_question_decision_unlocks_generation_without_rewriting_document_analysis(): void
+    public function test_document_readiness_never_reads_or_rewrites_question_answers(): void
     {
         $document = $this->qualitySignalDocument([]);
         $document->forceFill([
@@ -223,13 +222,10 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
                 'questions' => [['code' => 'wall_material_required']],
             ],
         ]);
-        $registry = new FixedEstimateClarificationAnswerRegistry(['wall_material_required']);
+        $summary = (new DocumentGenerationReadinessService)->summary(new Collection([$document]));
 
-        $summary = (new DocumentGenerationReadinessService(null, null, null, $registry))
-            ->summary(new Collection([$document]));
-
-        self::assertSame(0, $summary['ai_question_count']);
-        self::assertSame(0, $summary['items'][0]['ai_question_count']);
+        self::assertArrayNotHasKey('ai_question_count', $summary);
+        self::assertArrayNotHasKey('ai_question_count', $summary['items'][0]);
         self::assertTrue($summary['can_generate']);
         self::assertSame(1, $document->facts_summary['ai_question_count']);
     }
@@ -400,16 +396,5 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
             'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot),
             'snapshot' => $snapshot,
         ], 17);
-    }
-}
-
-final readonly class FixedEstimateClarificationAnswerRegistry implements EstimateClarificationAnswerRegistry
-{
-    /** @param list<string> $keys */
-    public function __construct(private array $keys) {}
-
-    public function answeredKeys(int $organizationId, int $projectId, int $sessionId): array
-    {
-        return $this->keys;
     }
 }

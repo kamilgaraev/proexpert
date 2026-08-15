@@ -39,6 +39,25 @@ final class RetryEstimateGenerationSessionTest extends TestCase
     }
 
     #[Test]
+    public function session_cost_confirmation_increments_only_the_session_guard_before_retry(): void
+    {
+        $session = $this->failed(EstimateGenerationStatus::Generating);
+        $session->forceFill([
+            'failure_code' => 'session_cost_limit_reached',
+            'analysis_payload' => [
+                'internal_cost_guard' => ['confirmation_version' => 2],
+            ],
+        ]);
+        [$action, , $dispatcher] = $this->action($session);
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(3, data_get($result->analysis_payload, 'internal_cost_guard.confirmation_version'));
+        self::assertNotEmpty(data_get($result->analysis_payload, 'internal_cost_guard.confirmed_at'));
+        self::assertSame([[71, 4, 'attempt-new']], $dispatcher->generation);
+    }
+
+    #[Test]
     public function active_generating_session_can_be_restarted_with_a_new_fenced_attempt(): void
     {
         [$action, , $dispatcher] = $this->action($this->generating());

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 use InvalidArgumentException;
 
@@ -18,7 +17,7 @@ final readonly class ArbitrationIntentIngestor
      * @param  list<mixed>  $intents
      * @param  list<ObservationClaim>  $claims
      */
-    public function ingest(array $intents, array $claims, VisionDocumentInput $source): ArbitrationIntentIngestionResult
+    public function ingest(array $intents, array $claims): ArbitrationIntentIngestionResult
     {
         if (! array_is_list($intents) || count($intents) > 64) {
             throw new VisionContractException('arbitration_transport_unbounded');
@@ -36,7 +35,7 @@ final readonly class ArbitrationIntentIngestor
                 throw new VisionContractException('arbitration_scope_override_attempted');
             }
             try {
-                $accepted[] = $this->project($intent, $claims, $source);
+                $accepted[] = $this->project($intent, $claims);
             } catch (InvalidArgumentException $exception) {
                 $quarantined[] = ['index' => $index, 'reason' => $exception->getMessage()];
             }
@@ -46,7 +45,7 @@ final readonly class ArbitrationIntentIngestor
     }
 
     /** @param array<string,mixed> $intent @param list<ObservationClaim> $claims */
-    private function project(array $intent, array $claims, VisionDocumentInput $source): ArbitrationDecision
+    private function project(array $intent, array $claims): ArbitrationDecision
     {
         $claimsById = [];
         $allowedEvidence = [];
@@ -108,12 +107,6 @@ final readonly class ArbitrationIntentIngestor
             'unit' => $claim->unit,
             'source_claim_id' => $claim->id,
         ];
-        $question = $status === 'unresolved'
-            ? $this->question($intent['question'] ?? null, $claimId, $evidence, $source)
-            : null;
-        if ($status !== 'unresolved' && ($intent['question'] ?? null) !== null) {
-            throw new InvalidArgumentException('arbitration_question_status_invalid');
-        }
 
         return new ArbitrationDecision(
             $claimId,
@@ -122,47 +115,7 @@ final readonly class ArbitrationIntentIngestor
             array_values($evidence),
             'arbiter_reason_'.substr(hash('sha256', $claimId.'|'.trim($reason)), 0, 16),
             $canonicalClaim,
-            $question,
             trim($reason),
         );
-    }
-
-    /** @param list<string> $evidence */
-    private function question(mixed $question, string $claimId, array $evidence, VisionDocumentInput $source): array
-    {
-        if (! is_array($question) || array_is_list($question)) {
-            throw new InvalidArgumentException('arbitration_question_invalid');
-        }
-        $texts = [];
-        foreach (['subject', 'reason', 'impact', 'recommendation'] as $field) {
-            $value = $question[$field] ?? null;
-            if (! is_string($value) || trim($value) === '' || mb_strlen($value) > 1000) {
-                throw new InvalidArgumentException('arbitration_question_invalid');
-            }
-            $texts[$field] = trim($value);
-        }
-        $choices = $question['choices'] ?? [];
-        if (! is_array($choices) || ! array_is_list($choices) || count($choices) > 8) {
-            throw new InvalidArgumentException('arbitration_question_invalid');
-        }
-        foreach ($choices as $choice) {
-            if (! is_string($choice) || trim($choice) === '' || mb_strlen($choice) > 200) {
-                throw new InvalidArgumentException('arbitration_question_invalid');
-            }
-        }
-
-        return [
-            'code' => 'arbiter_question_'.substr(hash('sha256', $claimId.'|'.$texts['subject']), 0, 16),
-            ...$texts,
-            'choices' => array_values($choices),
-            'source_locator' => [
-                'page_id' => $source->pageId,
-                'page_number' => $source->pageNumber,
-                'processing_unit_id' => $source->processingUnitId,
-                'source_version' => $source->sourceVersion,
-                'coordinate_space' => 'normalized_derivative_v1',
-                'evidence_refs' => array_values($evidence),
-            ],
-        ];
     }
 }

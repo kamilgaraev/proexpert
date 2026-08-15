@@ -316,9 +316,8 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
         $routing = $output->normalizedPayload['sheet_analysis_routing'] ?? null;
         $targetedReview = is_array($routing) && ($routing['needs_review'] ?? false) === true;
         $semanticState = $output->semanticState();
-        $needsReview = $targetedReview || $semanticState !== 'ready';
+        $needsReview = $targetedReview;
         $qualityFlags = match (true) {
-            $semanticState === 'questions' => ['ai_questions_pending'],
             $semanticState === 'partial' => ['ai_partial_result'],
             $targetedReview => ['targeted_analysis_limited'],
             default => [],
@@ -379,7 +378,10 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 ->first();
             if (! $document instanceof EstimateGenerationDocument
                 || (string) $document->processing_control_status !== 'paused'
-                || (string) $document->processing_control_reason !== 'cost_limit_reached') {
+                || ! in_array((string) $document->processing_control_reason, [
+                    'cost_limit_reached',
+                    'session_cost_limit_reached',
+                ], true)) {
                 return false;
             }
 

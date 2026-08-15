@@ -13,6 +13,7 @@ final class TimewebRerankWireClient implements RerankWireClient
 {
     public function __construct(
         private readonly TimewebChatCompletionPayloadFactory $payloadFactory,
+        private readonly SessionAiCostGuard $costGuard,
     ) {}
 
     public function provider(): string
@@ -22,6 +23,14 @@ final class TimewebRerankWireClient implements RerankWireClient
 
     public function call(string $model, array $messages, array $options): array
     {
+        $scope = $options['estimate_generation_scope'] ?? null;
+        if (is_array($scope)) {
+            $this->costGuard->authorize(
+                (int) ($scope['organization_id'] ?? 0),
+                (int) ($scope['project_id'] ?? 0),
+                (int) ($scope['session_id'] ?? 0),
+            );
+        }
         $apiKey = trim((string) config('ai-assistant.llm.timeweb.api_key', ''));
         if ($apiKey === '') {
             throw new RuntimeException('reranker_not_configured');

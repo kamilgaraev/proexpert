@@ -94,26 +94,6 @@ final readonly class AnalysisBasisPayloadService
 
             return $this->questionPayload($id, $question);
         }
-        $rows = $this->database->table('estimate_generation_document_pages as page')
-            ->join('estimate_generation_documents as document', 'document.id', '=', 'page.document_id')
-            ->where('document.organization_id', $organizationId)
-            ->where('document.project_id', $projectId)
-            ->where('document.session_id', $sessionId)
-            ->where('document.status', '<>', 'ignored')
-            ->whereColumn('page.source_version', 'document.source_version')
-            ->where('page.status', '<>', 'excluded')
-            ->orderBy('document.id')
-            ->orderBy('page.page_number')
-            ->limit(10_000)
-            ->get(['page.normalized_payload']);
-        foreach ($rows as $row) {
-            $payload = $this->decodeObject($row->normalized_payload);
-            foreach (is_array($payload['ai_questions'] ?? null) ? $payload['ai_questions'] : [] as $question) {
-                if (is_array($question) && (string) ($question['code'] ?? '') === $id) {
-                    return $this->questionPayload($id, $question);
-                }
-            }
-        }
 
         return null;
     }

@@ -176,15 +176,18 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
             }
             $this->sessions->reconcile($session);
         } catch (Throwable $error) {
-            $this->documentQuery()
-                ->whereKey($documentId)
-                ->where('source_version', $sourceVersion)
-                ->where('units_reconcile_claim_token', $token)
-                ->update([
-                    'units_reconcile_claim_token' => null,
-                    'units_reconcile_lease_expires_at' => null,
-                    'updated_at' => now(),
-                ]);
+            try {
+                $this->documentQuery()
+                    ->whereKey($documentId)
+                    ->where('source_version', $sourceVersion)
+                    ->where('units_reconcile_claim_token', $token)
+                    ->update([
+                        'units_reconcile_claim_token' => null,
+                        'units_reconcile_lease_expires_at' => null,
+                        'updated_at' => now(),
+                    ]);
+            } catch (Throwable) {
+            }
 
             throw $error;
         }

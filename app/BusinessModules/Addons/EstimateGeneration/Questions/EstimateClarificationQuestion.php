@@ -20,7 +20,7 @@ final readonly class EstimateClarificationQuestion
     ) {
         if (preg_match('/^[a-z][a-z0-9_]{1,79}$/D', $code) !== 1
             || trim($subject) === '' || mb_strlen($subject) > 160
-            || count($choices) < 3 || count($choices) > 10
+            || count($choices) < 2 || count($choices) > 10
             || $sourceLocator === [] || array_is_list($sourceLocator)) {
             throw new InvalidArgumentException('estimate_clarification_question_invalid');
         }

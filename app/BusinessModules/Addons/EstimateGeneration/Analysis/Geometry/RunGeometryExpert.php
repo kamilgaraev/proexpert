@@ -63,7 +63,7 @@ final readonly class RunGeometryExpert implements GeometryExpertRunner
             $result = new GeometryExpertResult(
                 $calculated->quantities,
                 $calculated->conflicts,
-                $calculated->questions,
+                $calculated->limitations,
                 $calculated->skippedSheets,
                 $calculated->quarantinedIntents,
                 $physicalAttemptId,

@@ -12,8 +12,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
-use InvalidArgumentException;
 use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
 
@@ -49,7 +49,7 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
     }
 
     /** @param array<string, mixed> $context
-     *  @return array<string, mixed>
+     * @return array<string, mixed>
      */
     public function review(array $context): array
     {
@@ -105,6 +105,11 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
+                'estimate_generation_scope' => [
+                    'organization_id' => $operation->organizationId,
+                    'project_id' => $operation->projectId,
+                    'session_id' => $operation->sessionId,
+                ],
             ]);
             $content = $this->normalizedContent((string) ($response['content'] ?? ''));
             $decoded = json_decode($content, true);

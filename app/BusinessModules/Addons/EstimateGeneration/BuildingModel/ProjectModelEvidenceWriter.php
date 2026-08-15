@@ -165,7 +165,6 @@ final readonly class ProjectModelEvidenceWriter
             evidenceRefs: $claim->evidenceRef === null ? [] : [$claim->evidenceRef],
             reasonCode: 'independent_observation_preserved',
             canonicalClaim: null,
-            question: null,
         ), $claims);
 
         $this->writeArbitration($claims, $decisions, $documentId, $pageNumber);

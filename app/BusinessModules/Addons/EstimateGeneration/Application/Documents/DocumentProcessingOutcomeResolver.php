@@ -32,7 +32,6 @@ final readonly class DocumentProcessingOutcomeResolver
         ];
         $hasTerminalSystemFailure = false;
         $hasRecoverableSystemFailure = false;
-        $hasQuestionReview = false;
         $hasPartialReview = false;
         foreach ($pages as $page) {
             $pageStatus = (string) ($page['status'] ?? 'queued');
@@ -47,7 +46,6 @@ final readonly class DocumentProcessingOutcomeResolver
             $metadata = is_array($unit['metadata'] ?? null) ? $unit['metadata'] : [];
             $category = $metadata['failure_category'] ?? null;
             $qualityFlags = is_array($page['quality_flags'] ?? null) ? $page['quality_flags'] : [];
-            $hasQuestionReview = $hasQuestionReview || in_array('ai_questions_pending', $qualityFlags, true);
             $hasPartialReview = $hasPartialReview || in_array('ai_partial_result', $qualityFlags, true);
 
             if (in_array($pageStatus, ['queued', 'processing'], true)
@@ -62,7 +60,8 @@ final readonly class DocumentProcessingOutcomeResolver
                 && (int) ($unit['output_count'] ?? 0) > 0
                 && in_array($pageStatus, ['ready', 'needs_review'], true)) {
                 $counts['ready']++;
-                if ($category === 'user_action_required' || $pageStatus === 'needs_review') {
+                $semanticPartial = in_array('ai_partial_result', $qualityFlags, true);
+                if ($category === 'user_action_required' || ($pageStatus === 'needs_review' && ! $semanticPartial)) {
                     $counts['needs_user_action']++;
                 }
             } else {
@@ -99,10 +98,9 @@ final readonly class DocumentProcessingOutcomeResolver
                 $counts['ready'] > 0 && $counts['system_failed'] > 0 => 'partial',
                 $type === 'cancelled' && $counts['ready'] > 0 => 'partial',
                 $type === 'cancelled' => 'cancelled',
-                $hasQuestionReview => 'questions',
                 $hasPartialReview => 'partial',
                 in_array($type, ['system_failure', 'temporary_failure'], true) => 'system_failure',
-                $counts['needs_user_action'] > 0 => 'questions',
+                $counts['needs_user_action'] > 0 => 'partial',
                 default => 'ready',
             },
             errorCode: match ($type) {

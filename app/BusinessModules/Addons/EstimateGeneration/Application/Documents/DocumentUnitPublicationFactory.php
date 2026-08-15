@@ -80,7 +80,6 @@ final readonly class DocumentUnitPublicationFactory
                     ? mb_substr($item['reason_code'], 0, 120)
                     : 'arbiter_decision',
                 canonicalClaim: is_array($item['canonical_claim'] ?? null) ? $item['canonical_claim'] : null,
-                question: is_array($item['question'] ?? null) ? $item['question'] : null,
                 reason: is_string($item['reason'] ?? null) ? mb_substr($item['reason'], 0, 500) : '',
             );
             $decidedClaims[$claimId] = true;
@@ -110,7 +109,6 @@ final readonly class DocumentUnitPublicationFactory
             evidenceRefs: $claim->evidenceRef === null ? [] : [$claim->evidenceRef],
             reasonCode: 'independent_observation_preserved',
             canonicalClaim: null,
-            question: null,
         );
     }
 }

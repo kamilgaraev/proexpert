@@ -147,7 +147,7 @@ final class GeometryExpertTest extends TestCase
         self::assertSame('105', $result->quantities[0]['value']);
         self::assertSame('geometry-formulas:v2', $result->quantities[0]['formula_version']);
         self::assertSame(['evidence:101', 'evidence:102'], $result->quantities[0]['evidence_ids']);
-        self::assertSame([], $result->questions);
+        self::assertSame([], $result->limitations);
     }
 
     #[Test]
@@ -193,8 +193,9 @@ final class GeometryExpertTest extends TestCase
 
         self::assertSame([], $result->quantities);
         self::assertSame('partial_opening_geometry', $result->conflicts[0]['code']);
-        self::assertSame('Не определена высота одного из проёмов', $result->questions[0]['subject']);
-        self::assertSame(5, $result->questions[0]['source_locator']['page_number']);
+        self::assertSame('partial_opening_geometry', $result->limitations[0]['type']);
+        self::assertSame('opening_height', $result->limitations[0]['missing_operand']);
+        self::assertSame(5, $result->limitations[0]['source_locator']['page_number']);
     }
 
     #[Test]
@@ -247,7 +248,7 @@ final class GeometryExpertTest extends TestCase
     }
 
     #[Test]
-    public function duplicated_physical_locator_is_not_counted_twice_and_creates_a_concrete_question(): void
+    public function duplicated_physical_locator_is_not_counted_twice_and_creates_a_typed_limitation(): void
     {
         $result = $this->calculator()->calculate($this->input([
             $this->sheet('plan', 4, [
@@ -260,8 +261,8 @@ final class GeometryExpertTest extends TestCase
 
         self::assertSame([], $result->quantities);
         self::assertSame('duplicate_physical_locator', $result->conflicts[0]['code']);
-        self::assertSame('Повторно использован один и тот же размер', $result->questions[0]['subject']);
-        self::assertSame(4, $result->questions[0]['source_locator']['page_number']);
+        self::assertSame('duplicate_geometry_source', $result->limitations[0]['type']);
+        self::assertSame(4, $result->limitations[0]['source_locator']['page_number']);
     }
 
     #[Test]
@@ -275,7 +276,7 @@ final class GeometryExpertTest extends TestCase
 
         self::assertSame([], $result->quantities);
         self::assertSame(['page:7'], $result->skippedSheets);
-        self::assertSame([], $result->questions);
+        self::assertSame([], $result->limitations);
     }
 
     #[Test]
@@ -298,8 +299,8 @@ final class GeometryExpertTest extends TestCase
 
         self::assertSame([], $result->quantities);
         self::assertSame('cross_sheet_geometry_conflict', $result->conflicts[0]['code']);
-        self::assertSame([4, 9], $result->questions[0]['source_locator']['page_numbers']);
-        self::assertSame('Площадь этажа различается между листами', $result->questions[0]['subject']);
+        self::assertSame([4, 9], $result->limitations[0]['source_locator']['page_numbers']);
+        self::assertSame('cross_sheet_geometry_conflict', $result->limitations[0]['type']);
     }
 
     #[Test]
@@ -333,7 +334,7 @@ final class GeometryExpertTest extends TestCase
         self::assertSame([
             ['document_id' => 31, 'page_id' => 41, 'page_number' => 4, 'source_version' => 'sha256:'.str_repeat('a', 64)],
             ['document_id' => 32, 'page_id' => 49, 'page_number' => 9, 'source_version' => 'sha256:'.str_repeat('b', 64)],
-        ], $result->questions[0]['source_locator']['sources']);
+        ], $result->limitations[0]['source_locator']['sources']);
     }
 
     #[Test]
@@ -542,16 +543,7 @@ final class GeometryExpertTest extends TestCase
 
     private function calculator(): DeterministicGeometryCalculator
     {
-        $messages = require dirname(__DIR__, 4).'/lang/ru/estimate_generation.php';
-
-        return new DeterministicGeometryCalculator(static function (string $key) use ($messages): string {
-            $value = $messages;
-            foreach (array_slice(explode('.', $key), 1) as $segment) {
-                $value = is_array($value) ? ($value[$segment] ?? null) : null;
-            }
-
-            return is_string($value) ? $value : $key;
-        });
+        return new DeterministicGeometryCalculator;
     }
 
     /** @return array<string,mixed> */

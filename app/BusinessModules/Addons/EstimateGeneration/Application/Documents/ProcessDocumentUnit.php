@@ -108,7 +108,10 @@ final readonly class ProcessDocumentUnit
             }
         } catch (Throwable $error) {
             if ($error instanceof DocumentUnitProcessingException
-                && $error->safeCode === 'document_cost_limit_reached'
+                && in_array($error->safeCode, [
+                    'document_cost_limit_reached',
+                    'session_cost_limit_reached',
+                ], true)
                 && $this->store->pauseForCostConfirmation($claim, now()->toDateTimeImmutable())) {
                 $this->reconciler->reconcile($context->documentId, $sourceVersion);
 

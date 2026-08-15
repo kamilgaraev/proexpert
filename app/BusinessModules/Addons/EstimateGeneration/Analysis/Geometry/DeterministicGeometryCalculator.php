@@ -8,29 +8,17 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQua
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
-use Closure;
 use InvalidArgumentException;
-
-use function trans_message;
 
 final class DeterministicGeometryCalculator
 {
     public const FORMULA_VERSION = 'geometry-formulas:v2';
 
-    private readonly Closure $translator;
-
-    public function __construct(?callable $translator = null)
-    {
-        $this->translator = $translator === null
-            ? static fn (string $key): string => trans_message($key)
-            : Closure::fromCallable($translator);
-    }
-
     public function calculate(GeometryExpertInput $input): GeometryExpertResult
     {
         $quantities = [];
         $conflicts = [];
-        $questions = [];
+        $limitations = [];
         $skippedSheets = [];
         $quarantinedIntents = [];
         foreach ($input->sheets as $sheet) {
@@ -62,16 +50,10 @@ final class DeterministicGeometryCalculator
                         'quantity_id' => $interpretation['quantity_id'] ?? null,
                         'physical_locators' => array_values(array_unique($locators)),
                     ];
-                    $questions[] = [
-                        'code' => $this->questionCode('duplicate_geometry_source', $interpretation, $locators),
-                        'subject' => $this->text('estimate_generation.geometry_expert.duplicate.subject'),
-                        'reason' => $this->text('estimate_generation.geometry_expert.duplicate.reason'),
-                        'impact' => $this->text('estimate_generation.geometry_expert.duplicate.impact'),
-                        'recommendation' => $this->text('estimate_generation.geometry_expert.duplicate.recommendation'),
-                        'choices' => [
-                            $this->text('estimate_generation.geometry_expert.duplicate.choice_once'),
-                            $this->text('estimate_generation.geometry_expert.duplicate.choice_other'),
-                        ],
+                    $limitations[] = [
+                        'code' => $this->limitationCode('duplicate_geometry_source', $interpretation, $locators),
+                        'type' => 'duplicate_geometry_source',
+                        'quantity_id' => $interpretation['quantity_id'] ?? null,
                         'source_locator' => [
                             'page_number' => $sheet['page_number'] ?? null,
                             'physical_locators' => array_values(array_unique($locators)),
@@ -87,18 +69,11 @@ final class DeterministicGeometryCalculator
                         'quantity_id' => $interpretation['quantity_id'] ?? null,
                         'missing_operand' => $partialOpening,
                     ];
-                    $questions[] = [
-                        'code' => $this->questionCode('partial_opening_geometry', $interpretation, $locators),
-                        'subject' => $this->text($partialOpening === 'opening_height'
-                            ? 'estimate_generation.geometry_expert.partial_opening.missing_height'
-                            : 'estimate_generation.geometry_expert.partial_opening.missing_width'),
-                        'reason' => $this->text('estimate_generation.geometry_expert.partial_opening.reason'),
-                        'impact' => $this->text('estimate_generation.geometry_expert.partial_opening.impact'),
-                        'recommendation' => $this->text('estimate_generation.geometry_expert.partial_opening.recommendation'),
-                        'choices' => [
-                            $this->text('estimate_generation.geometry_expert.partial_opening.choice_specify'),
-                            $this->text('estimate_generation.geometry_expert.partial_opening.choice_ignore'),
-                        ],
+                    $limitations[] = [
+                        'code' => $this->limitationCode('partial_opening_geometry', $interpretation, $locators),
+                        'type' => 'partial_opening_geometry',
+                        'quantity_id' => $interpretation['quantity_id'] ?? null,
+                        'missing_operand' => $partialOpening,
                         'source_locator' => $this->sheetSourceLocator($sheet, [
                             'physical_locators' => array_values(array_unique($locators)),
                         ]),
@@ -130,11 +105,11 @@ final class DeterministicGeometryCalculator
             }
         }
 
-        [$quantities, $crossSheetConflicts, $crossSheetQuestions] = $this->reconcile($quantities);
+        [$quantities, $crossSheetConflicts, $crossSheetLimitations] = $this->reconcile($quantities);
         $conflicts = [...$conflicts, ...$crossSheetConflicts];
-        $questions = [...$questions, ...$crossSheetQuestions];
+        $limitations = [...$limitations, ...$crossSheetLimitations];
 
-        return new GeometryExpertResult($quantities, $conflicts, $questions, $skippedSheets, $quarantinedIntents);
+        return new GeometryExpertResult($quantities, $conflicts, $limitations, $skippedSheets, $quarantinedIntents);
     }
 
     /**
@@ -144,7 +119,7 @@ final class DeterministicGeometryCalculator
     {
         $candidates = [];
         $conflicts = [];
-        $questions = [];
+        $limitations = [];
         $skipped = [];
         $quarantined = [];
         foreach ($pages as $page) {
@@ -166,16 +141,16 @@ final class DeterministicGeometryCalculator
                 ];
             }
             $conflicts = [...$conflicts, ...$result->conflicts];
-            $questions = [...$questions, ...$result->questions];
+            $limitations = [...$limitations, ...$result->limitations];
             $skipped = [...$skipped, ...$result->skippedSheets];
             $quarantined = [...$quarantined, ...$result->quarantinedIntents];
         }
-        [$quantities, $crossConflicts, $crossQuestions] = $this->reconcile($candidates);
+        [$quantities, $crossConflicts, $crossLimitations] = $this->reconcile($candidates);
 
         return new GeometryExpertResult(
             $quantities,
             [...$conflicts, ...$crossConflicts],
-            [...$questions, ...$crossQuestions],
+            [...$limitations, ...$crossLimitations],
             array_values(array_unique($skipped)),
             $quarantined,
         );
@@ -491,7 +466,7 @@ final class DeterministicGeometryCalculator
         }
         $quantities = [];
         $conflicts = [];
-        $questions = [];
+        $limitations = [];
         foreach ($groups as $quantityId => $group) {
             usort($group, static fn (array $left, array $right): int => json_encode(
                 $left['source_locator'] ?? [],
@@ -536,27 +511,16 @@ final class DeterministicGeometryCalculator
                 'values' => $values,
                 'page_numbers' => $pages,
             ];
-            $questions[] = [
+            $limitations[] = [
                 'code' => 'cross_sheet_geometry_'.substr(hash('sha256', (string) $quantityId), 0, 16),
-                'subject' => $this->text($group[0]['quantity']['formula_id'] === 'floor_area'
-                    ? 'estimate_generation.geometry_expert.cross_sheet.floor_subject'
-                    : 'estimate_generation.geometry_expert.cross_sheet.geometry_subject'),
-                'reason' => $this->text('estimate_generation.geometry_expert.cross_sheet.reason'),
-                'impact' => $this->text('estimate_generation.geometry_expert.cross_sheet.impact'),
-                'recommendation' => $this->text('estimate_generation.geometry_expert.cross_sheet.recommendation'),
-                'choices' => array_map(
-                    fn (string $value): string => str_replace(
-                        ':value',
-                        $value,
-                        $this->text('estimate_generation.geometry_expert.cross_sheet.choice_value'),
-                    ),
-                    $values,
-                ),
+                'type' => 'cross_sheet_geometry_conflict',
+                'quantity_id' => $quantityId,
+                'values' => $values,
                 'source_locator' => ['page_numbers' => $pages, 'sources' => array_values($sources)],
             ];
         }
 
-        return [$quantities, $conflicts, $questions];
+        return [$quantities, $conflicts, $limitations];
     }
 
     /** @param list<array<string,mixed>> $operands @return list<array<string,mixed>> */
@@ -602,7 +566,7 @@ final class DeterministicGeometryCalculator
     }
 
     /** @param array<string,mixed> $interpretation @param list<mixed> $locators */
-    private function questionCode(string $prefix, array $interpretation, array $locators): string
+    private function limitationCode(string $prefix, array $interpretation, array $locators): string
     {
         return $prefix.'_'.substr(hash('sha256', json_encode([
             $interpretation['quantity_id'] ?? null,
@@ -620,10 +584,5 @@ final class DeterministicGeometryCalculator
             'source_version' => $sheet['source_version'] ?? null,
             ...$extra,
         ], static fn (mixed $value): bool => $value !== null && $value !== []);
-    }
-
-    private function text(string $key): string
-    {
-        return ($this->translator)($key);
     }
 }
