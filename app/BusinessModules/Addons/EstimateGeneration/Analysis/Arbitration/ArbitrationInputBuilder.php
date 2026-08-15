@@ -21,13 +21,14 @@ final class ArbitrationInputBuilder
     public function build(VisionDocumentInput $source, array $observerRuns, Closure $onPhysicalAttemptReserved): array
     {
         $roles = array_keys($observerRuns);
-        if (! in_array($roles, [
-            ['observer_literal', 'observer_construction'],
-            ['observer_literal', 'observer_construction', 'observer_risk'],
-        ], true)) {
+        if ($roles !== ['observer_literal', 'observer_construction', 'observer_risk']) {
             throw new InvalidArgumentException('arbitration_requires_independent_observers');
         }
-        $claims = $this->claims($source, $observerRuns);
+        $batch = $this->claimBatch($source, $observerRuns);
+        $claims = $batch->claims;
+        if ($claims === []) {
+            throw new InvalidArgumentException('arbitration_claims_missing');
+        }
         $compact = array_map(static fn (ObservationClaim $claim): array => [
             'id' => $claim->id,
             'role' => $claim->observerRole,
@@ -45,6 +46,7 @@ final class ArbitrationInputBuilder
                 'source_version' => $source->sourceVersion,
                 'minority_evidence_required' => true,
                 'claims' => $compact,
+                'quarantined_items' => $batch->quarantined,
             ],
         ];
 
@@ -98,12 +100,25 @@ final class ArbitrationInputBuilder
      */
     public function claims(VisionDocumentInput $source, array $observerRuns): array
     {
+        $batch = $this->claimBatch($source, $observerRuns);
+        if ($batch->claims === []) {
+            throw new InvalidArgumentException('arbitration_claims_missing');
+        }
+
+        return $batch->claims;
+    }
+
+    /** @param array<string,AiRoleRunResult> $observerRuns */
+    public function claimBatch(VisionDocumentInput $source, array $observerRuns): ObservationClaimBatch
+    {
         $roles = array_keys($observerRuns);
         if ($roles === [] || ! array_is_list($roles)
             || array_diff($roles, ['observer_literal', 'observer_construction', 'observer_risk']) !== []) {
             throw new InvalidArgumentException('observer_roles_invalid');
         }
         $claims = [];
+        $quarantined = [];
+        $rawClaimCount = 0;
         foreach ($roles as $role) {
             $payload = $observerRuns[$role]->payload;
             $origin = $payload['source'] ?? null;
@@ -117,9 +132,15 @@ final class ArbitrationInputBuilder
                 throw new InvalidArgumentException('arbitration_observer_scope_invalid');
             }
             $evidence = [];
-            foreach ($payload['evidence'] as $item) {
+            foreach ($payload['evidence'] as $evidenceIndex => $item) {
                 if (! is_array($item) || ! is_string($item['key'] ?? null) || ! is_array($item['locator'] ?? null)) {
-                    throw new InvalidArgumentException('arbitration_observer_evidence_invalid');
+                    $quarantined[] = [
+                        'role' => $role,
+                        'index' => is_int($evidenceIndex) ? $evidenceIndex : null,
+                        'reason_code' => 'observer_evidence_invalid',
+                    ];
+
+                    continue;
                 }
                 $key = str_replace('observer_', '', $role).':'.$item['key'];
                 $evidence[$key] = [
@@ -130,28 +151,47 @@ final class ArbitrationInputBuilder
                 ];
             }
             foreach ($payload['claims'] as $index => $claim) {
-                if (! is_array($claim) || count($claims) >= 192) {
+                $rawClaimCount++;
+                if ($rawClaimCount > 192) {
                     throw new InvalidArgumentException('arbitration_claims_unbounded');
+                }
+                if (! is_array($claim)) {
+                    $quarantined[] = [
+                        'role' => $role,
+                        'index' => is_int($index) ? $index : null,
+                        'reason_code' => 'observer_claim_invalid',
+                    ];
+
+                    continue;
                 }
                 if (is_string($claim['evidenceRef'] ?? null)) {
                     $claim['evidenceRef'] = str_replace('observer_', '', $role).':'.$claim['evidenceRef'];
                 }
-                $claims[] = ObservationClaim::fromObserverPayload(
-                    $role,
-                    (int) $index,
-                    $claim,
-                    $evidence,
-                    $source->organizationId,
-                    $source->projectId,
-                    $source->sessionId,
-                    $source->sourceVersion,
-                );
+                try {
+                    $claims[] = ObservationClaim::fromObserverPayload(
+                        $role,
+                        (int) $index,
+                        $claim,
+                        $evidence,
+                        $source->organizationId,
+                        $source->projectId,
+                        $source->sessionId,
+                        $source->sourceVersion,
+                    );
+                } catch (InvalidArgumentException $exception) {
+                    $quarantined[] = [
+                        'role' => $role,
+                        'index' => is_int($index) ? $index : null,
+                        'reason_code' => match ($exception->getMessage()) {
+                            'observation_claim_locator_out_of_scope' => 'observer_claim_evidence_unusable',
+                            'observation_claim_value_invalid' => 'observer_claim_value_invalid',
+                            default => 'observer_claim_invalid',
+                        },
+                    ];
+                }
             }
         }
-        if ($claims === []) {
-            throw new InvalidArgumentException('arbitration_claims_missing');
-        }
 
-        return $claims;
+        return new ObservationClaimBatch($claims, $quarantined);
     }
 }

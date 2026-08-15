@@ -105,6 +105,35 @@ final class AiRoleRunPostgresTest extends TestCase
         }
     }
 
+    public function test_stale_role_with_a_durable_provider_response_is_reclaimed_for_local_replay(): void
+    {
+        [$connection, $schema] = $this->fixture();
+
+        try {
+            $repository = new EloquentAiRoleRunRepository($connection, leaseSeconds: 60);
+            $input = $this->input('sha256:'.str_repeat('f', 64));
+            $owner = '11111111-1111-4111-8111-111111111111';
+            $successor = '22222222-2222-4222-8222-222222222222';
+            $claim = $repository->claim($input, $owner);
+            $attemptId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+            $repository->startPhysicalAttempt($claim->runId, $owner, $attemptId);
+            $connection->table('estimate_generation_ai_role_runs')->where('id', $claim->runId)->update([
+                'lease_expires_at' => new DateTimeImmutable('-1 minute'),
+            ]);
+
+            $recovered = $repository->claim($input, $successor);
+
+            self::assertSame('owned', $recovered->disposition);
+            self::assertSame($successor, $recovered->ownerUuid);
+            self::assertSame($attemptId, $connection->table('estimate_generation_ai_role_runs')
+                ->where('id', $claim->runId)->value('physical_attempt_id'));
+            self::assertSame('running', $connection->table('estimate_generation_ai_role_runs')
+                ->where('id', $claim->runId)->value('status'));
+        } finally {
+            $this->cleanup($connection, $schema);
+        }
+    }
+
     public function test_current_lookup_is_tenant_scoped_and_completed_payload_is_bounded_by_postgresql(): void
     {
         [$connection, $schema] = $this->fixture();
@@ -217,7 +246,10 @@ final class AiRoleRunPostgresTest extends TestCase
             CREATE TABLE estimate_generation_sessions (id bigint PRIMARY KEY);
             CREATE TABLE estimate_generation_documents (id bigint PRIMARY KEY);
             CREATE TABLE estimate_generation_document_pages (id bigint PRIMARY KEY);
-            CREATE TABLE estimate_generation_vision_physical_attempts (attempt_id uuid PRIMARY KEY);
+            CREATE TABLE estimate_generation_vision_physical_attempts (
+                attempt_id uuid PRIMARY KEY,
+                state varchar(32) NOT NULL
+            );
             SQL);
         $migration = require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000100_create_estimate_generation_ai_role_runs.php');
         $migration->up();
@@ -227,8 +259,9 @@ final class AiRoleRunPostgresTest extends TestCase
         $connection->table('estimate_generation_documents')->insert(['id' => 40]);
         $connection->table('estimate_generation_document_pages')->insert(['id' => 50]);
         $connection->table('estimate_generation_vision_physical_attempts')->insert([
-            ['attempt_id' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
-            ['attempt_id' => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'],
+            ['attempt_id' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'state' => 'completed'],
+            ['attempt_id' => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'state' => 'wire_started'],
+            ['attempt_id' => 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'state' => 'response_received'],
         ]);
 
         return [$connection, $schema];

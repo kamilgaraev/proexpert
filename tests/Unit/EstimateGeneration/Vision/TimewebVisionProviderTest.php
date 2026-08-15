@@ -1261,10 +1261,10 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     #[Test]
     public function invalid_items_are_quarantined_without_losing_valid_page_content(): void
     {
-        $response = $this->response(['elements' => [
+        $response = $this->response(['sheet_type' => 'architectural_title_block', 'elements' => [
             ['key' => 'valid-text', 'type' => 'text', 'label' => 'Ось 1', 'polygon' => [[0.1, 0.1], [0.2, 0.2]], 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
             ['key' => 'invalid-text', 'type' => 'text', 'label' => 'bad', 'polygon' => [[0.1, 0.1]], 'confidence' => 0.9, 'evidence_ref' => 'page-1'],
-        ], 'project_sheet_analysis' => [
+        ], 'warnings' => ['low_confidence', 'provider_note', 'low_confidence'], 'project_sheet_analysis' => [
             'contractVersion' => 'sheet-analysis:v3',
             'role' => 'plan',
             'facts' => [
@@ -1278,7 +1278,12 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
 
         self::assertCount(1, $result->elements);
         self::assertCount(1, $result->projectSheetAnalysis?->facts ?? []);
-        self::assertSame(['elements', 'facts'], array_column($result->quarantinedItems, 'section'));
+        self::assertSame('unknown', $result->sheetType);
+        self::assertSame(['low_confidence'], $result->warnings);
+        self::assertSame(
+            ['sheet_type', 'elements', 'warnings', 'warnings', 'facts'],
+            array_column($result->quarantinedItems, 'section'),
+        );
         self::assertSame('succeeded', $this->attempts[0]->status);
     }
 

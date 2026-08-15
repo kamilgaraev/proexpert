@@ -48,7 +48,31 @@ final class RoleVisionResponseCanonicalizer
             ]);
         }
 
-        return new RoleVisionResponseCanonicalization($this->projectObserverEvidence($payload, $input));
+        $projected = $this->projectObserverEvidence($payload, $input);
+        $projectSheetAnalysis = is_array($projected['project_sheet_analysis'] ?? null)
+            ? $projected['project_sheet_analysis']
+            : [
+                'contractVersion' => ProjectSheetAnalysisData::CONTRACT_VERSION,
+                'role' => 'unknown',
+                'facts' => [],
+            ];
+        $canonical = [
+            'schema_version' => is_array($projected['analysis_routing'] ?? null) ? 4 : 3,
+            'sheet_type' => is_string($projected['sheet_type'] ?? null) ? $projected['sheet_type'] : 'unknown',
+            'evidence' => is_array($projected['evidence'] ?? null) && $projected['evidence'] !== []
+                ? $projected['evidence']
+                : [['key' => 'server_page_evidence', 'locator' => $this->locator($input)]],
+            'elements' => is_array($projected['elements'] ?? null) ? $projected['elements'] : [],
+            'scale_candidates' => is_array($projected['scale_candidates'] ?? null) ? $projected['scale_candidates'] : [],
+            'warnings' => is_array($projected['warnings'] ?? null) ? $projected['warnings'] : [],
+            'visual_attributes' => is_array($projected['visual_attributes'] ?? null) ? $projected['visual_attributes'] : [],
+            'project_sheet_analysis' => $projectSheetAnalysis,
+        ];
+        if (is_array($projected['analysis_routing'] ?? null)) {
+            $canonical['analysis_routing'] = $projected['analysis_routing'];
+        }
+
+        return new RoleVisionResponseCanonicalization($canonical);
     }
 
     /** @param array<string,mixed> $payload @return array<string,mixed> */
@@ -69,6 +93,9 @@ final class RoleVisionResponseCanonicalizer
                 return $payload;
             }
             if ($localReference === '' || mb_strlen($localReference) > 200) {
+                continue;
+            }
+            if (isset($references[$localReference])) {
                 continue;
             }
             $serverReference = 'evidence:'.substr(hash('sha256', implode('|', [

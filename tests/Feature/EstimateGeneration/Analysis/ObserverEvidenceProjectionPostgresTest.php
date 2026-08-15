@@ -16,7 +16,6 @@ use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
-use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 
@@ -110,7 +109,7 @@ final class ObserverEvidenceProjectionPostgresTest extends TestCase
     }
 
     #[Test]
-    public function canonical_entity_replay_is_idempotent_and_semantic_collision_preserves_the_first_result(): void
+    public function candidate_replay_is_idempotent_and_distinct_observations_do_not_collide(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
         self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
@@ -146,20 +145,15 @@ final class ObserverEvidenceProjectionPostgresTest extends TestCase
 
         $writer->writeIndependentObservations([$first], 173, 1);
         $writer->writeIndependentObservations([$first], 173, 1);
-        try {
-            $writer->writeIndependentObservations([$collision], 173, 1);
-            self::fail('Semantic entity collision was silently accepted.');
-        } catch (InvalidArgumentException $exception) {
-            self::assertSame('project_model_entity_exact_identity_collision', $exception->getMessage());
-        }
+        $writer->writeIndependentObservations([$collision], 173, 1);
 
-        self::assertSame(1, DB::table('estimate_generation_project_model_entities')
+        self::assertSame(2, DB::table('estimate_generation_project_model_entities')
             ->where('organization_id', $scope[0])->where('project_id', $scope[1])
             ->where('session_id', $scope[2])->where('source_version', $sourceVersion)->count());
-        self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
+        self::assertSame(2, DB::table('estimate_generation_project_model_assertions')
             ->where('organization_id', $scope[0])->where('project_id', $scope[1])
             ->where('session_id', $scope[2])->where('source_version', $sourceVersion)->count());
-        self::assertSame(1, DB::table('estimate_generation_evidence')
+        self::assertSame(2, DB::table('estimate_generation_evidence')
             ->where('organization_id', $scope[0])->where('project_id', $scope[1])
             ->where('session_id', $scope[2])->count());
     }

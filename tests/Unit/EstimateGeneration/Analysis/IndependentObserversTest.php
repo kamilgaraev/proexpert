@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Analysis;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
@@ -13,8 +12,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
@@ -22,7 +19,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
-use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class IndependentObserversTest extends TestCase
 {
@@ -185,8 +181,6 @@ final class IndependentObserversTest extends TestCase
             $provider,
             new ObserverInputBuilder,
             'openai/gpt-5.6-luna',
-            new ArbitrationInputBuilder,
-            new ProjectModelEvidenceWriter(new InMemoryProjectModelRepository, new InMemoryEvidenceRepository),
         );
         $profiles = [ObserverProfile::Construction, ObserverProfile::Risk];
 
@@ -224,22 +218,17 @@ final class IndependentObserversTest extends TestCase
     {
         $repository = new InMemoryAiRoleRunRepository;
         $provider = new RecordingObserverVisionProvider($this->analysis());
-        $models = new InMemoryProjectModelRepository;
         $runner = new RunIndependentObservers(
             $repository,
             $provider,
             new ObserverInputBuilder,
             'openai/gpt-5.6-luna',
-            new ArbitrationInputBuilder,
-            new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository),
         );
 
         $results = $runner->run($this->sourceInput(), [ObserverProfile::Risk]);
 
         self::assertSame([], $results['observer_risk']->payload['claims']);
         self::assertCount(1, $results['observer_risk']->payload['observation']['quarantined_items']);
-        self::assertSame([], $models->entities);
-        self::assertSame([], $models->facts);
         self::assertCount(1, $provider->inputs);
 
         $replayed = $runner->run($this->sourceInput(), [ObserverProfile::Risk]);

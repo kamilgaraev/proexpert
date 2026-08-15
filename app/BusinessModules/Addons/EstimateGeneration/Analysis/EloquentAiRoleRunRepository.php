@@ -80,6 +80,19 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
                 return new AiRoleRunClaim((int) $row->id, 'busy', $currentOwner);
             }
             if ($row->physical_attempt_id !== null) {
+                $physicalState = $this->database->table('estimate_generation_vision_physical_attempts')
+                    ->where('attempt_id', (string) $row->physical_attempt_id)
+                    ->value('state');
+                if (in_array($physicalState, ['response_received', 'completed'], true)) {
+                    $query->update([
+                        'owner_uuid' => $ownerUuid,
+                        'lease_expires_at' => $leaseExpiresAt,
+                        'started_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+
+                    return new AiRoleRunClaim((int) $row->id, 'owned', $ownerUuid);
+                }
                 $query->update([
                     'status' => 'ambiguous',
                     'owner_uuid' => null,

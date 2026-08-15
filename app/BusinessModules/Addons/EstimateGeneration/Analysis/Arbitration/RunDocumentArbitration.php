@@ -10,7 +10,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
@@ -25,7 +24,6 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
         private VisionProvider $vision,
         private ArbitrationInputBuilder $inputs,
         private string $model,
-        private ?ProjectModelEvidenceWriter $writer = null,
     ) {}
 
     /** @param array<string,AiRoleRunResult> $observerRuns */
@@ -112,9 +110,6 @@ final readonly class RunDocumentArbitration implements DocumentArbitrator
                     : ($ingestion->quarantined !== [] ? 'partial' : 'ready'),
                 'questions' => $questions,
             ], $physicalAttemptId);
-            if ($decisions !== []) {
-                $this->writer?->writeArbitration($built['claims'], $decisions, $source->documentId, $source->pageNumber);
-            }
             $this->runs->complete($claim->runId, $claim->ownerUuid, $result);
 
             return $result;

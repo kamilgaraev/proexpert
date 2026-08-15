@@ -95,7 +95,10 @@ final class DocumentSemanticUnderstandingSummarizerTest extends TestCase
                 'observer_construction' => true,
                 'observer_risk' => true,
                 'arbiter' => true,
-                'geometry_expert' => true,
+            ],
+            'analysis_routing' => [
+                'observer_roles' => ['observer_literal', 'observer_construction', 'observer_risk'],
+                'arbiter_required' => true,
             ],
             'ai_questions' => [[
                 'code' => 'partial_opening_geometry_abc123',

@@ -18,7 +18,10 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
 {
     private const SYSTEMIC_FAILURE_THRESHOLD = 2;
 
-    public function __construct(private Connection $database) {}
+    public function __construct(
+        private Connection $database,
+        private ?DocumentUnitPublicationWriter $publicationWriter = null,
+    ) {}
 
     public function create(int $organizationId, int $projectId, int $sessionId, int $documentId, DocumentUnitData $unit): DocumentProcessingUnitRecord
     {
@@ -244,7 +247,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
     public function publish(DocumentProcessingUnitClaim $claim, DocumentUnitOutput $output, DateTimeImmutable $now): bool
     {
         return $this->database->transaction(function () use ($claim, $output, $now): bool {
-            $unit = $this->query()->with('document')->lockForUpdate()->find($claim->unitId);
+            $unit = $this->claimQuery($claim)->with('document')->lockForUpdate()->first();
 
             if (! $unit instanceof EstimateGenerationProcessingUnit
                 || ! $this->isCurrent($unit, (string) $unit->source_version)
@@ -254,53 +257,91 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 return false;
             }
 
-            $page = $this->pageQuery()->where('document_id', $unit->document_id)
-                ->where('page_number', $unit->unit_index)->lockForUpdate()->first();
-            if (! $page instanceof EstimateGenerationDocumentPage
-                || (int) $page->processing_unit_id !== (int) $unit->id
-                || (string) $page->source_version !== (string) $unit->source_version
-                || $this->pageHasLineage($page)) {
-                return false;
-            }
-            $routing = $output->normalizedPayload['sheet_analysis_routing'] ?? null;
-            $targetedReview = is_array($routing) && ($routing['needs_review'] ?? false) === true;
-            $semanticState = $output->semanticState();
-            $needsReview = $targetedReview || $semanticState !== 'ready';
-            $qualityFlags = match (true) {
-                $semanticState === 'questions' => ['ai_questions_pending'],
-                $semanticState === 'partial' => ['ai_partial_result'],
-                $targetedReview => ['targeted_analysis_limited'],
-                default => [],
-            };
-            $page->forceFill(['output_version' => $output->version, 'width' => $output->width, 'height' => $output->height,
-                'rotation' => $output->rotation, 'text' => $output->text,
-                'text_hash' => $output->text !== '' ? hash('sha256', $output->text) : null,
-                'confidence' => $output->confidence, 'normalized_payload' => $output->persistedNormalizedPayload(),
-                'quality_flags' => $qualityFlags,
-                'status' => $needsReview ? 'needs_review' : 'ready',
-                'excluded_at' => null,
-                'excluded_reason' => null])->save();
+            if ($output->publication !== null) {
+                if ($this->publicationWriter === null) {
+                    throw new DocumentUnitProcessingException('document_unit_publication_writer_missing');
+                }
 
-            return $this->query()
-                ->whereKey($unit->id)
-                ->where('organization_id', $unit->organization_id)
-                ->where('project_id', $unit->project_id)
-                ->where('session_id', $unit->session_id)
-                ->where('document_id', $unit->document_id)
-                ->where('source_version', $unit->source_version)
-                ->where('status', DocumentProcessingUnitStatus::Running->value)
-                ->where('claim_token', $claim->token)
-                ->where('lease_expires_at', '>', $now)
-                ->update([
-                    'status' => DocumentProcessingUnitStatus::Completed->value,
-                    'output_version' => $output->version,
-                    'output_count' => 1,
-                    'claim_token' => null,
-                    'lease_expires_at' => null,
-                    'completed_at' => $now,
-                    'updated_at' => $now,
-                ]) === 1;
+                return $this->publicationWriter->transaction(
+                    (int) $unit->organization_id,
+                    (int) $unit->session_id,
+                    fn (): bool => $this->publishLocked($unit, $claim, $output, $now),
+                );
+            }
+
+            return $this->publishLocked($unit, $claim, $output, $now);
         }, 3);
+    }
+
+    private function publishLocked(
+        EstimateGenerationProcessingUnit $unit,
+        DocumentProcessingUnitClaim $claim,
+        DocumentUnitOutput $output,
+        DateTimeImmutable $now,
+    ): bool {
+
+        $page = $this->pageQuery()->where('document_id', $unit->document_id)
+            ->where('page_number', $unit->unit_index)->lockForUpdate()->first();
+        if (! $page instanceof EstimateGenerationDocumentPage
+            || (int) $page->processing_unit_id !== (int) $unit->id
+            || (string) $page->source_version !== (string) $unit->source_version
+            || $this->pageHasLineage($page)) {
+            return false;
+        }
+        if ($output->publication !== null) {
+            $this->publicationWriter?->write(
+                $output->publication,
+                (int) $unit->organization_id,
+                (int) $unit->project_id,
+                (int) $unit->session_id,
+                (int) $unit->document_id,
+                (int) $unit->unit_index,
+                (string) $unit->source_version,
+            );
+        }
+        $routing = $output->normalizedPayload['sheet_analysis_routing'] ?? null;
+        $targetedReview = is_array($routing) && ($routing['needs_review'] ?? false) === true;
+        $semanticState = $output->semanticState();
+        $needsReview = $targetedReview || $semanticState !== 'ready';
+        $qualityFlags = match (true) {
+            $semanticState === 'questions' => ['ai_questions_pending'],
+            $semanticState === 'partial' => ['ai_partial_result'],
+            $targetedReview => ['targeted_analysis_limited'],
+            default => [],
+        };
+        $page->forceFill(['output_version' => $output->version, 'width' => $output->width, 'height' => $output->height,
+            'rotation' => $output->rotation, 'text' => $output->text,
+            'text_hash' => $output->text !== '' ? hash('sha256', $output->text) : null,
+            'confidence' => $output->confidence, 'normalized_payload' => $output->persistedNormalizedPayload(),
+            'quality_flags' => $qualityFlags,
+            'status' => $needsReview ? 'needs_review' : 'ready',
+            'excluded_at' => null,
+            'excluded_reason' => null])->save();
+
+        $published = $this->query()
+            ->whereKey($unit->id)
+            ->where('organization_id', $unit->organization_id)
+            ->where('project_id', $unit->project_id)
+            ->where('session_id', $unit->session_id)
+            ->where('document_id', $unit->document_id)
+            ->where('source_version', $unit->source_version)
+            ->where('status', DocumentProcessingUnitStatus::Running->value)
+            ->where('claim_token', $claim->token)
+            ->where('lease_expires_at', '>', $now)
+            ->update([
+                'status' => DocumentProcessingUnitStatus::Completed->value,
+                'output_version' => $output->version,
+                'output_count' => 1,
+                'claim_token' => null,
+                'lease_expires_at' => null,
+                'completed_at' => $now,
+                'updated_at' => $now,
+            ]) === 1;
+        if (! $published) {
+            throw new DocumentUnitProcessingException('document_unit_atomic_publication_failed');
+        }
+
+        return true;
     }
 
     public function renew(DocumentProcessingUnitClaim $claim, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): bool

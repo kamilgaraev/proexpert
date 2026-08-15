@@ -21,6 +21,7 @@ final readonly class DocumentUnitOutput
         public ?int $unitIndex = null,
         public ?string $sourceVersion = null,
         public array $qualitySignals = [],
+        public ?DocumentUnitPublication $publication = null,
     ) {
         if ($version === '' || strlen($version) > 80) {
             throw new InvalidArgumentException('Unit output version must contain at most 80 characters.');

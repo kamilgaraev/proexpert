@@ -5,12 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
@@ -27,8 +25,6 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
         private VisionProvider $vision,
         private ObserverInputBuilder $inputs,
         private string $model,
-        private ?ArbitrationInputBuilder $claimProjector = null,
-        private ?ProjectModelEvidenceWriter $evidenceWriter = null,
     ) {
         if (preg_match('#^[A-Za-z0-9._/-]{1,160}$#D', $model) !== 1) {
             throw new \InvalidArgumentException('observer_model_invalid');
@@ -69,7 +65,6 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
             $claim = $this->runs->claim($runInput, $ownerUuid);
             if ($claim->disposition === 'replay' && $claim->result !== null) {
                 $results[$profile->role()->value] = $claim->result;
-                $this->preserveObservation($source, $profile, $claim->result);
 
                 continue;
             }
@@ -90,7 +85,6 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
                     $physicalAttemptId,
                 );
                 $this->runs->complete($claim->runId, $claim->ownerUuid, $result);
-                $this->preserveObservation($source, $profile, $result);
                 $results[$profile->role()->value] = $result;
             } catch (VisionContractException|VisionProviderException $exception) {
                 $this->runs->fail($claim->runId, $claim->ownerUuid, new AiRoleRunFailure(
@@ -104,22 +98,6 @@ final readonly class RunIndependentObservers implements DocumentObserverRunner
         }
 
         return $results;
-    }
-
-    private function preserveObservation(
-        VisionDocumentInput $source,
-        ObserverProfile $profile,
-        AiRoleRunResult $result,
-    ): void {
-        if ($this->claimProjector === null || $this->evidenceWriter === null) {
-            return;
-        }
-        $payloadClaims = $result->payload['claims'] ?? null;
-        if (is_array($payloadClaims) && $payloadClaims === []) {
-            return;
-        }
-        $claims = $this->claimProjector->claims($source, [$profile->role()->value => $result]);
-        $this->evidenceWriter->writeIndependentObservations($claims, $source->documentId, $source->pageNumber);
     }
 
     private function runInput(VisionDocumentInput $input, ObserverProfile $profile): AiRoleRunInput

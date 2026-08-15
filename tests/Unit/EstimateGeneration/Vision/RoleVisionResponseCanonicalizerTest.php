@@ -92,6 +92,26 @@ final class RoleVisionResponseCanonicalizerTest extends TestCase
         self::assertSame($payload['evidence'], $result->payload['evidence']);
     }
 
+    #[Test]
+    public function duplicate_observer_evidence_is_isolated_without_rejecting_the_useful_response(): void
+    {
+        $payload = json_decode((string) file_get_contents(
+            dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/observer-production-v3.json',
+        ), true, flags: JSON_THROW_ON_ERROR);
+        $payload['evidence'][] = $payload['evidence'][0];
+
+        $result = (new RoleVisionResponseCanonicalizer)->canonicalize(
+            $payload,
+            $this->input(['observer' => ['index' => 1]]),
+        );
+
+        self::assertCount(1, $result->payload['evidence']);
+        self::assertSame(
+            $result->payload['evidence'][0]['key'],
+            $result->payload['project_sheet_analysis']['facts'][0]['evidenceRef'],
+        );
+    }
+
     /** @param array<string,mixed> $auxiliaryMetadata */
     private function input(array $auxiliaryMetadata): VisionDocumentInput
     {

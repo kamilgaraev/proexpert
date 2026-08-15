@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPublicationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
@@ -415,6 +416,77 @@ final class DocumentArbitrationTest extends TestCase
         self::assertSame(['confirmed'], array_values(array_unique(array_column($models->facts, 'status'))));
         self::assertCount(1, $models->facts);
         self::assertCount(1, $models->evidence);
+    }
+
+    #[Test]
+    public function one_invalid_claim_is_quarantined_without_hiding_other_observer_claims_from_the_arbiter(): void
+    {
+        $runs = $this->observerRuns();
+        $literal = $runs['observer_literal'];
+        $runs['observer_literal'] = new AiRoleRunResult([
+            ...$literal->payload,
+            'claims' => [
+                ...$literal->payload['claims'],
+                [
+                    'entityKey' => 'broken-value',
+                    'factType' => 'material',
+                    'value' => 'not-an-object',
+                    'evidenceRef' => 'note-1',
+                ],
+            ],
+        ], $literal->physicalAttemptId);
+        $builder = new ArbitrationInputBuilder;
+
+        $batch = $builder->claimBatch($this->sourceInput(), $runs);
+        $built = $builder->build($this->sourceInput(), $runs, static function (): void {});
+
+        self::assertCount(3, $batch->claims);
+        self::assertSame(
+            ['literal:1', 'construction:1', 'risk:1'],
+            array_map(static fn (ObservationClaim $claim): string => $claim->id, $batch->claims),
+        );
+        self::assertSame([[
+            'role' => 'observer_literal',
+            'index' => 1,
+            'reason_code' => 'observer_claim_value_invalid',
+        ]], $batch->quarantined);
+        self::assertCount(3, $built['claims']);
+        self::assertSame($batch->quarantined, $built['input']->auxiliaryMetadata['arbitration']['quarantined_items']);
+    }
+
+    #[Test]
+    public function missing_or_duplicate_arbiter_decisions_preserve_every_observer_claim_once(): void
+    {
+        $runs = $this->observerRuns();
+        $arbitration = new AiRoleRunResult(['decisions' => [[
+            'claim_id' => 'literal:1',
+            'status' => 'accepted',
+            'supporting_claim_ids' => ['literal:1'],
+            'evidence_refs' => ['literal:note-1'],
+        ], [
+            'claim_id' => 'literal:1',
+            'status' => 'candidate',
+            'supporting_claim_ids' => ['literal:1'],
+            'evidence_refs' => ['literal:note-1'],
+        ]]], null);
+
+        $publication = (new DocumentUnitPublicationFactory)->fromAnalysis(
+            $this->sourceInput(),
+            $runs,
+            $arbitration,
+        );
+
+        self::assertNotNull($publication);
+        self::assertCount(3, $publication->claims);
+        self::assertCount(3, $publication->decisions);
+        self::assertSame(
+            ['literal:1', 'construction:1', 'risk:1'],
+            array_map(static fn (ArbitrationDecision $decision): string => $decision->claimId, $publication->decisions),
+        );
+        self::assertSame(['accepted', 'candidate', 'candidate'], array_map(
+            static fn (ArbitrationDecision $decision): string => $decision->status,
+            $publication->decisions,
+        ));
     }
 
     #[Test]

@@ -26,6 +26,11 @@ final readonly class ProjectModelEvidenceWriter
         private EvidenceRepository $evidence,
     ) {}
 
+    public function transaction(int $organizationId, int $sessionId, callable $callback): mixed
+    {
+        return $this->evidence->transaction($organizationId, $sessionId, $callback);
+    }
+
     /** @param list<ObservationClaim> $claims @param list<ArbitrationDecision> $decisions */
     public function writeArbitration(array $claims, array $decisions, int $documentId, int $pageNumber): void
     {
@@ -95,7 +100,16 @@ final readonly class ProjectModelEvidenceWriter
                 }
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
-                $entityId = 'entity:'.hash('sha256', $projection['type'].'|'.$claim->entityKey);
+                $entityId = 'entity:'.hash('sha256', implode('|', $decision->status === 'accepted'
+                    ? [$projection['type'], $claim->entityKey]
+                    : [
+                        $projection['type'],
+                        $claim->entityKey,
+                        $claim->id,
+                        $scope->sourceVersion,
+                        (string) $documentId,
+                        (string) $pageNumber,
+                    ]));
                 $entities[$entityId] = new Entity(
                     $entityId,
                     $scope->organizationId,
