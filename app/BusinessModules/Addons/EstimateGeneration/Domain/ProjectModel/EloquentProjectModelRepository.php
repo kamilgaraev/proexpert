@@ -1168,12 +1168,42 @@ SQL, [
             $factRows = $this->database->table('estimate_generation_project_model_conflict_facts as binding')
                 ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'binding.fact_id')
                 ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'fact.entity_id')
+                ->join('estimate_generation_project_model_fact_projections as projection', function ($join): void {
+                    $join->on('projection.fact_id', '=', 'fact.id')
+                        ->on('projection.organization_id', '=', 'binding.organization_id')
+                        ->on('projection.project_id', '=', 'binding.project_id')
+                        ->on('projection.session_id', '=', 'binding.session_id');
+                })
                 ->where('binding.conflict_id', $row->id)
                 ->where('binding.organization_id', $organizationId)
                 ->where('binding.project_id', $projectId)
                 ->where('binding.session_id', $sessionId)
+                ->where('projection.is_current', true)
                 ->orderBy('fact.stable_key')
                 ->get(['fact.*', 'entity.stable_key as entity_stable_key']);
+            $factIds = $factRows->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+            $evidenceByFact = [];
+            if ($factIds !== []) {
+                foreach ($this->database->table('estimate_generation_project_model_fact_evidence as binding')
+                    ->join('estimate_generation_evidence as evidence', function ($join): void {
+                        $join->on('evidence.id', '=', 'binding.evidence_id')
+                            ->on('evidence.organization_id', '=', 'binding.organization_id')
+                            ->on('evidence.project_id', '=', 'binding.project_id')
+                            ->on('evidence.session_id', '=', 'binding.session_id');
+                    })
+                    ->whereIn('binding.fact_id', $factIds)
+                    ->where('binding.organization_id', $organizationId)
+                    ->where('binding.project_id', $projectId)
+                    ->where('binding.session_id', $sessionId)
+                    ->whereNull('evidence.invalidated_at')
+                    ->whereColumn('evidence.source_version', 'binding.evidence_source_version')
+                    ->whereColumn('evidence.invalidation_version', 'binding.evidence_invalidation_version')
+                    ->orderBy('binding.fact_id')
+                    ->orderBy('binding.evidence_id')
+                    ->get(['binding.fact_id', 'binding.evidence_id']) as $binding) {
+                    $evidenceByFact[(int) $binding->fact_id][] = 'evidence:'.$binding->evidence_id;
+                }
+            }
             $facts = [];
             foreach ($factRows as $factRow) {
                 $value = $this->decode($factRow->fact_value);
@@ -1189,8 +1219,8 @@ SQL, [
                     is_string($factRow->fact_unit) ? $factRow->fact_unit : null,
                     (float) $factRow->confidence,
                     (string) $factRow->fact_origin,
-                    'conflicted',
-                    [],
+                    (string) $factRow->fact_status,
+                    $evidenceByFact[(int) $factRow->id] ?? [],
                     (int) $factRow->fact_version,
                 );
             }

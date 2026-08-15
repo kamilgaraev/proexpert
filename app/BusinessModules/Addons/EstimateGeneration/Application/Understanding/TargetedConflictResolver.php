@@ -34,6 +34,10 @@ final readonly class TargetedConflictResolver
             'text' => ($this->translator)('estimate_generation.project_model.conflict_question', [
                 'fact' => $this->factName($conflict->facts[0]->type),
             ]),
+            'fact_ids' => array_map(static fn (Fact $fact): string => $fact->id, $conflict->facts),
+            'evidence_ids' => $conflict->evidenceIds,
+            'reason_code' => $conflict->reason,
+            'source_locator' => $this->sourceLocator($conflict->evidenceIds, $evidenceById),
             'options' => $options,
         ];
     }
@@ -88,7 +92,33 @@ final readonly class TargetedConflictResolver
                 static fn (Fact $fact): array => $fact->evidenceIds,
                 $facts,
             )))),
+            'reason_code' => 'manual_review_required',
+            'source_locator' => $this->sourceLocator(
+                array_values(array_unique(array_merge(...array_map(
+                    static fn (Fact $fact): array => $fact->evidenceIds,
+                    $facts,
+                )))),
+                $evidenceById,
+            ),
             'options' => $options,
+        ];
+    }
+
+    /** @param list<string> $evidenceIds @param array<string, Evidence> $evidenceById */
+    private function sourceLocator(array $evidenceIds, array $evidenceById): array
+    {
+        $pages = [];
+        foreach ($evidenceIds as $evidenceId) {
+            $page = $evidenceById[$evidenceId]->page ?? null;
+            if (is_int($page) && $page > 0) {
+                $pages[$page] = true;
+            }
+        }
+        ksort($pages, SORT_NUMERIC);
+
+        return [
+            'evidence_ids' => $evidenceIds,
+            'page_numbers' => array_keys($pages),
         ];
     }
 

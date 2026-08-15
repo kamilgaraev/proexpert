@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
@@ -56,6 +57,7 @@ final readonly class ProjectModelEvidenceWriter
         $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope): void {
             $entities = [];
             $facts = [];
+            $factsByClaimId = [];
             $domainEvidence = [];
             foreach ($decisions as $decision) {
                 $claim = $byId[$decision->claimId] ?? throw new InvalidArgumentException('Arbitration claim is absent.');
@@ -147,9 +149,65 @@ final readonly class ProjectModelEvidenceWriter
                     },
                     $evidenceIds,
                 );
+                $factsByClaimId[$claim->id] = $facts[$factId];
             }
-            $this->models->saveSourceModel(array_values($entities), array_values($facts), array_values($domainEvidence));
+            $conflicts = $this->unresolvedConflicts($byId, $decisions, $factsByClaimId);
+            $this->models->saveSourceModel(
+                array_values($entities),
+                array_values($facts),
+                array_values($domainEvidence),
+                $conflicts,
+            );
         });
+    }
+
+    /**
+     * @param  array<string, ObservationClaim>  $claims
+     * @param  list<ArbitrationDecision>  $decisions
+     * @param  array<string, Fact>  $factsByClaimId
+     * @return list<Conflict>
+     */
+    private function unresolvedConflicts(array $claims, array $decisions, array $factsByClaimId): array
+    {
+        $groups = [];
+        foreach ($decisions as $decision) {
+            $claim = $claims[$decision->claimId] ?? null;
+            $fact = $factsByClaimId[$decision->claimId] ?? null;
+            if (! $claim instanceof ObservationClaim || ! $fact instanceof Fact) {
+                continue;
+            }
+            $key = mb_strtolower($claim->entityKey)."\0".mb_strtolower($fact->type);
+            $groups[$key]['facts'][] = $fact;
+            $groups[$key]['unresolved'] = ($groups[$key]['unresolved'] ?? false)
+                || $decision->status === 'unresolved';
+        }
+
+        $conflicts = [];
+        foreach ($groups as $group) {
+            $facts = $group['facts'] ?? [];
+            if (($group['unresolved'] ?? false) !== true || count($facts) < 2) {
+                continue;
+            }
+            $values = array_unique(array_map(
+                static fn (Fact $fact): string => hash('sha256', json_encode(
+                    [$fact->value, $fact->unit],
+                    JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION,
+                )),
+                $facts,
+            ));
+            if (count($values) < 2) {
+                continue;
+            }
+            $factIds = array_map(static fn (Fact $fact): string => $fact->id, $facts);
+            sort($factIds, SORT_STRING);
+            $conflictId = 'conflict:document-arbitration:'.substr(hash(
+                'sha256',
+                implode('|', [...$factIds, $facts[0]->sourceVersion, 'document-arbitration-conflict:v1']),
+            ), 0, 48);
+            $conflicts[] = Conflict::between($conflictId, $facts, 'document_arbitration_unresolved');
+        }
+
+        return $conflicts;
     }
 
     /** @param list<ObservationClaim> $claims */

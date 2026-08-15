@@ -29,6 +29,7 @@ final class ResolveCurrentEstimateClarificationTest extends TestCase
             'text' => 'Какой материал наружных стен использовать?',
             'fact_ids' => ['fact:wall-material'],
             'evidence_ids' => ['evidence:1'],
+            'source_locator' => ['page_numbers' => [4]],
             'options' => $options,
         ]];
         $snapshot = $this->snapshot();
@@ -40,6 +41,7 @@ final class ResolveCurrentEstimateClarificationTest extends TestCase
         self::assertCount(10, $first[0]->question->choices);
         self::assertSame('fact:wall-material', $first[0]->targetFactId);
         self::assertSame(self::SOURCE_VERSION, $first[0]->sourceVersion);
+        self::assertSame([4], $first[0]->question->sourceLocator['page_numbers']);
         self::assertSame('other', $first[0]->question->choices[8]->kind);
         self::assertSame('leave_unresolved', $first[0]->question->choices[9]->kind);
         self::assertNotSame($first[0]->answerFingerprint, $second[0]->answerFingerprint);
