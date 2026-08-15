@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
 final readonly class ArbitrationDecision
 {
-    /** @param list<string> $supportingClaimIds @param list<string> $evidenceRefs @param array<string,mixed>|null $canonicalClaim @param array<string,mixed>|null $question */
+    /** @param list<string> $supportingClaimIds @param list<string> $evidenceRefs @param array<string,mixed>|null $canonicalClaim */
     public function __construct(
         public string $claimId,
         public string $status,
@@ -14,7 +14,6 @@ final readonly class ArbitrationDecision
         public array $evidenceRefs,
         public string $reasonCode,
         public ?array $canonicalClaim,
-        public ?array $question,
         public string $reason = '',
     ) {}
 }

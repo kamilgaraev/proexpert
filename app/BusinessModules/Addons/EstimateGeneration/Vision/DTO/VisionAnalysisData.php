@@ -598,14 +598,7 @@ final readonly class VisionAnalysisData
                 }
                 $candidate = VisionEvidenceData::fromArray([
                     'key' => $evidenceKey,
-                    'locator' => array_intersect_key($locator, array_flip([
-                        'page_id',
-                        'page_number',
-                        'processing_unit_id',
-                        'source_version',
-                        'coordinate_space',
-                        'explicit',
-                    ])),
+                    'locator' => $locator,
                 ]);
                 if (isset($seen[$candidate->key])) {
                     throw new VisionContractException('duplicate_evidence_key');

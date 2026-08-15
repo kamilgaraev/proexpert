@@ -44,15 +44,7 @@ final readonly class DocumentUnitOutput
         $geometry = is_array($this->normalizedPayload['geometry_expert'] ?? null)
             ? $this->normalizedPayload['geometry_expert']
             : [];
-        $questions = is_array($this->normalizedPayload['ai_questions'] ?? null)
-            ? $this->normalizedPayload['ai_questions']
-            : [];
         $decisions = is_array($arbitration['decisions'] ?? null) ? $arbitration['decisions'] : [];
-        if ($questions !== []
-            || ($arbitration['result_state'] ?? null) === 'questions'
-            || $this->hasDecisionStatus($decisions, 'unresolved')) {
-            return 'questions';
-        }
 
         $observerQuarantine = false;
         $observers = is_array($this->normalizedPayload['independent_observations'] ?? null)
@@ -81,6 +73,7 @@ final readonly class DocumentUnitOutput
             || $visionQuarantine !== []
             || $arbitrationQuarantine !== []
             || $geometryQuarantine !== []
+            || $this->hasDecisionStatus($decisions, 'unresolved')
             || $this->hasDecisionStatus($decisions, 'candidate')) {
             return 'partial';
         }

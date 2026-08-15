@@ -1238,7 +1238,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'facts' => [
                 $this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => 0.0], 'm'),
                 $this->semanticFact('roof-form', 'roof_geometry', ['type' => 'enum', 'data' => 'gable']),
-                $this->semanticFact('finish-question', 'unresolved_question', ['type' => 'string', 'data' => 'Уточнить материал отделки фасада']),
+                $this->semanticFact('finish-unknown', 'unknown', ['type' => 'unknown', 'data' => null]),
                 $this->semanticFact('finish-recommendation', 'recommendation', ['type' => 'string', 'data' => 'Сверить ведомость отделки и узлы фасада']),
             ],
         ]]);
@@ -1254,7 +1254,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             (string) $request['messages'][0]['content'],
             'preliminary hint',
         )
-            && str_contains((string) $request['messages'][0]['content'], 'unresolved_question')
+            && str_contains((string) $request['messages'][0]['content'], 'unknown')
             && str_contains((string) $request['messages'][0]['content'], 'same explicitly marked entity across'));
     }
 

@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
-use App\BusinessModules\Addons\EstimateGeneration\Questions\ClarificationQuestionProjector;
-use Illuminate\Container\Container;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
@@ -14,7 +12,7 @@ use ReflectionMethod;
 final class EstimateGenerationDocumentSemanticProjectionTest extends TestCase
 {
     #[Test]
-    public function it_projects_bounded_operator_semantics_without_raw_provider_response(): void
+    public function it_projects_bounded_document_semantics_without_questions_or_raw_provider_response(): void
     {
         $page = (object) ['normalized_payload' => [
             'vision_analysis' => [
@@ -28,9 +26,9 @@ final class EstimateGenerationDocumentSemanticProjectionTest extends TestCase
                 'project_sheet_analysis' => [
                     'role' => 'facade',
                     'facts' => [[
-                        'entityKey' => 'finish-question',
-                        'factType' => 'unresolved_question',
-                        'value' => ['type' => 'string', 'data' => 'confirm finish'],
+                        'entityKey' => 'finish-unknown',
+                        'factType' => 'unknown_material',
+                        'value' => ['type' => 'unknown', 'data' => null],
                     ]],
                 ],
             ],
@@ -57,38 +55,69 @@ final class EstimateGenerationDocumentSemanticProjectionTest extends TestCase
                 'observer_risk' => true,
                 'arbiter' => true,
             ],
-            'ai_questions' => [[
-                'code' => 'confirm_finish',
-                'subject' => 'Отделка фасада',
-                'reason' => 'Материал не указан явно.',
-                'impact' => 'Состав работ нельзя подтвердить.',
-                'recommendation' => 'Уточнить материал фасада.',
-                'choices' => ['Штукатурка'],
-                'source_locator' => ['evidence_refs' => ['page-1']],
-            ]],
             'provider_raw_response' => 'must-not-leak',
         ]];
-        $container = new Container;
-        Container::setInstance($container);
-        $container->instance(
-            ClarificationQuestionProjector::class,
-            new ClarificationQuestionProjector(static fn (string $key): string => str_ends_with($key, '.other')
-                ? 'Другой вариант'
-                : 'Оставить без решения'),
-        );
-        $method = new ReflectionMethod(EstimateGenerationDocumentDetailResource::class, 'semanticAnalysis');
 
-        $payload = $method->invoke(null, $page);
+        $payload = (new ReflectionMethod(EstimateGenerationDocumentDetailResource::class, 'semanticAnalysis'))
+            ->invoke(null, $page);
 
         self::assertSame('facade', $payload['role']);
         self::assertSame('gable', $payload['observations'][0]['label']);
-        self::assertCount(1, $payload['questions']);
+        self::assertArrayNotHasKey('questions', $payload);
         self::assertSame(['material'], $payload['coverage']['needs_targeted']);
         self::assertTrue($payload['analysis_complete']);
         self::assertSame('dense_ambiguous', $payload['route']);
         self::assertSame(4, $payload['physical_provider_call_count']);
         self::assertSame('Размерная цепочка', $payload['semantic_regions'][0]['label']);
         self::assertArrayNotHasKey('provider_raw_response', $payload);
+    }
+
+    #[Test]
+    public function legacy_empty_or_oversized_question_choices_cannot_break_document_read(): void
+    {
+        $questions = [
+            ['code' => 'empty_choices', 'choices' => []],
+            ['code' => 'too_many_choices', 'choices' => range(1, 9)],
+        ];
+        $page = (object) ['normalized_payload' => [
+            'ai_questions' => $questions,
+            'document_arbitration' => ['questions' => $questions],
+            'vision_analysis' => ['elements' => [['type' => 'wall', 'label' => 'brick']]],
+        ]];
+
+        $payload = (new ReflectionMethod(EstimateGenerationDocumentDetailResource::class, 'semanticAnalysis'))
+            ->invoke(null, $page);
+
+        self::assertSame('brick', $payload['observations'][0]['label']);
+        self::assertArrayNotHasKey('questions', $payload);
+    }
+
+    #[Test]
+    public function malformed_single_observation_is_isolated_without_losing_valid_page_results(): void
+    {
+        $page = (object) [
+            'page_number' => 2,
+            'normalized_payload' => [
+                'vision_analysis' => ['elements' => [
+                    ['type' => 'wall', 'label' => 'Кирпичная стена'],
+                    'damaged-observation',
+                ]],
+                'independent_observations' => [
+                    'observer_literal' => ['claims' => [
+                        ['entityKey' => 'wall:1', 'factType' => 'material', 'value' => ['type' => 'string', 'data' => 'brick']],
+                        ['entityKey' => null, 'factType' => 'material'],
+                    ]],
+                ],
+            ],
+        ];
+
+        $payload = (new ReflectionMethod(EstimateGenerationDocumentDetailResource::class, 'semanticAnalysis'))
+            ->invoke(null, $page);
+
+        self::assertSame('Кирпичная стена', $payload['observations'][0]['label']);
+        self::assertSame('wall:1', $payload['context'][0]['entityKey']);
+        self::assertSame(['malformed_observation', 'malformed_observation'], array_column($payload['limitations'], 'code'));
+        self::assertSame(2, $payload['limitations'][0]['source_locator']['page_number']);
     }
 
     #[Test]
@@ -118,9 +147,9 @@ final class EstimateGenerationDocumentSemanticProjectionTest extends TestCase
                 ]]],
             ],
         ]];
-        $method = new ReflectionMethod(EstimateGenerationDocumentDetailResource::class, 'semanticAnalysis');
 
-        $payload = $method->invoke(null, $page);
+        $payload = (new ReflectionMethod(EstimateGenerationDocumentDetailResource::class, 'semanticAnalysis'))
+            ->invoke(null, $page);
 
         self::assertTrue($payload['analysis_complete']);
         self::assertSame('ready_context', $payload['outcome']);

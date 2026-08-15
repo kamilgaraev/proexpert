@@ -174,6 +174,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorderO
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\SafeLogFailureRecorderObserver;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineCheckpointStore;
@@ -551,7 +552,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource::class,
             static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource => new \App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource(
-                $app->make('db'),
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification::class),
                 (int) config('estimate-generation.project_planning.max_facts') + 1,
@@ -574,6 +574,15 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\AnswerEstimateClarification::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Questions\ListEstimateClarifications::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot::class,
+            static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot => new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot(
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService::class),
+                null,
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry::class),
+            ),
+        );
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator::class,
             static fn ($app): \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator => new \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningCoordinator(
@@ -795,6 +804,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 self::MINIMUM_PIPELINE_LEASE_SECONDS,
             )),
         ));
+        $this->app->singleton(
+            SessionAiCostGuard::class,
+            static fn ($app): SessionAiCostGuard => new SessionAiCostGuard($app->make('db')->connection()),
+        );
         $this->app->singleton(RerankWireClient::class, TimewebRerankWireClient::class);
         $this->app->singleton(OcrDocumentStorageService::class);
         $this->app->singleton(OcrPreflightService::class);

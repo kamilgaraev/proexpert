@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use Brick\Math\BigDecimal;
 use DateTimeImmutable;
 use Illuminate\Database\Connection;
 
@@ -28,6 +29,15 @@ final readonly class DocumentWireAuthorization
             return 'document_processing_stopped';
         }
 
+        $session = $this->database->table('estimate_generation_sessions')
+            ->where('id', $scope->session_id)
+            ->where('organization_id', $scope->organization_id)
+            ->where('project_id', $scope->project_id)
+            ->lockForUpdate()
+            ->first(['analysis_payload']);
+        if ($session === null) {
+            return 'document_processing_stopped';
+        }
         $document = $this->database->table('estimate_generation_documents')
             ->where('id', $scope->document_id)
             ->where('organization_id', $scope->organization_id)
@@ -40,9 +50,13 @@ final readonly class DocumentWireAuthorization
             return 'document_processing_stopped';
         }
         if ((string) $document->processing_control_status !== 'active') {
-            return (string) $document->processing_control_status === 'paused'
-                ? 'document_cost_limit_reached'
-                : 'document_processing_stopped';
+            if ((string) $document->processing_control_status !== 'paused') {
+                return 'document_processing_stopped';
+            }
+
+            return (string) $document->processing_control_reason === 'session_cost_limit_reached'
+                ? 'session_cost_limit_reached'
+                : 'document_cost_limit_reached';
         }
 
         $meta = is_string($document->meta) ? json_decode($document->meta, true) : $document->meta;
@@ -54,8 +68,21 @@ final readonly class DocumentWireAuthorization
         }
 
         $limit = $document->processing_cost_limit === null
-            ? (string) config('estimate-generation.generation.document_cost_limit_rub', '50.00')
+            ? (string) config('estimate-generation.generation.document_cost_limit_rub', '600.00')
             : (string) $document->processing_cost_limit;
+        $analysis = is_string($session->analysis_payload)
+            ? json_decode($session->analysis_payload, true)
+            : $session->analysis_payload;
+        $guard = is_array($analysis) && is_array($analysis['internal_cost_guard'] ?? null)
+            ? $analysis['internal_cost_guard']
+            : [];
+        $sessionLimit = BigDecimal::of((string) config(
+            'estimate-generation.generation.session_cost_limit_rub',
+            '900.00',
+        ))->plus(BigDecimal::of((string) config(
+            'estimate-generation.generation.session_cost_confirmation_increment_rub',
+            '450.00',
+        ))->multipliedBy(max(0, (int) ($guard['confirmation_version'] ?? 0))));
         $usage = $this->database->selectOne(<<<'SQL'
 SELECT COALESCE(SUM(usage.cost_amount) FILTER (
            WHERE usage.pricing_status = 'available' AND usage.currency = 'RUB'
@@ -85,11 +112,37 @@ SQL, [
             $scope->document_id,
             $scope->processing_lineage_id,
         ]);
-        $limitReached = filter_var($usage?->limit_reached ?? false, FILTER_VALIDATE_BOOL)
+        $documentLimitReached = filter_var($usage?->limit_reached ?? false, FILTER_VALIDATE_BOOL)
             || (int) ($usage?->unknown_count ?? 0) > 0;
-        if (! $limitReached) {
+        $sessionUsage = $this->database->selectOne(<<<'SQL'
+SELECT COALESCE(SUM(cost_amount) FILTER (
+           WHERE pricing_status = 'available' AND currency = 'RUB'
+       ), 0)::numeric(20,8) AS spent,
+       COUNT(*) FILTER (
+           WHERE pricing_status <> 'available'
+              OR cost_amount IS NULL
+              OR currency IS DISTINCT FROM 'RUB'
+       )::int AS unknown_count,
+       (COALESCE(SUM(cost_amount) FILTER (
+           WHERE pricing_status = 'available' AND currency = 'RUB'
+       ), 0) >= ?::numeric) AS limit_reached
+FROM estimate_generation_ai_usage
+WHERE organization_id = ?
+  AND project_id = ?
+  AND session_id = ?
+SQL, [
+            (string) $sessionLimit,
+            $scope->organization_id,
+            $scope->project_id,
+            $scope->session_id,
+        ]);
+        $sessionLimitReached = filter_var($sessionUsage?->limit_reached ?? false, FILTER_VALIDATE_BOOL)
+            || (int) ($sessionUsage?->unknown_count ?? 0) > 0;
+        if (! $documentLimitReached && ! $sessionLimitReached) {
             return null;
         }
+
+        $reason = $sessionLimitReached ? 'session_cost_limit_reached' : 'cost_limit_reached';
 
         $this->database->table('estimate_generation_documents')
             ->where('id', $scope->document_id)
@@ -99,12 +152,19 @@ SQL, [
                 'processing_control_status' => 'paused',
                 'processing_control_source_version' => (string) $scope->source_version,
                 'processing_control_attempt_id' => (string) $scope->processing_lineage_id,
-                'processing_control_reason' => 'cost_limit_reached',
+                'processing_control_reason' => $reason,
                 'processing_control_at' => $now,
                 'processing_cost_limit' => $limit,
+                'meta' => json_encode([
+                    ...$meta,
+                    'session_cost_guard_confirmation_version' => max(
+                        0,
+                        (int) ($guard['confirmation_version'] ?? 0),
+                    ),
+                ], JSON_THROW_ON_ERROR),
                 'updated_at' => $now,
             ]);
 
-        return 'document_cost_limit_reached';
+        return $sessionLimitReached ? 'session_cost_limit_reached' : 'document_cost_limit_reached';
     }
 }

@@ -7,6 +7,8 @@ namespace Tests\Unit\EstimateGeneration\Workflow;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Testing\TestCase;
@@ -20,6 +22,30 @@ final class BuildSessionSnapshotTest extends TestCase
         $app->make(Kernel::class)->bootstrap();
 
         return $app;
+    }
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->app->instance(EstimateClarificationCatalog::class, new class implements EstimateClarificationCatalog
+        {
+            public function allCurrent(int $organizationId, int $projectId, int $sessionId): array
+            {
+                return [];
+            }
+        });
+        $this->app->instance(
+            EstimateClarificationAnswerRegistry::class,
+            new class implements EstimateClarificationAnswerRegistry
+            {
+                public function answeredKeys(int $organizationId, int $projectId, int $sessionId): array
+                {
+                    return [];
+                }
+            },
+        );
+        $this->app->forgetInstance(BuildSessionSnapshot::class);
     }
 
     #[Test]
@@ -246,7 +272,7 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
-    public function successful_recovery_recommends_ai_questions_before_draft(): void
+    public function successful_recovery_without_project_questions_recommends_draft(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
@@ -259,13 +285,12 @@ final class BuildSessionSnapshotTest extends TestCase
                 'action_required' => 0,
                 'ignored' => 0,
                 'drawing_elements' => 24,
-                'ai_question_count' => 2,
             ],
         );
 
-        self::assertSame('ai_questions', $snapshot->recommendedStep);
-        self::assertTrue($snapshot->workflowSteps[2]['recommended']);
-        self::assertFalse($snapshot->workflowSteps[3]['available']);
+        self::assertSame('draft', $snapshot->recommendedStep);
+        self::assertFalse($snapshot->workflowSteps[2]['recommended']);
+        self::assertTrue($snapshot->workflowSteps[3]['available']);
     }
 
     #[Test]

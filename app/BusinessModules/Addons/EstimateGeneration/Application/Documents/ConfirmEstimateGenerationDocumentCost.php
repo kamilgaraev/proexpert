@@ -69,22 +69,44 @@ final readonly class ConfirmEstimateGenerationDocumentCost
                 return [$lockedSession, $lockedDocument, 'replayed', $attemptId];
             }
             if ((string) $lockedDocument->processing_control_status !== 'paused'
-                || (string) $lockedDocument->processing_control_reason !== 'cost_limit_reached') {
+                || ! in_array((string) $lockedDocument->processing_control_reason, [
+                    'cost_limit_reached',
+                    'session_cost_limit_reached',
+                ], true)) {
                 throw new DocumentProcessingControlConflict('confirmation_not_required');
             }
+            $documentConfirmation = (string) $lockedDocument->processing_control_reason === 'cost_limit_reached';
+            $sessionConfirmation = (string) $lockedDocument->processing_control_reason === 'session_cost_limit_reached';
             $increment = (string) config(
-                'estimate-generation.generation.document_cost_limit_rub',
-                '50.00',
+                'estimate-generation.generation.document_cost_confirmation_increment_rub',
+                '300.00',
             );
             $currentLimit = $lockedDocument->processing_cost_limit === null
-                ? $increment : (string) $lockedDocument->processing_cost_limit;
+                ? (string) config('estimate-generation.generation.document_cost_limit_rub', '600.00')
+                : (string) $lockedDocument->processing_cost_limit;
             $now = now();
+            $analysis = is_array($lockedSession->analysis_payload) ? $lockedSession->analysis_payload : [];
+            $sessionGuard = is_array($analysis['internal_cost_guard'] ?? null)
+                ? $analysis['internal_cost_guard']
+                : [];
+            $currentSessionConfirmationVersion = max(0, (int) ($sessionGuard['confirmation_version'] ?? 0));
+            $pausedSessionConfirmationVersion = max(
+                0,
+                (int) ($meta['session_cost_guard_confirmation_version'] ?? $currentSessionConfirmationVersion),
+            );
+            $sessionConfirmationAdvances = $sessionConfirmation
+                && $currentSessionConfirmationVersion <= $pausedSessionConfirmationVersion;
+            $documentConfirmationVersion = (int) $lockedDocument->processing_cost_confirmation_version
+                + ($documentConfirmation ? 1 : 0);
+            $sessionConfirmationVersion = $currentSessionConfirmationVersion
+                + ($sessionConfirmationAdvances ? 1 : 0);
             $confirmation = [
                 'idempotency_hash' => $keyHash,
                 'source_version' => $expectedSourceVersion,
                 'attempt_id' => $attemptId,
                 'confirmed_at' => $now->toISOString(),
-                'version' => (int) $lockedDocument->processing_cost_confirmation_version + 1,
+                'version' => $documentConfirmation ? $documentConfirmationVersion : $sessionConfirmationVersion,
+                'guard' => $documentConfirmation ? 'document' : 'session',
             ];
             $lockedDocument->forceFill([
                 'status' => 'processing',
@@ -92,15 +114,29 @@ final readonly class ConfirmEstimateGenerationDocumentCost
                 'processing_control_status' => 'active',
                 'processing_control_reason' => null,
                 'processing_control_at' => null,
-                'processing_cost_limit' => $this->addMoney($currentLimit, $increment),
+                'processing_cost_limit' => $documentConfirmation
+                    ? $this->addMoney($currentLimit, $increment)
+                    : $lockedDocument->processing_cost_limit,
                 'processing_cost_confirmed_at' => $now,
-                'processing_cost_confirmation_version' => (int) $lockedDocument->processing_cost_confirmation_version + 1,
+                'processing_cost_confirmation_version' => $documentConfirmationVersion,
                 'meta' => [
                     ...$meta,
                     'processing_cost_confirmation' => $confirmation,
                     'processing_cost_confirmations' => [...$history, $confirmation],
                 ],
             ])->save();
+            if ($sessionConfirmationAdvances) {
+                $lockedSession->forceFill([
+                    'analysis_payload' => [
+                        ...$analysis,
+                        'internal_cost_guard' => [
+                            ...$sessionGuard,
+                            'confirmation_version' => $sessionConfirmationVersion,
+                            'confirmed_at' => $now->toISOString(),
+                        ],
+                    ],
+                ])->save();
+            }
 
             return [$lockedSession, $lockedDocument, 'accepted', $attemptId];
         }, 3);

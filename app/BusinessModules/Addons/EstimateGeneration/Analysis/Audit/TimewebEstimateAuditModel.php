@@ -65,6 +65,11 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
+                'estimate_generation_scope' => [
+                    'organization_id' => $input->organizationId,
+                    'project_id' => $input->projectId,
+                    'session_id' => $input->sessionId,
+                ],
             ]);
             $decoded = json_decode($this->normalizedContent((string) ($response['content'] ?? '')), true);
             if (! is_array($decoded) || ($response['model'] ?? null) !== $this->modelName) {

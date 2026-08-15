@@ -10,7 +10,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenera
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityReviewPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
@@ -45,7 +44,6 @@ class DocumentGenerationReadinessService
         private readonly ?EffectiveSettingsResolver $settingsResolver = null,
         ?EstimateGenerationQualityReviewPolicy $qualityReview = null,
         ?DocumentSystemFailureDetector $systemFailures = null,
-        private readonly ?EstimateClarificationAnswerRegistry $clarificationAnswers = null,
     ) {
         $this->qualityReview = $qualityReview ?? new EstimateGenerationQualityReviewPolicy;
         $this->systemFailures = $systemFailures ?? new DocumentSystemFailureDetector;
@@ -109,17 +107,7 @@ class DocumentGenerationReadinessService
      */
     public function summary(Collection $documents, ?EffectiveEstimateGenerationSettings $settings = null): array
     {
-        $answeredByScope = [];
-        $items = $documents->map(function (EstimateGenerationDocument $document) use ($settings, &$answeredByScope): array {
-            $scope = implode(':', [
-                (int) $document->organization_id,
-                (int) $document->project_id,
-                (int) $document->session_id,
-            ]);
-            $answeredByScope[$scope] ??= $this->answeredQuestionKeys($document);
-
-            return $this->documentState($document, $settings, $answeredByScope[$scope]);
-        });
+        $items = $documents->map(fn (EstimateGenerationDocument $document): array => $this->documentState($document, $settings));
         $pending = $items->where('is_pending', true);
         $failed = $items->where('status', 'failed');
         $systemFailures = $items->where('is_system_failure', true);
@@ -138,7 +126,6 @@ class DocumentGenerationReadinessService
         $capabilityIncompleteDocuments = $items->where('capabilities_complete', false)->where('status', '!=', 'ignored');
         $actionRequiredCount = $actionRequired->count();
         $hasDocuments = $items->isNotEmpty();
-        $aiQuestionCount = (int) $items->sum('ai_question_count');
         $multiAgentItems = $items->where('uses_multi_agent_analysis', true);
         $analysisRolesComplete = $multiAgentItems->isNotEmpty()
             && $multiAgentItems->every(static fn (array $item): bool => ($item['analysis_roles_complete'] ?? false) === true);
@@ -158,7 +145,6 @@ class DocumentGenerationReadinessService
             'structure_incomplete_count' => $structureIncompleteDocuments->count(),
             'capability_incomplete_count' => $capabilityIncompleteDocuments->count(),
             'action_required_count' => $actionRequiredCount,
-            'ai_question_count' => $aiQuestionCount,
             'analysis_roles_complete' => $analysisRolesComplete,
             'multi_agent_document_count' => $multiAgentItems->count(),
             'has_documents' => $hasDocuments,
@@ -181,7 +167,6 @@ class DocumentGenerationReadinessService
     private function documentState(
         EstimateGenerationDocument $document,
         ?EffectiveEstimateGenerationSettings $settings,
-        array $answeredQuestionKeys = [],
     ): array {
         $status = (string) ($document->status ?? 'uploaded');
         $isPending = in_array($status, self::PENDING_STATUSES, true);
@@ -190,7 +175,6 @@ class DocumentGenerationReadinessService
         $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
         $usesMultiAgentAnalysis = array_key_exists('analysis_roles_complete', $factsSummary);
         $analysisRolesComplete = ($factsSummary['analysis_roles_complete'] ?? false) === true;
-        $aiQuestionCount = $this->unansweredQuestionCount($factsSummary, $answeredQuestionKeys);
         $qualityFlags = is_array($document->quality_flags) ? $document->quality_flags : [];
         $hasConflicts = (is_array($factsSummary['conflicts'] ?? null) && $factsSummary['conflicts'] !== []);
         $hasLowQuality = in_array($document->quality_level, ['low', 'unusable'], true);
@@ -199,9 +183,8 @@ class DocumentGenerationReadinessService
         $missingDocumentUnderstanding = ! $isPending && ($usesMultiAgentAnalysis
             ? ! $analysisRolesComplete
             : $this->missingDocumentUnderstanding($factsSummary));
-        $requiresDocumentReview = ! $isPending && ($usesMultiAgentAnalysis
-            ? $aiQuestionCount > 0
-            : $this->requiresDocumentReview($factsSummary));
+        $requiresDocumentReview = ! $isPending && ! $usesMultiAgentAnalysis
+            && $this->requiresDocumentReview($factsSummary);
         $qualitySignals = is_array($factsSummary['quality_signals'] ?? null) ? $factsSummary['quality_signals'] : [];
         $qualityDecision = $settings === null || $isPending
             ? null
@@ -228,19 +211,17 @@ class DocumentGenerationReadinessService
             'requires_document_review' => $requiresDocumentReview,
             'uses_multi_agent_analysis' => $usesMultiAgentAnalysis,
             'analysis_roles_complete' => $usesMultiAgentAnalysis && $analysisRolesComplete,
-            'ai_question_count' => $aiQuestionCount,
             'requires_quality_review' => $requiresQualityReview,
             'quality_review_reasons' => $qualityDecision?->reasons ?? [],
             'structure_complete' => $structureComplete,
             'capabilities_complete' => $capabilitiesComplete,
-            'is_ready' => $status === 'ready' && $structureComplete && $capabilitiesComplete && $aiQuestionCount === 0,
+            'is_ready' => $status === 'ready' && $structureComplete && $capabilitiesComplete,
             'is_pending' => $isPending,
             'is_system_failure' => $isSystemFailure,
             'is_temporary_failure' => $isSystemFailure && $this->systemFailures->temporary($document),
             'is_action_required' => $isActionStatus
                 || (! $isSystemFailure && (
-                    $hasConflicts
-                    || $hasLowQuality
+                    $hasLowQuality
                     || (! $isPending && ! $structureComplete)
                     || (! $isPending && ! $capabilitiesComplete)
                     || $missingDocumentUnderstanding
@@ -249,41 +230,6 @@ class DocumentGenerationReadinessService
                 )),
             'updated_at' => $document->updated_at?->toISOString(),
         ];
-    }
-
-    /** @return list<string> */
-    private function answeredQuestionKeys(EstimateGenerationDocument $document): array
-    {
-        if ($this->clarificationAnswers === null
-            || (int) $document->organization_id < 1
-            || (int) $document->project_id < 1
-            || (int) $document->session_id < 1) {
-            return [];
-        }
-
-        return $this->clarificationAnswers->answeredKeys(
-            (int) $document->organization_id,
-            (int) $document->project_id,
-            (int) $document->session_id,
-        );
-    }
-
-    /** @param array<string,mixed> $factsSummary @param list<string> $answeredQuestionKeys */
-    private function unansweredQuestionCount(array $factsSummary, array $answeredQuestionKeys): int
-    {
-        $persisted = max(0, (int) ($factsSummary['ai_question_count'] ?? 0));
-        $questions = is_array($factsSummary['questions'] ?? null) ? $factsSummary['questions'] : [];
-        $keys = [];
-        foreach ($questions as $question) {
-            if (is_array($question) && is_string($question['code'] ?? null)) {
-                $keys[$question['code']] = true;
-            }
-        }
-        if ($keys === []) {
-            return $persisted;
-        }
-
-        return max(0, $persisted - count(array_intersect(array_keys($keys), $answeredQuestionKeys)));
     }
 
     /**

@@ -20,6 +20,7 @@ final class RecoverStalledEstimateGenerationDocumentsTest extends TestCase
         self::assertStringContainsString('ProcessEstimateGenerationDocumentJob::CONNECTION', $recovery);
         self::assertStringContainsString('ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE', $recovery);
         self::assertStringContainsString("'processing_attempt_id'", $recovery);
+        self::assertStringContainsString("->where('processing_control_status', 'cancelled')", $recovery);
         self::assertStringContainsString('attemptId: $attemptId', $recovery);
         self::assertStringContainsString('RecoverStalledEstimateGenerationDocuments::class', $provider);
         self::assertStringContainsString("->name('estimate-generation:recover-stalled-documents')", $provider);

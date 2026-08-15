@@ -138,7 +138,7 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
     }
 
     #[Test]
-    public function semantic_questions_and_quarantine_have_distinct_honest_states(): void
+    public function legacy_question_flags_and_quarantine_are_both_non_question_partial_states(): void
     {
         $questions = (new DocumentProcessingOutcomeResolver)->resolve(
             [$this->page(1, 'needs_review', ['ai_questions_pending'])],
@@ -149,7 +149,7 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
             [$this->unit(1, 'completed', 1)],
         );
 
-        self::assertSame('questions', $questions->toArray()['state']);
+        self::assertSame('partial', $questions->toArray()['state']);
         self::assertSame('partial', $partial->toArray()['state']);
     }
 

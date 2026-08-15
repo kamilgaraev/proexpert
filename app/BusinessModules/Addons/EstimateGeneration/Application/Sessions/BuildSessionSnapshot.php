@@ -7,6 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationAction;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
@@ -21,6 +23,8 @@ final class BuildSessionSnapshot
     public function __construct(
         private readonly AiEstimateQuotaService $aiEstimateQuota,
         ?Closure $translator = null,
+        private readonly ?EstimateClarificationCatalog $clarifications = null,
+        private readonly ?EstimateClarificationAnswerRegistry $clarificationAnswers = null,
     ) {
         $this->translator = $translator ?? static fn (string $key): string => trans_message($key);
     }
@@ -84,7 +88,8 @@ final class BuildSessionSnapshot
         $budgetScope = is_array($draft['budget_scope'] ?? null) ? $draft['budget_scope'] : [];
         $aiEstimateQuota = $session->getAttribute('ai_estimate_quota_snapshot');
         $nextAction = $this->recommendedNextAction($status, $actions);
-        $recommendedStep = $this->recommendedStep($session, $status, $documentsSummary);
+        $questionCount = $this->unansweredQuestionCount($session);
+        $recommendedStep = $this->recommendedStep($session, $status, $documentsSummary, $questionCount);
 
         return new SessionSnapshotData(
             id: (int) $session->getKey(),
@@ -120,7 +125,7 @@ final class BuildSessionSnapshot
                     (string) $session->getKey(),
                 )->toArray(),
             recommendedStep: $recommendedStep,
-            workflowSteps: $this->workflowSteps($session, $status, $documentsSummary, $recommendedStep),
+            workflowSteps: $this->workflowSteps($session, $status, $documentsSummary, $recommendedStep, $questionCount),
         );
     }
 
@@ -235,6 +240,7 @@ final class BuildSessionSnapshot
         EstimateGenerationSession $session,
         EstimateGenerationStatus $status,
         array $documentsSummary,
+        int $questionCount,
     ): ?string {
         if ($status === EstimateGenerationStatus::ProcessingDocuments) {
             return 'documents';
@@ -247,7 +253,7 @@ final class BuildSessionSnapshot
 
         if ($status === EstimateGenerationStatus::InputReviewRequired
             && $this->documentAnalysisComplete($documentsSummary)) {
-            return (int) ($documentsSummary['ai_question_count'] ?? 0) > 0 ? 'ai_questions' : 'draft';
+            return $questionCount > 0 ? 'ai_questions' : 'draft';
         }
 
         return null;
@@ -262,6 +268,7 @@ final class BuildSessionSnapshot
         EstimateGenerationStatus $status,
         array $documentsSummary,
         ?string $recommendedStep,
+        int $questionCount,
     ): array {
         $usable = $this->usableDocumentResults($documentsSummary);
         $total = max(0, (int) ($documentsSummary['total'] ?? $documentsSummary['total_count'] ?? 0));
@@ -272,7 +279,7 @@ final class BuildSessionSnapshot
         $analysisComplete = $total > 0
             && $this->documentAnalysisComplete($documentsSummary)
             && ($usable + $ignored) >= $total;
-        $questionsResolved = (int) ($documentsSummary['ai_question_count'] ?? 0) === 0;
+        $questionsResolved = $questionCount === 0;
 
         $available = [
             'object' => true,
@@ -290,6 +297,33 @@ final class BuildSessionSnapshot
             ],
             array_keys($available),
         );
+    }
+
+    private function unansweredQuestionCount(EstimateGenerationSession $session): int
+    {
+        if ($this->clarifications === null) {
+            return 0;
+        }
+        $answered = $this->clarificationAnswers === null
+            ? []
+            : $this->clarificationAnswers->answeredKeys(
+                (int) $session->organization_id,
+                (int) $session->project_id,
+                (int) $session->getKey(),
+            );
+        $answered = array_fill_keys($answered, true);
+        $count = 0;
+        foreach ($this->clarifications->allCurrent(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->getKey(),
+        ) as $current) {
+            if (! isset($answered[$current->question->code])) {
+                $count++;
+            }
+        }
+
+        return $count;
     }
 
     /** @param array<string, mixed> $documentsSummary */

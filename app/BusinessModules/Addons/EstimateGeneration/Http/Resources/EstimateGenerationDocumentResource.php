@@ -44,12 +44,6 @@ class EstimateGenerationDocumentResource extends JsonResource
                 'attempt_id' => $document->processing_control_attempt_id,
                 'changed_at' => $document->processing_control_at?->toISOString(),
             ],
-            'cost_journal' => [
-                'spent_rub' => $document->getAttribute('processing_cost_spent_rub'),
-                'limit_rub' => $document->processing_cost_limit
-                    ?? (string) config('estimate-generation.generation.document_cost_limit_rub', '50.00'),
-                'confirmation_version' => (int) ($document->processing_cost_confirmation_version ?? 0),
-            ],
             'quality' => [
                 'score' => $document->quality_score,
                 'level' => $document->quality_level,
@@ -139,7 +133,9 @@ class EstimateGenerationDocumentResource extends JsonResource
             'temporary_failure' => 'estimate_generation.document_processing_temporarily_unavailable',
             'system_failure' => 'estimate_generation.document_processing_system_failed',
             'user_action_required' => 'estimate_generation.document_processing_user_action_required',
-            'cancelled' => 'estimate_generation.document_processing_cancelled',
+            'cancelled' => $ready > 0
+                ? 'estimate_generation.document_processing_stopped_partial'
+                : 'estimate_generation.document_processing_cancelled',
             default => 'estimate_generation.document_processing_in_progress',
         };
         $state = is_string($stored['state'] ?? null) ? $stored['state'] : match (true) {
@@ -160,6 +156,18 @@ class EstimateGenerationDocumentResource extends JsonResource
                 $reportedExecutionProgress,
                 $calculatedExecutionProgress,
             ))),
+            'execution' => [
+                'completed_pages' => $terminalCount,
+                'total_pages' => $included,
+                'progress_percent' => max(0, min(100, max(
+                    $reportedExecutionProgress,
+                    $calculatedExecutionProgress,
+                ))),
+            ],
+            'usefulness' => [
+                'usable_pages' => $ready,
+                'total_pages' => $included,
+            ],
             'readiness' => is_string($stored['readiness'] ?? null) ? $stored['readiness'] : match ($type) {
                 'ready' => 'ready',
                 'processing' => 'processing',
@@ -228,14 +236,13 @@ class EstimateGenerationDocumentResource extends JsonResource
         return is_array($understanding) ? $understanding : null;
     }
 
-    /** @return array{roles_complete: bool, question_count: int} */
+    /** @return array{roles_complete: bool} */
     private function analysisStatus(EstimateGenerationDocument $document): array
     {
         $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
 
         return [
             'roles_complete' => ($factsSummary['analysis_roles_complete'] ?? false) === true,
-            'question_count' => max(0, (int) ($factsSummary['ai_question_count'] ?? 0)),
         ];
     }
 }

@@ -181,8 +181,28 @@ final class RetryEstimateGenerationSession
 
     private function retryGeneration(EstimateGenerationSession $session): EstimateGenerationSession
     {
+        $analysisPayload = null;
+        if ((string) $session->failure_code === 'session_cost_limit_reached') {
+            $analysis = is_array($session->analysis_payload) ? $session->analysis_payload : [];
+            $guard = is_array($analysis['internal_cost_guard'] ?? null)
+                ? $analysis['internal_cost_guard']
+                : [];
+            $analysisPayload = [
+                ...$analysis,
+                'internal_cost_guard' => [
+                    ...$guard,
+                    'confirmation_version' => max(0, (int) ($guard['confirmation_version'] ?? 0)) + 1,
+                    'confirmed_at' => now()->toISOString(),
+                ],
+            ];
+        }
         $attemptId = ($this->attemptIdFactory)();
-        $session = $this->advance->generationRetried($session, $attemptId, $this->refreshedRegionalContext($session));
+        $session = $this->advance->generationRetried(
+            $session,
+            $attemptId,
+            $this->refreshedRegionalContext($session),
+            $analysisPayload,
+        );
         $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
 
         return $session;

@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Dispatch
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentCostJournalReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDispatchCandidate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDispatchStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitOutput;
@@ -16,6 +17,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentWireAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StopEstimateGenerationDocumentProcessing;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -24,6 +27,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProce
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore;
@@ -91,17 +96,20 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $authorization = Mockery::mock(AuthorizationService::class);
             $authorization->shouldReceive('can')->twice()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
-            $readiness->shouldReceive('evaluate')->twice()->andReturn(['summary' => []]);
+            $readiness->shouldReceive('evaluate')->times(3)->andReturn($this->reviewRequiredReadiness());
+            $this->app->instance(DocumentGenerationReadinessService::class, $readiness);
+            $this->app->forgetInstance(DocumentUnitAggregateReconciler::class);
             $service = new StopEstimateGenerationDocumentProcessing(
                 $authorization,
                 $readiness,
+                app(DocumentUnitAggregateReconciler::class),
             );
 
             $first = $service->handle(
                 $fixture['session'],
                 $fixture['document'],
                 $fixture['user'],
-                0,
+                (int) $fixture['session']->fresh()->state_version,
                 $fixture['sourceVersion'],
                 'stop-idempotency-key',
             );
@@ -109,7 +117,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $fixture['session'],
                 $fixture['document']->fresh(),
                 $fixture['user'],
-                0,
+                (int) $fixture['session']->fresh()->state_version,
                 $fixture['sourceVersion'],
                 'stop-idempotency-key',
             );
@@ -127,6 +135,103 @@ final class DocumentProcessingControlPostgresTest extends TestCase
     }
 
     #[Test]
+    public function operator_stop_reconciles_a_twenty_two_page_partial_result_for_list_snapshot_and_detail(): void
+    {
+        $this->requirePostgres();
+        DB::beginTransaction();
+        try {
+            $fixture = $this->fixture('600.00000000');
+            $this->expandDocumentToPages($fixture, 22);
+            $store = app(DocumentProcessingUnitStore::class);
+            $now = new DateTimeImmutable;
+            foreach (EstimateGenerationProcessingUnit::query()
+                ->where('document_id', $fixture['document']->id)
+                ->orderBy('unit_index')
+                ->limit(2)
+                ->get() as $unit) {
+                $claim = $store->claim(
+                    (int) $unit->id,
+                    $fixture['sourceVersion'],
+                    $now,
+                    $now->modify('+180 seconds'),
+                    3,
+                );
+                self::assertTrue($claim->acquired());
+                self::assertTrue($store->publish(
+                    $claim,
+                    new DocumentUnitOutput(
+                        version: 'document-174-partial-v1',
+                        text: 'Сохранённый результат страницы '.(int) $unit->unit_index,
+                        confidence: 0.95,
+                        normalizedPayload: [
+                            'independent_observations' => [],
+                            'limitations' => [],
+                        ],
+                        unitType: $unit->unit_type,
+                        unitIndex: (int) $unit->unit_index,
+                        sourceVersion: $fixture['sourceVersion'],
+                    ),
+                    $now,
+                ));
+            }
+            DB::table('estimate_generation_ai_usage')->insert(
+                $this->usageRow($fixture, (string) Str::uuid(), '17.15026500'),
+            );
+            $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
+            $authorization = Mockery::mock(AuthorizationService::class);
+            $authorization->shouldReceive('can')->once()->andReturnTrue();
+            $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
+            $readiness->shouldReceive('evaluate')->twice()->andReturn($this->reviewRequiredReadiness());
+            $this->app->instance(DocumentGenerationReadinessService::class, $readiness);
+            $this->app->forgetInstance(DocumentUnitAggregateReconciler::class);
+
+            (new StopEstimateGenerationDocumentProcessing(
+                $authorization,
+                $readiness,
+                app(DocumentUnitAggregateReconciler::class),
+            ))->handle(
+                $fixture['session'],
+                $fixture['document']->fresh(),
+                $fixture['user'],
+                (int) $fixture['session']->fresh()->state_version,
+                $fixture['sourceVersion'],
+                'document-174-stop',
+            );
+
+            $document = $fixture['document']->fresh([
+                'pages',
+                'processingUnits',
+                'facts',
+                'drawingElements',
+                'quantityTakeoffs',
+                'scopeInferences',
+            ]);
+            $list = (new EstimateGenerationDocumentResource($document))->resolve();
+            $detail = (new EstimateGenerationDocumentDetailResource($document))->resolve();
+            $session = $fixture['session']->fresh();
+
+            self::assertSame('needs_review', $document->status);
+            self::assertSame('completed', $document->processing_stage);
+            self::assertSame(100, $document->progress_percent);
+            self::assertSame(2, $document->processed_page_count);
+            self::assertSame('cancelled', $document->processing_control_status);
+            self::assertSame(2, $list['processing_outcome']['usefulness']['usable_pages']);
+            self::assertSame(22, $list['processing_outcome']['execution']['completed_pages']);
+            self::assertSame(100, $list['processing_outcome']['execution']['progress_percent']);
+            self::assertArrayNotHasKey('cost_journal', $list);
+            self::assertCount(22, $detail['pages']);
+            self::assertArrayNotHasKey('ai_questions', $detail);
+            self::assertSame('input_review_required', $session->status->value);
+            self::assertSame(35, $session->processing_progress);
+            self::assertSame('17.15026500', (string) DB::table('estimate_generation_ai_usage')
+                ->where('session_id', $session->id)
+                ->sum('cost_amount'));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
     public function explicit_retry_after_stop_creates_a_fresh_active_lineage(): void
     {
         $this->requirePostgres();
@@ -138,15 +243,20 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $authorization = Mockery::mock(AuthorizationService::class);
             $authorization->shouldReceive('can')->twice()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
-            $readiness->shouldReceive('evaluate')->twice()->andReturn(['summary' => []]);
+            $readiness->shouldReceive('evaluate')->times(3)->andReturn($this->reviewRequiredReadiness());
             $this->app->instance(AuthorizationService::class, $authorization);
             $this->app->instance(DocumentGenerationReadinessService::class, $readiness);
-            $stop = new StopEstimateGenerationDocumentProcessing($authorization, $readiness);
+            $this->app->forgetInstance(DocumentUnitAggregateReconciler::class);
+            $stop = new StopEstimateGenerationDocumentProcessing(
+                $authorization,
+                $readiness,
+                app(DocumentUnitAggregateReconciler::class),
+            );
             $stop->handle(
                 $fixture['session'],
                 $fixture['document'],
                 $fixture['user'],
-                0,
+                (int) $fixture['session']->fresh()->state_version,
                 $fixture['sourceVersion'],
                 'stop-before-retry',
             );
@@ -155,7 +265,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $fixture['session']->fresh(),
                 $fixture['document']->fresh(),
                 $fixture['user'],
-                0,
+                (int) $fixture['session']->fresh()->state_version,
                 $fixture['sourceVersion'],
                 'retry-after-stop',
                 'Продолжить после остановки',
@@ -180,6 +290,8 @@ final class DocumentProcessingControlPostgresTest extends TestCase
         try {
             Queue::fake();
             config()->set('estimate-generation.generation.document_cost_limit_rub', '0.20000000');
+            config()->set('estimate-generation.generation.document_cost_confirmation_increment_rub', '0.20000000');
+            config()->set('estimate-generation.generation.session_cost_confirmation_increment_rub', '0.30000000');
             $fixture = $this->fixture('0.10000000');
             $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
             $fixture['document']->forceFill([
@@ -189,9 +301,9 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 'processing_control_reason' => 'cost_limit_reached',
             ])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
-            $authorization->shouldReceive('can')->times(4)->andReturnTrue();
+            $authorization->shouldReceive('can')->times(6)->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
-            $readiness->shouldReceive('evaluate')->times(4)->andReturn(['summary' => []]);
+            $readiness->shouldReceive('evaluate')->times(6)->andReturn(['summary' => []]);
             $service = new ConfirmEstimateGenerationDocumentCost(
                 $authorization,
                 $readiness,
@@ -238,13 +350,48 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $fixture['sourceVersion'],
                 'cost-confirmation-key',
             );
+            $fixture['document']->fresh()->forceFill([
+                'processing_control_status' => 'paused',
+                'processing_control_reason' => 'session_cost_limit_reached',
+            ])->save();
+            $sessionConfirmation = $service->handle(
+                $fixture['session'],
+                $fixture['document']->fresh(),
+                $fixture['user'],
+                0,
+                $fixture['sourceVersion'],
+                'session-cost-confirmation-key',
+            );
+            $document = $fixture['document']->fresh();
+            $document->forceFill([
+                'processing_control_status' => 'paused',
+                'processing_control_reason' => 'session_cost_limit_reached',
+                'meta' => [
+                    ...$document->meta,
+                    'session_cost_guard_confirmation_version' => 0,
+                ],
+            ])->save();
+            $sameSessionConfirmation = $service->handle(
+                $fixture['session']->fresh(),
+                $document,
+                $fixture['user'],
+                0,
+                $fixture['sourceVersion'],
+                'session-cost-confirmation-key-b',
+            );
 
             self::assertSame('accepted', $first->disposition);
             self::assertSame('replayed', $second->disposition);
             self::assertSame('accepted', $third->disposition);
             self::assertSame('replayed', $delayedFirst->disposition);
+            self::assertSame('accepted', $sessionConfirmation->disposition);
+            self::assertSame('accepted', $sameSessionConfirmation->disposition);
             self::assertSame('0.50000000', (string) $fixture['document']->fresh()->processing_cost_limit);
             self::assertSame(2, (int) $fixture['document']->fresh()->processing_cost_confirmation_version);
+            self::assertSame(
+                1,
+                (int) data_get($fixture['session']->fresh()->analysis_payload, 'internal_cost_guard.confirmation_version'),
+            );
         } finally {
             DB::rollBack();
         }
@@ -560,6 +707,71 @@ final class DocumentProcessingControlPostgresTest extends TestCase
     }
 
     #[Test]
+    public function session_cost_ceiling_aggregates_multiple_documents_before_the_next_wire(): void
+    {
+        $this->requirePostgres();
+        DB::beginTransaction();
+        try {
+            config()->set('estimate-generation.generation.document_cost_limit_rub', '10.00000000');
+            config()->set('estimate-generation.generation.session_cost_limit_rub', '1.00000000');
+            $fixture = $this->fixture('10.00000000');
+            $sibling = $this->siblingDocument($fixture, 'active', null);
+            DB::table('estimate_generation_ai_usage')->insert([
+                $this->usageRow($fixture, (string) Str::uuid(), '0.40000000'),
+                $this->usageRow($sibling, (string) Str::uuid(), '0.70000000'),
+            ]);
+            [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
+
+            try {
+                $store->markWireStarted(
+                    $context->attemptId,
+                    $fingerprint,
+                    $owner,
+                    new DateTimeImmutable,
+                    (new DateTimeImmutable)->modify('+180 seconds'),
+                );
+                self::fail('Session cost ceiling allowed another wire.');
+            } catch (DocumentUnitProcessingException $exception) {
+                self::assertSame('session_cost_limit_reached', $exception->safeCode);
+            }
+
+            $document = $fixture['document']->fresh();
+            self::assertSame('paused', $document->processing_control_status);
+            self::assertSame('session_cost_limit_reached', $document->processing_control_reason);
+            self::assertSame(0, (int) data_get($document->meta, 'session_cost_guard_confirmation_version'));
+            self::assertSame('pre_wire', DB::table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $context->attemptId)->value('state'));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function session_cost_ceiling_also_blocks_later_ai_stages_with_exact_scope(): void
+    {
+        $this->requirePostgres();
+        DB::beginTransaction();
+        try {
+            config()->set('estimate-generation.generation.session_cost_limit_rub', '1.00000000');
+            $fixture = $this->fixture('10.00000000');
+            $sibling = $this->siblingDocument($fixture, 'active', null);
+            DB::table('estimate_generation_ai_usage')->insert([
+                $this->usageRow($fixture, (string) Str::uuid(), '0.40000000'),
+                $this->usageRow($sibling, (string) Str::uuid(), '0.70000000'),
+            ]);
+
+            $this->expectException(SessionAiCostLimitReached::class);
+            app(SessionAiCostGuard::class)->authorize(
+                (int) $fixture['organization']->id,
+                (int) $fixture['project']->id,
+                (int) $fixture['session']->id,
+            );
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
     public function paid_response_without_usage_journal_pauses_before_the_next_wire(): void
     {
         $this->requirePostgres();
@@ -648,7 +860,11 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $authorization->shouldReceive('can')->once()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
             $readiness->shouldReceive('evaluate')->once()->andReturn(['summary' => []]);
-            $stop = new StopEstimateGenerationDocumentProcessing($authorization, $readiness);
+            $stop = new StopEstimateGenerationDocumentProcessing(
+                $authorization,
+                $readiness,
+                app(DocumentUnitAggregateReconciler::class),
+            );
             $result = $stop->handle(
                 $fixture['session'],
                 $fixture['document'],
@@ -729,9 +945,15 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $authorization = Mockery::mock(AuthorizationService::class);
             $authorization->shouldReceive('can')->once()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
-            $readiness->shouldReceive('evaluate')->once()->andReturn(['summary' => []]);
+            $readiness->shouldReceive('evaluate')->twice()->andReturn($this->reviewRequiredReadiness());
+            $this->app->instance(DocumentGenerationReadinessService::class, $readiness);
+            $this->app->forgetInstance(DocumentUnitAggregateReconciler::class);
 
-            (new StopEstimateGenerationDocumentProcessing($authorization, $readiness))->handle(
+            (new StopEstimateGenerationDocumentProcessing(
+                $authorization,
+                $readiness,
+                app(DocumentUnitAggregateReconciler::class),
+            ))->handle(
                 $fixture['session'],
                 $fixture['document'],
                 $fixture['user'],
@@ -1098,6 +1320,20 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    /** @return array<string, mixed> */
+    private function reviewRequiredReadiness(): array
+    {
+        return [
+            'can_generate' => false,
+            'summary' => [
+                'pending_count' => 0,
+                'system_failure_count' => 0,
+                'action_required_count' => 1,
+                'items' => [],
+            ],
+        ];
     }
 
     private function requirePostgres(): void

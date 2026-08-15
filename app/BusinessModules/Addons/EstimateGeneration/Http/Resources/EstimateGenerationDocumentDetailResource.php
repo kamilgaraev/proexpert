@@ -7,7 +7,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ManageEstimateGenerationDocumentPages;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
-use App\BusinessModules\Addons\EstimateGeneration\Questions\ClarificationQuestionProjector;
 use App\Models\User;
 use Illuminate\Http\Request;
 
@@ -60,15 +59,6 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'semantic_analysis' => self::semanticAnalysis($page),
             ])->all();
         }, []);
-        $payload['ai_questions'] = $document->relationLoaded('pages')
-            ? array_map(
-                static fn ($question): array => $question->toArray(),
-                app(ClarificationQuestionProjector::class)->projectPages($document->pages->map(
-                    static fn ($page): array => self::normalizedPayload($page),
-                )->all()),
-            )
-            : [];
-
         $payload['processing_units'] = $this->whenLoaded('processingUnits', function () use ($document): array {
             return $document->processingUnits->map(static fn ($unit): array => [
                 'id' => $unit->id,
@@ -172,7 +162,19 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
     {
         $payload = self::normalizedPayload($page);
         $vision = is_array($payload['vision_analysis'] ?? null) ? $payload['vision_analysis'] : [];
-        $elements = is_array($vision['elements'] ?? null) ? array_values(array_filter($vision['elements'], 'is_array')) : [];
+        $rawElements = is_array($vision['elements'] ?? null) ? $vision['elements'] : [];
+        $elements = [];
+        $limitations = is_array($payload['limitations'] ?? null)
+            ? array_values(array_filter($payload['limitations'], 'is_array'))
+            : [];
+        foreach ($rawElements as $index => $element) {
+            if (! is_array($element)) {
+                $limitations[] = self::malformedObservationLimitation($page, 'vision_analysis.elements', $index);
+
+                continue;
+            }
+            $elements[] = $element;
+        }
         $completion = is_array($payload['role_completion'] ?? null) ? $payload['role_completion'] : [];
         $routing = is_array($payload['analysis_routing'] ?? null) ? $payload['analysis_routing'] : [];
         $outcome = is_string($payload['analysis_outcome'] ?? null) ? $payload['analysis_outcome'] : null;
@@ -182,7 +184,12 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         $arbitration = is_array($payload['document_arbitration'] ?? null) ? $payload['document_arbitration'] : [];
         $decisions = is_array($arbitration['decisions'] ?? null) ? $arbitration['decisions'] : [];
         $facts = [];
-        foreach ($decisions as $decision) {
+        foreach ($decisions as $index => $decision) {
+            if (! is_array($decision)) {
+                $limitations[] = self::malformedObservationLimitation($page, 'document_arbitration.decisions', $index);
+
+                continue;
+            }
             $canonical = is_array($decision) ? ($decision['canonical_claim'] ?? null) : null;
             if (! is_array($canonical) || ! in_array($decision['status'] ?? null, ['accepted', 'candidate'], true)) {
                 continue;
@@ -202,8 +209,16 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
             : [];
         foreach ($independent as $role => $observer) {
             $claims = is_array($observer) && is_array($observer['claims'] ?? null) ? $observer['claims'] : [];
-            foreach ($claims as $claim) {
-                if (! is_array($claim)) {
+            foreach ($claims as $index => $claim) {
+                if (! is_array($claim)
+                    || ! is_string($claim['entityKey'] ?? null)
+                    || ! is_string($claim['factType'] ?? null)) {
+                    $limitations[] = self::malformedObservationLimitation(
+                        $page,
+                        'independent_observations.'.(is_string($role) ? $role : 'unknown').'.claims',
+                        $index,
+                    );
+
                     continue;
                 }
                 $context[] = [
@@ -222,11 +237,6 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
             ...(is_array($geometry['quarantined_intents'] ?? null) ? $geometry['quarantined_intents'] : []),
             ...(is_array($routing['semantic_region_quarantine'] ?? null) ? $routing['semantic_region_quarantine'] : []),
         ], 'is_array'));
-        $questions = array_map(
-            static fn ($question): array => $question->toArray(),
-            app(ClarificationQuestionProjector::class)->projectPages([$payload]),
-        );
-
         $plannedComplete = $plannedRoles !== [];
         foreach ($plannedRoles as $role) {
             $plannedComplete = $plannedComplete && ($completion[$role] ?? false) === true;
@@ -258,11 +268,25 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
             ], $elements)),
             'facts' => $facts,
             'context' => $context,
-            'questions' => $questions,
+            'limitations' => $limitations,
             'quarantined_items' => $quarantined,
             'semantic_regions' => is_array($routing['semantic_regions'] ?? null)
                 ? array_values(array_filter($routing['semantic_regions'], 'is_array'))
                 : [],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private static function malformedObservationLimitation(mixed $page, string $section, int|string $index): array
+    {
+        return [
+            'code' => 'malformed_observation',
+            'type' => 'malformed_observation',
+            'source_locator' => array_filter([
+                'page_number' => is_int($page->page_number ?? null) ? $page->page_number : null,
+                'section' => $section,
+                'index' => is_int($index) ? $index : (string) $index,
+            ], static fn (mixed $value): bool => $value !== null),
         ];
     }
 

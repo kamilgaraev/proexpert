@@ -86,13 +86,19 @@ final class AdvanceEstimateGeneration
         EstimateGenerationSession $session,
         string $attemptId,
         array $inputPayloadChanges = [],
+        ?array $analysisPayload = null,
     ): EstimateGenerationSession {
-        return $this->withQuotaForGeneration($session, function (EstimateGenerationSession $lockedSession) use ($attemptId, $inputPayloadChanges): EstimateGenerationSession {
-            return $this->workflow->transition($lockedSession, EstimateGenerationEvent::Retried, $this->generationAttributes(
+        return $this->withQuotaForGeneration($session, function (EstimateGenerationSession $lockedSession) use ($attemptId, $inputPayloadChanges, $analysisPayload): EstimateGenerationSession {
+            $attributes = $this->generationAttributes(
                 $lockedSession,
                 $attemptId,
                 $inputPayloadChanges,
-            ));
+            );
+            if ($analysisPayload !== null) {
+                $attributes['analysis_payload'] = $analysisPayload;
+            }
+
+            return $this->workflow->transition($lockedSession, EstimateGenerationEvent::Retried, $attributes);
         });
     }
 

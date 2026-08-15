@@ -89,6 +89,11 @@ final readonly class AttemptAwareNormativeLlmClient
             $httpCode = null;
             $response = [];
             try {
+                $options['estimate_generation_scope'] = [
+                    'organization_id' => $organizationId,
+                    'project_id' => $projectId,
+                    'session_id' => $sessionId,
+                ];
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;
                 $content = $this->normalizedContent(

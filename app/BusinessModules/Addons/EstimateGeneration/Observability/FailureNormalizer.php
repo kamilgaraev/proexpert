@@ -25,6 +25,11 @@ final readonly class FailureNormalizer
             $error instanceof OcrConfigurationException => [FailureCategory::Terminal, 'ocr_not_configured', []],
             $error instanceof PipelineStageException => [$error->category, $error->safeCode, []],
             $error instanceof TypedFailureException => [$error->category, $error->safeCode, $error->safeContext],
+            $error instanceof SessionAiCostLimitReached => [
+                FailureCategory::Recoverable,
+                'session_cost_limit_reached',
+                ['reason' => $error->reason],
+            ],
             $error instanceof OcrProviderException => $this->ocrProvider($error),
             $error instanceof RerankWireException => [
                 $error->attemptStatus === 'malformed_response' ? FailureCategory::Terminal : FailureCategory::Recoverable,
@@ -88,7 +93,7 @@ final readonly class FailureNormalizer
                 'document_input_invalid', 'drawing_geometry_unreadable', 'unit_page_lineage_conflict',
                 'cad_geometry_processor_required', 'unit_artifact_manifest_required', 'unit_content_empty',
                 'unit_recognition_empty',
-                'document_cost_limit_reached', 'document_processing_stopped',
+                'document_cost_limit_reached', 'session_cost_limit_reached', 'document_processing_stopped',
             ], true) => FailureCategory::UserActionRequired,
             default => FailureCategory::Terminal,
         };
