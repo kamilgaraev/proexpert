@@ -22,7 +22,8 @@ final readonly class DocumentReadinessClassifier
         if ($this->systemFailures->detected($document)) {
             return false;
         }
-        if (in_array($status, ['failed', 'needs_review'], true)) {
+        if (in_array($status, ['failed', 'needs_review'], true)
+            || ($status === 'processing' && (string) $document->processing_control_status === 'cancelled')) {
             return true;
         }
 
@@ -63,7 +64,7 @@ EXISTS (
        )
 )
 SQL;
-        $canonicalAction = "(status = 'failed' AND COALESCE(error_code, '') NOT IN ('document_processing_system_failed','document_processing_temporarily_unavailable')) OR status = 'needs_review' OR (status <> 'ignored' AND (facts_summary->'document_understanding'->>'role_for_estimation' = 'needs_review' OR facts_summary->'document_understanding'->'extracted_capabilities'->>'requires_manual_review' = 'true'))";
+        $canonicalAction = "(status = 'failed' AND COALESCE(error_code, '') NOT IN ('document_processing_system_failed','document_processing_temporarily_unavailable')) OR status = 'needs_review' OR (status = 'processing' AND processing_control_status = 'cancelled') OR (status <> 'ignored' AND (facts_summary->'document_understanding'->>'role_for_estimation' = 'needs_review' OR facts_summary->'document_understanding'->'extracted_capabilities'->>'requires_manual_review' = 'true'))";
 
         return sprintf('(%s) AND NOT (%s)', $canonicalAction, $legacySystemicFailure);
     }
