@@ -10,6 +10,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Eloquent
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ResetDocumentProcessingUnitsForAttempt;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
@@ -548,6 +550,107 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             self::assertSame(0, $actionRequired);
         } finally {
             DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function operational_sql_classifies_an_operator_stopped_partial_document_as_settled_action_required(): void
+    {
+        $this->requireEnvironment();
+        $organization = null;
+        $project = null;
+        $user = null;
+        $session = null;
+        $sourceVersion = 'sha256:'.str_repeat('a', 64);
+
+        try {
+            $organization = Organization::factory()->create();
+            $project = Project::factory()->for($organization)->create();
+            $user = User::factory()->create();
+            $session = EstimateGenerationSession::query()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'user_id' => $user->id,
+                'status' => 'processing_documents',
+                'processing_stage' => 'processing_documents',
+                'processing_progress' => 5,
+                'input_payload' => [],
+                'state_version' => 1,
+            ]);
+            $document = EstimateGenerationDocument::query()->create([
+                'session_id' => $session->id,
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'user_id' => $user->id,
+                'filename' => 'architecture.pdf',
+                'mime_type' => 'application/pdf',
+                'source_version' => $sourceVersion,
+                'status' => 'processing',
+                'processing_stage' => 'quality_check',
+                'progress_percent' => 10,
+                'processing_control_status' => 'cancelled',
+                'processing_control_reason' => 'operator_stop',
+                'page_count' => 22,
+                'processed_page_count' => 0,
+            ]);
+            foreach (range(1, 22) as $pageNumber) {
+                $completed = $pageNumber <= 2;
+                $unit = EstimateGenerationProcessingUnit::query()->create([
+                    'organization_id' => $organization->id,
+                    'project_id' => $project->id,
+                    'session_id' => $session->id,
+                    'document_id' => $document->id,
+                    'unit_type' => 'pdf_page',
+                    'unit_index' => $pageNumber,
+                    'source_version' => $sourceVersion,
+                    'status' => $completed ? 'completed' : 'superseded',
+                    'attempt_count' => $completed ? 1 : 0,
+                    'output_version' => $completed ? 'sha256:'.str_repeat('b', 64) : null,
+                    'output_count' => $completed ? 1 : 0,
+                    'completed_at' => $completed ? now() : null,
+                    'locator' => $this->locator($organization->id, $sourceVersion, $pageNumber),
+                    'metadata' => (object) [],
+                ]);
+                EstimateGenerationDocumentPage::query()->create([
+                    'organization_id' => $organization->id,
+                    'project_id' => $project->id,
+                    'session_id' => $session->id,
+                    'document_id' => $document->id,
+                    'processing_unit_id' => $unit->id,
+                    'source_version' => $sourceVersion,
+                    'output_version' => $completed ? 'sha256:'.str_repeat('b', 64) : null,
+                    'page_number' => $pageNumber,
+                    'status' => $completed ? 'ready' : ($pageNumber === 3 ? 'failed' : 'queued'),
+                    'language_codes' => [],
+                    'normalized_payload' => [],
+                    'quality_flags' => [],
+                ]);
+            }
+            $actionRequiredSql = (new DocumentReadinessClassifier)->actionRequiredSql();
+            $summary = DB::table('estimate_generation_documents')
+                ->where('session_id', $session->id)
+                ->selectRaw("SUM(CASE WHEN status IN ('uploaded','queued','processing') AND NOT COALESCE(({$actionRequiredSql}), FALSE) THEN 1 ELSE 0 END) AS pending")
+                ->selectRaw("SUM(CASE WHEN COALESCE(({$actionRequiredSql}), FALSE) THEN 1 ELSE 0 END) AS action_required")
+                ->first();
+
+            self::assertSame(0, (int) $summary->pending);
+            self::assertSame(1, (int) $summary->action_required);
+
+            $snapshot = app(BuildSessionOperationalSnapshot::class)->handle($session, []);
+
+            self::assertSame(EstimateGenerationStatus::InputReviewRequired, $snapshot->status);
+            self::assertSame('input_review_required', $snapshot->processingStage);
+            self::assertSame(35, $snapshot->processingProgress);
+            self::assertSame(0, $snapshot->documentsSummary['pending']);
+            self::assertSame(1, $snapshot->documentsSummary['action_required']);
+            self::assertSame(22, $snapshot->documentsSummary['pages']);
+            self::assertSame('processing_documents', $session->fresh()->status->value);
+            self::assertSame(5, $session->fresh()->processing_progress);
+        } finally {
+            $session?->delete();
+            $project?->delete();
+            $user?->delete();
+            $organization?->delete();
         }
     }
 

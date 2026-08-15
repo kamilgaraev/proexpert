@@ -24,7 +24,7 @@ final class DocumentReadinessClassifierTest extends TestCase
         $document->forceFill($attributes);
 
         self::assertSame($expected, $classifier->requiresAction($document));
-        foreach (['failed', 'needs_review', 'role_for_estimation', 'requires_manual_review'] as $rule) {
+        foreach (['failed', 'needs_review', 'processing_control_status', 'cancelled', 'role_for_estimation', 'requires_manual_review'] as $rule) {
             self::assertStringContainsString($rule, $classifier->actionRequiredSql());
         }
     }
@@ -38,6 +38,11 @@ final class DocumentReadinessClassifierTest extends TestCase
         yield 'conflict alone' => [['status' => 'ready', 'quality_level' => 'high', 'facts_summary' => ['document_understanding' => ['role_for_estimation' => 'primary'], 'conflicts' => [['code' => 'scale']]]], false];
         yield 'low quality alone' => [['status' => 'ready', 'quality_level' => 'low', 'facts_summary' => ['document_understanding' => ['role_for_estimation' => 'primary']]], false];
         yield 'pending without role' => [['status' => 'processing', 'quality_level' => null, 'facts_summary' => []], false];
+        yield 'operator stopped processing is a terminal user decision' => [[
+            'status' => 'processing',
+            'processing_control_status' => 'cancelled',
+            'facts_summary' => [],
+        ], true];
         yield 'ignored' => [['status' => 'ignored', 'quality_level' => 'unusable', 'facts_summary' => []], false];
         yield 'system processing failure is not a user decision' => [[
             'status' => 'failed',

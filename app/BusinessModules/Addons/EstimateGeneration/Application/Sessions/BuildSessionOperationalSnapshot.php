@@ -47,6 +47,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
         private readonly EstimatorReadinessEvaluator $readinessEvaluator,
         private readonly OperationalReadinessInputFactory $readinessInputFactory,
         private readonly DocumentReadinessClassifier $documentClassifier,
+        private readonly SettledDocumentStageSessionProjector $documentStageProjector,
     ) {}
 
     /** @param list<string> $permissions */
@@ -152,12 +153,14 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
     /** @return array<string, mixed> */
     private function documents(Connection $connection, int $organizationId, int $projectId, int $sessionId): array
     {
+        $actionRequiredSql = $this->documentClassifier->actionRequiredSql();
+
         return $this->aggregate($connection->table('estimate_generation_documents')
             ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
             ->selectRaw('COUNT(*) AS total, MAX(id) AS max_id, MAX(updated_at) AS max_updated_at')
             ->selectRaw("SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END) AS ready")
-            ->selectRaw("SUM(CASE WHEN status IN ('uploaded','queued','processing') THEN 1 ELSE 0 END) AS pending")
-            ->selectRaw('SUM(CASE WHEN '.$this->documentClassifier->actionRequiredSql().' THEN 1 ELSE 0 END) AS action_required')
+            ->selectRaw("SUM(CASE WHEN status IN ('uploaded','queued','processing') AND NOT COALESCE(({$actionRequiredSql}), FALSE) THEN 1 ELSE 0 END) AS pending")
+            ->selectRaw("SUM(CASE WHEN COALESCE(({$actionRequiredSql}), FALSE) THEN 1 ELSE 0 END) AS action_required")
             ->selectRaw("SUM(CASE WHEN status = 'ignored' THEN 1 ELSE 0 END) AS ignored")
             ->selectRaw('COALESCE(SUM(page_count), 0) AS pages, COALESCE(SUM(processed_page_count), 0) AS processed_pages')
             ->selectRaw("md5(COALESCE(string_agg(id::text || ':' || COALESCE(source_version, ''), '|' ORDER BY id), '')) AS source_versions")
@@ -328,6 +331,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
     private function assemble(array $session, array $permissions, array ...$parts): SessionSnapshotData
     {
         [$documents, $checkpoint, $checkpoints, $units, $evidence, $usage, $failures, $estimate, $sources] = $parts;
+        $session = $this->documentStageProjector->project($session, $documents);
         $model = new EstimateGenerationSession;
         $model->forceFill([
             ...$session,
