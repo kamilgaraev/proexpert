@@ -638,12 +638,64 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
 
             $snapshot = app(BuildSessionOperationalSnapshot::class)->handle($session, []);
 
+            $payload = $snapshot->toArray();
+
             self::assertSame(EstimateGenerationStatus::InputReviewRequired, $snapshot->status);
             self::assertSame('input_review_required', $snapshot->processingStage);
             self::assertSame(35, $snapshot->processingProgress);
             self::assertSame(0, $snapshot->documentsSummary['pending']);
             self::assertSame(1, $snapshot->documentsSummary['action_required']);
             self::assertSame(22, $snapshot->documentsSummary['pages']);
+            self::assertSame('review_documents', $payload['next_action']);
+            self::assertSame('documents', $payload['recommended_step']);
+            self::assertSame([
+                ['id' => 'object', 'available' => true, 'recommended' => false],
+                ['id' => 'documents', 'available' => true, 'recommended' => true],
+                ['id' => 'ai_questions', 'available' => false, 'recommended' => false],
+                ['id' => 'draft', 'available' => false, 'recommended' => false],
+                ['id' => 'review', 'available' => false, 'recommended' => false],
+            ], $payload['workflow_steps']);
+            self::assertSame(['documents_require_review'], array_column($payload['blocking_issues'], 'code'));
+            self::assertSame([
+                'id',
+                'project_id',
+                'status',
+                'processing_stage',
+                'processing_progress',
+                'state_version',
+                'object_input',
+                'operational_version',
+                'available_actions',
+                'blocking_issues',
+                'warnings',
+                'next_action',
+                'recommended_step',
+                'workflow_steps',
+                'readiness_evaluated',
+                'can_generate',
+                'can_apply',
+                'current_checkpoint',
+                'queue_summary',
+                'recovery_summary',
+                'documents_summary',
+                'estimate_summary',
+                'review_summary',
+                'evidence_summary',
+                'quality_summary',
+                'scope_summary',
+                'ai_estimate_quota',
+                'usage_summary',
+                'failure_summary',
+                'applied_estimate_id',
+                'updated_at',
+            ], array_keys($payload));
+            $recommended = array_values(array_filter(
+                $payload['workflow_steps'],
+                static fn (array $step): bool => $step['recommended'],
+            ));
+            self::assertCount(1, $recommended);
+            self::assertTrue($recommended[0]['available']);
+            self::assertSame($payload['recommended_step'], $recommended[0]['id']);
             self::assertSame('processing_documents', $session->fresh()->status->value);
             self::assertSame(5, $session->fresh()->processing_progress);
         } finally {

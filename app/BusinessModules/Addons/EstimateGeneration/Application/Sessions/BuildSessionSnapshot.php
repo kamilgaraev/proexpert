@@ -89,7 +89,7 @@ final class BuildSessionSnapshot
         $aiEstimateQuota = $session->getAttribute('ai_estimate_quota_snapshot');
         $nextAction = $this->recommendedNextAction($status, $actions);
         $questionCount = $this->unansweredQuestionCount($session);
-        $recommendedStep = $this->recommendedStep($session, $status, $documentsSummary, $questionCount);
+        $workflow = $this->workflowProjection($session, $status, $documentsSummary, $questionCount);
 
         return new SessionSnapshotData(
             id: (int) $session->getKey(),
@@ -124,8 +124,8 @@ final class BuildSessionSnapshot
                     (string) $session->organization_id,
                     (string) $session->getKey(),
                 )->toArray(),
-            recommendedStep: $recommendedStep,
-            workflowSteps: $this->workflowSteps($session, $status, $documentsSummary, $recommendedStep, $questionCount),
+            recommendedStep: $workflow['recommended_step'],
+            workflowSteps: $workflow['steps'],
         );
     }
 
@@ -236,46 +236,30 @@ final class BuildSessionSnapshot
         return null;
     }
 
-    private function recommendedStep(
-        EstimateGenerationSession $session,
-        EstimateGenerationStatus $status,
-        array $documentsSummary,
-        int $questionCount,
-    ): ?string {
-        if ($status === EstimateGenerationStatus::ProcessingDocuments) {
-            return 'documents';
-        }
-
-        if ($status === EstimateGenerationStatus::Failed
-            && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments) {
-            return 'documents';
-        }
-
-        if ($status === EstimateGenerationStatus::InputReviewRequired
-            && $this->documentAnalysisComplete($documentsSummary)) {
-            return $questionCount > 0 ? 'ai_questions' : 'draft';
-        }
-
-        return null;
-    }
-
     /**
      * @param  array<string, mixed>  $documentsSummary
-     * @return list<array{id: string, available: bool, recommended: bool}>
+     * @return array{
+     *     recommended_step: ?string,
+     *     steps: list<array{id: string, available: bool, recommended: bool}>
+     * }
      */
-    private function workflowSteps(
+    private function workflowProjection(
         EstimateGenerationSession $session,
         EstimateGenerationStatus $status,
         array $documentsSummary,
-        ?string $recommendedStep,
         int $questionCount,
     ): array {
         $usable = $this->usableDocumentResults($documentsSummary);
         $total = max(0, (int) ($documentsSummary['total'] ?? $documentsSummary['total_count'] ?? 0));
         $ignored = max(0, (int) ($documentsSummary['ignored'] ?? $documentsSummary['ignored_count'] ?? 0));
+        $actionRequired = max(0, (int) (
+            $documentsSummary['action_required'] ?? $documentsSummary['action_required_count'] ?? 0
+        ));
         $requiresDocumentRecovery = $status === EstimateGenerationStatus::ProcessingDocuments
             || ($status === EstimateGenerationStatus::Failed
                 && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments);
+        $requiresDocumentReview = $status === EstimateGenerationStatus::InputReviewRequired
+            && $actionRequired > 0;
         $analysisComplete = $total > 0
             && $this->documentAnalysisComplete($documentsSummary)
             && ($usable + $ignored) >= $total;
@@ -288,15 +272,28 @@ final class BuildSessionSnapshot
             'draft' => $analysisComplete && $questionsResolved && ! $requiresDocumentRecovery,
             'review' => $analysisComplete && $questionsResolved && ! $requiresDocumentRecovery,
         ];
+        $recommendedStep = match (true) {
+            $requiresDocumentRecovery, $requiresDocumentReview => 'documents',
+            $status === EstimateGenerationStatus::InputReviewRequired && $analysisComplete => $questionCount > 0
+                ? 'ai_questions'
+                : 'draft',
+            default => null,
+        };
+        if ($recommendedStep !== null && ! $available[$recommendedStep]) {
+            $recommendedStep = null;
+        }
 
-        return array_map(
-            static fn (string $id): array => [
-                'id' => $id,
-                'available' => $available[$id],
-                'recommended' => $id === $recommendedStep,
-            ],
-            array_keys($available),
-        );
+        return [
+            'recommended_step' => $recommendedStep,
+            'steps' => array_map(
+                static fn (string $id): array => [
+                    'id' => $id,
+                    'available' => $available[$id],
+                    'recommended' => $id === $recommendedStep,
+                ],
+                array_keys($available),
+            ),
+        ];
     }
 
     private function unansweredQuestionCount(EstimateGenerationSession $session): int

@@ -294,6 +294,42 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
+    public function document_requiring_review_recommends_the_available_documents_step(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
+            permissions: [],
+            readinessSummary: [
+                'blockers' => [[
+                    'code' => 'documents_require_review',
+                    'message_key' => 'estimate_generation.documents_require_review',
+                    'message' => 'Проверьте частичный результат документа.',
+                ]],
+                'warnings' => [],
+                'next_action' => ['code' => 'review_documents'],
+            ],
+            documentsSummary: [
+                'total' => 1,
+                'ready' => 0,
+                'pending' => 0,
+                'action_required' => 1,
+                'ignored' => 0,
+                'pages' => 22,
+            ],
+        );
+        $payload = $snapshot->toArray();
+
+        self::assertSame('documents', $payload['recommended_step']);
+        self::assertSame([
+            ['id' => 'object', 'available' => true, 'recommended' => false],
+            ['id' => 'documents', 'available' => true, 'recommended' => true],
+            ['id' => 'ai_questions', 'available' => false, 'recommended' => false],
+            ['id' => 'draft', 'available' => false, 'recommended' => false],
+            ['id' => 'review', 'available' => false, 'recommended' => false],
+        ], $payload['workflow_steps']);
+    }
+
+    #[Test]
     public function ignored_documents_count_as_terminal_and_unlock_draft_after_questions(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
@@ -388,10 +424,22 @@ final class BuildSessionSnapshotTest extends TestCase
                 'estimate_generation.apply',
             ],
             readinessSummary: ['blockers' => [], 'warnings' => []],
+            documentsSummary: [
+                'total' => 1,
+                'ready' => 0,
+                'pending' => 0,
+                'action_required' => 1,
+                'ignored' => 0,
+            ],
         );
 
         self::assertSame([], $snapshot->availableActions);
         self::assertNull($snapshot->nextAction);
+        self::assertNull($snapshot->recommendedStep);
+        self::assertSame([], array_values(array_filter(
+            $snapshot->workflowSteps,
+            static fn (array $step): bool => $step['recommended'],
+        )));
     }
 
     #[Test]
