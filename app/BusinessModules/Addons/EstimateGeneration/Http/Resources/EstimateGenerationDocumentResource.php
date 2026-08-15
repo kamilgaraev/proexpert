@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentLifecycleState;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingOutcomeResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSystemFailureDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentActionBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -96,10 +97,12 @@ class EstimateGenerationDocumentResource extends JsonResource
     private function processingOutcome(EstimateGenerationDocument $document): array
     {
         $facts = is_array($document->facts_summary) ? $document->facts_summary : [];
-        $stored = is_array($facts['processing_outcome'] ?? null) ? $facts['processing_outcome'] : [];
+        $liveOutcome = $this->liveProcessingOutcome($document);
+        $stored = $liveOutcome
+            ?? (is_array($facts['processing_outcome'] ?? null) ? $facts['processing_outcome'] : []);
         $failureDetector = app(DocumentSystemFailureDetector::class);
-        $legacyTemporaryFailure = $stored === [] && $failureDetector->temporary($document);
-        $legacySystemFailure = $stored === [] && ! $legacyTemporaryFailure && $failureDetector->detected($document);
+        $legacyTemporaryFailure = $liveOutcome === null && $stored === [] && $failureDetector->temporary($document);
+        $legacySystemFailure = $liveOutcome === null && $stored === [] && ! $legacyTemporaryFailure && $failureDetector->detected($document);
         $type = $legacyTemporaryFailure
             ? 'temporary_failure'
             : ($legacySystemFailure
@@ -122,18 +125,28 @@ class EstimateGenerationDocumentResource extends JsonResource
             'system_failed' => max(0, (int) ($counts['system_failed'] ?? (in_array($type, ['system_failure', 'temporary_failure'], true) ? $included - $ready : 0))),
             'processing' => max(0, (int) ($counts['processing'] ?? ($type === 'processing' ? $included - $ready : 0))),
             'excluded' => max(0, (int) ($counts['excluded'] ?? 0)),
+            'cancelled' => max(0, (int) ($counts['cancelled'] ?? 0)),
         ];
+        $terminalCount = max(0, $counts['included'] - $counts['processing']);
+        $calculatedExecutionProgress = $counts['included'] === 0
+            ? 0
+            : (int) floor(($terminalCount / $counts['included']) * 100);
+        $reportedExecutionProgress = is_int($stored['execution_progress_percent'] ?? null)
+            ? $stored['execution_progress_percent']
+            : ($liveOutcome !== null ? 0 : (int) ($document->progress_percent ?? 0));
         $messageKey = match ($type) {
             'ready' => 'estimate_generation.document_processing_ready',
             'temporary_failure' => 'estimate_generation.document_processing_temporarily_unavailable',
             'system_failure' => 'estimate_generation.document_processing_system_failed',
             'user_action_required' => 'estimate_generation.document_processing_user_action_required',
+            'cancelled' => 'estimate_generation.document_processing_cancelled',
             default => 'estimate_generation.document_processing_in_progress',
         };
         $state = is_string($stored['state'] ?? null) ? $stored['state'] : match (true) {
             $type === 'processing' => 'processing',
             $counts['ready'] > 0 && $counts['system_failed'] > 0 => 'partial',
             $counts['needs_user_action'] > 0 => 'questions',
+            $counts['cancelled'] > 0 => $counts['ready'] > 0 ? 'partial' : 'cancelled',
             in_array($type, ['system_failure', 'temporary_failure'], true) => 'system_failure',
             default => 'ready',
         };
@@ -143,7 +156,10 @@ class EstimateGenerationDocumentResource extends JsonResource
             'state' => $state,
             'counts' => $counts,
             'retry_allowed' => ($stored['retry_allowed'] ?? false) === true,
-            'execution_progress_percent' => max(0, min(100, (int) ($stored['execution_progress_percent'] ?? $document->progress_percent ?? 0))),
+            'execution_progress_percent' => max(0, min(100, max(
+                $reportedExecutionProgress,
+                $calculatedExecutionProgress,
+            ))),
             'readiness' => is_string($stored['readiness'] ?? null) ? $stored['readiness'] : match ($type) {
                 'ready' => 'ready',
                 'processing' => 'processing',
@@ -154,6 +170,39 @@ class EstimateGenerationDocumentResource extends JsonResource
             'message_key' => $messageKey,
             'message' => trans_message($messageKey),
         ];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function liveProcessingOutcome(EstimateGenerationDocument $document): ?array
+    {
+        if (! $document->relationLoaded('processingUnits') || ! $document->relationLoaded('pages')) {
+            return null;
+        }
+        $sourceVersion = (string) ($document->source_version ?? '');
+        $units = $document->processingUnits->filter(
+            static fn ($unit): bool => $sourceVersion === '' || (string) $unit->source_version === $sourceVersion,
+        );
+        $pages = $document->pages->filter(
+            static fn ($page): bool => $sourceVersion === '' || (string) $page->source_version === $sourceVersion,
+        );
+        if ($units->isEmpty() || $pages->isEmpty()) {
+            return null;
+        }
+
+        return app(DocumentProcessingOutcomeResolver::class)->resolve(
+            $pages->map(static fn ($page): array => [
+                'processing_unit_id' => (int) $page->processing_unit_id,
+                'status' => (string) $page->status,
+                'quality_flags' => is_array($page->quality_flags) ? $page->quality_flags : [],
+            ])->values()->all(),
+            $units->map(static fn ($unit): array => [
+                'id' => (int) $unit->id,
+                'status' => $unit->status->value,
+                'output_count' => (int) $unit->output_count,
+                'failure_code' => $unit->failure_code,
+                'metadata' => is_array($unit->metadata) ? $unit->metadata : [],
+            ])->values()->all(),
+        )->toArray();
     }
 
     protected function countRelationOrAttribute(EstimateGenerationDocument $document, string $attribute, string $relation): int

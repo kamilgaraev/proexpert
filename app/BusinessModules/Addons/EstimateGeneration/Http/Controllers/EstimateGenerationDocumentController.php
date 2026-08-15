@@ -100,6 +100,7 @@ class EstimateGenerationDocumentController extends Controller
                 ->with([
                     'session',
                     'processingUnits:id,organization_id,project_id,session_id,document_id,source_version,status,output_count,failure_code,failure_fingerprint,metadata',
+                    'pages:id,document_id,processing_unit_id,source_version,status,quality_flags',
                 ])
                 ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
                 ->orderBy('id')
@@ -193,6 +194,7 @@ class EstimateGenerationDocumentController extends Controller
                 (string) $request->validated('idempotency_key'),
                 $request->validated('reason'),
             );
+            $result->document->loadMissing(['processingUnits', 'pages']);
             $this->costJournal->attach([$result->document]);
 
             return AdminResponse::success([
@@ -253,6 +255,7 @@ class EstimateGenerationDocumentController extends Controller
                 (string) $request->validated('source_version'),
                 (string) $request->validated('idempotency_key'),
             );
+            $result->document->loadMissing(['processingUnits', 'pages']);
             $this->costJournal->attach([$result->document]);
 
             return AdminResponse::success([
@@ -308,6 +311,7 @@ class EstimateGenerationDocumentController extends Controller
                 (string) $request->validated('source_version'),
                 (string) $request->validated('idempotency_key'),
             );
+            $result->document->loadMissing(['processingUnits', 'pages']);
             $this->costJournal->attach([$result->document]);
 
             return AdminResponse::success([
@@ -359,6 +363,7 @@ class EstimateGenerationDocumentController extends Controller
                 (int) $request->validated('state_version'),
                 $request->validated('reason'),
             );
+            $result->document->loadMissing(['processingUnits', 'pages']);
             $this->costJournal->attach([$result->document]);
 
             return AdminResponse::success([
@@ -532,6 +537,7 @@ class EstimateGenerationDocumentController extends Controller
      */
     private function pageActionPayload(DocumentPageActionResult $result): array
     {
+        $result->document->loadMissing(['processingUnits', 'pages']);
         $this->costJournal->attach([$result->document]);
 
         return [

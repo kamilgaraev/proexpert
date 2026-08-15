@@ -165,6 +165,102 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
     }
 
     #[Test]
+    public function production_shaped_active_document_173_reports_terminal_units_cost_and_nonzero_execution_progress(): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturnTrue();
+        $this->app->instance(
+            EstimateGenerationDocumentActionBuilder::class,
+            new EstimateGenerationDocumentActionBuilder($authorization),
+        );
+        $document = $this->document('needs_review');
+        $document->forceFill([
+            'page_count' => 22,
+            'processed_page_count' => 0,
+            'progress_percent' => 100,
+            'source_version' => 'sha256:current',
+            'processing_control_status' => 'active',
+            'facts_summary' => [],
+        ]);
+        $units = [];
+        $pages = [];
+        for ($page = 1; $page <= 22; $page++) {
+            $status = match (true) {
+                $page <= 3 => DocumentProcessingUnitStatus::Completed,
+                $page <= 12 => DocumentProcessingUnitStatus::Failed,
+                $page <= 14 => DocumentProcessingUnitStatus::Running,
+                default => DocumentProcessingUnitStatus::Pending,
+            };
+            $unit = new EstimateGenerationProcessingUnit;
+            $unit->forceFill([
+                'id' => 500 + $page,
+                'organization_id' => 7,
+                'project_id' => 17,
+                'session_id' => 41,
+                'document_id' => 91,
+                'source_version' => 'sha256:current',
+                'unit_type' => DocumentUnitType::PdfPage,
+                'unit_index' => $page,
+                'status' => $status,
+                'output_count' => $status === DocumentProcessingUnitStatus::Completed ? 1 : 0,
+                'failure_code' => $status === DocumentProcessingUnitStatus::Failed
+                    ? ($page <= 7 ? 'document_unit_pre_wire_failed' : ($page <= 11 ? 'unit_claim_lost' : 'vision_provider_response_invalid'))
+                    : null,
+                'metadata' => $status === DocumentProcessingUnitStatus::Failed
+                    ? ['failure_category' => 'terminal']
+                    : [],
+            ]);
+            $units[] = $unit;
+
+            $pageProjection = new EstimateGenerationDocumentPage;
+            $pageProjection->forceFill([
+                'id' => 700 + $page,
+                'organization_id' => 7,
+                'project_id' => 17,
+                'session_id' => 41,
+                'document_id' => 91,
+                'processing_unit_id' => 500 + $page,
+                'source_version' => 'sha256:current',
+                'page_number' => $page,
+                'status' => match (true) {
+                    $page <= 3 => 'needs_review',
+                    $page <= 12 => 'failed',
+                    $page <= 14 => 'processing',
+                    default => 'queued',
+                },
+                'quality_flags' => $page <= 3 ? ['review_required'] : [],
+            ]);
+            $pages[] = $pageProjection;
+        }
+        $document->setRelation('processingUnits', new Collection($units));
+        $document->setRelation('pages', new Collection($pages));
+        $document->setAttribute('processing_cost_spent_rub', '209.35611000');
+        $document->setAttribute('processing_cost_limit', '250.00000000');
+        $request = Request::create('/documents/91');
+        $user = $this->user(7);
+        $request->setUserResolver(static fn (): User => $user);
+
+        $payload = (new EstimateGenerationDocumentResource($document))->toArray($request);
+
+        self::assertSame('processing', $payload['processing_outcome']['type']);
+        self::assertSame([
+            'included' => 22,
+            'ready' => 3,
+            'needs_user_action' => 3,
+            'terminal_system_failed' => 9,
+            'breaker_stopped' => 0,
+            'system_failed' => 9,
+            'processing' => 10,
+            'excluded' => 0,
+            'cancelled' => 0,
+        ], $payload['processing_outcome']['counts']);
+        self::assertSame(54, $payload['processing_outcome']['execution_progress_percent']);
+        self::assertSame('209.35611000', $payload['cost_journal']['spent_rub']);
+        self::assertSame('250.00000000', $payload['cost_journal']['limit_rub']);
+        self::assertContains('stop_document_processing', array_column($payload['available_actions'], 'action'));
+    }
+
+    #[Test]
     public function temporary_document_failure_does_not_expose_explicit_system_failure_retry(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
@@ -472,7 +568,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         self::assertSame('https://storage.example/signed-preview', $payload['preview_url']);
         self::assertSame('floor_plan', $payload['pages'][0]['page_role']);
         self::assertSame('geometry_source', $payload['pages'][0]['role_for_estimation']);
-        self::assertTrue($payload['pages'][0]['review']['required']);
+        self::assertFalse($payload['pages'][0]['review']['required']);
         self::assertSame('failed', $payload['processing_units'][0]['status']);
         self::assertSame('pdf_page', $payload['processing_units'][0]['unit_type']);
     }

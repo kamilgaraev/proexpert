@@ -148,6 +148,7 @@ return [
     ],
     'document_processing_in_progress' => 'Документ обрабатывается.',
     'document_processing_user_action_required' => 'Для части страниц требуется ваше решение.',
+    'document_processing_cancelled' => 'Обработка остановлена. Уже полученные результаты сохранены.',
     'document_processing_temporarily_unavailable' => 'Сервис временно не смог обработать документ. Файл сохранён, обработку можно повторить позже.',
     'document_processing_system_failed' => 'Сервис не смог обработать документ. Файл сохранён, повторная загрузка не требуется.',
     'analysis_completed' => 'Структура объекта и исходные данные проанализированы.',

@@ -44,7 +44,7 @@ final readonly class EstimateGenerationDocumentActionBuilder
         $status = (string) $document->status;
         $actions = [];
         if ((string) $document->processing_control_status === 'active'
-            && in_array($status, ['uploaded', 'queued', 'processing'], true)) {
+            && $this->hasActiveProcessing($document, $status)) {
             $actions[] = [
                 ...$this->action($document, $session, 'stop_document_processing', 'stop', true),
                 'source_version' => (string) $document->source_version,
@@ -69,6 +69,20 @@ final readonly class EstimateGenerationDocumentActionBuilder
         }
 
         return $actions;
+    }
+
+    private function hasActiveProcessing(EstimateGenerationDocument $document, string $status): bool
+    {
+        if (! $document->relationLoaded('processingUnits')) {
+            return in_array($status, ['uploaded', 'queued', 'processing'], true);
+        }
+
+        $sourceVersion = (string) ($document->source_version ?? '');
+
+        return $document->processingUnits->contains(
+            static fn ($unit): bool => in_array($unit->status->value, ['pending', 'running'], true)
+                && ($sourceVersion === '' || (string) $unit->source_version === $sourceVersion),
+        );
     }
 
     private function belongsToContext(
