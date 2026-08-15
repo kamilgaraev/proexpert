@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynt
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisModel;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessEstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationEvidence;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
@@ -26,8 +27,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineOutputReposit
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\AnswerEstimateClarification;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ListEstimateClarifications;
-use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
@@ -320,14 +321,25 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             ->where('entity.entity_kind', 'room')
             ->count());
 
+        app(ProjectUnderstandingCoordinator::class)->refresh(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+            (string) Str::uuid(),
+            1,
+        );
+
         $questions = app(ListEstimateClarifications::class)->handle(
             (int) $organization->id,
             (int) $project->id,
             (int) $session->id,
         );
         self::assertNotEmpty($questions);
-        self::assertMatchesRegularExpression('/^arbiter_question_[a-f0-9]{16}$/D', (string) $questions[0]['code']);
-        self::assertSame('Материал наружной стены', $questions[0]['subject']);
+        self::assertMatchesRegularExpression('/^project_question_[a-f0-9]{32}$/D', (string) $questions[0]['code']);
+        self::assertSame(
+            'В документах указаны разные значения для «материал». Какое значение использовать?',
+            $questions[0]['subject'],
+        );
         self::assertSame([5], $questions[0]['source_locator']['page_numbers']);
         self::assertSame($sourceVersion, $questions[0]['source_version']);
 
@@ -785,6 +797,20 @@ final class RecordedFullPdfProjectSynthesisModel implements ProjectSynthesisMode
     ): array {
         $this->logicalCalls++;
         $fingerprint = $input->fingerprint();
+        $questionConflictId = null;
+        foreach ($candidateQuestions as $candidateQuestion) {
+            if (is_string($candidateQuestion['conflict_id'] ?? null)) {
+                $questionConflictId = $candidateQuestion['conflict_id'];
+                break;
+            }
+        }
+        if ($questionConflictId === null) {
+            throw new \LogicException('recorded_project_synthesis_question_candidate_missing');
+        }
+        $selection = [
+            'accepted_link_ids' => [],
+            'question_conflict_ids' => [$questionConflictId],
+        ];
         $hex = hash('sha256', 'recorded-project-synthesis|'.$fingerprint);
         $attemptId = substr($hex, 0, 8).'-'.substr($hex, 8, 4).'-4'.substr($hex, 13, 3)
             .'-8'.substr($hex, 17, 3).'-'.substr($hex, 20, 12);
@@ -799,8 +825,7 @@ final class RecordedFullPdfProjectSynthesisModel implements ProjectSynthesisMode
             'state' => 'completed',
             'response_payload' => json_encode([
                 'recording' => 'ar-1-project-synthesis-v1',
-                'accepted_link_ids' => [],
-                'question_conflict_ids' => [],
+                ...$selection,
             ], JSON_THROW_ON_ERROR),
             'status' => 'success',
             'http_code' => 200,
@@ -815,7 +840,7 @@ final class RecordedFullPdfProjectSynthesisModel implements ProjectSynthesisMode
         $onPhysicalAttemptReserved($attemptId);
         $this->physicalCalls++;
 
-        return ['accepted_link_ids' => [], 'question_conflict_ids' => []];
+        return $selection;
     }
 }
 
@@ -1049,6 +1074,8 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
         $evidenceKey = sprintf('page-%d-%s', $input->pageNumber, $profile);
         $factValue = match (true) {
             $input->pageNumber === 3 && $profile === 'literal' => 80.0,
+            $input->pageNumber === 5 && $profile === 'literal' => 'Газобетон',
+            $input->pageNumber === 5 && $profile === 'construction' => 'Керамический блок',
             $profile === 'literal' => (string) $page['title'],
             $profile === 'construction' => 'Кладка и отделка учитываются раздельно',
             $profile === 'risk' => $input->pageNumber === 5 ? 'Требуется подтвердить толщину наружной стены' : 'Требуется проверка размерных границ',
@@ -1056,6 +1083,7 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
         };
         $factType = match (true) {
             $input->pageNumber === 3 && $profile === 'literal' => 'area',
+            $input->pageNumber === 5 && in_array($profile, ['literal', 'construction'], true) => 'material',
             $profile === 'literal' => 'note',
             $profile === 'construction' => 'material',
             default => 'risk',
@@ -1149,15 +1177,6 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
                     $isConstruction => 'construction_interpretation_requires_review',
                     default => 'bounded_risk_observation',
                 },
-                ...($isConstructionConflict ? ['question' => [
-                    'code' => 'wall_material_conflict_page_5',
-                    'subject' => 'Материал наружной стены',
-                    'reason' => 'Наблюдатели по-разному определили материал наружной стены.',
-                    'impact' => 'От ответа зависят состав работ, нормы и стоимость материалов.',
-                    'recommendation' => 'Выберите материал, подтверждённый проектной документацией.',
-                    'choices' => ['Газобетон', 'Керамический блок', 'Оставить нерешённым'],
-                    'source_locator' => ['page_number' => 5, 'evidence_refs' => [$evidenceRef]],
-                ]] : []),
             ];
         }, $claims);
 

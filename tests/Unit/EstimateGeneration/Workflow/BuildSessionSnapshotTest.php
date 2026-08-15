@@ -298,7 +298,15 @@ final class BuildSessionSnapshotTest extends TestCase
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
-            permissions: [],
+            permissions: [
+                'estimate_generation.view',
+                'estimate_generation.create',
+                'estimate_generation.upload_documents',
+                'estimate_generation.generate',
+                'estimate_generation.review',
+                'estimate_generation.apply',
+                'estimate_generation.export',
+            ],
             readinessSummary: [
                 'blockers' => [[
                     'code' => 'documents_require_review',
@@ -320,6 +328,7 @@ final class BuildSessionSnapshotTest extends TestCase
         $payload = $snapshot->toArray();
 
         self::assertSame('documents', $payload['recommended_step']);
+        self::assertSame('review_documents', $payload['next_action']);
         self::assertSame([
             ['id' => 'object', 'available' => true, 'recommended' => false],
             ['id' => 'documents', 'available' => true, 'recommended' => true],
@@ -327,6 +336,10 @@ final class BuildSessionSnapshotTest extends TestCase
             ['id' => 'draft', 'available' => false, 'recommended' => false],
             ['id' => 'review', 'available' => false, 'recommended' => false],
         ], $payload['workflow_steps']);
+        self::assertCount(1, array_filter(
+            $payload['workflow_steps'],
+            static fn (array $step): bool => $step['recommended'] && $step['available'],
+        ));
     }
 
     #[Test]

@@ -143,7 +143,6 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                                 evidenceRefs: [$claim->evidenceRef],
                                 reasonCode: 'independent_observation_preserved',
                                 canonicalClaim: null,
-                                question: null,
                             )],
                         ),
                     );
@@ -289,7 +288,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 [$observation->evidenceRef],
                 'independent_observation_preserved',
                 null,
-                null,
+                '',
             )]);
 
             try {
@@ -356,7 +355,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                     [$own->evidenceRef],
                     'independent_observation_preserved',
                     null,
-                    null,
+                    '',
                 )]),
             ), $now->modify('+1 second'));
 
@@ -450,7 +449,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                     [$own->evidenceRef],
                     'independent_observation_preserved',
                     null,
-                    null,
+                    '',
                 )]),
             ), $now->modify('+1 second'));
 
@@ -508,7 +507,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                     [$observation->evidenceRef],
                     'independent_observation_preserved',
                     null,
-                    null,
+                    '',
                 )]),
             ), $now->modify('+1 second'));
 

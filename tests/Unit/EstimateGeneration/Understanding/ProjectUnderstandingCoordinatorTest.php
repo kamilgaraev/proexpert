@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\Expe
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingBudget;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
@@ -153,6 +154,70 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         self::assertNotNull($models->currentUnderstanding(1, 2, 3));
         self::assertFalse($result->isReadyForPlanning());
         self::assertFalse($replayed->isReadyForPlanning());
+    }
+
+    #[Test]
+    public function persisted_conflict_is_offered_to_synthesis_with_its_evidence(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $source = $this->modelSource();
+        $left = new Fact(
+            'fact:material-left', 1, 2, 3, $source, 'entity:material-left', 'material', 'Газобетон', null,
+            1.0, 'document', 'confirmed', ['evidence:1'],
+        );
+        $right = new Fact(
+            'fact:material-right', 1, 2, 3, $source, 'entity:material-right', 'material', 'Керамический блок', null,
+            0.0, 'unresolved', 'unresolved', ['evidence:2'],
+        );
+        $conflict = Conflict::between(
+            'conflict:document-arbitration:test',
+            [$left, $right],
+            'document_arbitration_unresolved',
+        );
+        $models->saveSourceModel(
+            [
+                new Entity('entity:material-left', 1, 2, 3, $source, 'material', 'entity:material-left', []),
+                new Entity('entity:material-right', 1, 2, 3, $source, 'material', 'entity:material-right', []),
+            ],
+            [$left, $right],
+            [$this->evidence('evidence:1'), $this->evidence('evidence:2')],
+            [$conflict],
+        );
+        $synthesis = new RecordingProjectSynthesisRunner;
+
+        $result = $this->coordinator(
+            $models,
+            new RecordingArbitratorFactory,
+            synthesis: $synthesis,
+        )->refresh(1, 2, 3, $this->token(), 1);
+
+        self::assertSame([$conflict->id], array_column($result->questions, 'conflict_id'));
+        self::assertSame(
+            ['evidence:1', 'evidence:2'],
+            array_values(array_unique(array_merge(...array_column($result->questions[0]['options'], 'evidence_ids')))),
+        );
+    }
+
+    #[Test]
+    public function empty_candidate_set_does_not_spend_a_project_synthesis_call(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $models->saveSourceModel(
+            [new Entity('entity:single', 1, 2, 3, $this->modelSource(), 'room', 'entity:single', [])],
+            [$this->fact('fact:single', 'entity:single', 'evidence:1')],
+            [$this->evidence('evidence:1')],
+        );
+        $synthesis = new RecordingProjectSynthesisRunner;
+
+        $result = $this->coordinator(
+            $models,
+            new RecordingArbitratorFactory,
+            synthesis: $synthesis,
+        )->refresh(1, 2, 3, $this->token(), 1);
+
+        self::assertSame(0, $synthesis->calls);
+        self::assertSame(0, $result->providerCalls);
+        self::assertSame([], $result->questions);
     }
 
     #[Test]
@@ -436,6 +501,8 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
 
 final class RecordingProjectSynthesisRunner implements ProjectSynthesisRunner
 {
+    public int $calls = 0;
+
     public ?ProjectSynthesisInput $input = null;
 
     public function run(
@@ -443,6 +510,7 @@ final class RecordingProjectSynthesisRunner implements ProjectSynthesisRunner
         array $candidateLinks,
         array $candidateQuestions,
     ): ProjectSynthesisSelection {
+        $this->calls++;
         $this->input = $input;
 
         return new ProjectSynthesisSelection(

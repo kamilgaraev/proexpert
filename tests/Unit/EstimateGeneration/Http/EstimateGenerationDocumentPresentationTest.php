@@ -270,12 +270,13 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
             EstimateGenerationDocumentActionBuilder::class,
             new EstimateGenerationDocumentActionBuilder($authorization),
         );
-        $document = $this->document('needs_review');
+        $document = $this->document('processing');
         $document->forceFill([
             'id' => 174,
             'page_count' => 22,
             'processed_page_count' => 2,
-            'progress_percent' => 100,
+            'processing_stage' => 'quality_check',
+            'progress_percent' => 10,
             'source_version' => 'sha256:current',
             'processing_control_status' => 'cancelled',
             'processing_control_reason' => 'operator_stop',
@@ -312,6 +313,9 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
 
         $payload = (new EstimateGenerationDocumentResource($document))->toArray($request);
 
+        self::assertSame('needs_review', $payload['status']);
+        self::assertSame('completed', $payload['processing_stage']);
+        self::assertSame(100, $payload['progress_percent']);
         self::assertSame('cancelled', $payload['processing_outcome']['type']);
         self::assertSame('partial', $payload['processing_outcome']['state']);
         self::assertSame(['completed_pages' => 22, 'total_pages' => 22, 'progress_percent' => 100], $payload['processing_outcome']['execution']);

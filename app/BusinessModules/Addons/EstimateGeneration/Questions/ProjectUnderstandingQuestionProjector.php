@@ -54,6 +54,14 @@ final class ProjectUnderstandingQuestionProjector
 
         $factIds = $this->boundedIds($question['fact_ids'] ?? []);
         $evidenceIds = $this->boundedIds($question['evidence_ids'] ?? []);
+        $sourceLocator = is_array($question['source_locator'] ?? null)
+            ? $question['source_locator']
+            : [];
+        $pageNumbers = array_values(array_unique(array_filter(
+            is_array($sourceLocator['page_numbers'] ?? null) ? $sourceLocator['page_numbers'] : [],
+            static fn (mixed $page): bool => is_int($page) && $page > 0,
+        )));
+        sort($pageNumbers, SORT_NUMERIC);
         $choices = [];
         $seen = [];
         foreach (is_array($question['options'] ?? null) ? $question['options'] : [] as $option) {
@@ -102,6 +110,7 @@ final class ProjectUnderstandingQuestionProjector
                 'understanding_source_version' => $understandingSourceVersion,
                 'fact_ids' => $factIds,
                 'evidence_ids' => $evidenceIds,
+                'page_numbers' => array_slice($pageNumbers, 0, 64),
             ],
         );
     }

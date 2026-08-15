@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Understandin
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisSelection;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\RunProjectSynthesis;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
@@ -179,13 +180,35 @@ final readonly class ProjectUnderstandingCoordinator
             $this->budget,
         );
         $result = $linker->link($snapshot->entities, $snapshot->facts, $snapshot->evidence);
-        $selection = $this->synthesis->run($synthesisInput, $result->links, $result->questions);
+        $conflicts = [];
+        $questionsByConflict = [];
+        $evidenceById = [];
+        foreach ($snapshot->evidence as $evidence) {
+            $evidenceById[$evidence->id] = $evidence;
+        }
+        foreach ([...$snapshot->conflicts, ...$result->conflicts] as $conflict) {
+            $conflicts[$conflict->id] = $conflict;
+            $questionsByConflict[$conflict->id] = $this->conflicts->question($conflict, $evidenceById);
+        }
+        foreach ($result->questions as $question) {
+            if (is_string($question['conflict_id'] ?? null)) {
+                $questionsByConflict[$question['conflict_id']] = $question;
+            }
+        }
+        $candidateQuestions = array_values($questionsByConflict);
+        $synthesisProviderCalls = 0;
+        if ($result->links === [] && $candidateQuestions === []) {
+            $selection = new ProjectSynthesisSelection([], []);
+        } else {
+            $selection = $this->synthesis->run($synthesisInput, $result->links, $candidateQuestions);
+            $synthesisProviderCalls = 1;
+        }
         $acceptedLinks = array_values(array_filter(
             $result->links,
             static fn (array $link): bool => in_array($link['id'] ?? null, $selection->acceptedLinkIds, true),
         ));
         $questions = array_values(array_filter(
-            $result->questions,
+            $candidateQuestions,
             static fn (array $question): bool => in_array(
                 $question['conflict_id'] ?? null,
                 $selection->questionConflictIds,
@@ -200,10 +223,10 @@ final readonly class ProjectUnderstandingCoordinator
             $inputFingerprint,
             $snapshotToken,
             $acceptedLinks,
-            $result->conflicts,
+            array_values($conflicts),
             $questions,
             $result->limitations,
-            $result->providerCalls + 1,
+            $result->providerCalls + $synthesisProviderCalls,
         );
         if (! $saved) {
             return ProjectUnderstandingResult::stale([$this->conflicts->staleSnapshot()], $result->providerCalls);
@@ -213,10 +236,10 @@ final readonly class ProjectUnderstandingCoordinator
             $sourceVersion,
             $inputFingerprint,
             $acceptedLinks,
-            $result->conflicts,
+            array_values($conflicts),
             $questions,
             $result->limitations,
-            $result->providerCalls + 1,
+            $result->providerCalls + $synthesisProviderCalls,
             $this->hasOnlyPlanningUnresolvedFacts($snapshot->facts),
         );
     }

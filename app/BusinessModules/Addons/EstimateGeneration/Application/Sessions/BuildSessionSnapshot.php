@@ -87,9 +87,9 @@ final class BuildSessionSnapshot
         $metrics = is_array($readinessSummary['metrics'] ?? null) ? $readinessSummary['metrics'] : [];
         $budgetScope = is_array($draft['budget_scope'] ?? null) ? $draft['budget_scope'] : [];
         $aiEstimateQuota = $session->getAttribute('ai_estimate_quota_snapshot');
-        $nextAction = $this->recommendedNextAction($status, $actions);
         $questionCount = $this->unansweredQuestionCount($session);
         $workflow = $this->workflowProjection($session, $status, $documentsSummary, $questionCount);
+        $nextAction = $this->recommendedNextAction($status, $actions, $workflow['recommended_step']);
 
         return new SessionSnapshotData(
             id: (int) $session->getKey(),
@@ -215,10 +215,16 @@ final class BuildSessionSnapshot
     }
 
     /** @param list<array{action: string, label: string, method: string, endpoint: string, requires_confirmation: bool}> $actions */
-    private function recommendedNextAction(EstimateGenerationStatus $status, array $actions): ?string
-    {
+    private function recommendedNextAction(
+        EstimateGenerationStatus $status,
+        array $actions,
+        ?string $recommendedStep,
+    ): ?string {
         if ($status === EstimateGenerationStatus::ProcessingDocuments) {
             return 'wait_documents';
+        }
+        if ($status === EstimateGenerationStatus::InputReviewRequired && $recommendedStep === 'documents') {
+            return 'review_documents';
         }
         if ($status === EstimateGenerationStatus::Archived) {
             return null;
