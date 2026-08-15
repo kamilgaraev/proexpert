@@ -310,9 +310,7 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
 
     private function sameScope(DocumentProcessingUnitRecord $candidate, DocumentProcessingUnitRecord $scope): bool
     {
-        return $this->sameLineageScope($candidate, $scope)
-            && $candidate->unit->type === $scope->unit->type
-            && ($candidate->unit->locator['content_type'] ?? null) === ($scope->unit->locator['content_type'] ?? null);
+        return $this->sameLineageScope($candidate, $scope);
     }
 
     private function sameLineageScope(DocumentProcessingUnitRecord $candidate, DocumentProcessingUnitRecord $scope): bool

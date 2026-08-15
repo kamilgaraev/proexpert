@@ -535,6 +535,29 @@ final class DocumentArbitrationTest extends TestCase
     }
 
     #[Test]
+    public function accepted_room_area_keeps_a_semantic_entity_for_server_quantity_derivation(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        $claims = [new ObservationClaim(
+            'literal:1', 'observer_literal', 'room:main', 'area',
+            ['type' => 'number', 'data' => 80.0], 'm2', 'area-label', true,
+            7, 9, 11, $this->version(), ['page_number' => 4],
+        )];
+        $decisions = [$this->decision([
+            'claim_id' => 'literal:1', 'status' => 'accepted', 'supporting_claim_ids' => ['literal:1'],
+            'evidence_refs' => ['area-label'], 'reason_code' => 'explicit_area',
+        ], $claims)];
+
+        $writer->writeArbitration($claims, $decisions, 13, 4);
+
+        self::assertCount(1, $models->entities);
+        self::assertSame('room', array_values($models->entities)[0]->type);
+        self::assertSame('area', array_values($models->facts)[0]->type);
+        self::assertSame('80.0', array_values($models->facts)[0]->value);
+    }
+
+    #[Test]
     public function arbitration_rejects_evidence_not_owned_by_a_supporting_claim(): void
     {
         $claims = [

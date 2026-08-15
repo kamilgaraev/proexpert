@@ -22,12 +22,12 @@ final class ArbitrationInputBuilder
     {
         $roles = array_keys($observerRuns);
         if ($roles !== ['observer_literal', 'observer_construction', 'observer_risk']) {
-            throw new InvalidArgumentException('arbitration_requires_independent_observers');
+            throw new ArbitrationInputException('arbitration_requires_independent_observers');
         }
         $batch = $this->claimBatch($source, $observerRuns);
         $claims = $batch->claims;
         if ($claims === []) {
-            throw new InvalidArgumentException('arbitration_claims_missing');
+            throw new ArbitrationInputException('arbitration_claims_missing');
         }
         $compact = array_map(static fn (ObservationClaim $claim): array => [
             'id' => $claim->id,

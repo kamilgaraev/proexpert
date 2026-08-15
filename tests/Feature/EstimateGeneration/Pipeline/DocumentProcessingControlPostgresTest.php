@@ -11,11 +11,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDispatchCandidate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDispatchStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitOutput;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentWireAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StopEstimateGenerationDocumentProcessing;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
@@ -417,6 +419,69 @@ final class DocumentProcessingControlPostgresTest extends TestCase
     }
 
     #[Test]
+    public function three_sixty_four_page_documents_keep_recovery_bounded_and_isolate_stop_and_cost_pause(): void
+    {
+        $this->requirePostgres();
+        DB::beginTransaction();
+        try {
+            Queue::fake();
+            config()->set('estimate-generation.vision.adaptive_analysis.max_in_flight_units_per_document', 16);
+            $active = $this->fixture();
+            $this->expandDocumentToPages($active, 64);
+            $stopped = $this->siblingDocument($active, 'cancelled', null);
+            $paused = $this->siblingDocument($active, 'paused', 'cost_limit_reached');
+            $this->expandDocumentToPages($stopped, 64);
+            $this->expandDocumentToPages($paused, 64);
+            EstimateGenerationProcessingUnit::query()
+                ->where('document_id', $stopped['document']->id)
+                ->update(['status' => 'superseded']);
+            self::assertSame(192, EstimateGenerationProcessingUnit::query()
+                ->where('session_id', $active['session']->id)
+                ->count());
+
+            $memoryBefore = memory_get_usage(true);
+            $dispatcher = app(DispatchDocumentProcessingUnits::class);
+            $activeDispatched = $dispatcher->forDocument(
+                (int) $active['document']->id,
+                $active['sourceVersion'],
+            );
+            $stoppedDispatched = $dispatcher->forDocument(
+                (int) $stopped['document']->id,
+                $stopped['sourceVersion'],
+            );
+            $pausedDispatched = $dispatcher->forDocument(
+                (int) $paused['document']->id,
+                $paused['sourceVersion'],
+            );
+            $memoryGrowth = memory_get_usage(true) - $memoryBefore;
+
+            self::assertSame(16, $activeDispatched);
+            self::assertSame(0, $stoppedDispatched);
+            self::assertSame(0, $pausedDispatched);
+            Queue::assertPushed(ProcessEstimateGenerationUnitJob::class, 16);
+            self::assertLessThanOrEqual(16 * 1024 * 1024, $memoryGrowth);
+            self::assertSame(16, EstimateGenerationProcessingUnit::query()
+                ->where('document_id', $active['document']->id)
+                ->whereNotNull('next_dispatch_at')
+                ->count());
+            self::assertSame(0, EstimateGenerationProcessingUnit::query()
+                ->whereIn('document_id', [$stopped['document']->id, $paused['document']->id])
+                ->whereNotNull('next_dispatch_at')
+                ->count());
+            self::assertSame(64, EstimateGenerationProcessingUnit::query()
+                ->where('document_id', $stopped['document']->id)
+                ->where('status', 'superseded')
+                ->count());
+            self::assertSame(64, EstimateGenerationProcessingUnit::query()
+                ->where('document_id', $paused['document']->id)
+                ->where('status', 'pending')
+                ->count());
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
     public function cost_ceiling_pauses_before_the_next_wire(): void
     {
         $this->requirePostgres();
@@ -563,6 +628,21 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
             $store->markWireStarted($context->attemptId, $fingerprint, $owner, $now, $now->modify('+180 seconds'));
             $this->attachActiveRoleRun($fixture, $context->attemptId, $owner);
+            $store->storeResponse(
+                $context->attemptId,
+                $fingerprint,
+                $owner,
+                ['parsed_envelope' => ['status' => 'ok']],
+                'response_received',
+                200,
+                10,
+                'fixture-model',
+                ['pricing_status' => 'available', 'currency' => 'RUB'],
+            );
+            DB::table('estimate_generation_ai_usage')->insert(
+                $this->usageRow($fixture, $context->attemptId, '0.10000000'),
+            );
+            $store->markUsageRecorded($context->attemptId, $fingerprint);
             $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
             $authorization->shouldReceive('can')->once()->andReturnTrue();
@@ -582,20 +662,23 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             self::assertSame('processing', $fixture['document']->fresh()->status);
             self::assertSame('running', $fixture['unit']->fresh()->status->value);
 
-            $store->storeResponse(
-                $context->attemptId,
-                $fingerprint,
-                $owner,
-                ['parsed_envelope' => ['status' => 'ok']],
-                'response_received',
-                200,
-                10,
-                'fixture-model',
-                ['pricing_status' => 'available', 'currency' => 'RUB'],
-            );
-
-            self::assertSame('response_received', DB::table('estimate_generation_vision_physical_attempts')
+            self::assertSame('completed', DB::table('estimate_generation_vision_physical_attempts')
                 ->where('attempt_id', $context->attemptId)->value('state'));
+            self::assertTrue(app(DocumentProcessingUnitStore::class)->publish(
+                $unitClaim,
+                new DocumentUnitOutput(
+                    version: 'stop-after-wire-publication-v1',
+                    text: 'Полезный сохранённый результат',
+                    confidence: 0.95,
+                    normalizedPayload: ['independent_observations' => [['status' => 'ok']]],
+                    unitType: $fixture['unit']->unit_type,
+                    unitIndex: (int) $fixture['unit']->unit_index,
+                    sourceVersion: $fixture['sourceVersion'],
+                ),
+                new DateTimeImmutable,
+            ));
+            self::assertSame('completed', $fixture['unit']->fresh()->status->value);
+            self::assertSame('ready', $fixture['page']->fresh()->status);
         } finally {
             DB::rollBack();
         }
@@ -802,6 +885,117 @@ final class DocumentProcessingControlPostgresTest extends TestCase
 
         return compact('organization', 'project', 'user', 'session', 'document', 'unit', 'page', 'sourceVersion', 'lineage')
             + ['source_version' => $sourceVersion];
+    }
+
+    /** @param array<string, mixed> $fixture */
+    private function expandDocumentToPages(array $fixture, int $pageCount): void
+    {
+        $fixture['document']->forceFill(['page_count' => $pageCount])->save();
+        foreach (range(2, $pageCount) as $pageNumber) {
+            $unit = EstimateGenerationProcessingUnit::query()->create([
+                'organization_id' => $fixture['organization']->id,
+                'project_id' => $fixture['project']->id,
+                'session_id' => $fixture['session']->id,
+                'document_id' => $fixture['document']->id,
+                'unit_type' => 'pdf_page',
+                'unit_index' => $pageNumber,
+                'source_version' => $fixture['sourceVersion'],
+                'status' => 'pending',
+                'locator' => [
+                    'source_kind' => 'pdf',
+                    'source_version' => $fixture['sourceVersion'],
+                    'coordinate_space' => 'pdf_page_pixels',
+                    'artifact_path' => sprintf(
+                        'org-%d/estimate-generation/pages/%s/%d.png',
+                        $fixture['organization']->id,
+                        $fixture['lineage'],
+                        $pageNumber,
+                    ),
+                    'artifact_sha256' => 'sha256:'.hash('sha256', $fixture['lineage'].'-page-'.$pageNumber),
+                    'artifact_version_id' => 'version-'.$fixture['lineage'].'-'.$pageNumber,
+                ],
+                'metadata' => ['processing_attempt_id' => $fixture['lineage']],
+            ]);
+            EstimateGenerationDocumentPage::query()->create([
+                'document_id' => $fixture['document']->id,
+                'organization_id' => $fixture['organization']->id,
+                'project_id' => $fixture['project']->id,
+                'session_id' => $fixture['session']->id,
+                'processing_unit_id' => $unit->id,
+                'source_version' => $fixture['sourceVersion'],
+                'page_number' => $pageNumber,
+                'status' => 'queued',
+            ]);
+        }
+    }
+
+    /** @param array<string, mixed> $fixture @return array<string, mixed> */
+    private function siblingDocument(array $fixture, string $controlStatus, ?string $controlReason): array
+    {
+        $sourceVersion = 'sha256:'.hash('sha256', (string) Str::uuid());
+        $lineage = (string) Str::uuid();
+        $document = EstimateGenerationDocument::query()->create([
+            'session_id' => $fixture['session']->id,
+            'organization_id' => $fixture['organization']->id,
+            'project_id' => $fixture['project']->id,
+            'user_id' => $fixture['user']->id,
+            'filename' => 'large-'.$controlStatus.'.pdf',
+            'mime_type' => 'application/pdf',
+            'storage_path' => sprintf(
+                'org-%d/estimate-generation/large-%s.pdf',
+                $fixture['organization']->id,
+                $controlStatus,
+            ),
+            'checksum_sha256' => substr($sourceVersion, 7),
+            'source_version' => $sourceVersion,
+            'page_count' => 1,
+            'status' => 'processing',
+            'processing_control_status' => $controlStatus,
+            'processing_control_source_version' => $sourceVersion,
+            'processing_control_attempt_id' => $lineage,
+            'processing_control_reason' => $controlReason,
+            'processing_cost_limit' => $controlStatus === 'paused' ? '1.00000000' : null,
+            'meta' => ['processing_attempt_id' => $lineage],
+        ]);
+        $unit = EstimateGenerationProcessingUnit::query()->create([
+            'organization_id' => $fixture['organization']->id,
+            'project_id' => $fixture['project']->id,
+            'session_id' => $fixture['session']->id,
+            'document_id' => $document->id,
+            'unit_type' => 'pdf_page',
+            'unit_index' => 1,
+            'source_version' => $sourceVersion,
+            'status' => 'pending',
+            'locator' => [
+                'source_kind' => 'pdf',
+                'source_version' => $sourceVersion,
+                'coordinate_space' => 'pdf_page_pixels',
+                'artifact_path' => sprintf(
+                    'org-%d/estimate-generation/pages/%s/1.png',
+                    $fixture['organization']->id,
+                    $lineage,
+                ),
+                'artifact_sha256' => 'sha256:'.hash('sha256', $lineage.'-page-1'),
+                'artifact_version_id' => 'version-'.$lineage,
+            ],
+            'metadata' => ['processing_attempt_id' => $lineage],
+        ]);
+        $page = EstimateGenerationDocumentPage::query()->create([
+            'document_id' => $document->id,
+            'organization_id' => $fixture['organization']->id,
+            'project_id' => $fixture['project']->id,
+            'session_id' => $fixture['session']->id,
+            'processing_unit_id' => $unit->id,
+            'source_version' => $sourceVersion,
+            'page_number' => 1,
+            'status' => 'queued',
+        ]);
+
+        return [
+            ...$fixture,
+            ...compact('document', 'unit', 'page', 'sourceVersion', 'lineage'),
+            'source_version' => $sourceVersion,
+        ];
     }
 
     /** @return array{EloquentVisionPhysicalAttemptStore, AiOperationContext, string, string} */

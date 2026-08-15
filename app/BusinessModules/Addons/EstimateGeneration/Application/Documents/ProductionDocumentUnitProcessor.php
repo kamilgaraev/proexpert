@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputException;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
@@ -135,6 +136,16 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 [
                     ...$exception->safeContext,
                     ...($exception->httpCode === null ? [] : ['http_status' => $exception->httpCode]),
+                ],
+                $exception,
+                $resourceUsage,
+            ),
+            $exception instanceof ArbitrationInputException => new TypedFailureException(
+                FailureCategory::Terminal,
+                $exception->safeCode,
+                [
+                    ...$this->boundaryContext($context),
+                    'execution_boundary' => 'document_arbitration_input',
                 ],
                 $exception,
                 $resourceUsage,

@@ -51,9 +51,9 @@ final readonly class AiEstimateQuotaService
         [$organizationKey, $sessionKey] = $this->validatedScope($organizationId, $sessionId);
 
         $this->database->transaction(function () use ($organizationKey, $sessionKey): void {
-            $this->lockedSession($organizationKey, $sessionKey);
+            $session = $this->lockedSession($organizationKey, $sessionKey);
 
-            if ($this->hasUsableDraft($sessionKey)) {
+            if ($this->hasUsableDraft($session)) {
                 return;
             }
 
@@ -114,8 +114,8 @@ final readonly class AiEstimateQuotaService
             (string) $session->getKey(),
         );
         $this->database->transaction(function () use ($organizationId, $sessionId): void {
-            $this->lockedSession($organizationId, $sessionId);
-            if (! $this->hasUsableDraft($sessionId)) {
+            $lockedSession = $this->lockedSession($organizationId, $sessionId);
+            if (! $this->hasUsableDraft($lockedSession)) {
                 throw new \RuntimeException('estimate_generation.ai_estimate_quota_product_boundary_missing');
             }
             $reservation = $this->database->table(self::TABLE)
@@ -383,30 +383,41 @@ final readonly class AiEstimateQuotaService
         );
     }
 
-    private function hasUsableDraft(int $sessionId): bool
+    private function hasUsableDraft(EstimateGenerationSession $session): bool
     {
         if (EstimateGenerationPackage::query()
-            ->where('session_id', $sessionId)
+            ->where('session_id', $session->getKey())
             ->whereIn('status', ['ready_for_review', 'review_required', 'approved'])
             ->exists()) {
             return true;
         }
 
-        $session = EstimateGenerationSession::query()->find($sessionId);
-        if (! $session instanceof EstimateGenerationSession
-            || ! in_array($session->status, [
-                EstimateGenerationStatus::EstimateReviewRequired,
-                EstimateGenerationStatus::ReadyToApply,
-                EstimateGenerationStatus::Applied,
-            ], true)) {
+        if (! in_array($session->status, [
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+            EstimateGenerationStatus::Applied,
+        ], true)) {
             return false;
         }
 
         $draft = $session->draft_payload;
+        if (! is_array($draft) || ! is_array($draft['local_estimates'] ?? null)) {
+            return false;
+        }
+        foreach ($draft['local_estimates'] as $localEstimate) {
+            if (! is_array($localEstimate) || ! is_array($localEstimate['sections'] ?? null)) {
+                continue;
+            }
+            foreach ($localEstimate['sections'] as $section) {
+                if (is_array($section)
+                    && is_array($section['work_items'] ?? null)
+                    && $section['work_items'] !== []) {
+                    return true;
+                }
+            }
+        }
 
-        return is_array($draft)
-            && is_array($draft['work_items'] ?? null)
-            && $draft['work_items'] !== [];
+        return false;
     }
 
     private function lockedSession(int $organizationId, int $sessionId): EstimateGenerationSession

@@ -198,11 +198,15 @@ final class AiEstimateQuotaTest extends TestCase
         $session->forceFill([
             'status' => EstimateGenerationStatus::EstimateReviewRequired,
             'draft_payload' => [
-                'work_items' => [[
-                    'key' => 'review-item',
-                    'name' => 'Review item',
-                    'quantity' => 1,
-                    'unit' => 'item',
+                'local_estimates' => [[
+                    'sections' => [[
+                        'work_items' => [[
+                            'key' => 'review-item',
+                            'name' => 'Review item',
+                            'quantity' => 1,
+                            'unit' => 'item',
+                        ]],
+                    ]],
                 ]],
             ],
         ])->save();

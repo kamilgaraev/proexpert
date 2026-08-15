@@ -1,0 +1,28 @@
+{
+  "contract_version": "most-recorded-page-routes:v1",
+  "source_pages": 22,
+  "pages": [
+    {"page": 1, "route": "simple_context", "kind": "cover", "title": "Обложка архитектурного проекта"},
+    {"page": 2, "route": "simple_context", "kind": "title", "title": "Архитектурные решения"},
+    {"page": 3, "route": "structured_textual", "kind": "index", "title": "Состав комплекта"},
+    {"page": 4, "route": "structured_textual", "kind": "narrative", "title": "Общие указания"},
+    {"page": 5, "route": "dense_ambiguous", "kind": "drawing", "title": "План этажа с экспликацией", "question": true},
+    {"page": 6, "route": "dense_ambiguous", "kind": "drawing", "title": "Размерный план"},
+    {"page": 7, "route": "dense_ambiguous", "kind": "drawing", "title": "Схема сантехнических приборов"},
+    {"page": 8, "route": "dense_ambiguous", "kind": "drawing", "title": "Схема розеток и выключателей"},
+    {"page": 9, "route": "dense_ambiguous", "kind": "drawing", "title": "План освещения"},
+    {"page": 10, "route": "dense_ambiguous", "kind": "drawing", "title": "Фасад"},
+    {"page": 11, "route": "dense_ambiguous", "kind": "drawing", "title": "Фасад"},
+    {"page": 12, "route": "dense_ambiguous", "kind": "drawing", "title": "Фасад"},
+    {"page": 13, "route": "dense_ambiguous", "kind": "drawing", "title": "Фасад"},
+    {"page": 14, "route": "dense_ambiguous", "kind": "drawing", "title": "Разрез"},
+    {"page": 15, "route": "dense_ambiguous", "kind": "drawing", "title": "Разрез"},
+    {"page": 16, "route": "dense_ambiguous", "kind": "drawing", "title": "План кровли"},
+    {"page": 17, "route": "structured_textual", "kind": "schedule", "title": "Ведомость проёмов и отделки"},
+    {"page": 18, "route": "dense_ambiguous", "kind": "drawing", "title": "Объёмный вид"},
+    {"page": 19, "route": "dense_ambiguous", "kind": "drawing", "title": "Объёмный вид"},
+    {"page": 20, "route": "structured_textual", "kind": "specification", "title": "Визуализация и материалы"},
+    {"page": 21, "route": "structured_textual", "kind": "specification", "title": "Визуализация и материалы"},
+    {"page": 22, "route": "structured_textual", "kind": "specification", "title": "Визуализация и материалы"}
+  ]
+}

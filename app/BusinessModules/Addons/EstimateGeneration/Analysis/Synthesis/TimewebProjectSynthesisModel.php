@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
@@ -26,6 +27,7 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
         private int $maxInputBytes,
         private int $maxOutputTokens,
         private int $timeoutSeconds,
+        private ?DurableAiPhysicalResponseStore $responses = null,
     ) {
         if (preg_match('#^[A-Za-z0-9._/-]{1,160}$#D', $modelName) !== 1
             || $maxInputBytes < 1 || $maxOutputTokens < 1 || $timeoutSeconds < 1) {
@@ -47,9 +49,7 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
         if (strlen($payload) > $this->maxInputBytes) {
             throw new InvalidArgumentException('project_synthesis_input_limit_exceeded');
         }
-        $attemptId = AiOperationContext::deterministicId(
-            'project-synthesis-attempt|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)),
-        );
+        $attemptId = AiOperationContext::deterministicId('project-synthesis-attempt|'.$input->fingerprint());
         $onPhysicalAttemptReserved($attemptId);
         $context = new AiOperationContext(
             AiOperationContext::deterministicId('project-synthesis|'.$input->fingerprint()),
@@ -66,7 +66,16 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
         $status = 'connection_failed';
         $httpCode = null;
         $started = hrtime(true);
+        $usageRecorded = false;
         try {
+            $replay = $this->responses?->replay($attemptId, $input->fingerprint());
+            if ($replay !== null) {
+                $response = $replay['provider_response'];
+                $usageRecorded = $replay['usage_recorded'];
+                $status = 'succeeded';
+
+                return $replay['parsed_response'];
+            }
             $response = $this->wire->call($this->modelName, [
                 ['role' => 'system', 'content' => $this->prompt()],
                 ['role' => 'user', 'content' => $payload],
@@ -81,6 +90,14 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
                 throw new RerankWireException('malformed_response');
             }
             $status = 'succeeded';
+            $this->responses?->store(
+                $attemptId,
+                $input->fingerprint(),
+                $decoded,
+                $response,
+                (int) max(0, round((hrtime(true) - $started) / 1_000_000)),
+                $price->toArray(),
+            );
 
             return $decoded;
         } catch (RerankWireException $exception) {
@@ -88,7 +105,12 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
             $httpCode = $exception->httpCode;
             throw $exception;
         } finally {
-            $this->record($context, $status, $httpCode, $response, $started, $price);
+            if (! $usageRecorded) {
+                $this->record($context, $status, $httpCode, $response, $started, $price);
+                if ($status === 'succeeded') {
+                    $this->responses?->markUsageRecorded($attemptId, $input->fingerprint());
+                }
+            }
         }
     }
 

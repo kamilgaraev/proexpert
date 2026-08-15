@@ -144,7 +144,26 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $payload['local_estimates'],
             $intents,
             $composerInput->derivedQuantities,
+            $composerInput->facts,
         );
+        foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
+            foreach ($localEstimate['sections'] as $sectionIndex => $section) {
+                foreach ($section['work_items'] as $itemIndex => $item) {
+                    if (($item['composition_intent']['kind'] ?? null) !== 'supplementary') {
+                        continue;
+                    }
+                    $mapped = $this->attachCanonicalQuantity($item, $quantities, $this->quantityResolver);
+                    $quantity = $mapped['quantity_evidence'] ?? null;
+                    if (is_array($quantity) && ($quantity['review_blockers'] ?? []) === []) {
+                        $node = $this->acceptedEvidence->materialize($context, QuantityData::fromArray($quantity), $mapped);
+                        $mapped['quantity_evidence_id'] = $node->id;
+                        $mapped['quantity_evidence_fingerprint'] = $node->fingerprint;
+                        $mapped['quantity_evidence_source_version'] = $node->sourceVersion;
+                    }
+                    $payload['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $mapped;
+                }
+            }
+        }
         $payload['estimate_composition'] = [
             'schema_version' => 1,
             'snapshot_token' => $composerInput->snapshotToken,

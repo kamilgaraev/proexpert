@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputException;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
@@ -571,6 +572,22 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         } catch (TypedFailureException $exception) {
             self::assertSame('document_unit_pre_wire_failed', $exception->safeCode);
             self::assertSame('document_unit_representation', $exception->safeContext['execution_boundary']);
+            self::assertSame($original, $exception->getPrevious());
+        }
+    }
+
+    #[Test]
+    public function missing_arbitration_claims_keep_the_exact_safe_failure_reason(): void
+    {
+        $original = new ArbitrationInputException('arbitration_claims_missing');
+        $processor = $this->cadFailureProcessor($original);
+
+        try {
+            $processor->process($this->context(DocumentUnitType::CadDrawing));
+            self::fail('Arbitration input failure must be classified.');
+        } catch (TypedFailureException $exception) {
+            self::assertSame('arbitration_claims_missing', $exception->safeCode);
+            self::assertSame('document_arbitration_input', $exception->safeContext['execution_boundary']);
             self::assertSame($original, $exception->getPrevious());
         }
     }

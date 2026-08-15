@@ -185,8 +185,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 ->where('session_id', $unit->session_id)
                 ->where('document_id', $unit->document_id)
                 ->where('source_version', $unit->source_version)
-                ->where($this->attemptLineagePredicate($attemptId))
-                ->where($this->processingRoutePredicate($unit));
+                ->where($this->attemptLineagePredicate($attemptId));
             $runningCount = (clone $scopeQuery)
                 ->where('status', DocumentProcessingUnitStatus::Running->value)
                 ->where('lease_expires_at', '>', $now)
@@ -598,13 +597,20 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
         }
 
         return $this->database->table('estimate_generation_vision_physical_attempts as attempts')
-            ->join('estimate_generation_ai_role_runs as runs', function ($join): void {
-                $join->on('runs.physical_attempt_id', '=', 'attempts.attempt_id')
-                    ->where('runs.status', 'running');
-            })
             ->where('attempts.unit_id', $unitId)
             ->where('attempts.processing_lineage_id', $attemptId)
-            ->whereIn('attempts.state', ['wire_started', 'response_received'])
+            ->where(function ($query): void {
+                $query->whereIn('attempts.state', ['wire_started', 'response_received'])
+                    ->orWhere(function ($completed): void {
+                        $completed->where('attempts.state', 'completed')
+                            ->whereExists(function ($activeRuns): void {
+                                $activeRuns->selectRaw('1')
+                                    ->from('estimate_generation_ai_role_runs as active_runs')
+                                    ->whereColumn('active_runs.physical_attempt_id', 'attempts.attempt_id')
+                                    ->where('active_runs.status', 'running');
+                            });
+                    });
+            })
             ->exists();
     }
 
@@ -781,26 +787,6 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             }
 
             $query->whereRaw("metadata->>'processing_attempt_id' = ?", [$attemptId]);
-        };
-    }
-
-    private function processingRoutePredicate(EstimateGenerationProcessingUnit $unit): \Closure
-    {
-        $unitType = $unit->unit_type->value;
-        $contentType = is_string(((array) $unit->locator)['content_type'] ?? null)
-            ? ((array) $unit->locator)['content_type']
-            : null;
-
-        return static function (Builder $query) use ($unitType, $contentType): void {
-            $query->where('unit_type', $unitType);
-            if ($unitType === DocumentUnitType::PdfPage->value) {
-                if ($contentType === null) {
-                    $query->whereRaw("locator->>'content_type' IS NULL");
-
-                    return;
-                }
-                $query->whereRaw("locator->>'content_type' = ?", [$contentType]);
-            }
         };
     }
 }

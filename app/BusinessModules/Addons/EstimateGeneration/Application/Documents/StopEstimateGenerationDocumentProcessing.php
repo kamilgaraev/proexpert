@@ -194,13 +194,20 @@ final readonly class StopEstimateGenerationDocumentProcessing
         }
 
         return DB::table('estimate_generation_vision_physical_attempts as attempts')
-            ->join('estimate_generation_ai_role_runs as runs', function ($join): void {
-                $join->on('runs.physical_attempt_id', '=', 'attempts.attempt_id')
-                    ->where('runs.status', 'running');
-            })
             ->where('attempts.unit_id', $unitId)
             ->where('attempts.processing_lineage_id', $attemptId)
-            ->whereIn('attempts.state', ['wire_started', 'response_received'])
+            ->where(function ($query): void {
+                $query->whereIn('attempts.state', ['wire_started', 'response_received'])
+                    ->orWhere(function ($completed): void {
+                        $completed->where('attempts.state', 'completed')
+                            ->whereExists(function ($activeRuns): void {
+                                $activeRuns->selectRaw('1')
+                                    ->from('estimate_generation_ai_role_runs as active_runs')
+                                    ->whereColumn('active_runs.physical_attempt_id', 'attempts.attempt_id')
+                                    ->where('active_runs.status', 'running');
+                            });
+                    });
+            })
             ->exists();
     }
 

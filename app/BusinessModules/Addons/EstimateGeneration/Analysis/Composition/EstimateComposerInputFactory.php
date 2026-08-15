@@ -21,9 +21,9 @@ final readonly class EstimateComposerInputFactory
     }
 
     /**
-     * @param list<array<string, mixed>> $candidates
-     * @param list<array<string, mixed>> $derivedQuantities
-     * @param list<array<string, mixed>> $missingDocuments
+     * @param  list<array<string, mixed>>  $candidates
+     * @param  list<array<string, mixed>>  $derivedQuantities
+     * @param  list<array<string, mixed>>  $missingDocuments
      */
     public function capture(
         int $organizationId,
@@ -74,12 +74,28 @@ final readonly class EstimateComposerInputFactory
             sessionId: $sessionId,
             snapshotToken: (string) $capture['token'],
             facts: array_map($this->fact(...), $snapshot->facts),
-            derivedQuantities: $derivedQuantities,
+            derivedQuantities: array_map($this->derivedQuantity(...), $derivedQuantities),
             decisions: array_map($this->decision(...), $decisions),
             candidates: $candidates,
             missingDocuments: $missingDocuments,
             contractVersion: RunEstimateComposer::PROMPT_CONTRACT,
         );
+    }
+
+    /** @param array<string, mixed> $quantity @return array{id:string,value:string,unit:string} */
+    private function derivedQuantity(array $quantity): array
+    {
+        $id = $quantity['id'] ?? $quantity['key'] ?? null;
+        $value = $quantity['value'] ?? $quantity['amount'] ?? null;
+        $unit = $quantity['unit'] ?? null;
+        if (! is_string($id) || preg_match('/^[a-z0-9][a-z0-9._:-]{0,159}$/D', $id) !== 1
+            || (! is_int($value) && ! is_float($value) && ! is_string($value))
+            || ! is_numeric($value) || (float) $value <= 0
+            || ! is_string($unit) || trim($unit) === '' || strlen($unit) > 32) {
+            throw new InvalidArgumentException('estimate_composer_derived_quantity_invalid');
+        }
+
+        return ['id' => $id, 'value' => (string) $value, 'unit' => $unit];
     }
 
     /** @return array<string, mixed> */

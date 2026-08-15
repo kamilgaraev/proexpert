@@ -41,6 +41,7 @@ final class OriginalDocumentArtifactLocator
             'artifact_path' => $path,
             'artifact_bytes' => $bytes,
             'artifact_sha256' => $artifactHash,
+            'artifact_version_id' => $artifactHash,
             'artifact_source_version' => $sourceVersion,
             'content_type' => strtolower(trim((string) $document->mime_type)),
         ];

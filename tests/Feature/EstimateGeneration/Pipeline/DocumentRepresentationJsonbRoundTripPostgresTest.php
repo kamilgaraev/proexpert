@@ -318,7 +318,8 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             ->all());
         self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($unrelated->id)->status->value);
         self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($differentLineage->id)->status->value);
-        self::assertSame('pending', EstimateGenerationProcessingUnit::query()->findOrFail($differentContract->id)->status->value);
+        self::assertSame('failed', EstimateGenerationProcessingUnit::query()->findOrFail($differentContract->id)->status->value);
+        self::assertSame('breaker_stopped', EstimateGenerationProcessingUnit::query()->findOrFail($differentContract->id)->failure_code);
 
         $fallbackClaim = $store->claim(
             $unrelated->id,
@@ -339,6 +340,13 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             0,
             (new ResetDocumentProcessingUnitsForAttempt)->handle($document, $sourceVersion, $attemptId, $newAttemptId),
         );
+        $document->forceFill([
+            'processing_control_status' => 'active',
+            'processing_control_attempt_id' => $newAttemptId,
+            'processing_control_reason' => null,
+            'processing_control_at' => null,
+            'meta' => [...(array) $document->meta, 'processing_attempt_id' => $newAttemptId],
+        ])->save();
         $reset = EstimateGenerationProcessingUnit::query()
             ->whereIn('id', array_map(static fn ($unit): int => (int) $unit->id, $units))
             ->orderBy('unit_index')

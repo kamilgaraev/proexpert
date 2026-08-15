@@ -100,8 +100,9 @@ final readonly class ProjectModelEvidenceWriter
                 }
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
+                $entityIdentity = (string) ($projection['identity_key'] ?? $claim->entityKey);
                 $entityId = 'entity:'.hash('sha256', implode('|', $decision->status === 'accepted'
-                    ? [$projection['type'], $claim->entityKey]
+                    ? [$projection['type'], $entityIdentity]
                     : [
                         $projection['type'],
                         $claim->entityKey,
@@ -134,8 +135,8 @@ final readonly class ProjectModelEvidenceWriter
                     $scope->sessionId,
                     $scope->sourceVersion,
                     $entityId,
-                    mb_substr($claim->factType, 0, 120),
-                    $claim->value['data'],
+                    mb_substr((string) ($projection['fact_type'] ?? $claim->factType), 0, 120),
+                    $this->projectModelFactValue($claim),
                     $claim->unit,
                     $decision->status === 'accepted' ? 1.0 : 0.0,
                     $decision->status === 'unresolved' ? 'unresolved' : 'document',
@@ -178,6 +179,19 @@ final readonly class ProjectModelEvidenceWriter
         }
 
         return 'material:'.hash('sha256', json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+    }
+
+    private function projectModelFactValue(ObservationClaim $claim): mixed
+    {
+        $value = $claim->value['data'];
+        if (is_int($value)) {
+            return (string) $value;
+        }
+        if (is_float($value)) {
+            return json_encode($value, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
+        }
+
+        return $value;
     }
 
     /** @return array<string,mixed> */
@@ -225,7 +239,7 @@ final readonly class ProjectModelEvidenceWriter
         }
     }
 
-    /** @return array{type:string,attributes:array<string,mixed>}|null */
+    /** @return array{type:string,attributes:array<string,mixed>,identity_key?:string,fact_type?:string}|null */
     private function projectModelEntity(ObservationClaim $claim): ?array
     {
         $type = mb_strtolower($claim->factType);
@@ -246,12 +260,42 @@ final readonly class ProjectModelEvidenceWriter
         $numeric = (is_int($value) || is_float($value)) && $value > 0;
         $unit = $claim->unit;
         $allowedUnits = ['m', 'm2', 'm3', 'pcs', 'kg', 't', 'h'];
+        if ($type === 'area' && $numeric && $unit === 'm2'
+            && preg_match('/^room[:._-]/D', mb_strtolower($claim->entityKey)) === 1) {
+            return ['type' => 'room', 'attributes' => ['area_m2' => $value]];
+        }
+        $semanticType = $this->semanticEntityType($claim->entityKey);
+        $semanticFactTypes = [
+            'room' => ['length', 'width'],
+            'wall' => ['wall_length', 'wall_height'],
+            'site' => ['area', 'depth'],
+            'roof' => ['plan_area', 'slope_rise', 'slope_run'],
+            'roof_facet' => ['plan_area', 'slope_rise', 'slope_run'],
+            'opening' => ['opening_width', 'opening_height'],
+            'roof_opening' => ['area'],
+        ];
+        if ($semanticType !== null
+            && in_array($type, $semanticFactTypes[$semanticType], true)
+            && $numeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
+            return ['type' => $semanticType, 'attributes' => ['semantic_type' => $semanticType]];
+        }
         $kind = $type === 'quantity'
             ? 'quantity'
             : (in_array($type, ['area', 'dimension_chain', 'elevation', 'level'], true) ? 'dimension' : null);
         if ($kind !== null && $numeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
 
             return ['type' => $kind, 'attributes' => ['value' => $value, 'unit' => $unit]];
+        }
+
+        return null;
+    }
+
+    private function semanticEntityType(string $entityKey): ?string
+    {
+        foreach (['roof_opening', 'roof_facet', 'opening', 'room', 'wall', 'site', 'roof'] as $type) {
+            if (preg_match('/^'.preg_quote($type, '/').'[:._-]/D', mb_strtolower($entityKey)) === 1) {
+                return $type;
+            }
         }
 
         return null;

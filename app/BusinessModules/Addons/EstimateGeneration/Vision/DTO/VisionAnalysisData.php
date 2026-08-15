@@ -174,12 +174,8 @@ final readonly class VisionAnalysisData
             || count($data['elements']) > $maxElements) {
             throw new VisionContractException('invalid_analysis_schema');
         }
-        $evidencePayload = self::normalizeEvidencePayload($data['evidence']);
-        $evidence = array_map(static fn (mixed $item): VisionEvidenceData => is_array($item) ? VisionEvidenceData::fromArray($item) : throw new VisionContractException('invalid_evidence'), $evidencePayload);
+        [$evidence, $evidenceQuarantine] = self::providerEvidence($data['evidence']);
         $evidenceKeys = array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence);
-        if (count($evidenceKeys) !== count(array_unique($evidenceKeys))) {
-            throw new VisionContractException('duplicate_keys');
-        }
         [$elements, $elementQuarantine] = self::providerElements($data['elements'], $evidenceKeys);
         [$scales, $scaleQuarantine] = self::providerScales($data['scale_candidates'], $evidenceKeys, $elements);
         $semanticQuarantine = [];
@@ -246,6 +242,7 @@ final readonly class VisionAnalysisData
                 ...(! in_array($data['sheet_type'], self::SHEET_TYPES, true)
                     ? [['section' => 'sheet_type', 'index' => 0, 'reason' => 'invalid_sheet_type']]
                     : []),
+                ...$evidenceQuarantine,
                 ...$elementQuarantine,
                 ...$scaleQuarantine,
                 ...$warningQuarantine,
@@ -574,6 +571,57 @@ final readonly class VisionAnalysisData
         }
 
         return $normalized;
+    }
+
+    /**
+     * @param  array<mixed>  $payload
+     * @return array{list<VisionEvidenceData>, list<array{section: string, index: int, reason: string}>}
+     */
+    private static function providerEvidence(array $payload): array
+    {
+        $evidence = [];
+        $quarantine = [];
+        $seen = [];
+        $isList = array_is_list($payload);
+
+        foreach ($payload as $key => $item) {
+            $index = is_int($key) ? $key : count($evidence) + count($quarantine);
+            try {
+                if (! is_array($item)) {
+                    throw new VisionContractException('invalid_evidence');
+                }
+                $evidenceKey = $isList ? ($item['key'] ?? null) : ($item['key'] ?? $key);
+                $locator = $item['locator'] ?? (! $isList ? $item : null);
+                if (! is_string($evidenceKey) || ! is_array($locator)
+                    || (! $isList && isset($item['key']) && ! hash_equals((string) $key, $evidenceKey))) {
+                    throw new VisionContractException('invalid_evidence');
+                }
+                $candidate = VisionEvidenceData::fromArray([
+                    'key' => $evidenceKey,
+                    'locator' => array_intersect_key($locator, array_flip([
+                        'page_id',
+                        'page_number',
+                        'processing_unit_id',
+                        'source_version',
+                        'coordinate_space',
+                        'explicit',
+                    ])),
+                ]);
+                if (isset($seen[$candidate->key])) {
+                    throw new VisionContractException('duplicate_evidence_key');
+                }
+                $seen[$candidate->key] = true;
+                $evidence[] = $candidate;
+            } catch (VisionContractException $exception) {
+                $quarantine[] = [
+                    'section' => 'evidence',
+                    'index' => $index,
+                    'reason' => $exception->reason,
+                ];
+            }
+        }
+
+        return [$evidence, $quarantine];
     }
 
     /** @param array<mixed> $elements @return array<mixed> */

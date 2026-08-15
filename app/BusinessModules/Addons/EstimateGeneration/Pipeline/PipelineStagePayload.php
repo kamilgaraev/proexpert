@@ -80,8 +80,14 @@ final readonly class PipelineStagePayload
             throw new InvalidArgumentException('Pipeline generation mode is invalid.');
         }
         self::assertList($data['local_estimates']);
+        $compositionKeys = is_array($data['estimate_composition'])
+            ? array_keys($data['estimate_composition'])
+            : [];
+        $expectedCompositionKeys = ['schema_version', 'snapshot_token', 'input_fingerprint', 'intents_count', 'derived_quantities'];
+        sort($compositionKeys);
+        sort($expectedCompositionKeys);
         if (! is_array($data['estimate_composition'])
-            || array_keys($data['estimate_composition']) !== ['schema_version', 'snapshot_token', 'input_fingerprint', 'intents_count', 'derived_quantities']
+            || $compositionKeys !== $expectedCompositionKeys
             || $data['estimate_composition']['schema_version'] !== 1
             || preg_match('/^[a-f0-9]{64}$/D', (string) $data['estimate_composition']['snapshot_token']) !== 1
             || preg_match('/^[a-f0-9]{64}$/D', (string) $data['estimate_composition']['input_fingerprint']) !== 1

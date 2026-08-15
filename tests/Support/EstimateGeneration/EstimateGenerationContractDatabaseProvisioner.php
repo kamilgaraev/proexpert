@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Support\EstimateGeneration;
 
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Schema\Blueprint;
 use InvalidArgumentException;
 
 final class EstimateGenerationContractDatabaseProvisioner
@@ -379,6 +380,35 @@ final class EstimateGenerationContractDatabaseProvisioner
                 'sha256' => hash_file('sha256', $root.DIRECTORY_SEPARATOR.$entry),
             ]);
         }
+        self::provisionCommercialQuotaProjection($connection);
+    }
+
+    private static function provisionCommercialQuotaProjection(ConnectionInterface $connection): void
+    {
+        $schema = $connection->getSchemaBuilder();
+        $schema->create('organization_package_subscriptions', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->string('package_slug');
+            $table->string('status');
+            $table->timestampTz('current_period_end_at')->nullable();
+            $table->timestampTz('trial_ends_at')->nullable();
+            $table->timestampsTz();
+        });
+        $schema->create('organization_resource_allocations', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('commercial_account_id')->nullable();
+            $table->string('resource_slug');
+            $table->string('limit_key');
+            $table->decimal('quantity', 14, 2)->nullable();
+            $table->string('source');
+            $table->string('status');
+            $table->timestampTz('period_start_at')->nullable();
+            $table->timestampTz('period_end_at')->nullable();
+            $table->jsonb('metadata')->nullable();
+            $table->timestampsTz();
+        });
     }
 
     private static function validateCompleteInventory(string $root): void

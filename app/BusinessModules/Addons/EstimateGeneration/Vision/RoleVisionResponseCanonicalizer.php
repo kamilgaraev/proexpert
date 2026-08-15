@@ -109,7 +109,12 @@ final class RoleVisionResponseCanonicalizer
                 $localReference,
             ])), 0, 32);
             $references[$localReference] = $serverReference;
-            $projectedEvidence[] = ['key' => $serverReference, 'locator' => $this->locator($input)];
+            $locator = $this->locator($input);
+            $providerLocator = is_array($item['locator'] ?? null) ? $item['locator'] : [];
+            if (is_bool($providerLocator['explicit'] ?? null)) {
+                $locator['explicit'] = $providerLocator['explicit'];
+            }
+            $projectedEvidence[] = ['key' => $serverReference, 'locator' => $locator];
         }
         $payload['evidence'] = $projectedEvidence;
 

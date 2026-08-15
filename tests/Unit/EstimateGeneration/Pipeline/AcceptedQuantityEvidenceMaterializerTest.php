@@ -17,6 +17,42 @@ use PHPUnit\Framework\TestCase;
 final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
 {
     #[Test]
+    public function canonical_derived_quantity_lineage_is_hashed_without_becoming_evidence_payload(): void
+    {
+        $repository = new InMemoryEvidenceRepository;
+        $materializer = new AcceptedQuantityEvidenceMaterializer($repository);
+        $context = new PipelineContext(
+            30, 10, 20, 1, 'sha256:'.str_repeat('a', 64), 'generating',
+            baseInputVersion: 'sha256:'.str_repeat('b', 64),
+        );
+        $quantity = new QuantityData(
+            key: 'floor_area',
+            unit: 'm2',
+            amount: '80.00',
+            formulaKey: 'direct_floor_area',
+            formulaVersion: '1',
+            formulaInputs: [
+                'operands' => [[
+                    'fact_id' => 'fact:room:1',
+                    'evidence' => [[
+                        'source_version' => 'sha256:'.str_repeat('c', 64),
+                        'region' => ['x' => 0.1, 'y' => 0.2, 'width' => 0.3, 'height' => 0.4],
+                    ]],
+                ]],
+            ],
+            source: QuantitySource::Evidenced,
+            evidenceIds: ['evidence:1'],
+            modelVersion: 'sha256:'.str_repeat('d', 64),
+        );
+
+        $first = $materializer->materialize($context, $quantity, ['key' => 'supplementary-floor']);
+        $replay = $materializer->materialize($context, $quantity, ['key' => 'supplementary-floor']);
+
+        self::assertSame($first->id, $replay->id);
+        self::assertSame(['quantity', 'unit', 'work_code'], array_keys($first->value));
+    }
+
+    #[Test]
     public function mapped_first_floor_quantity_with_deep_source_formula_is_materialized_idempotently(): void
     {
         $repository = new InMemoryEvidenceRepository;
@@ -32,9 +68,15 @@ final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
             formulaKey: 'floor.area.room_annotations',
             formulaVersion: '1.0.0',
             formulaInputs: [
-                'items' => [[
-                    'evidence_id' => 'room:1',
-                    'named_operands' => ['area' => ['value' => '21.900000', 'unit' => 'm2']],
+                'operands' => [[
+                    'fact_id' => 'fact:room:1',
+                    'evidence' => [[
+                        'source_version' => 'sha256:'.str_repeat('c', 64),
+                        'region' => ['x' => 0.1, 'y' => 0.2, 'width' => 0.3, 'height' => 0.4],
+                    ]],
+                    'snapshot_identity' => [
+                        'rounding_policy' => ['mode' => 'half_up', 'scale' => 2],
+                    ],
                 ]],
             ],
             source: QuantitySource::Evidenced,

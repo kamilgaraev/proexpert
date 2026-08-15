@@ -8,7 +8,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateC
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\PostgresConnection;
 use Illuminate\Foundation\Application;
@@ -73,6 +81,67 @@ final class EstimateComposerPostgresTest extends TestCase
         }
     }
 
+    #[Test]
+    public function confirmed_composer_response_is_recovered_without_a_second_wire_call(): void
+    {
+        [$connection, $schema] = $this->fixture();
+        try {
+            $wire = new RecordedComposerWireClient;
+            $usage = $this->createMock(AiUsageStore::class);
+            $prices = $this->createMock(AiPriceSnapshotResolver::class);
+            $prices->method('resolve')->willReturn(AiPriceSnapshot::fromArray([]));
+            $model = new TimewebEstimateComposerModel(
+                $wire,
+                $usage,
+                $prices,
+                'openai/gpt-5-mini',
+                100000,
+                1000,
+                30,
+                new DurableAiPhysicalResponseStore($connection),
+            );
+            $input = $this->input(str_repeat('c', 64));
+            $repository = new EloquentAiRoleRunRepository($connection, 180);
+            $runInput = new AiRoleRunInput(
+                organizationId: $input->organizationId,
+                projectId: $input->projectId,
+                sessionId: $input->sessionId,
+                documentId: null,
+                pageId: null,
+                subjectType: 'estimate_session',
+                subjectId: (string) $input->sessionId,
+                subjectVersion: $input->snapshotToken,
+                role: AiAnalysisRole::EstimateComposer,
+                model: 'openai/gpt-5-mini',
+                promptContractVersion: RunEstimateComposer::PROMPT_CONTRACT,
+                inputFingerprint: $input->fingerprint(),
+            );
+            $owner = AiOperationContext::deterministicId('composer-recovery-owner');
+            $claim = $repository->claim($runInput, $owner);
+            self::assertSame('owned', $claim->disposition);
+            $model->compose(
+                $input,
+                static fn (string $attemptId) => $repository->startPhysicalAttempt($claim->runId, $owner, $attemptId),
+            );
+            $connection->table('estimate_generation_ai_role_runs')->where('id', $claim->runId)->update([
+                'lease_expires_at' => now()->subMinute(),
+            ]);
+
+            $result = (new RunEstimateComposer($repository, $model, 'openai/gpt-5-mini'))->run($input);
+
+            self::assertNotEmpty($result);
+            self::assertSame(1, $wire->calls);
+            self::assertSame('completed', $connection->table('estimate_generation_ai_role_runs')
+                ->where('id', $claim->runId)->value('status'));
+            self::assertSame('completed', $connection->table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $connection->table('estimate_generation_ai_role_runs')
+                    ->where('id', $claim->runId)->value('physical_attempt_id'))
+                ->value('state'));
+        } finally {
+            $this->cleanup($connection, $schema);
+        }
+    }
+
     /** @return array{PostgresConnection,string} */
     private function fixture(): array
     {
@@ -95,15 +164,14 @@ final class EstimateComposerPostgresTest extends TestCase
             CREATE TABLE estimate_generation_sessions (id bigint PRIMARY KEY);
             CREATE TABLE estimate_generation_documents (id bigint PRIMARY KEY);
             CREATE TABLE estimate_generation_document_pages (id bigint PRIMARY KEY);
-            CREATE TABLE estimate_generation_vision_physical_attempts (attempt_id uuid PRIMARY KEY);
             SQL);
+        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000300_create_vision_physical_attempts.php'))->up();
+        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000400_add_recovery_lease_to_vision_physical_attempts.php'))->up();
+        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_15_000100_separate_vision_logical_request_from_processing_lineage.php'))->up();
         (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000100_create_estimate_generation_ai_role_runs.php'))->up();
         $connection->table('organizations')->insert(['id' => 10]);
         $connection->table('projects')->insert(['id' => 20]);
         $connection->table('estimate_generation_sessions')->insert(['id' => 30]);
-        $connection->table('estimate_generation_vision_physical_attempts')->insert([
-            ['attempt_id' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
-        ]);
 
         return [$connection, $schema];
     }
@@ -150,7 +218,7 @@ final class PostgresRecordedEstimateComposerModel implements EstimateComposerMod
     public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
     {
         $this->calls++;
-        $onPhysicalAttemptReserved('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+        $onPhysicalAttemptReserved(AiOperationContext::deterministicId('recorded-composer|'.$input->fingerprint()));
 
         return ['work_intents' => array_map(static fn (array $candidate): array => [
             'kind' => 'existing',
@@ -164,5 +232,39 @@ final class PostgresRecordedEstimateComposerModel implements EstimateComposerMod
             'exclusions' => [],
             'missing_document_recommendations' => [],
         ], $input->candidates)];
+    }
+}
+
+final class RecordedComposerWireClient implements RerankWireClient
+{
+    public int $calls = 0;
+
+    public function provider(): string
+    {
+        return 'recorded';
+    }
+
+    public function call(string $model, array $messages, array $options): array
+    {
+        $this->calls++;
+
+        return [
+            'content' => json_encode(['work_intents' => [[
+                'kind' => 'existing',
+                'candidate_id' => 'baseline:foundation',
+                'work_key' => null,
+                'name' => null,
+                'derived_quantity_id' => null,
+                'source_fact_ids' => ['fact:foundation'],
+                'technology_package_candidate' => null,
+                'assumptions' => [],
+                'exclusions' => [],
+                'missing_document_recommendations' => [],
+            ]]], JSON_THROW_ON_ERROR),
+            'model' => $model,
+            'usage_available' => true,
+            'input_tokens' => 100,
+            'output_tokens' => 50,
+        ];
     }
 }

@@ -254,13 +254,14 @@ final class EstimateComposerTest extends TestCase
         ];
 
         $input = $factory->capture(10, 20, 30, [$candidate], [[
-            'id' => 'quantity:foundation', 'value' => '10.2500', 'unit' => 'm3',
+            'key' => 'quantity:foundation', 'amount' => '10.2500', 'unit' => 'm3',
         ]], []);
 
         self::assertSame($models->snapshotForPlanning(10, 20, 30, 10001)['token'], $input->snapshotToken);
         self::assertSame('10.2500', $input->facts[0]['value']);
         self::assertSame('decision:foundation', $input->decisions[0]['id']);
         self::assertSame('10.2500', $input->derivedQuantities[0]['value']);
+        self::assertSame('quantity:foundation', $input->derivedQuantities[0]['id']);
         self::assertSame([$candidate], $input->candidates);
     }
 
@@ -339,6 +340,58 @@ final class EstimateComposerTest extends TestCase
         self::assertSame(
             ['Нужна недостающая ведомость объёмов.'],
             $projected[0]['sections'][0]['work_items'][10]['composition_intent']['missing_document_recommendations'],
+        );
+    }
+
+    public function test_composer_can_add_a_source_grounded_work_when_the_deterministic_baseline_is_empty(): void
+    {
+        $projector = new EstimateCompositionProjector;
+        self::assertSame([], $projector->candidates([]));
+        $input = new EstimateComposerInput(
+            10,
+            20,
+            30,
+            str_repeat('a', 64),
+            [['id' => 'fact:room-area', 'type' => 'area', 'value' => 80.0, 'unit' => 'm2', 'status' => 'confirmed']],
+            [['id' => 'quantity:room-area', 'value' => '80.000000', 'unit' => 'm2']],
+            [],
+            [],
+            [],
+            RunEstimateComposer::PROMPT_CONTRACT,
+        );
+
+        self::assertSame([], $input->candidates);
+        self::assertSame('fact:room-area', $input->facts[0]['id']);
+
+        $result = (new RunEstimateComposer(
+            new ComposerRoleRunMemoryRepository,
+            new RecordedEstimateComposerModel(['work_intents' => [[
+                'kind' => 'supplementary',
+                'candidate_id' => null,
+                'work_key' => 'floor-screed-from-documented-area',
+                'name' => 'Устройство цементной стяжки пола',
+                'derived_quantity_id' => 'quantity:room-area',
+                'source_fact_ids' => ['fact:room-area'],
+                'technology_package_candidate' => null,
+                'assumptions' => [],
+                'exclusions' => [],
+                'missing_document_recommendations' => [],
+            ]]]),
+            'openai/gpt-5-mini',
+        ))->run($input);
+
+        self::assertCount(1, $result);
+        self::assertSame('supplementary', $result[0]['kind']);
+        $projection = new \ReflectionMethod($projector, 'supplementaryItems');
+        $items = $projection->invoke(
+            $projector,
+            [$result[0]['candidate_id'] => $result[0]],
+            $input->derivedQuantities,
+            $input->facts,
+        );
+        self::assertSame(
+            'quantity:room-area',
+            $items[0]['metadata']['quantity_key'],
         );
     }
 

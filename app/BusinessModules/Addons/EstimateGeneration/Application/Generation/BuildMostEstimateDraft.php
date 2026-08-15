@@ -257,7 +257,7 @@ final class BuildMostEstimateDraft
             && ($norm['hard_gate_passed'] ?? false) === true
             && $this->string($norm['unit'] ?? null) === $this->string($workItem['unit'] ?? null)
             && is_array($retrieval)
-            && ($retrieval['status'] ?? null) === 'matched'
+            && in_array($retrieval['status'] ?? null, ['matched', 'retrieval_only', 'reranked'], true)
             && ($retrieval['blocking_issues'] ?? []) === []
             && is_array($catalog)
             && ($catalog['status'] ?? null) === 'current'

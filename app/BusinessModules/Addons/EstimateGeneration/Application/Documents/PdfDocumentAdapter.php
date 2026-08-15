@@ -109,6 +109,7 @@ final readonly class PdfDocumentAdapter implements DocumentUnitAdapter
                         'artifact_path' => $artifactPath,
                         'artifact_bytes' => $artifactBytes,
                         'artifact_sha256' => $artifactSha256,
+                        'artifact_version_id' => $artifactSha256,
                         'artifact_source_version' => $artifactSha256,
                         'content_type' => 'image/png',
                         'page' => $page->pageNumber,

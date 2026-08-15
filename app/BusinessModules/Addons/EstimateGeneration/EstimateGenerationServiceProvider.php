@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateC
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
@@ -673,6 +674,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (string) config('estimate-generation.vision.model'),
         ));
         $this->app->alias(RunDocumentArbitration::class, DocumentArbitrator::class);
+        $this->app->singleton(
+            DurableAiPhysicalResponseStore::class,
+            static fn ($app): DurableAiPhysicalResponseStore => new DurableAiPhysicalResponseStore($app->make('db')->connection()),
+        );
         $this->app->singleton(ProjectSynthesisModel::class, static fn ($app): ProjectSynthesisModel => new TimewebProjectSynthesisModel(
             $app->make(RerankWireClient::class),
             $app->make(AiUsageStore::class),
@@ -681,6 +686,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (int) config('estimate-generation.project_engineer.max_input_bytes'),
             (int) config('estimate-generation.project_engineer.max_output_tokens'),
             (int) config('estimate-generation.project_engineer.timeout_seconds'),
+            $app->make(DurableAiPhysicalResponseStore::class),
         ));
         $this->app->singleton(RunProjectSynthesis::class, static fn ($app): RunProjectSynthesis => new RunProjectSynthesis(
             $app->make(AiRoleRunRepository::class),
@@ -696,6 +702,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (int) config('estimate-generation.estimate_composer.max_input_bytes'),
             (int) config('estimate-generation.estimate_composer.max_output_tokens'),
             (int) config('estimate-generation.estimate_composer.timeout_seconds'),
+            $app->make(DurableAiPhysicalResponseStore::class),
         ));
         $this->app->alias(TimewebEstimateComposerModel::class, EstimateComposerModel::class);
         $this->app->alias(
