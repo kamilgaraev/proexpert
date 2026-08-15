@@ -53,6 +53,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(
+            \App\Contracts\Seo\IndexNowPublisher::class,
+            \App\Services\Seo\QueuedIndexNowPublisher::class,
+        );
+
         $this->app->bind(\App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector::class, static fn ($app) => new \App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector([
             new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\SafetyViolationProblemSource($app->make(\App\Modules\Core\AccessController::class)),
             new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\OverdueScheduleProblemSource($app->make(\App\Modules\Core\AccessController::class)),
