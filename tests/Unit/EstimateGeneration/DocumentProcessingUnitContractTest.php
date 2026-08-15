@@ -299,6 +299,42 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
+    public function cost_pause_returns_the_claim_to_pending_without_consuming_an_attempt(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $unit = $store->create(1, 2, 3, 4, $this->unit(DocumentUnitType::PdfPage, 1, 'source'));
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public int $calls = 0;
+
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                $this->calls++;
+
+                throw new DocumentUnitProcessingException('document_cost_limit_reached');
+            }
+        };
+        $reconciler = new class implements DocumentUnitAggregateReconciler
+        {
+            public int $calls = 0;
+
+            public function reconcile(int $documentId, string $sourceVersion): void
+            {
+                $this->calls++;
+            }
+        };
+
+        $outcome = $this->processUnit($store, $processor, $reconciler)->handle($unit->id, 'source');
+
+        self::assertSame(DocumentProcessingUnitClaimStatus::UserActionRequired, $outcome->status);
+        self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($unit->id)?->status);
+        self::assertSame(0, $store->find($unit->id)?->attemptCount);
+        self::assertNull($store->find($unit->id)?->failureCode);
+        self::assertSame(1, $processor->calls);
+        self::assertSame(1, $reconciler->calls);
+    }
+
+    #[Test]
     public function deterministic_terminal_unit_failure_is_not_retried(): void
     {
         $store = new InMemoryDocumentProcessingUnitStore;
@@ -577,8 +613,8 @@ final class DocumentProcessingUnitContractTest extends TestCase
             self::assertSame('breaker_stopped', $store->find($unit->id)?->failureCode);
             self::assertSame(0, $store->find($unit->id)?->metadata['actual_execution_count']);
         }
-        self::assertSame(DocumentProcessingUnitStatus::Pending, $store->find($differentContract->id)?->status);
-        self::assertSame(0, $store->find($differentContract->id)?->attemptCount);
+        self::assertSame(DocumentProcessingUnitStatus::Failed, $store->find($differentContract->id)?->status);
+        self::assertSame('breaker_stopped', $store->find($differentContract->id)?->failureCode);
     }
 
     #[Test]
@@ -972,9 +1008,16 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 return array_values(array_filter($this->due, fn (DocumentUnitDispatchCandidate $candidate): bool => ! in_array($candidate->unitId, $this->marked, true)));
             }
 
-            public function markDispatched(int $unitId, DateTimeImmutable $now, DateTimeImmutable $nextDispatchAt): void
-            {
-                $this->marked[] = $unitId;
+            public function dispatchIfAllowed(
+                DocumentUnitDispatchCandidate $candidate,
+                DateTimeImmutable $now,
+                DateTimeImmutable $nextDispatchAt,
+                callable $dispatch,
+            ): bool {
+                $dispatch();
+                $this->marked[] = $candidate->unitId;
+
+                return true;
             }
         };
         $jobs = new class implements EstimateGenerationUnitJobDispatcher
@@ -1035,7 +1078,16 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 return [];
             }
 
-            public function markDispatched(int $unitId, DateTimeImmutable $now, DateTimeImmutable $nextDispatchAt): void {}
+            public function dispatchIfAllowed(
+                DocumentUnitDispatchCandidate $candidate,
+                DateTimeImmutable $now,
+                DateTimeImmutable $nextDispatchAt,
+                callable $dispatch,
+            ): bool {
+                $dispatch();
+
+                return true;
+            }
         };
         $jobs = new class implements EstimateGenerationUnitJobDispatcher
         {
@@ -1183,13 +1235,11 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringContainsString("->where('source_version', \$sourceVersion)", $finalizer);
         self::assertStringContainsString("whereNotIn('processing_unit_id', \$currentUnitIds)", $finalizer);
         self::assertStringContainsString("'units_finalized_source_version' => \$sourceVersion", $finalizer);
-        $rebuild = strpos($finalizer, '$this->buildingModels->rebuild');
         $marker = strpos($finalizer, "'units_reconciled_source_version' => \$sourceVersion");
         $readiness = strpos($finalizer, '$this->sessions->reconcile');
-        self::assertIsInt($rebuild);
+        self::assertStringNotContainsString('$this->buildingModels->rebuild', $finalizer);
         self::assertIsInt($marker);
         self::assertIsInt($readiness);
-        self::assertLessThan($marker, $rebuild);
         self::assertLessThan($readiness, $marker);
         self::assertIsString($provider);
         self::assertStringContainsString('RecoverEstimateGenerationUnitsJob', $provider);

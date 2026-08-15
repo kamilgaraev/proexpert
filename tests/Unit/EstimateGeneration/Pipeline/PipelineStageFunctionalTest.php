@@ -259,7 +259,7 @@ final class PipelineStageFunctionalTest extends TestCase
     }
 
     #[Test]
-    public function it_preserves_legacy_global_selection_when_candidate_id_map_is_explicitly_null(): void
+    public function it_preserves_unmapped_supplementary_work_for_server_side_normative_selection(): void
     {
         $artifacts = new InMemoryPipelineArtifactStore;
         $results = new StageResultFactory($artifacts, PipelineDefinitionGraph::standard());
@@ -275,7 +275,7 @@ final class PipelineStageFunctionalTest extends TestCase
                 'dataset_version' => 'fsnb-2026.1',
                 'applicability_date' => '2026-07-13',
                 'catalog_candidates' => [],
-                'candidate_ids_by_work_item' => null,
+                'candidate_ids_by_work_item' => ['existing-work' => []],
             ],
             'estimate_composition' => [
                 'schema_version' => 1,
@@ -296,6 +296,7 @@ final class PipelineStageFunctionalTest extends TestCase
                             'quantity' => '10',
                             'quantity_formula' => 'roof.covering',
                             'item_type' => 'priced_work',
+                            'composition_intent' => ['kind' => 'supplementary'],
                         ],
                         ['key' => 'roof-reference', 'name' => 'Справочная позиция', 'item_type' => 'operation'],
                     ],
@@ -344,7 +345,7 @@ final class PipelineStageFunctionalTest extends TestCase
                 {
                     public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
                     {
-                        throw new \LogicException('Legacy global selection must not search when the pinned catalog is empty.');
+                        throw new \LogicException('Supplementary selection must not search outside the pinned catalog.');
                     }
                 },
                 new NormativeHardGate,
@@ -355,7 +356,7 @@ final class PipelineStageFunctionalTest extends TestCase
             {
                 public function rerank(WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $candidateSet): NormativeRerankResultData
                 {
-                    throw new \LogicException('Legacy global selection must not rerank when the pinned catalog is empty.');
+                    throw new \LogicException('Supplementary selection must not rerank when the pinned catalog is empty.');
                 }
             },
         );

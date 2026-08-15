@@ -4,20 +4,26 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ConfirmEstimateGenerationDocumentCost;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentCostJournalReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentPageActionResult;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingControlConflict;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ExplicitDocumentRetryConflict;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\IgnoreEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ManageEstimateGenerationDocumentPages;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReuseEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StopEstimateGenerationDocumentProcessing;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UploadEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ConfirmEstimateGenerationDocumentCostRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ManageEstimateGenerationDocumentPagesRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RetryEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ReuseEstimateGenerationDocumentsRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\StopEstimateGenerationDocumentProcessingRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
@@ -46,6 +52,9 @@ class EstimateGenerationDocumentController extends Controller
         private readonly ManageEstimateGenerationDocumentPages $manageDocumentPages,
         private readonly UploadEstimateGenerationDocuments $uploadDocuments,
         private readonly ReuseEstimateGenerationDocuments $reuseDocuments,
+        private readonly StopEstimateGenerationDocumentProcessing $stopDocumentProcessing,
+        private readonly ConfirmEstimateGenerationDocumentCost $confirmDocumentCost,
+        private readonly DocumentCostJournalReader $costJournal,
     ) {}
 
     public function upload(UploadEstimateGenerationDocumentsRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -59,6 +68,7 @@ class EstimateGenerationDocumentController extends Controller
                 $request->user(),
             );
             $result->documents->each(static fn (EstimateGenerationDocument $document) => $document->setRelation('session', $session));
+            $this->costJournal->attach($result->documents);
 
             return AdminResponse::success([
                 'documents' => EstimateGenerationDocumentResource::collection($result->documents)->resolve(),
@@ -90,10 +100,12 @@ class EstimateGenerationDocumentController extends Controller
                 ->with([
                     'session',
                     'processingUnits:id,organization_id,project_id,session_id,document_id,source_version,status,output_count,failure_code,failure_fingerprint,metadata',
+                    'pages:id,document_id,processing_unit_id,source_version,status,quality_flags',
                 ])
                 ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
                 ->orderBy('id')
                 ->get();
+            $this->costJournal->attach($documents);
 
             return AdminResponse::success([
                 'documents' => EstimateGenerationDocumentResource::collection($documents)->resolve(),
@@ -113,6 +125,7 @@ class EstimateGenerationDocumentController extends Controller
                 $request->user(),
             );
             $result->documents->each(static fn (EstimateGenerationDocument $document) => $document->setRelation('session', $session));
+            $this->costJournal->attach($result->documents);
 
             return AdminResponse::success([
                 'documents' => EstimateGenerationDocumentResource::collection($result->documents)->resolve(),
@@ -144,17 +157,18 @@ class EstimateGenerationDocumentController extends Controller
         return $this->safeReadResponse(function () use ($request, $project, $session, $document): JsonResponse {
             $this->guardDocument($request, $project, $session, $document);
 
-            return AdminResponse::success(
-                (new EstimateGenerationDocumentDetailResource($document->load([
-                    'session',
-                    'processingUnits',
-                    'pages',
-                    'facts',
-                    'drawingElements',
-                    'quantityTakeoffs',
-                    'scopeInferences',
-                ])))->resolve()
-            );
+            $document->load([
+                'session',
+                'processingUnits',
+                'pages',
+                'facts',
+                'drawingElements',
+                'quantityTakeoffs',
+                'scopeInferences',
+            ]);
+            $this->costJournal->attach([$document]);
+
+            return AdminResponse::success((new EstimateGenerationDocumentDetailResource($document))->resolve());
         }, 'show document', [
             'project_id' => $project->id,
             'session_id' => $session->id,
@@ -180,6 +194,8 @@ class EstimateGenerationDocumentController extends Controller
                 (string) $request->validated('idempotency_key'),
                 $request->validated('reason'),
             );
+            $result->document->loadMissing(['processingUnits', 'pages']);
+            $this->costJournal->attach([$result->document]);
 
             return AdminResponse::success([
                 'document' => (new EstimateGenerationDocumentResource($result->document->setRelation('session', $session)))->resolve(),
@@ -222,6 +238,116 @@ class EstimateGenerationDocumentController extends Controller
         }
     }
 
+    public function stop(
+        StopEstimateGenerationDocumentProcessingRequest $request,
+        Project $project,
+        EstimateGenerationSession $session,
+        EstimateGenerationDocument $document,
+    ): JsonResponse {
+        $this->guardDocument($request, $project, $session, $document);
+
+        try {
+            $result = $this->stopDocumentProcessing->handle(
+                $session,
+                $document,
+                $request->actor(),
+                (int) $request->validated('state_version'),
+                (string) $request->validated('source_version'),
+                (string) $request->validated('idempotency_key'),
+            );
+            $result->document->loadMissing(['processingUnits', 'pages']);
+            $this->costJournal->attach([$result->document]);
+
+            return AdminResponse::success([
+                'document' => (new EstimateGenerationDocumentResource(
+                    $result->document->setRelation('session', $session)
+                ))->resolve(),
+                'documents_summary' => $result->summary,
+                'stop' => [
+                    'disposition' => $result->disposition,
+                    'attempt_id' => $result->attemptId,
+                ],
+            ], trans_message($result->messageKey));
+        } catch (DocumentProcessingControlConflict $exception) {
+            $status = $exception->disposition === 'forbidden' ? 403 : 409;
+
+            return AdminResponse::error(
+                trans_message($status === 403
+                    ? 'estimate_generation.access_denied'
+                    : 'estimate_generation.document_processing_stop_conflict'),
+                $status,
+                null,
+                ['disposition' => $exception->disposition],
+            );
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
+        } catch (\Throwable $exception) {
+            Log::error('[EstimateGeneration] Document processing stop failed', [
+                'failure_code' => 'document_processing_stop_failed',
+                'project_id' => $project->id,
+                'session_id' => $session->id,
+                'document_id' => $document->id,
+                'exception_class' => $exception::class,
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.document_processing_stop_error'), 500);
+        }
+    }
+
+    public function confirmCost(
+        ConfirmEstimateGenerationDocumentCostRequest $request,
+        Project $project,
+        EstimateGenerationSession $session,
+        EstimateGenerationDocument $document,
+    ): JsonResponse {
+        $this->guardDocument($request, $project, $session, $document);
+
+        try {
+            $result = $this->confirmDocumentCost->handle(
+                $session,
+                $document,
+                $request->actor(),
+                (int) $request->validated('state_version'),
+                (string) $request->validated('source_version'),
+                (string) $request->validated('idempotency_key'),
+            );
+            $result->document->loadMissing(['processingUnits', 'pages']);
+            $this->costJournal->attach([$result->document]);
+
+            return AdminResponse::success([
+                'document' => (new EstimateGenerationDocumentResource(
+                    $result->document->setRelation('session', $session)
+                ))->resolve(),
+                'documents_summary' => $result->summary,
+                'confirmation' => [
+                    'disposition' => $result->disposition,
+                    'attempt_id' => $result->attemptId,
+                ],
+            ], trans_message($result->messageKey));
+        } catch (DocumentProcessingControlConflict $exception) {
+            $status = $exception->disposition === 'forbidden' ? 403 : 409;
+
+            return AdminResponse::error(
+                trans_message($status === 403
+                    ? 'estimate_generation.access_denied'
+                    : 'estimate_generation.document_cost_confirmation_conflict'),
+                $status,
+                null,
+                ['disposition' => $exception->disposition],
+            );
+        } catch (\Throwable $exception) {
+            Log::error('[EstimateGeneration] Document cost confirmation failed', [
+                'failure_code' => 'document_cost_confirmation_failed',
+                'project_id' => $project->id,
+                'session_id' => $session->id,
+                'document_id' => $document->id,
+                'exception_class' => $exception::class,
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.document_cost_confirmation_error'), 500);
+        }
+    }
+
     public function ignore(
         IgnoreEstimateGenerationDocumentRequest $request,
         Project $project,
@@ -237,6 +363,8 @@ class EstimateGenerationDocumentController extends Controller
                 (int) $request->validated('state_version'),
                 $request->validated('reason'),
             );
+            $result->document->loadMissing(['processingUnits', 'pages']);
+            $this->costJournal->attach([$result->document]);
 
             return AdminResponse::success([
                 'document' => (new EstimateGenerationDocumentResource($result->document->setRelation('session', $session)))->resolve(),
@@ -409,6 +537,9 @@ class EstimateGenerationDocumentController extends Controller
      */
     private function pageActionPayload(DocumentPageActionResult $result): array
     {
+        $result->document->loadMissing(['processingUnits', 'pages']);
+        $this->costJournal->attach([$result->document]);
+
         return [
             'document' => (new EstimateGenerationDocumentResource($result->document->setRelation('session', $result->document->session)))->resolve(),
             'pages' => $result->pages->map(static fn ($page): array => [

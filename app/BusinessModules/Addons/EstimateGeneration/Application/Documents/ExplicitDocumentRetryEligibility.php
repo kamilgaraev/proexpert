@@ -53,6 +53,16 @@ final readonly class ExplicitDocumentRetryEligibility
             return false;
         }
 
+        if (in_array((string) $document->processing_control_status, ['cancelled', 'paused'], true)) {
+            return $document->relationLoaded('processingUnits')
+                && $document->processingUnits->contains(
+                    fn ($unit): bool => hash_equals(
+                        (string) $document->source_version,
+                        (string) $unit->source_version,
+                    )
+                );
+        }
+
         if (trim((string) $document->source_version) === ''
             || ! $this->systemFailures->detected($document)
             || $this->systemFailures->temporary($document)) {
@@ -109,7 +119,7 @@ final readonly class ExplicitDocumentRetryEligibility
             && hash_equals($sourceVersion, $retrySourceVersion)
             && $retryAttemptId !== ''
             && hash_equals($processingAttemptId, $retryAttemptId)
-            && ($currentRetry['status'] ?? null) === 'failed'
-            && ($currentRetry['terminal_reason'] ?? null) === 'system_failure';
+            && in_array($currentRetry['status'] ?? null, ['failed', 'cancelled'], true)
+            && in_array($currentRetry['terminal_reason'] ?? null, ['system_failure', 'operator_stop', 'cost_limit_reached'], true);
     }
 }

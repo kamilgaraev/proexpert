@@ -45,21 +45,49 @@ final readonly class VisionAnalysisData
         public array $rawObserverFacts = [],
         public ?PageAnalysisRoutingDecision $analysisRouting = null,
     ) {
-        if (! in_array($sheetType, self::SHEET_TYPES, true) || $evidence === [] || count($evidence) > 256 || count($elements) > 500 || count($scaleCandidates) > 32
-            || array_diff($warnings, self::WARNINGS) !== [] || count($warnings) !== count(array_unique($warnings))
-            || preg_match('/^[a-z0-9._-]{1,80}$/', $provider) !== 1
-            || preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $requestedModel) !== 1 || $reportedModel !== $requestedModel
-            || preg_match('/^[A-Za-z0-9._:-]{1,80}$/', $modelVersion) !== 1
-            || ! in_array($usageStatus, ['measured', 'unavailable'], true)
+        if (! in_array($sheetType, self::SHEET_TYPES, true)) {
+            throw new VisionContractException('invalid_sheet_type');
+        }
+        if ($evidence === []) {
+            throw new VisionContractException('evidence_required');
+        }
+        if (count($evidence) > 256) {
+            throw new VisionContractException('evidence_limit_exceeded');
+        }
+        if (count($elements) > 500) {
+            throw new VisionContractException('element_limit_exceeded');
+        }
+        if (count($scaleCandidates) > 32) {
+            throw new VisionContractException('scale_candidate_limit_exceeded');
+        }
+        if (array_diff($warnings, self::WARNINGS) !== [] || count($warnings) !== count(array_unique($warnings))) {
+            throw new VisionContractException('invalid_warnings');
+        }
+        if (preg_match('/^[a-z0-9._-]{1,80}$/', $provider) !== 1) {
+            throw new VisionContractException('invalid_provider_identity');
+        }
+        if (preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $requestedModel) !== 1) {
+            throw new VisionContractException('invalid_requested_model_identity');
+        }
+        if ($reportedModel !== $requestedModel) {
+            throw new VisionContractException('reported_model_mismatch');
+        }
+        if (preg_match('/^[A-Za-z0-9._:-]{1,80}$/', $modelVersion) !== 1) {
+            throw new VisionContractException('invalid_model_version');
+        }
+        if (! in_array($usageStatus, ['measured', 'unavailable'], true)
             || ($usageStatus === 'unavailable') !== ($inputTokens === null && $outputTokens === null)
-            || ($inputTokens !== null && $inputTokens < 0) || ($outputTokens !== null && $outputTokens < 0)
-            || count($rawObserverFacts) > 64
+            || ($inputTokens !== null && $inputTokens < 0)
+            || ($outputTokens !== null && $outputTokens < 0)) {
+            throw new VisionContractException('invalid_usage_metadata');
+        }
+        if (count($rawObserverFacts) > 64
             || strlen(json_encode($rawObserverFacts, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)) > self::MAX_RAW_OBSERVATION_BYTES) {
-            throw new VisionContractException('invalid_analysis_metadata');
+            throw new VisionContractException('invalid_raw_observer_facts');
         }
         foreach ($rawObserverFacts as $fact) {
             if (! is_array($fact)) {
-                throw new VisionContractException('invalid_analysis_metadata');
+                throw new VisionContractException('invalid_raw_observer_facts');
             }
         }
         $evidenceKeys = array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence);
@@ -146,12 +174,8 @@ final readonly class VisionAnalysisData
             || count($data['elements']) > $maxElements) {
             throw new VisionContractException('invalid_analysis_schema');
         }
-        $evidencePayload = self::normalizeEvidencePayload($data['evidence']);
-        $evidence = array_map(static fn (mixed $item): VisionEvidenceData => is_array($item) ? VisionEvidenceData::fromArray($item) : throw new VisionContractException('invalid_evidence'), $evidencePayload);
+        [$evidence, $evidenceQuarantine] = self::providerEvidence($data['evidence']);
         $evidenceKeys = array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence);
-        if (count($evidenceKeys) !== count(array_unique($evidenceKeys))) {
-            throw new VisionContractException('duplicate_keys');
-        }
         [$elements, $elementQuarantine] = self::providerElements($data['elements'], $evidenceKeys);
         [$scales, $scaleQuarantine] = self::providerScales($data['scale_candidates'], $evidenceKeys, $elements);
         $semanticQuarantine = [];
@@ -169,12 +193,7 @@ final readonly class VisionAnalysisData
                 $semanticQuarantine[] = ['section' => 'project_sheet_analysis', 'index' => 0, 'reason' => $exception->reason];
             }
         }
-        foreach ($data['warnings'] as $warning) {
-            if (! is_string($warning)) {
-                throw new VisionContractException('invalid_warning');
-            }
-        }
-        $warnings = array_values($data['warnings']);
+        [$warnings, $warningQuarantine] = self::providerWarnings($data['warnings']);
         if ($scales === [] && ! in_array('scale_missing', $warnings, true)) {
             $warnings[] = 'scale_missing';
         }
@@ -205,7 +224,7 @@ final readonly class VisionAnalysisData
         }
 
         return new self(
-            $data['sheet_type'],
+            in_array($data['sheet_type'], self::SHEET_TYPES, true) ? $data['sheet_type'] : 'unknown',
             $evidence,
             $elements,
             $scales,
@@ -219,7 +238,18 @@ final readonly class VisionAnalysisData
             $outputTokens,
             $visualAttributes,
             $projectSheetAnalysis,
-            [...$elementQuarantine, ...$scaleQuarantine, ...$visualQuarantine, ...$semanticQuarantine, ...$routingQuarantine],
+            [
+                ...(! in_array($data['sheet_type'], self::SHEET_TYPES, true)
+                    ? [['section' => 'sheet_type', 'index' => 0, 'reason' => 'invalid_sheet_type']]
+                    : []),
+                ...$evidenceQuarantine,
+                ...$elementQuarantine,
+                ...$scaleQuarantine,
+                ...$warningQuarantine,
+                ...$visualQuarantine,
+                ...$semanticQuarantine,
+                ...$routingQuarantine,
+            ],
             self::boundedRawObserverFacts($data['project_sheet_analysis']['facts'] ?? []),
             $routing,
         );
@@ -262,7 +292,7 @@ final readonly class VisionAnalysisData
             static fn (mixed $item): VisionElementData => is_array($item)
                 ? VisionElementData::fromArray($item)
                 : throw new VisionContractException('invalid_element'),
-            $data['elements'],
+            self::normalizeProviderElementLabels($data['elements']),
         );
         $scales = array_map(
             static fn (mixed $item): VisionScaleCandidateData => is_array($item)
@@ -543,11 +573,68 @@ final readonly class VisionAnalysisData
         return $normalized;
     }
 
+    /**
+     * @param  array<mixed>  $payload
+     * @return array{list<VisionEvidenceData>, list<array{section: string, index: int, reason: string}>}
+     */
+    private static function providerEvidence(array $payload): array
+    {
+        $evidence = [];
+        $quarantine = [];
+        $seen = [];
+        $isList = array_is_list($payload);
+
+        foreach ($payload as $key => $item) {
+            $index = is_int($key) ? $key : count($evidence) + count($quarantine);
+            try {
+                if (! is_array($item)) {
+                    throw new VisionContractException('invalid_evidence');
+                }
+                $evidenceKey = $isList ? ($item['key'] ?? null) : ($item['key'] ?? $key);
+                $locator = $item['locator'] ?? (! $isList ? $item : null);
+                if (! is_string($evidenceKey) || ! is_array($locator)
+                    || (! $isList && isset($item['key']) && ! hash_equals((string) $key, $evidenceKey))) {
+                    throw new VisionContractException('invalid_evidence');
+                }
+                $candidate = VisionEvidenceData::fromArray([
+                    'key' => $evidenceKey,
+                    'locator' => array_intersect_key($locator, array_flip([
+                        'page_id',
+                        'page_number',
+                        'processing_unit_id',
+                        'source_version',
+                        'coordinate_space',
+                        'explicit',
+                    ])),
+                ]);
+                if (isset($seen[$candidate->key])) {
+                    throw new VisionContractException('duplicate_evidence_key');
+                }
+                $seen[$candidate->key] = true;
+                $evidence[] = $candidate;
+            } catch (VisionContractException $exception) {
+                $quarantine[] = [
+                    'section' => 'evidence',
+                    'index' => $index,
+                    'reason' => $exception->reason,
+                ];
+            }
+        }
+
+        return [$evidence, $quarantine];
+    }
+
     /** @param array<mixed> $elements @return array<mixed> */
     private static function normalizeProviderElementLabels(array $elements): array
     {
         return array_map(static function (mixed $element): mixed {
-            if (! is_array($element) || ! is_string($element['label'] ?? null)) {
+            if (! is_array($element)) {
+                return $element;
+            }
+            if (! array_key_exists('label', $element)) {
+                return [...$element, 'label' => null];
+            }
+            if (! is_string($element['label'])) {
                 return $element;
             }
 
@@ -660,6 +747,23 @@ final readonly class VisionAnalysisData
         }
 
         return [[], [['section' => 'visual_attributes', 'index' => 0, 'reason' => 'invalid_visual_attributes']]];
+    }
+
+    /** @param array<mixed> $payload @return array{list<string>, list<array{section: string, index: int, reason: string}>} */
+    private static function providerWarnings(array $payload): array
+    {
+        $warnings = [];
+        $quarantined = [];
+        foreach ($payload as $index => $warning) {
+            if (! is_string($warning) || ! in_array($warning, self::WARNINGS, true) || in_array($warning, $warnings, true)) {
+                $quarantined[] = ['section' => 'warnings', 'index' => $index, 'reason' => 'invalid_warning'];
+
+                continue;
+            }
+            $warnings[] = $warning;
+        }
+
+        return [$warnings, $quarantined];
     }
 
     /** @return list<string> */

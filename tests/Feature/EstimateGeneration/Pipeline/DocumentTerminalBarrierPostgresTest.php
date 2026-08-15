@@ -133,4 +133,132 @@ final class DocumentTerminalBarrierPostgresTest extends TestCase
             DB::rollBack();
         }
     }
+
+    #[Test]
+    public function multi_document_sixty_four_page_fixtures_keep_dispatch_and_memory_bounded(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            config()->set('estimate-generation.vision.adaptive_analysis.max_in_flight_units_per_document', 8);
+            $organization = Organization::factory()->create();
+            $project = Project::factory()->for($organization)->create();
+            $user = User::factory()->create();
+            $session = EstimateGenerationSession::query()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'user_id' => $user->id,
+                'status' => 'processing_documents',
+                'processing_stage' => 'processing_documents',
+                'processing_progress' => 0,
+                'input_payload' => [],
+                'state_version' => 0,
+            ]);
+            $documents = [];
+            foreach (range(1, 3) as $documentIndex) {
+                $sourceVersion = 'sha256:'.hash('sha256', 'bounded-document-'.$documentIndex);
+                $document = EstimateGenerationDocument::query()->create([
+                    'session_id' => $session->id,
+                    'organization_id' => $organization->id,
+                    'project_id' => $project->id,
+                    'user_id' => $user->id,
+                    'filename' => 'bounded-'.$documentIndex.'.pdf',
+                    'mime_type' => 'application/pdf',
+                    'source_version' => $sourceVersion,
+                    'status' => 'processing',
+                    'processing_stage' => 'preflight',
+                    'progress_percent' => 0,
+                    'page_count' => 64,
+                    'processing_control_status' => 'active',
+                ]);
+                $rows = [];
+                $now = now();
+                foreach (range(1, 64) as $page) {
+                    $rows[] = [
+                        'organization_id' => $organization->id,
+                        'project_id' => $project->id,
+                        'session_id' => $session->id,
+                        'document_id' => $document->id,
+                        'unit_type' => 'pdf_page',
+                        'unit_index' => $page,
+                        'source_version' => $sourceVersion,
+                        'status' => 'pending',
+                        'locator' => json_encode([
+                            'source_kind' => 'pdf',
+                            'source_version' => $sourceVersion,
+                            'coordinate_space' => 'pdf_page_pixels',
+                            'artifact_path' => 'org-'.$organization->id.'/bounded/'.$documentIndex.'/'.$page.'.png',
+                            'artifact_sha256' => 'sha256:'.hash('sha256', $documentIndex.'|'.$page),
+                            'artifact_version_id' => 'bounded-'.$documentIndex.'-'.$page,
+                            'content_type' => 'image/png',
+                        ], JSON_THROW_ON_ERROR),
+                        'metadata' => '{}',
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
+                }
+                DB::table('estimate_generation_processing_units')->insert($rows);
+                $documents[] = $document;
+            }
+
+            $store = new EloquentDocumentUnitDispatchStore(DB::connection());
+            $now = CarbonImmutable::now()->toDateTimeImmutable();
+            $memoryBefore = memory_get_usage(true);
+            $dispatched = 0;
+            foreach ($documents as $document) {
+                $candidates = $store->dueForDocument((int) $document->id, (string) $document->source_version, $now, 100);
+                self::assertCount(8, $candidates);
+                foreach ($candidates as $candidate) {
+                    self::assertTrue($store->dispatchIfAllowed(
+                        $candidate,
+                        $now,
+                        $now->modify('+5 minutes'),
+                        static function () use (&$dispatched): void {
+                            $dispatched++;
+                        },
+                    ));
+                }
+                self::assertSame([], $store->dueForDocument(
+                    (int) $document->id,
+                    (string) $document->source_version,
+                    $now,
+                    100,
+                ));
+            }
+            self::assertSame(24, $dispatched);
+            self::assertLessThanOrEqual(8 * 1024 * 1024, memory_get_usage(true) - $memoryBefore);
+            self::assertCount(10, $store->dueForRecovery($now, 10));
+
+            $candidate = collect($store->dueForRecovery($now, 100))
+                ->first(fn ($item): bool => $item->sourceVersion === (string) $documents[0]->source_version);
+            self::assertNotNull($candidate);
+            $documents[0]->forceFill(['processing_control_status' => 'cancelled'])->save();
+            self::assertFalse($store->dispatchIfAllowed(
+                $candidate,
+                $now,
+                $now->modify('+5 minutes'),
+                static function (): void {
+                    self::fail('Stopped document dispatched a unit.');
+                },
+            ));
+
+            $candidate = collect($store->dueForRecovery($now, 100))
+                ->first(fn ($item): bool => $item->sourceVersion === (string) $documents[2]->source_version);
+            self::assertNotNull($candidate);
+            $documents[2]->forceFill([
+                'processing_control_status' => 'paused',
+                'processing_control_reason' => 'cost_limit_reached',
+            ])->save();
+            self::assertFalse($store->dispatchIfAllowed(
+                $candidate,
+                $now,
+                $now->modify('+5 minutes'),
+                static function (): void {
+                    self::fail('Cost-paused document dispatched a unit.');
+                },
+            ));
+        } finally {
+            DB::rollBack();
+        }
+    }
 }

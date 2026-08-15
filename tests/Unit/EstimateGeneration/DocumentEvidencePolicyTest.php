@@ -55,6 +55,19 @@ final class DocumentEvidencePolicyTest extends TestCase
         }
     }
 
+    public function test_needs_review_status_preserves_useful_document_context_without_promoting_quantities(): void
+    {
+        $document = [
+            'status' => 'needs_review',
+            'quality' => ['level' => 'acceptable'],
+            'facts_summary' => ['total_area_m2' => 80.0],
+        ];
+
+        self::assertTrue(DocumentEvidencePolicy::isTrusted($document));
+        self::assertFalse(DocumentEvidencePolicy::canUseQuantityEvidence($document));
+        self::assertFalse(DocumentEvidencePolicy::canScanNormativeReferences($document));
+    }
+
     /**
      * @return array<string, mixed>
      */

@@ -80,6 +80,19 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
                 return new AiRoleRunClaim((int) $row->id, 'busy', $currentOwner);
             }
             if ($row->physical_attempt_id !== null) {
+                $physicalState = $this->database->table('estimate_generation_vision_physical_attempts')
+                    ->where('attempt_id', (string) $row->physical_attempt_id)
+                    ->value('state');
+                if (in_array($physicalState, ['response_received', 'completed'], true)) {
+                    $query->update([
+                        'owner_uuid' => $ownerUuid,
+                        'lease_expires_at' => $leaseExpiresAt,
+                        'started_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+
+                    return new AiRoleRunClaim((int) $row->id, 'owned', $ownerUuid);
+                }
                 $query->update([
                     'status' => 'ambiguous',
                     'owner_uuid' => null,
@@ -107,18 +120,86 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
         $this->assertUuid($ownerUuid);
         $this->assertUuid($physicalAttemptId);
         $now = new DateTimeImmutable;
-        $updated = $this->database->table(self::TABLE)
-            ->where('id', $runId)
-            ->where('status', 'running')
-            ->where('owner_uuid', $ownerUuid)
-            ->where('lease_expires_at', '>', $now)
-            ->update([
-                'physical_attempt_id' => $physicalAttemptId,
+        $updated = $this->database->transaction(function () use ($runId, $ownerUuid, $physicalAttemptId, $now): int {
+            $run = $this->database->table(self::TABLE)
+                ->where('id', $runId)
+                ->where('status', 'running')
+                ->where('owner_uuid', $ownerUuid)
+                ->where('lease_expires_at', '>', $now)
+                ->lockForUpdate()
+                ->first();
+            if ($run === null) {
+                return 0;
+            }
+            $this->database->table('estimate_generation_vision_physical_attempts')->insertOrIgnore([
+                'attempt_id' => $physicalAttemptId,
+                'request_fingerprint' => (string) $run->input_fingerprint,
+                'logical_request_fingerprint' => (string) $run->input_fingerprint,
+                'organization_id' => (int) $run->organization_id,
+                'project_id' => (int) $run->project_id,
+                'session_id' => (int) $run->session_id,
+                'document_id' => $run->document_id,
+                'page_id' => $run->page_id,
+                'state' => 'wire_started',
+                'owner_token' => $ownerUuid,
+                'lease_expires_at' => $run->lease_expires_at,
+                'wire_started_at' => $now,
+                'usage_recorded' => false,
+                'created_at' => $now,
                 'updated_at' => $now,
             ]);
+            $attempt = $this->database->table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $physicalAttemptId)
+                ->lockForUpdate()
+                ->first();
+            if ($attempt === null
+                || (int) $attempt->organization_id !== (int) $run->organization_id
+                || (int) $attempt->project_id !== (int) $run->project_id
+                || (int) $attempt->session_id !== (int) $run->session_id
+                || $this->nullableInt($attempt->document_id) !== $this->nullableInt($run->document_id)
+                || $this->nullableInt($attempt->page_id) !== $this->nullableInt($run->page_id)
+                || ! $this->physicalAttemptMatchesRun($attempt, $run)) {
+                throw new UsageInvariantViolation('AI role run physical attempt scope collision.');
+            }
+
+            return $this->database->table(self::TABLE)
+                ->where('id', $runId)
+                ->where('status', 'running')
+                ->where('owner_uuid', $ownerUuid)
+                ->where('lease_expires_at', '>', $now)
+                ->update([
+                    'physical_attempt_id' => $physicalAttemptId,
+                    'updated_at' => $now,
+                ]);
+        }, 3);
         if ($updated !== 1) {
             throw new UsageInvariantViolation('AI role run physical attempt ownership lost.');
         }
+    }
+
+    private function physicalAttemptMatchesRun(object $attempt, object $run): bool
+    {
+        if ($attempt->unit_id === null) {
+            return hash_equals((string) $attempt->request_fingerprint, (string) $run->input_fingerprint)
+                && hash_equals((string) $attempt->logical_request_fingerprint, (string) $run->input_fingerprint)
+                && $attempt->processing_lineage_id === null;
+        }
+        if ($run->document_id === null || $run->page_id === null || $attempt->processing_lineage_id === null) {
+            return false;
+        }
+
+        return $this->database->table('estimate_generation_processing_units as units')
+            ->join('estimate_generation_document_pages as pages', 'pages.processing_unit_id', '=', 'units.id')
+            ->where('units.id', (int) $attempt->unit_id)
+            ->where('units.organization_id', (int) $run->organization_id)
+            ->where('units.project_id', (int) $run->project_id)
+            ->where('units.session_id', (int) $run->session_id)
+            ->where('units.document_id', (int) $run->document_id)
+            ->where('units.source_version', (string) $run->subject_version)
+            ->whereRaw("units.metadata->>'processing_attempt_id' = ?", [(string) $attempt->processing_lineage_id])
+            ->where('pages.id', (int) $run->page_id)
+            ->where('pages.source_version', (string) $run->subject_version)
+            ->exists();
     }
 
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
@@ -322,5 +403,10 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
     private function nullableString(mixed $value): ?string
     {
         return is_string($value) ? $value : null;
+    }
+
+    private function nullableInt(mixed $value): ?int
+    {
+        return $value === null ? null : (int) $value;
     }
 }

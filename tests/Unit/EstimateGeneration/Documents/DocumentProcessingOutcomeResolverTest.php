@@ -30,6 +30,7 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
             'system_failed' => 0,
             'processing' => 0,
             'excluded' => 0,
+            'cancelled' => 0,
         ], $outcome->counts);
         self::assertNull($outcome->errorCode);
     }

@@ -55,15 +55,12 @@ final readonly class EstimateCompositionProjector
                 }
             }
         }
-        if ($candidates === []) {
-            throw new InvalidArgumentException('estimate_composer_work_candidates_empty');
-        }
 
         return $candidates;
     }
 
-    /** @param list<array<string, mixed>> $intents @param list<array<string, mixed>> $derivedQuantities */
-    public function apply(array $localEstimates, array $intents, array $derivedQuantities): array
+    /** @param list<array<string, mixed>> $intents @param list<array<string, mixed>> $derivedQuantities @param list<array<string, mixed>> $facts */
+    public function apply(array $localEstimates, array $intents, array $derivedQuantities, array $facts = []): array
     {
         $byId = [];
         $supplementary = [];
@@ -119,7 +116,7 @@ final readonly class EstimateCompositionProjector
                 'sections' => [[
                     'key' => 'ai-composer-supplementary',
                     'title' => trans_message('estimate_generation.composition.supplementary_section'),
-                    'work_items' => $this->supplementaryItems($supplementary, $derivedQuantities),
+                    'work_items' => $this->supplementaryItems($supplementary, $derivedQuantities, $facts),
                 ]],
             ];
         }
@@ -127,8 +124,8 @@ final readonly class EstimateCompositionProjector
         return $localEstimates;
     }
 
-    /** @param array<string, array<string, mixed>> $supplementary @param list<array<string, mixed>> $derivedQuantities */
-    private function supplementaryItems(array $supplementary, array $derivedQuantities): array
+    /** @param array<string, array<string, mixed>> $supplementary @param list<array<string, mixed>> $derivedQuantities @param list<array<string, mixed>> $facts */
+    private function supplementaryItems(array $supplementary, array $derivedQuantities, array $facts): array
     {
         $quantities = [];
         foreach ($derivedQuantities as $quantity) {
@@ -136,24 +133,53 @@ final readonly class EstimateCompositionProjector
                 $quantities[$quantity['id']] = $quantity;
             }
         }
+        $factsById = [];
+        foreach ($facts as $fact) {
+            if (is_array($fact) && is_string($fact['id'] ?? null)) {
+                $factsById[$fact['id']] = $fact;
+            }
+        }
         $items = [];
         foreach ($supplementary as $intent) {
             $quantity = is_string($intent['derived_quantity_id'] ?? null)
                 ? ($quantities[$intent['derived_quantity_id']] ?? null)
                 : null;
+            $sourceFact = null;
+            foreach ($intent['source_fact_ids'] as $factId) {
+                $candidate = $factsById[$factId] ?? null;
+                if (is_array($candidate)
+                    && ($candidate['status'] ?? null) === 'confirmed'
+                    && (is_int($candidate['value'] ?? null) || is_float($candidate['value'] ?? null))
+                    && (float) $candidate['value'] > 0
+                    && is_string($candidate['unit'] ?? null)) {
+                    $sourceFact = $candidate;
+                    break;
+                }
+            }
             $technology = $this->identifier($intent['technology_package_candidate'] ?? null);
+            $metadata = [];
+            if ($technology !== null) {
+                $metadata['technology_package_id'] = $technology;
+            }
+            if (is_array($quantity)) {
+                $metadata['quantity_key'] = $intent['derived_quantity_id'];
+            }
             $items[] = [
                 'key' => $intent['work_key'],
                 'name' => $intent['name'],
                 'item_type' => 'priced_work',
-                'unit' => is_array($quantity) ? $this->boundedString($quantity['unit'] ?? null, 32) : null,
-                'quantity' => is_array($quantity) ? $this->positiveDecimal($quantity['value'] ?? null) : null,
+                'unit' => is_array($quantity)
+                    ? $this->boundedString($quantity['unit'] ?? null, 32)
+                    : $this->boundedString($sourceFact['unit'] ?? null, 32),
+                'quantity' => is_array($quantity)
+                    ? $this->positiveDecimal($quantity['value'] ?? null)
+                    : $this->positiveDecimal($sourceFact['value'] ?? null),
                 'quantity_formula' => is_array($quantity) ? $this->boundedString($quantity['id'] ?? null, 300) : null,
                 'source_refs' => array_map(
                     static fn (string $factId): array => ['fact_id' => $factId],
                     $intent['source_fact_ids'],
                 ),
-                'metadata' => $technology === null ? [] : ['technology_package_id' => $technology],
+                'metadata' => $metadata,
                 'composition_intent' => $intent,
             ];
         }

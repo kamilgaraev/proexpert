@@ -7,13 +7,13 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use Illuminate\Http\Request;
-use PHPUnit\Framework\TestCase;
+use Tests\Support\DatabaseLessTestCase;
 
-class EstimateGenerationDocumentResourceTest extends TestCase
+class EstimateGenerationDocumentResourceTest extends DatabaseLessTestCase
 {
     public function test_document_resource_exposes_understanding_summary_counts(): void
     {
-        $document = new EstimateGenerationDocument();
+        $document = new EstimateGenerationDocument;
         $document->forceFill([
             'id' => 15,
             'filename' => 'АР-1.pdf',

@@ -22,6 +22,7 @@ final class DerivedQuantityFactory
         'wall_net_area' => ['wall_length', 'wall_height'],
         'sloped_roof_area' => ['plan_areas', 'slope_rises', 'slope_runs'],
         'earthwork_volume' => ['area', 'depth'],
+        'direct_floor_area' => ['measurement'],
         'technology_work_package' => ['base_quantity', 'coefficient'],
     ];
 
@@ -848,6 +849,7 @@ final class DerivedQuantityFactory
         return match ($formula) {
             'floor_area' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0])),
             'earthwork_volume' => $this->decimal($resolved['area'][0])->multipliedBy($this->decimal($resolved['depth'][0])),
+            'direct_floor_area' => $this->decimal($resolved['measurement'][0]),
             'technology_work_package' => $technologyOperation === 'identity'
                 ? $this->decimal($resolved['base_quantity'][0])
                 : $this->decimal($resolved['base_quantity'][0])->multipliedBy($this->decimal($resolved['coefficient'][0])),
@@ -907,7 +909,7 @@ final class DerivedQuantityFactory
                 default => 'unknown',
             };
         }
-        if (in_array($role, ['area', 'base_quantity', 'plan_areas', 'roof_opening_areas'], true)) {
+        if (in_array($role, ['area', 'base_quantity', 'plan_areas', 'roof_opening_areas', 'measurement'], true)) {
             return 'area';
         }
 

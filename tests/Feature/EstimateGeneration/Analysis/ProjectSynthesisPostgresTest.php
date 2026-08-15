@@ -6,12 +6,22 @@ namespace Tests\Feature\EstimateGeneration\Analysis;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\RunProjectSynthesis;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\TimewebProjectSynthesisModel;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -31,6 +41,137 @@ final class ProjectSynthesisPostgresTest extends TestCase
         $app->make(Kernel::class)->bootstrap();
 
         return $app;
+    }
+
+    #[Test]
+    public function project_role_reserves_the_physical_attempt_before_binding_the_foreign_key(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        $this->ensureSchema();
+        DB::beginTransaction();
+        try {
+            [, $scope] = $this->fixture();
+            $runs = new EloquentAiRoleRunRepository(DB::connection(), 180);
+            $input = new AiRoleRunInput(
+                $scope[0],
+                $scope[1],
+                $scope[2],
+                null,
+                null,
+                'estimate_session',
+                (string) $scope[2],
+                $scope[3],
+                AiAnalysisRole::ProjectEngineer,
+                'openai/gpt-5-mini',
+                'project-synthesis:v1',
+                hash('sha256', 'project-synthesis-input'),
+            );
+            $owner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+            $attemptId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+            $claim = $runs->claim($input, $owner);
+
+            $runs->startPhysicalAttempt($claim->runId, $owner, $attemptId);
+
+            $attempt = DB::table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $attemptId)
+                ->first();
+            self::assertNotNull($attempt);
+            self::assertSame($scope[0], (int) $attempt->organization_id);
+            self::assertSame($scope[1], (int) $attempt->project_id);
+            self::assertSame($scope[2], (int) $attempt->session_id);
+            self::assertSame('wire_started', $attempt->state);
+            self::assertSame($attemptId, DB::table('estimate_generation_ai_role_runs')
+                ->where('id', $claim->runId)
+                ->value('physical_attempt_id'));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function physical_attempt_cannot_be_rebound_to_a_different_logical_input(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        $this->ensureSchema();
+        DB::beginTransaction();
+        try {
+            [, $scope] = $this->fixture();
+            $runs = new EloquentAiRoleRunRepository(DB::connection(), 180);
+            $owner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+            $attemptId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+            $first = $runs->claim($this->runInput($scope, hash('sha256', 'first')), $owner);
+            $runs->startPhysicalAttempt($first->runId, $owner, $attemptId);
+            $runs->fail($first->runId, $owner, new \App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure(
+                'test_failure',
+                false,
+            ));
+            $secondOwner = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+            $second = $runs->claim($this->runInput($scope, hash('sha256', 'second')), $secondOwner);
+
+            $this->expectException(UsageInvariantViolation::class);
+            $runs->startPhysicalAttempt($second->runId, $secondOwner, $attemptId);
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function confirmed_synthesis_response_is_recovered_without_a_second_wire_call(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        $this->ensureSchema();
+        DB::beginTransaction();
+        try {
+            [, $scope] = $this->fixture();
+            $wire = new RecordedSynthesisWireClient;
+            $usage = $this->createMock(AiUsageStore::class);
+            $prices = $this->createMock(AiPriceSnapshotResolver::class);
+            $prices->method('resolve')->willReturn(AiPriceSnapshot::fromArray([]));
+            $model = new TimewebProjectSynthesisModel(
+                $wire,
+                $usage,
+                $prices,
+                'openai/gpt-5-mini',
+                100000,
+                1000,
+                30,
+                new DurableAiPhysicalResponseStore(DB::connection()),
+            );
+            $input = new ProjectSynthesisInput(
+                $scope[0],
+                $scope[1],
+                $scope[2],
+                [$scope[3]],
+                [],
+                [],
+                [],
+                ['arbiter' => [], 'geometry_expert' => []],
+                RunProjectSynthesis::PROMPT_CONTRACT,
+            );
+            $runs = new EloquentAiRoleRunRepository(DB::connection(), 180);
+            $runInput = $this->runInput($scope, $input->fingerprint(), $input->aggregateSourceVersion());
+            $owner = AiOperationContext::deterministicId('synthesis-recovery-owner');
+            $claim = $runs->claim($runInput, $owner);
+            self::assertSame('owned', $claim->disposition);
+            $model->synthesize(
+                $input,
+                [],
+                [],
+                static fn (string $attemptId) => $runs->startPhysicalAttempt($claim->runId, $owner, $attemptId),
+            );
+            DB::table('estimate_generation_ai_role_runs')->where('id', $claim->runId)->update([
+                'lease_expires_at' => now()->subMinute(),
+            ]);
+
+            $selection = (new RunProjectSynthesis($runs, $model, 'openai/gpt-5-mini'))->run($input, [], []);
+
+            self::assertSame([], $selection->acceptedLinkIds);
+            self::assertSame(1, $wire->calls);
+            self::assertSame('completed', DB::table('estimate_generation_ai_role_runs')
+                ->where('id', $claim->runId)->value('status'));
+        } finally {
+            DB::rollBack();
+        }
     }
 
     #[Test]
@@ -222,5 +363,50 @@ final class ProjectSynthesisPostgresTest extends TestCase
         $runs->complete($claim->runId, $owner, new AiRoleRunResult(['result' => $seed], null));
 
         return $fingerprint;
+    }
+
+    /** @param array{int,int,int,string} $scope */
+    private function runInput(array $scope, string $fingerprint, ?string $subjectVersion = null): AiRoleRunInput
+    {
+        return new AiRoleRunInput(
+            $scope[0],
+            $scope[1],
+            $scope[2],
+            null,
+            null,
+            'estimate_session',
+            (string) $scope[2],
+            $subjectVersion ?? $scope[3],
+            AiAnalysisRole::ProjectEngineer,
+            'openai/gpt-5-mini',
+            RunProjectSynthesis::PROMPT_CONTRACT,
+            $fingerprint,
+        );
+    }
+}
+
+final class RecordedSynthesisWireClient implements RerankWireClient
+{
+    public int $calls = 0;
+
+    public function provider(): string
+    {
+        return 'recorded';
+    }
+
+    public function call(string $model, array $messages, array $options): array
+    {
+        $this->calls++;
+
+        return [
+            'content' => json_encode([
+                'accepted_link_ids' => [],
+                'question_conflict_ids' => [],
+            ], JSON_THROW_ON_ERROR),
+            'model' => $model,
+            'usage_available' => true,
+            'input_tokens' => 100,
+            'output_tokens' => 50,
+        ];
     }
 }

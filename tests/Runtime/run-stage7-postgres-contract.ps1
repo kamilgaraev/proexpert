@@ -76,8 +76,13 @@ foreach ($name in $environmentNames) {
 $mutated = $false
 
 function Invoke-ContractAdminSql([string] $sql) {
-    $sql | docker exec -i $Container sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d most_ai_estimator_contract -f -'
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $output = $sql | docker exec -i $Container sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d most_ai_estimator_contract -f -' 2>&1
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($exitCode -ne 0) {
+        $output | Write-Output
         throw 'contract_admin_sql_failed'
     }
 }

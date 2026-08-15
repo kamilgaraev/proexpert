@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPublicationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
@@ -418,6 +419,77 @@ final class DocumentArbitrationTest extends TestCase
     }
 
     #[Test]
+    public function one_invalid_claim_is_quarantined_without_hiding_other_observer_claims_from_the_arbiter(): void
+    {
+        $runs = $this->observerRuns();
+        $literal = $runs['observer_literal'];
+        $runs['observer_literal'] = new AiRoleRunResult([
+            ...$literal->payload,
+            'claims' => [
+                ...$literal->payload['claims'],
+                [
+                    'entityKey' => 'broken-value',
+                    'factType' => 'material',
+                    'value' => 'not-an-object',
+                    'evidenceRef' => 'note-1',
+                ],
+            ],
+        ], $literal->physicalAttemptId);
+        $builder = new ArbitrationInputBuilder;
+
+        $batch = $builder->claimBatch($this->sourceInput(), $runs);
+        $built = $builder->build($this->sourceInput(), $runs, static function (): void {});
+
+        self::assertCount(3, $batch->claims);
+        self::assertSame(
+            ['literal:1', 'construction:1', 'risk:1'],
+            array_map(static fn (ObservationClaim $claim): string => $claim->id, $batch->claims),
+        );
+        self::assertSame([[
+            'role' => 'observer_literal',
+            'index' => 1,
+            'reason_code' => 'observer_claim_value_invalid',
+        ]], $batch->quarantined);
+        self::assertCount(3, $built['claims']);
+        self::assertSame($batch->quarantined, $built['input']->auxiliaryMetadata['arbitration']['quarantined_items']);
+    }
+
+    #[Test]
+    public function missing_or_duplicate_arbiter_decisions_preserve_every_observer_claim_once(): void
+    {
+        $runs = $this->observerRuns();
+        $arbitration = new AiRoleRunResult(['decisions' => [[
+            'claim_id' => 'literal:1',
+            'status' => 'accepted',
+            'supporting_claim_ids' => ['literal:1'],
+            'evidence_refs' => ['literal:note-1'],
+        ], [
+            'claim_id' => 'literal:1',
+            'status' => 'candidate',
+            'supporting_claim_ids' => ['literal:1'],
+            'evidence_refs' => ['literal:note-1'],
+        ]]], null);
+
+        $publication = (new DocumentUnitPublicationFactory)->fromAnalysis(
+            $this->sourceInput(),
+            $runs,
+            $arbitration,
+        );
+
+        self::assertNotNull($publication);
+        self::assertCount(3, $publication->claims);
+        self::assertCount(3, $publication->decisions);
+        self::assertSame(
+            ['literal:1', 'construction:1', 'risk:1'],
+            array_map(static fn (ArbitrationDecision $decision): string => $decision->claimId, $publication->decisions),
+        );
+        self::assertSame(['accepted', 'candidate', 'candidate'], array_map(
+            static fn (ArbitrationDecision $decision): string => $decision->status,
+            $publication->decisions,
+        ));
+    }
+
+    #[Test]
     public function independent_observations_are_preserved_as_non_calculable_candidates_per_page(): void
     {
         $models = new InMemoryProjectModelRepository;
@@ -460,6 +532,29 @@ final class DocumentArbitrationTest extends TestCase
             $node = $evidence->node(7, 9, 11, (int) str_replace('evidence:', '', $evidenceId));
             self::assertSame('material_code', $node?->value['fact_key']);
         }
+    }
+
+    #[Test]
+    public function accepted_room_area_keeps_a_semantic_entity_for_server_quantity_derivation(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        $claims = [new ObservationClaim(
+            'literal:1', 'observer_literal', 'room:main', 'area',
+            ['type' => 'number', 'data' => 80.0], 'm2', 'area-label', true,
+            7, 9, 11, $this->version(), ['page_number' => 4],
+        )];
+        $decisions = [$this->decision([
+            'claim_id' => 'literal:1', 'status' => 'accepted', 'supporting_claim_ids' => ['literal:1'],
+            'evidence_refs' => ['area-label'], 'reason_code' => 'explicit_area',
+        ], $claims)];
+
+        $writer->writeArbitration($claims, $decisions, 13, 4);
+
+        self::assertCount(1, $models->entities);
+        self::assertSame('room', array_values($models->entities)[0]->type);
+        self::assertSame('area', array_values($models->facts)[0]->type);
+        self::assertSame('80.0', array_values($models->facts)[0]->value);
     }
 
     #[Test]

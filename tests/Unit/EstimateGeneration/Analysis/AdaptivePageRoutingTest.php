@@ -29,7 +29,7 @@ final class AdaptivePageRoutingTest extends TestCase
         ]);
 
         self::assertSame(PageAnalysisRoute::StructuredTextual, $decision->effectiveRoute);
-        self::assertSame(2, PageAnalysisPlan::fromDecision($decision)->providerCallCount());
+        self::assertSame(4, PageAnalysisPlan::fromDecision($decision)->providerCallCount());
     }
 
     #[Test]
@@ -57,18 +57,18 @@ final class AdaptivePageRoutingTest extends TestCase
     }
 
     #[Test]
-    public function specification_uses_two_observers_and_only_arbitrates_material_risk_or_disagreement(): void
+    public function specification_uses_three_independent_observers_and_always_arbitrates(): void
     {
         $decision = $this->decision('specification', 'structured_textual');
 
         $ordinary = PageAnalysisPlan::fromDecision($decision);
         $disagreement = PageAnalysisPlan::fromDecision($decision, semanticDisagreement: true);
 
-        self::assertSame([ObserverProfile::Literal, ObserverProfile::Construction], $ordinary->observers);
-        self::assertFalse($ordinary->requiresArbitration);
-        self::assertSame(2, $ordinary->providerCallCount());
+        self::assertSame(ObserverProfile::cases(), $ordinary->observers);
+        self::assertTrue($ordinary->requiresArbitration);
+        self::assertSame(4, $ordinary->providerCallCount());
         self::assertTrue($disagreement->requiresArbitration);
-        self::assertSame(3, $disagreement->providerCallCount());
+        self::assertSame(4, $disagreement->providerCallCount());
     }
 
     #[Test]
@@ -145,8 +145,8 @@ final class AdaptivePageRoutingTest extends TestCase
         $calls = array_sum(array_map(static fn (PageAnalysisPlan $plan): int => $plan->providerCallCount(), $plans));
 
         self::assertSame(200, count($plans));
-        self::assertSame(380, $calls);
-        self::assertLessThan(500, $calls);
+        self::assertSame(560, $calls);
+        self::assertLessThan(600, $calls);
     }
 
     private function decision(string $kind, string $depth, bool $risk = false): PageAnalysisRoutingDecision

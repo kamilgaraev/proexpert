@@ -23,6 +23,8 @@ interface DocumentProcessingUnitStore
 
     public function renew(DocumentProcessingUnitClaim $claim, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): bool;
 
+    public function pauseForCostConfirmation(DocumentProcessingUnitClaim $claim, DateTimeImmutable $now): bool;
+
     public function fail(
         DocumentProcessingUnitClaim $claim,
         string $code,

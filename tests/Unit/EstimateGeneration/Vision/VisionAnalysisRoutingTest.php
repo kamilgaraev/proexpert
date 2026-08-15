@@ -76,6 +76,53 @@ final class VisionAnalysisRoutingTest extends TestCase
     }
 
     #[Test]
+    public function provider_evidence_quarantines_duplicate_or_malformed_items_without_losing_valid_evidence(): void
+    {
+        $locator = [
+            'page_id' => 17,
+            'page_number' => 2,
+            'processing_unit_id' => 19,
+            'source_version' => 'sha256:'.str_repeat('a', 64),
+            'coordinate_space' => 'normalized_derivative_v1',
+        ];
+        $analysis = VisionAnalysisData::fromProviderArray([
+            'schema_version' => 4,
+            'sheet_type' => 'detail',
+            'evidence' => [
+                ['key' => 'page', 'locator' => [...$locator, 'optional_provider_field' => true]],
+                ['key' => 'page', 'locator' => $locator],
+                ['key' => 'broken', 'locator' => ['page_number' => 2]],
+            ],
+            'elements' => [],
+            'scale_candidates' => [],
+            'warnings' => ['scale_missing'],
+            'visual_attributes' => [],
+            'project_sheet_analysis' => [
+                'contractVersion' => 'sheet-analysis:v3',
+                'role' => 'unknown',
+                'facts' => [],
+            ],
+            'analysis_routing' => [
+                'page_kind' => 'drawing',
+                'requested_depth' => 'simple_context',
+                'information_density' => 'low',
+                'readability' => 'high',
+                'confidence' => 0.99,
+                'ambiguous' => false,
+                'material_risk' => 'low',
+                'reasons' => ['Контроль изоляции отдельных значений.'],
+                'semantic_regions' => [],
+            ],
+        ], 'recorded', 'openai/gpt-5.6-luna', 'openai/gpt-5.6-luna', 'vision-v4', 'measured', 100, 30, 64);
+
+        self::assertSame(['page'], array_map(static fn ($item): string => $item->key, $analysis->evidence));
+        self::assertSame(
+            ['duplicate_evidence_key', 'invalid_evidence'],
+            array_column($analysis->quarantinedItems, 'reason'),
+        );
+    }
+
+    #[Test]
     public function fail_open_uses_high_material_risk_without_changing_the_ambiguity_type(): void
     {
         $decision = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoutingDecision::failOpen(

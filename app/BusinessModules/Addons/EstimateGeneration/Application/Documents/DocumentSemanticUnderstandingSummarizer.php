@@ -35,15 +35,17 @@ final readonly class DocumentSemanticUnderstandingSummarizer
             }
             if (($payload['schema_version'] ?? null) === 4) {
                 $completion = is_array($payload['role_completion'] ?? null) ? $payload['role_completion'] : [];
+                $routing = is_array($payload['analysis_routing'] ?? null) ? $payload['analysis_routing'] : [];
+                $expectedRoles = is_array($routing['observer_roles'] ?? null)
+                    ? array_values(array_filter($routing['observer_roles'], 'is_string'))
+                    : [];
+                if (($routing['arbiter_required'] ?? false) === true) {
+                    $expectedRoles[] = 'arbiter';
+                }
                 $roleRunsComplete = $roleRunsComplete
-                    && array_diff([
-                        'observer_literal',
-                        'observer_construction',
-                        'observer_risk',
-                        'arbiter',
-                        'geometry_expert',
-                    ], array_keys($completion)) === []
-                    && ! in_array(false, $completion, true);
+                    && $expectedRoles !== []
+                    && array_diff($expectedRoles, array_keys($completion)) === []
+                    && ! in_array(false, array_intersect_key($completion, array_flip($expectedRoles)), true);
                 $arbitratedPages[] = $payload;
 
                 continue;

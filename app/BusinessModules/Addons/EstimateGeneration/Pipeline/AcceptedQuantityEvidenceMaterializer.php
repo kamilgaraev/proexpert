@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalEvidenceJson;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceNode;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceProducer;
@@ -63,6 +63,6 @@ final readonly class AcceptedQuantityEvidenceMaterializer
 
     private static function canonical(array $value): string
     {
-        return json_encode(CanonicalEvidenceJson::normalize($value), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+        return DerivedQuantityIdentity::canonicalJson($value);
     }
 }

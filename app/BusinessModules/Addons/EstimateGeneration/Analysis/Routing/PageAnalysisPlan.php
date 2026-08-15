@@ -25,12 +25,9 @@ final readonly class PageAnalysisPlan
         $route = $decision->effectiveRoute;
         $observers = match ($route) {
             PageAnalysisRoute::SimpleContext => [ObserverProfile::Literal],
-            PageAnalysisRoute::StructuredTextual => [ObserverProfile::Literal, ObserverProfile::Construction],
-            PageAnalysisRoute::DenseAmbiguous => ObserverProfile::cases(),
+            PageAnalysisRoute::StructuredTextual, PageAnalysisRoute::DenseAmbiguous => ObserverProfile::cases(),
         };
-        $arbitration = $route === PageAnalysisRoute::DenseAmbiguous
-            || ($route === PageAnalysisRoute::StructuredTextual
-                && ($decision->materialRisk->requiresArbitration() || $semanticDisagreement));
+        $arbitration = $route !== PageAnalysisRoute::SimpleContext;
         $reasons = $decision->reasons;
         if ($decision->effectiveRoute !== $decision->requestedRoute) {
             $reasons[] = 'server_minimum_analysis_depth';

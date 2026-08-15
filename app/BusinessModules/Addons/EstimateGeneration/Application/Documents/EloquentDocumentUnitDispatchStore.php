@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use DateTimeImmutable;
 use Illuminate\Database\Connection;
@@ -47,14 +48,48 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
         return $this->candidates($this->due($now), $limit);
     }
 
-    public function markDispatched(int $unitId, DateTimeImmutable $now, DateTimeImmutable $nextDispatchAt): void
-    {
-        $this->query()->whereKey($unitId)->update([
-            'dispatch_attempt_count' => $this->database->raw('dispatch_attempt_count + 1'),
-            'last_dispatched_at' => $now,
-            'next_dispatch_at' => $nextDispatchAt,
-            'updated_at' => $now,
-        ]);
+    public function dispatchIfAllowed(
+        DocumentUnitDispatchCandidate $candidate,
+        DateTimeImmutable $now,
+        DateTimeImmutable $nextDispatchAt,
+        callable $dispatch,
+    ): bool {
+        return $this->database->transaction(function () use ($candidate, $now, $nextDispatchAt, $dispatch): bool {
+            $documentId = $this->query()->whereKey($candidate->unitId)->value('document_id');
+            if (! is_int($documentId)) {
+                return false;
+            }
+
+            $documentModel = new EstimateGenerationDocument;
+            $documentModel->setConnection($this->database->getName());
+            $document = $documentModel->newQuery()
+                ->lockForUpdate()
+                ->find($documentId);
+            if ($document === null
+                || (string) $document->processing_control_status !== 'active'
+                || ! hash_equals((string) $document->source_version, $candidate->sourceVersion)) {
+                return false;
+            }
+
+            $unit = $this->due($now)
+                ->whereKey($candidate->unitId)
+                ->where('document_id', $documentId)
+                ->where('source_version', $candidate->sourceVersion)
+                ->lockForUpdate()
+                ->first();
+            if ($unit === null) {
+                return false;
+            }
+
+            $dispatch();
+            $unit->forceFill([
+                'dispatch_attempt_count' => (int) $unit->dispatch_attempt_count + 1,
+                'last_dispatched_at' => $now,
+                'next_dispatch_at' => $nextDispatchAt,
+            ])->save();
+
+            return true;
+        }, 3);
     }
 
     /** @return Builder<EstimateGenerationProcessingUnit> */
@@ -63,6 +98,7 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
         return $this->query()
             ->whereHas('document', static fn (Builder $query): Builder => $query
                 ->whereColumn('estimate_generation_documents.source_version', 'estimate_generation_processing_units.source_version')
+                ->where('estimate_generation_documents.processing_control_status', 'active')
                 ->whereIn('estimate_generation_documents.status', ['queued', 'processing']))
             ->where(static function (Builder $query) use ($now): void {
                 $query->where(static fn (Builder $pending): Builder => $pending

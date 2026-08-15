@@ -361,7 +361,7 @@ final class OrdinaryEstimateDraftWorkflowTest extends TestCase
                 'priced_resources_count' => 1,
                 'decision' => ['status' => 'accepted'],
             ],
-            'normative_retrieval' => ['status' => 'matched', 'blocking_issues' => []],
+            'normative_retrieval' => ['status' => 'retrieval_only', 'blocking_issues' => []],
             'price_snapshot' => [
                 'region_id' => 77,
                 'zone_id' => 4,

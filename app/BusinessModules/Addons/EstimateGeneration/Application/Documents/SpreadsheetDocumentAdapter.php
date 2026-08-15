@@ -63,6 +63,7 @@ final readonly class SpreadsheetDocumentAdapter implements DocumentUnitAdapter
                         'source_kind' => DocumentUnitType::SpreadsheetSheet->sourceKind(),
                         'source_version' => $sourceVersion,
                         'coordinate_space' => DocumentUnitType::SpreadsheetSheet->coordinateSpace(),
+                        'artifact_version_id' => $artifact->sha256,
                         'artifact_source_version' => $artifact->sha256,
                         'artifact_kind' => 'spreadsheet_sheet',
                         'artifact_schema_version' => 1,

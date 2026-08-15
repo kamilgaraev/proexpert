@@ -205,9 +205,11 @@ final class DocumentAdapterContractTest extends TestCase
         });
         $document = new EstimateGenerationDocument(['filename' => 'plan.pdf', 'mime_type' => 'application/pdf']);
 
-        (new ApplicationPdfDocumentAdapter($storage, $text, $geometry))->createUnits($document, 'sha256:'.str_repeat('b', 64));
+        $units = (new ApplicationPdfDocumentAdapter($storage, $text, $geometry))
+            ->createUnits($document, 'sha256:'.str_repeat('b', 64));
         $payload = json_decode($storage->contents['pdf_page:1'], true, 64, JSON_THROW_ON_ERROR);
 
+        self::assertSame($units[0]->locator['artifact_sha256'], $units[0]->locator['artifact_version_id']);
         self::assertSame('available', $payload['sources']['text_layer']['status']);
         self::assertSame('available', $payload['sources']['geometry']['status']);
         self::assertSame(['status' => 'available', 'detail' => 'high'], $payload['sources']['render']);

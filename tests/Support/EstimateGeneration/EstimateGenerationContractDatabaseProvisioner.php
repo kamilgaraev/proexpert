@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Support\EstimateGeneration;
 
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Schema\Blueprint;
 use InvalidArgumentException;
 
 final class EstimateGenerationContractDatabaseProvisioner
@@ -12,12 +13,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '6bceab3feb69a9bbbaef8a385c272f3d28df345f32da6c6b849681870d1a0c85',
-        'training' => '15ee788d506971fcd28516675bc1330e88c89d4a47a13b1402badb1626de27ab',
-        'pricing' => '15ee788d506971fcd28516675bc1330e88c89d4a47a13b1402badb1626de27ab',
+        'geometry' => '987d2db855619cac720a87ad1d49fa773511e77e93ac1858244577f9fe1d36f9',
+        'training' => 'a96b0e60715d5e6799cf92a408cfa751af1378cf7eace6886606b276f273efc3',
+        'pricing' => 'a96b0e60715d5e6799cf92a408cfa751af1378cf7eace6886606b276f273efc3',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '388afc75af891f5ed15d20a4561533a5dac3d1de40dabfdf444971cf842d6cc8';
+    private const FRESH_INVENTORY_DIGEST = '6aceee53479987ae4bed671db19bf1f2753dde14c33b2a05195730e1286752d2';
 
     private const SUBJECT = [
         'geometry' => [
@@ -198,6 +199,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000900_remove_obsolete_estimate_generation_review_contours.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_001100_scope_failure_identities.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_15_000100_separate_vision_logical_request_from_processing_lineage.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_15_000200_add_document_processing_control.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void
@@ -378,6 +380,35 @@ final class EstimateGenerationContractDatabaseProvisioner
                 'sha256' => hash_file('sha256', $root.DIRECTORY_SEPARATOR.$entry),
             ]);
         }
+        self::provisionCommercialQuotaProjection($connection);
+    }
+
+    private static function provisionCommercialQuotaProjection(ConnectionInterface $connection): void
+    {
+        $schema = $connection->getSchemaBuilder();
+        $schema->create('organization_package_subscriptions', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->string('package_slug');
+            $table->string('status');
+            $table->timestampTz('current_period_end_at')->nullable();
+            $table->timestampTz('trial_ends_at')->nullable();
+            $table->timestampsTz();
+        });
+        $schema->create('organization_resource_allocations', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('commercial_account_id')->nullable();
+            $table->string('resource_slug');
+            $table->string('limit_key');
+            $table->decimal('quantity', 14, 2)->nullable();
+            $table->string('source');
+            $table->string('status');
+            $table->timestampTz('period_start_at')->nullable();
+            $table->timestampTz('period_end_at')->nullable();
+            $table->jsonb('metadata')->nullable();
+            $table->timestampsTz();
+        });
     }
 
     private static function validateCompleteInventory(string $root): void

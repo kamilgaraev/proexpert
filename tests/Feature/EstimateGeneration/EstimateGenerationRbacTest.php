@@ -58,6 +58,8 @@ class EstimateGenerationRbacTest extends TestCase
             'documents upload' => ['POST', "{$prefix}/{session}/documents", 'estimate_generation.upload_documents'],
             'document show' => ['GET', "{$prefix}/{session}/documents/{document}", 'estimate_generation.view'],
             'document retry' => ['POST', "{$prefix}/{session}/documents/{document}/retry", 'estimate_generation.review'],
+            'document stop' => ['POST', "{$prefix}/{session}/documents/{document}/stop", 'estimate_generation.review'],
+            'document confirm cost' => ['POST', "{$prefix}/{session}/documents/{document}/confirm-cost", 'estimate_generation.review'],
             'document ignore' => ['POST', "{$prefix}/{session}/documents/{document}/ignore", 'estimate_generation.review'],
             'analyze' => ['POST', "{$prefix}/{session}/analyze", 'estimate_generation.generate'],
             'generate' => ['POST', "{$prefix}/{session}/generate", 'estimate_generation.generate'],

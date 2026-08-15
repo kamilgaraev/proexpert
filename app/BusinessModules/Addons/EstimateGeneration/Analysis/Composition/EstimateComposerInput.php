@@ -9,11 +9,11 @@ use InvalidArgumentException;
 final readonly class EstimateComposerInput
 {
     /**
-     * @param list<array<string, mixed>> $facts
-     * @param list<array<string, mixed>> $derivedQuantities
-     * @param list<array<string, mixed>> $decisions
-     * @param list<array{candidate_id:string,work_key:string,name:string,unit:?string,quantity:?string,quantity_formula:?string,source_fact_ids:list<string>,technology_package_candidate:?string}> $candidates
-     * @param list<array<string, mixed>> $missingDocuments
+     * @param  list<array<string, mixed>>  $facts
+     * @param  list<array<string, mixed>>  $derivedQuantities
+     * @param  list<array<string, mixed>>  $decisions
+     * @param  list<array{candidate_id:string,work_key:string,name:string,unit:?string,quantity:?string,quantity_formula:?string,source_fact_ids:list<string>,technology_package_candidate:?string}>  $candidates
+     * @param  list<array<string, mixed>>  $missingDocuments
      */
     public function __construct(
         public int $organizationId,
@@ -33,7 +33,8 @@ final readonly class EstimateComposerInput
             || ! array_is_list($facts) || count($facts) > 10000
             || ! array_is_list($derivedQuantities) || count($derivedQuantities) > 2000
             || ! array_is_list($decisions) || count($decisions) > 2000
-            || ! array_is_list($candidates) || $candidates === [] || count($candidates) > 500
+            || ! array_is_list($candidates) || count($candidates) > 500
+            || ($facts === [] && $derivedQuantities === [] && $candidates === [])
             || ! array_is_list($missingDocuments) || count($missingDocuments) > 200) {
             throw new InvalidArgumentException('estimate_composer_input_invalid');
         }

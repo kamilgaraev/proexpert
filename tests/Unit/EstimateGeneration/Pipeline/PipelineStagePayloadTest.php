@@ -28,6 +28,29 @@ final class PipelineStagePayloadTest extends TestCase
     }
 
     #[Test]
+    public function persisted_jsonb_key_order_does_not_invalidate_composition_schema(): void
+    {
+        $data = [
+            'document_requirements' => [],
+            'estimate_composition' => [
+                'derived_quantities' => [],
+                'input_fingerprint' => str_repeat('b', 64),
+                'intents_count' => 1,
+                'schema_version' => 1,
+                'snapshot_token' => str_repeat('a', 64),
+            ],
+            'generation_mode' => 'ai_assisted',
+            'local_estimates' => [],
+            'normative_context_pin' => [],
+            'object_profile' => [],
+            'package_plan' => [],
+            'regional_context' => [],
+        ];
+
+        self::assertSame($data, PipelineStagePayload::from(ProcessingStage::PlanWorkItems, $data)->data);
+    }
+
+    #[Test]
     public function quantity_coverage_warning_requires_a_complete_structured_identity(): void
     {
         $this->expectException(InvalidArgumentException::class);

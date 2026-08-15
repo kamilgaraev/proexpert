@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 final readonly class DocumentProcessingOutcome
 {
-    /** @param array{included: int, ready: int, needs_user_action: int, terminal_system_failed: int, breaker_stopped: int, system_failed: int, processing: int, excluded: int} $counts */
+    /** @param array{included: int, ready: int, needs_user_action: int, terminal_system_failed: int, breaker_stopped: int, system_failed: int, processing: int, excluded: int, cancelled: int} $counts */
     public function __construct(
         public string $type,
         public string $documentStatus,

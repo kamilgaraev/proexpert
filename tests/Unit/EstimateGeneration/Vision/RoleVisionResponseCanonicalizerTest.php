@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Vision;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\RoleVisionResponseCanonicalizer;
@@ -90,6 +91,62 @@ final class RoleVisionResponseCanonicalizerTest extends TestCase
         );
 
         self::assertSame($payload['evidence'], $result->payload['evidence']);
+    }
+
+    #[Test]
+    public function duplicate_observer_evidence_is_isolated_without_rejecting_the_useful_response(): void
+    {
+        $payload = json_decode((string) file_get_contents(
+            dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/observer-production-v3.json',
+        ), true, flags: JSON_THROW_ON_ERROR);
+        $payload['evidence'][] = $payload['evidence'][0];
+
+        $result = (new RoleVisionResponseCanonicalizer)->canonicalize(
+            $payload,
+            $this->input(['observer' => ['index' => 1]]),
+        );
+
+        self::assertCount(1, $result->payload['evidence']);
+        self::assertSame(
+            $result->payload['evidence'][0]['key'],
+            $result->payload['project_sheet_analysis']['facts'][0]['evidenceRef'],
+        );
+    }
+
+    #[Test]
+    public function observer_preserves_only_the_explicit_evidence_classification_on_the_server_owned_locator(): void
+    {
+        $payload = json_decode((string) file_get_contents(
+            dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/observer-production-v3.json',
+        ), true, flags: JSON_THROW_ON_ERROR);
+        $payload['evidence'][0]['locator'] = [
+            'page_id' => 999,
+            'source_version' => 'sha256:'.str_repeat('f', 64),
+            'signed_url' => 'https://untrusted.invalid/private',
+            'explicit' => true,
+        ];
+
+        $result = (new RoleVisionResponseCanonicalizer)->canonicalize(
+            $payload,
+            $this->input(['observer' => ['index' => 1]]),
+        );
+
+        self::assertSame([
+            ...$this->locator(),
+            'explicit' => true,
+        ], $result->payload['evidence'][0]['locator']);
+        $analysis = VisionAnalysisData::fromProviderArray(
+            $result->payload,
+            'recorded',
+            'openai/gpt-5.6-luna',
+            'openai/gpt-5.6-luna',
+            'recording:v1',
+            'measured',
+            1,
+            1,
+            64,
+        );
+        self::assertSame(true, $analysis->evidence[0]->locator['explicit'] ?? null);
     }
 
     /** @param array<string,mixed> $auxiliaryMetadata */

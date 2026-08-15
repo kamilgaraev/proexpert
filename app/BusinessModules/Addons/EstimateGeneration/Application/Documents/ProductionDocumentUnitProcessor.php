@@ -4,12 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputException;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertInput;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertResult;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometrySheetRoleResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\ObserverDisagreementDetector;
@@ -45,8 +42,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private BoundedVersionedS3ObjectReader $reader,
         private DocumentObserverRunner $independentObservers,
         private DocumentArbitrator $documentArbitration,
-        private GeometryExpertRunner $geometryExpert,
-        private GeometrySheetRoleResolver $geometrySheetRoleResolver = new GeometrySheetRoleResolver,
+        private DocumentUnitPublicationFactory $publicationFactory = new DocumentUnitPublicationFactory,
         private CadStructureExtractor $cadStructure = new CadStructureExtractor,
         private ?CadRepresentationPublisher $cadRepresentationPublisher = null,
         private DocumentRepresentationResourceMeter $resourceMeter = new SystemDocumentRepresentationResourceMeter,
@@ -144,6 +140,16 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 $exception,
                 $resourceUsage,
             ),
+            $exception instanceof ArbitrationInputException => new TypedFailureException(
+                FailureCategory::Terminal,
+                $exception->safeCode,
+                [
+                    ...$this->boundaryContext($context),
+                    'execution_boundary' => 'document_arbitration_input',
+                ],
+                $exception,
+                $resourceUsage,
+            ),
             $exception instanceof DocumentManifestNeedsReview => new TypedFailureException(
                 FailureCategory::UserActionRequired,
                 $exception->safeCode,
@@ -202,7 +208,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 is_array($previousMeasurement['limitations'] ?? null) ? $previousMeasurement['limitations'] : [],
                 $measurement->limitations,
             ))),
-            'phases' => ['adapter_representation'],
+            'phases' => array_values(array_unique([
+                'adapter_representation',
+                'processor',
+                ...(is_array($previousMeasurement['phases'] ?? null) ? $previousMeasurement['phases'] : []),
+            ])),
         ];
         $serialized['native_structure'] = $native;
         $representation = DocumentRepresentation::fromArray($serialized);
@@ -230,6 +240,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             unitIndex: $output->unitIndex,
             sourceVersion: $output->sourceVersion,
             qualitySignals: $output->qualitySignals,
+            publication: $output->publication,
         );
     }
 
@@ -427,25 +438,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $context->renewLeaseOrFail();
             $arbitrationResult = $this->documentArbitration->run($input, $observerResults);
         }
-        $sheetRole = $arbitrationResult === null
-            ? null
-            : $this->geometrySheetRoleResolver->resolve($observerResults, $arbitrationResult);
-        $geometryResult = null;
-        if ($sheetRole !== null) {
-            $context->renewLeaseOrFail();
-            $geometryResult = $this->geometryExpert->run(new GeometryExpertInput(
-                organizationId: $context->organizationId,
-                projectId: $context->projectId,
-                sessionId: $context->sessionId,
-                sourceVersion: $context->sourceVersion,
-                sheets: [[
-                    'sheet_id' => 'page:'.$context->pageId,
-                    'sheet_role' => $sheetRole,
-                    'source' => $input,
-                    'arbitration' => $arbitrationResult->payload,
-                ]],
-            ));
-        }
 
         return $this->rasterOutput(
             $context,
@@ -454,9 +446,9 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $provenance,
             $observerResults,
             $arbitrationResult,
-            $geometryResult,
             $plan,
             $regionSet,
+            $this->publicationFactory->fromAnalysis($input, $observerResults, $arbitrationResult),
         );
     }
 
@@ -630,9 +622,9 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         DocumentUnitProvenance $provenance,
         array $observerResults,
         ?AiRoleRunResult $arbitrationResult,
-        ?GeometryExpertResult $geometryResult,
         PageAnalysisPlan $analysisPlan,
         \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet $semanticRegionSet,
+        ?DocumentUnitPublication $publication,
     ): DocumentUnitOutput {
         $observerPayloads = array_map(static fn (AiRoleRunResult $result): array => $result->payload, $observerResults);
         $literalPayload = $observerPayloads['observer_literal']['observation'] ?? null;
@@ -645,7 +637,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             'elements' => is_array($literalPayload['elements'] ?? null) ? $literalPayload['elements'] : [],
             'visual_attributes' => is_array($literalPayload['visual_attributes'] ?? null) ? $literalPayload['visual_attributes'] : [],
             'warnings' => is_array($literalPayload['warnings'] ?? null) ? $literalPayload['warnings'] : [],
-            'quarantined_items' => is_array($literalPayload['quarantined_items'] ?? null) ? $literalPayload['quarantined_items'] : [],
+            'quarantined_items' => [
+                ...(is_array($literalPayload['quarantined_items'] ?? null) ? $literalPayload['quarantined_items'] : []),
+                ...($publication?->quarantinedItems ?? []),
+            ],
             'arbitration_decisions' => is_array($arbitrationResult?->payload['decisions'] ?? null)
                 ? $arbitrationResult->payload['decisions']
                 : [],
@@ -673,19 +668,18 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $questions = is_array($arbitrationResult?->payload['questions'] ?? null)
             ? $arbitrationResult->payload['questions']
             : [];
-        $questions = [...$questions, ...($geometryResult?->questions ?? [])];
-        $roleCompletion = [
-            'observer_literal' => isset($observerPayloads['observer_literal']),
-            'observer_construction' => isset($observerPayloads['observer_construction']),
-            'observer_risk' => isset($observerPayloads['observer_risk']),
-            'arbiter' => ($arbitrationResult?->payload['role'] ?? null) === 'arbiter',
-            'geometry_expert' => $geometryResult !== null,
-        ];
+        $roleCompletion = [];
+        foreach ($analysisPlan->observers as $profile) {
+            $role = $profile->role()->value;
+            $roleCompletion[$role] = isset($observerPayloads[$role]);
+        }
+        if ($analysisPlan->requiresArbitration) {
+            $roleCompletion['arbiter'] = ($arbitrationResult?->payload['role'] ?? null) === 'arbiter';
+        }
         $analysisOutcome = $this->analysisOutcome(
             $analysisPlan,
             $observerPayloads,
             $arbitrationResult,
-            $geometryResult,
             $questions,
             $semanticRegionSet,
         );
@@ -707,10 +701,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $semanticRegionSet,
                     $observerResults,
                     $arbitrationResult,
-                    $geometryResult,
                 ),
                 'analysis_outcome' => $analysisOutcome,
-                'geometry_expert' => $geometryResult?->toArray(),
                 'ai_questions' => $questions,
             ], JSON_THROW_ON_ERROR)),
             text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
@@ -740,10 +732,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $semanticRegionSet,
                     $observerResults,
                     $arbitrationResult,
-                    $geometryResult,
                 ),
                 'analysis_outcome' => $analysisOutcome,
-                'geometry_expert' => $geometryResult?->toArray(),
                 'ai_questions' => $questions,
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,
@@ -772,6 +762,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     'auxiliary_status' => $auxiliary['geometry_status'],
                 ],
             ],
+            publication: $publication,
         );
     }
 
@@ -812,7 +803,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         PageAnalysisPlan $plan,
         array $observerPayloads,
         ?AiRoleRunResult $arbitration,
-        ?GeometryExpertResult $geometry,
         array $questions,
         \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet $semanticRegions,
     ): string {
@@ -829,8 +819,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             || ($plan->route->value === 'dense_ambiguous' && $semanticRegions->regions === [])) {
             return 'partial_review';
         }
-        if (in_array($arbitration?->payload['result_state'] ?? null, ['partial', 'questions'], true)
-            || (is_array($geometry?->quarantinedIntents ?? null) && $geometry->quarantinedIntents !== [])) {
+        if (in_array($arbitration?->payload['result_state'] ?? null, ['partial', 'questions'], true)) {
             return 'partial_review';
         }
         $decisions = is_array($arbitration?->payload['decisions'] ?? null)
@@ -854,7 +843,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet $regions,
         array $observerResults,
         ?AiRoleRunResult $arbitrationResult,
-        ?GeometryExpertResult $geometryResult,
     ): array {
         $physicalAttemptIds = array_values(array_unique(array_filter([
             ...array_map(
@@ -862,7 +850,6 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 $observerResults,
             ),
             $arbitrationResult?->physicalAttemptId,
-            $geometryResult?->physicalAttemptId,
         ], 'is_string')));
 
         return [
@@ -966,6 +953,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             unitIndex: $output->unitIndex,
             sourceVersion: $output->sourceVersion,
             qualitySignals: $output->qualitySignals,
+            publication: $output->publication,
         );
     }
 
@@ -983,6 +971,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             unitIndex: $output->unitIndex,
             sourceVersion: $output->sourceVersion,
             qualitySignals: $output->qualitySignals,
+            publication: $output->publication,
         );
     }
 }

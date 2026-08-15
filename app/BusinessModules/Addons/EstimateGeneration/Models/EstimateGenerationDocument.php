@@ -30,6 +30,14 @@ class EstimateGenerationDocument extends Model
         'units_reconciled_source_version',
         'units_reconcile_claim_token',
         'units_reconcile_lease_expires_at',
+        'processing_control_status',
+        'processing_control_source_version',
+        'processing_control_attempt_id',
+        'processing_control_reason',
+        'processing_control_at',
+        'processing_cost_limit',
+        'processing_cost_confirmed_at',
+        'processing_cost_confirmation_version',
         'page_count',
         'processed_page_count',
         'ocr_provider',
@@ -66,6 +74,10 @@ class EstimateGenerationDocument extends Model
         'ocr_finished_at' => 'datetime',
         'ignored_at' => 'datetime',
         'units_reconcile_lease_expires_at' => 'immutable_datetime',
+        'processing_control_at' => 'immutable_datetime',
+        'processing_cost_limit' => 'decimal:8',
+        'processing_cost_confirmed_at' => 'immutable_datetime',
+        'processing_cost_confirmation_version' => 'integer',
     ];
 
     public function session(): BelongsTo

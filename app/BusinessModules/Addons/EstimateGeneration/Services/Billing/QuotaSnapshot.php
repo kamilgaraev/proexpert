@@ -10,17 +10,19 @@ final readonly class QuotaSnapshot
         public int $included,
         public ?int $purchased,
         public int $used,
+        public int $reserved,
         public ?int $available,
         public ?string $reservationStatus,
     ) {}
 
-    /** @return array{included: int, purchased: int|null, used: int, available: int|null, reservation_status: string|null} */
+    /** @return array{included: int, purchased: int|null, used: int, reserved: int, available: int|null, reservation_status: string|null} */
     public function toArray(): array
     {
         return [
             'included' => $this->included,
             'purchased' => $this->purchased,
             'used' => $this->used,
+            'reserved' => $this->reserved,
             'available' => $this->available,
             'reservation_status' => $this->reservationStatus,
         ];

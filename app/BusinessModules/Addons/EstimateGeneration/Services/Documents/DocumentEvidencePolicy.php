@@ -6,13 +6,16 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Documents;
 
 final class DocumentEvidencePolicy
 {
-    private const TRUSTED_STATUSES = ['ready', 'uploaded'];
+    private const TRUSTED_STATUSES = ['ready', 'uploaded', 'needs_review'];
+
     private const TRUSTED_QUALITY_LEVELS = ['good', 'acceptable'];
+
     private const NON_PRIMARY_ROLES = ['reference_estimate', 'needs_review'];
+
     private const QUANTITY_EVIDENCE_ROLES = ['quantity_source', 'geometry_source'];
 
     /**
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $document
      */
     public static function isTrusted(array $document): bool
     {
@@ -23,7 +26,7 @@ final class DocumentEvidencePolicy
         $quality = is_array($document['quality'] ?? null) ? $document['quality'] : [];
         $level = (string) ($quality['level'] ?? '');
 
-        if ($level !== '' && !in_array($level, self::TRUSTED_QUALITY_LEVELS, true)) {
+        if ($level !== '' && ! in_array($level, self::TRUSTED_QUALITY_LEVELS, true)) {
             return false;
         }
 
@@ -31,7 +34,7 @@ final class DocumentEvidencePolicy
     }
 
     /**
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $document
      */
     public static function roleForEstimation(array $document): string
     {
@@ -41,7 +44,7 @@ final class DocumentEvidencePolicy
     }
 
     /**
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $document
      */
     public static function canUseQuantityEvidence(array $document): bool
     {
@@ -62,17 +65,17 @@ final class DocumentEvidencePolicy
     }
 
     /**
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $document
      */
     public static function canUseScopeEvidence(array $document): bool
     {
         $role = self::roleForEstimation($document);
 
-        return $role !== '' && !in_array($role, self::NON_PRIMARY_ROLES, true);
+        return $role !== '' && ! in_array($role, self::NON_PRIMARY_ROLES, true);
     }
 
     /**
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $document
      */
     public static function canScanNormativeReferences(array $document): bool
     {
@@ -80,7 +83,7 @@ final class DocumentEvidencePolicy
     }
 
     /**
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $document
      * @return array<string, mixed>
      */
     private static function understanding(array $document): array

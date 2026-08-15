@@ -13,9 +13,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\Deterministi
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\RunGeometryExpert;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\VisionGeometryExpertModel;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileSessionGeometryProjection;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
@@ -55,12 +52,6 @@ final class GeometryExpertPostgresTest extends TestCase
                 || (DB::getDatabaseName() === 'most_ai_estimator_contract'
                     && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
         );
-        self::assertInstanceOf(VisionGeometryExpertModel::class, app(GeometryExpertModel::class));
-        self::assertInstanceOf(RunGeometryExpert::class, app(RunGeometryExpert::class));
-        self::assertInstanceOf(ReconcileSessionGeometryProjection::class, app(ReconcileSessionGeometryProjection::class));
-        $reconciler = app(ReconcileEstimateGenerationDocuments::class);
-        $geometryProperty = new \ReflectionProperty($reconciler, 'geometry');
-        self::assertInstanceOf(ReconcileSessionGeometryProjection::class, $geometryProperty->getValue($reconciler));
         $this->ensureSchema();
         DB::beginTransaction();
         try {

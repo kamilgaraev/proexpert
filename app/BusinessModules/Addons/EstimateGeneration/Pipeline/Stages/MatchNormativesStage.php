@@ -134,16 +134,17 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         && $pin['candidate_ids_by_work_item'] !== null
                         ? (is_array($pin['candidate_ids_by_work_item']) ? $pin['candidate_ids_by_work_item'] : [])
                         : null;
+                    $isSupplementary = ($workItem['composition_intent']['kind'] ?? null) === 'supplementary';
                     $pinnedCandidates = $this->pinnedCandidates->forWorkItem(
                         $catalogCandidates,
                         $workItem,
                         $intent->normativeSections,
                         $intent,
-                        $candidateIdsByWorkItem,
+                        $isSupplementary ? null : $candidateIdsByWorkItem,
                     );
                     if ($pinnedCandidates === []) {
                         $telemetry->missingPinnedCandidate();
-                        if ($candidateIdsByWorkItem !== null) {
+                        if ($candidateIdsByWorkItem !== null && ! $isSupplementary) {
                             $this->appendMissingPinnedCandidateWarning($data['local_estimates'][$localIndex], $workItem);
                             unset($data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex]);
                             $excludedWorkItem = true;

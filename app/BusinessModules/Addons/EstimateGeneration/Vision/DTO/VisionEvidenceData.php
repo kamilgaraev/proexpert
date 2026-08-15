@@ -8,11 +8,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContra
 
 final readonly class VisionEvidenceData
 {
-    /** @param array{page_id: int, page_number: int, processing_unit_id: int, source_version: string, coordinate_space: string} $locator */
+    /** @param array{page_id: int, page_number: int, processing_unit_id: int, source_version: string, coordinate_space: string, explicit?: bool} $locator */
     public function __construct(public string $key, public array $locator)
     {
+        $locatorKeys = ['page_id', 'page_number', 'processing_unit_id', 'source_version', 'coordinate_space'];
+        if (array_key_exists('explicit', $locator)) {
+            $locatorKeys[] = 'explicit';
+        }
         if (preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/', $key) !== 1
-            || ! self::hasExactKeys($locator, ['page_id', 'page_number', 'processing_unit_id', 'source_version', 'coordinate_space'])
+            || ! self::hasExactKeys($locator, $locatorKeys)
+            || (array_key_exists('explicit', $locator) && ! is_bool($locator['explicit']))
             || ! is_int($locator['page_id']) || $locator['page_id'] < 1
             || ! is_int($locator['page_number']) || $locator['page_number'] < 1 || $locator['page_number'] > 10_000
             || ! is_int($locator['processing_unit_id']) || $locator['processing_unit_id'] < 1
@@ -25,8 +30,7 @@ final readonly class VisionEvidenceData
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self
     {
-        if (! self::hasExactKeys($data, ['key', 'locator']) || ! is_string($data['key']) || ! is_array($data['locator'])
-            || ! self::hasExactKeys($data['locator'], ['page_id', 'page_number', 'processing_unit_id', 'source_version', 'coordinate_space'])) {
+        if (! self::hasExactKeys($data, ['key', 'locator']) || ! is_string($data['key']) || ! is_array($data['locator'])) {
             throw new VisionContractException('invalid_evidence');
         }
 

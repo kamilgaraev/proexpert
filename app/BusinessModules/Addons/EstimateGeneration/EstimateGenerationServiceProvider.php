@@ -17,11 +17,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateC
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertModel;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\RunGeometryExpert;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\VisionGeometryExpertModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\RunIndependentObservers;
@@ -494,7 +491,17 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(DocumentSourceManifestStorage::class, S3DocumentSourceManifestStorage::class);
         $this->app->singleton(DocumentUnitDetector::class, ArtifactDocumentUnitDetector::class);
         $this->app->singleton(DocumentRepresentationResourceMeter::class, SystemDocumentRepresentationResourceMeter::class);
-        $this->app->singleton(DocumentProcessingUnitStore::class, EloquentDocumentProcessingUnitStore::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\AtomicDocumentUnitPublicationWriter::class,
+            static fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\AtomicDocumentUnitPublicationWriter(
+                $app->make('db')->connection(),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class),
+            ),
+        );
+        $this->app->singleton(DocumentProcessingUnitStore::class, static fn ($app): DocumentProcessingUnitStore => new EloquentDocumentProcessingUnitStore(
+            $app->make('db')->connection(),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\AtomicDocumentUnitPublicationWriter::class),
+        ));
         $this->app->singleton(DocumentUnitDispatchStore::class, EloquentDocumentUnitDispatchStore::class);
         $this->app->singleton(EstimateGenerationUnitJobDispatcher::class, LaravelEstimateGenerationUnitJobDispatcher::class);
         $this->app->singleton(DocumentUnitExhaustionHandler::class, EloquentDocumentUnitExhaustionHandler::class);
@@ -658,8 +665,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(VisionProvider::class),
             $app->make(ObserverInputBuilder::class),
             (string) config('estimate-generation.vision.model'),
-            $app->make(ArbitrationInputBuilder::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class),
         ));
         $this->app->alias(RunIndependentObservers::class, DocumentObserverRunner::class);
         $this->app->singleton(RunDocumentArbitration::class, static fn ($app): RunDocumentArbitration => new RunDocumentArbitration(
@@ -667,17 +672,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(VisionProvider::class),
             $app->make(ArbitrationInputBuilder::class),
             (string) config('estimate-generation.vision.model'),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class),
         ));
         $this->app->alias(RunDocumentArbitration::class, DocumentArbitrator::class);
-        $this->app->singleton(GeometryExpertModel::class, VisionGeometryExpertModel::class);
-        $this->app->singleton(RunGeometryExpert::class, static fn ($app): RunGeometryExpert => new RunGeometryExpert(
-            $app->make(AiRoleRunRepository::class),
-            $app->make(GeometryExpertModel::class),
-            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator::class),
-            (string) config('estimate-generation.vision.model'),
-        ));
-        $this->app->alias(RunGeometryExpert::class, GeometryExpertRunner::class);
+        $this->app->singleton(
+            DurableAiPhysicalResponseStore::class,
+            static fn ($app): DurableAiPhysicalResponseStore => new DurableAiPhysicalResponseStore($app->make('db')->connection()),
+        );
         $this->app->singleton(ProjectSynthesisModel::class, static fn ($app): ProjectSynthesisModel => new TimewebProjectSynthesisModel(
             $app->make(RerankWireClient::class),
             $app->make(AiUsageStore::class),
@@ -686,6 +686,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (int) config('estimate-generation.project_engineer.max_input_bytes'),
             (int) config('estimate-generation.project_engineer.max_output_tokens'),
             (int) config('estimate-generation.project_engineer.timeout_seconds'),
+            $app->make(DurableAiPhysicalResponseStore::class),
         ));
         $this->app->singleton(RunProjectSynthesis::class, static fn ($app): RunProjectSynthesis => new RunProjectSynthesis(
             $app->make(AiRoleRunRepository::class),
@@ -701,6 +702,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             (int) config('estimate-generation.estimate_composer.max_input_bytes'),
             (int) config('estimate-generation.estimate_composer.max_output_tokens'),
             (int) config('estimate-generation.estimate_composer.timeout_seconds'),
+            $app->make(DurableAiPhysicalResponseStore::class),
         ));
         $this->app->alias(TimewebEstimateComposerModel::class, EstimateComposerModel::class);
         $this->app->alias(
@@ -746,7 +748,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(ApplyComposerCorrectionCycle::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore::class,
+            static fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore(
+                $app->make('db')->connection(),
+                new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentWireAuthorization(
+                    $app->make('db')->connection(),
+                ),
+            ),
         );
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureRecorderObserver::class, SafeLogFailureRecorderObserver::class);

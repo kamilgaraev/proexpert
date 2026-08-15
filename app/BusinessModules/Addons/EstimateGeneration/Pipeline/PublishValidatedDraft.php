@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\Ta
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
@@ -26,6 +27,7 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private DraftReadinessInspector $readiness,
         private TargetedPackageRebuildOperationService $targetedRebuilds,
         private DraftPublicationGate $publicationGate,
+        private AiEstimateQuotaService $quota,
     ) {}
 
     public function beforeComplete(CheckpointClaim $claim, PipelineStageResult $result, DateTimeImmutable $completedAt): void
@@ -77,6 +79,7 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             'problem_flags' => $draft['problem_flags'] ?? [],
             'last_error' => null,
         ]);
+        $this->quota->confirmUsableDraft($published);
         if ($publishable) {
             $this->targetedRebuilds->scheduleAfterPublishedDraft($published, $draft);
         }

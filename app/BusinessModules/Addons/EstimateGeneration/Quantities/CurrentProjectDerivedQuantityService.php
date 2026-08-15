@@ -204,7 +204,19 @@ final readonly class CurrentProjectDerivedQuantityService
         foreach ($snapshot->entities as $entity) {
             $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->type);
             if ($semanticType === 'room') {
-                $request = $this->binaryRequest($entity, $facts, 'floor_area', 'length', 'width', $token, $technology, $completeness, 'm2', 2);
+                $area = $this->oneFact($facts, $entity->id, 'area');
+                $request = $area instanceof Fact
+                    ? $this->request(
+                        'direct_floor_area',
+                        $entity->id,
+                        ['measurement' => $area->id],
+                        $token,
+                        $technology,
+                        $completeness,
+                        'm2',
+                        2,
+                    )
+                    : $this->binaryRequest($entity, $facts, 'floor_area', 'length', 'width', $token, $technology, $completeness, 'm2', 2);
             } elseif ($semanticType === 'wall') {
                 $request = $this->wallRequest(
                     $entity,
@@ -649,6 +661,7 @@ final readonly class CurrentProjectDerivedQuantityService
         }
         $aliases = [
             'floor_area' => 'floor_area',
+            'direct_floor_area' => 'floor_area',
             'wall_net_area' => 'net_wall_area',
             'sloped_roof_area' => 'roof_area',
             'earthwork_volume' => 'earthwork_volume',

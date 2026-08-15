@@ -4,11 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputException;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\DocumentArbitrator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertInput;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertResult;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\GeometryExpertRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\DocumentObserverRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
@@ -106,7 +104,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $reader,
             $this->observerRunner($vision),
             $this->arbitrator(),
-            $this->geometryRunner(),
         );
         foreach ($paths as $offset => $path) {
             $index = $offset + 1;
@@ -197,7 +194,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $reader,
             $this->observerRunner($vision),
             $this->arbitrator(),
-            $this->geometryRunner(),
         );
         $locator = $unit->locator;
         $locator['document_representation']['capabilities'] = array_reverse(
@@ -239,7 +235,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             'observer_construction' => true,
             'observer_risk' => true,
             'arbiter' => true,
-            'geometry_expert' => true,
         ], $output->normalizedPayload['role_completion']);
         self::assertSame(4, $output->normalizedPayload['analysis_routing']['physical_provider_call_count']);
         self::assertCount(4, $output->normalizedPayload['analysis_routing']['physical_provider_attempt_ids']);
@@ -308,7 +303,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $reader,
             $this->observerRunner($vision),
             $this->arbitrator(),
-            $this->geometryRunner(),
         );
         $context = new DocumentUnitExecutionContext(
             1,
@@ -345,7 +339,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
 
         $output = $processor->process($context);
 
-        self::assertSame(1, $vision->calls);
+        self::assertSame(2, $vision->calls);
         self::assertSame('image/png', $vision->inputs[0]->contentType);
         self::assertSame([12, 8], array_slice(getimagesizefromstring($vision->inputs[0]->imageContent), 0, 2));
         self::assertSame('unavailable:pdf_geometry_contract_invalid', $vision->inputs[0]->auxiliaryMetadata['geometry_status']);
@@ -582,6 +576,22 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         }
     }
 
+    #[Test]
+    public function missing_arbitration_claims_keep_the_exact_safe_failure_reason(): void
+    {
+        $original = new ArbitrationInputException('arbitration_claims_missing');
+        $processor = $this->cadFailureProcessor($original);
+
+        try {
+            $processor->process($this->context(DocumentUnitType::CadDrawing));
+            self::fail('Arbitration input failure must be classified.');
+        } catch (TypedFailureException $exception) {
+            self::assertSame('arbitration_claims_missing', $exception->safeCode);
+            self::assertSame('document_arbitration_input', $exception->safeContext['execution_boundary']);
+            self::assertSame($original, $exception->getPrevious());
+        }
+    }
+
     private function cadFailureProcessor(\Throwable $error): ProductionDocumentUnitProcessor
     {
         $files = $this->createMock(FileService::class);
@@ -616,7 +626,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             new BoundedVersionedS3ObjectReader($files),
             $this->observerRunner(),
             $this->arbitrator(),
-            $this->geometryRunner(),
         );
     }
 
@@ -654,7 +663,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $reader,
             $this->observerRunner(error: $error),
             $this->arbitrator(),
-            $this->geometryRunner(),
         );
     }
 
@@ -733,7 +741,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             new BoundedVersionedS3ObjectReader($files),
             $this->observerRunner(),
             $this->arbitrator(),
-            $this->geometryRunner(),
         );
         $context = new DocumentUnitExecutionContext(
             1, 2, 3, 4, 5, DocumentUnitType::CadDrawing, 1,
@@ -798,7 +805,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             new BoundedVersionedS3ObjectReader($files),
             $this->observerRunner(),
             $this->arbitrator(),
-            $this->geometryRunner(),
             cadRepresentationPublisher: new CadRepresentationPublisher($files),
         );
 
@@ -883,17 +889,6 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                     'decisions' => [],
                     'questions' => [],
                 ], '10000000-0000-4000-8000-000000000004');
-            }
-        };
-    }
-
-    private function geometryRunner(): GeometryExpertRunner
-    {
-        return new class implements GeometryExpertRunner
-        {
-            public function run(GeometryExpertInput $input): GeometryExpertResult
-            {
-                return new GeometryExpertResult([], [], [], []);
             }
         };
     }

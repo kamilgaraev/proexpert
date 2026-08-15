@@ -34,14 +34,18 @@ final readonly class DispatchDocumentProcessingUnits
         $count = 0;
 
         foreach ($candidates as $candidate) {
-            $this->jobs->dispatch($candidate->unitId, $candidate->sourceVersion, $priority ?? $candidate->priority);
             $now = now()->toDateTimeImmutable();
-            $this->store->markDispatched(
-                $candidate->unitId,
+            $dispatched = $this->store->dispatchIfAllowed(
+                $candidate,
                 $now,
                 $now->modify(sprintf('+%d seconds', self::RECOVERY_DELAY_SECONDS)),
+                fn () => $this->jobs->dispatch(
+                    $candidate->unitId,
+                    $candidate->sourceVersion,
+                    $priority ?? $candidate->priority,
+                ),
             );
-            $count++;
+            $count += (int) $dispatched;
         }
 
         return $count;
