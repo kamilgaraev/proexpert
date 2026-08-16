@@ -318,6 +318,16 @@ final readonly class ProjectModelEvidenceWriter
         $unit = $claim->unit;
         $allowedUnits = ['m', 'm2', 'm3', 'pcs', 'kg', 't', 'h'];
         if ($type === 'area' && $numeric && $unit === 'm2'
+            && $claim->entityKey === 'building_area_total') {
+            return [
+                'type' => 'room',
+                'attributes' => [
+                    'area_m2' => $value,
+                    'document_role' => 'building_floor',
+                ],
+            ];
+        }
+        if ($type === 'area' && $numeric && $unit === 'm2'
             && preg_match('/^room[:._-]/D', mb_strtolower($claim->entityKey)) === 1) {
             return ['type' => 'room', 'attributes' => ['area_m2' => $value]];
         }

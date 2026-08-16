@@ -1,6 +1,20 @@
 <?php
 
 return [
+    'accepted_fact_projection' => [
+        'requested_area_takeoff_name' => 'Площадь цементной стяжки по подтверждённой площади здания',
+        'labels' => [
+            'total_area' => 'Общая площадь',
+            'area' => 'Площадь',
+            'dimension' => 'Размер',
+            'height' => 'Высота',
+            'floor_count' => 'Этажность',
+            'material' => 'Материал',
+            'work_scope' => 'Конструктивное решение',
+            'table_row' => 'Строка ведомости',
+            'note' => 'Сведения листа',
+        ],
+    ],
     'geometry_expert' => [
         'duplicate' => [
             'subject' => 'Повторно использован один и тот же размер',

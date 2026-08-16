@@ -76,12 +76,35 @@ final readonly class ObservationClaim
             $value,
             is_string($claim['unit'] ?? null) ? $claim['unit'] : null,
             $evidenceRef,
-            is_string($native) || (bool) ($locator['explicit'] ?? false),
+            self::hasExplicitSourceReference($native) || (bool) ($locator['explicit'] ?? false),
             $organizationId,
             $projectId,
             $sessionId,
             $sourceVersion,
             $locator,
         );
+    }
+
+    private static function hasExplicitSourceReference(mixed $source): bool
+    {
+        if (is_string($source)) {
+            return trim($source) !== '';
+        }
+        if (! is_array($source) || count($source) < 2 || count($source) > 64) {
+            return false;
+        }
+        $points = [];
+        foreach ($source as $point) {
+            if (! is_array($point) || count($point) !== 2
+                || ! is_numeric($point[0]) || ! is_numeric($point[1])
+                || ! is_finite((float) $point[0]) || ! is_finite((float) $point[1])
+                || (float) $point[0] < 0 || (float) $point[0] > 1
+                || (float) $point[1] < 0 || (float) $point[1] > 1) {
+                return false;
+            }
+            $points[] = sprintf('%.12F:%.12F', (float) $point[0], (float) $point[1]);
+        }
+
+        return count($points) === count(array_unique($points));
     }
 }

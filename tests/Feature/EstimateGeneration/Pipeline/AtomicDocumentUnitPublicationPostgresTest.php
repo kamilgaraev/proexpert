@@ -44,7 +44,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
     }
 
     #[Test]
-    public function observer_evidence_written_on_the_production_job_path_does_not_block_its_own_unit_publication(): void
+    public function accepted_consensus_is_atomically_persisted_as_evidence_project_model_and_document_facts(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
         self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
@@ -62,7 +62,9 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 'status' => 'draft',
                 'processing_stage' => 'draft',
                 'processing_progress' => 0,
-                'input_payload' => [],
+                'input_payload' => [
+                    'description' => 'Требуется устройство цементной стяжки пола по подтверждённой площади.',
+                ],
                 'state_version' => 0,
             ]);
             $document = EstimateGenerationDocument::query()->create([
@@ -125,6 +127,27 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                             'explicit' => true,
                         ],
                     );
+                    $area = new ObservationClaim(
+                        'literal:area:page-2',
+                        'observer_literal',
+                        'building_area_total',
+                        'area',
+                        ['type' => 'number', 'data' => 72.19],
+                        'm2',
+                        'literal:area:page-2',
+                        true,
+                        $context->organizationId,
+                        $context->projectId,
+                        $context->sessionId,
+                        $context->sourceVersion,
+                        [
+                            'page' => $context->index,
+                            'unit_type' => $context->type->value,
+                            'unit_index' => $context->index,
+                            'source_version' => $context->sourceVersion,
+                            'explicit' => true,
+                        ],
+                    );
 
                     return new DocumentUnitOutput(
                         version: 'production-shaped:v1',
@@ -135,15 +158,37 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                         unitIndex: $context->index,
                         sourceVersion: $context->sourceVersion,
                         publication: new DocumentUnitPublication(
-                            [$claim],
-                            [new ArbitrationDecision(
-                                claimId: $claim->id,
-                                status: 'candidate',
-                                supportingClaimIds: [$claim->id],
-                                evidenceRefs: [$claim->evidenceRef],
-                                reasonCode: 'independent_observation_preserved',
-                                canonicalClaim: null,
-                            )],
+                            [$claim, $area],
+                            [
+                                new ArbitrationDecision(
+                                    claimId: $claim->id,
+                                    status: 'accepted',
+                                    supportingClaimIds: [$claim->id],
+                                    evidenceRefs: [$claim->evidenceRef],
+                                    reasonCode: 'arbiter_consensus',
+                                    canonicalClaim: [
+                                        'entity_key' => $claim->entityKey,
+                                        'fact_type' => $claim->factType,
+                                        'value' => $claim->value,
+                                        'unit' => $claim->unit,
+                                        'source_claim_id' => $claim->id,
+                                    ],
+                                ),
+                                new ArbitrationDecision(
+                                    claimId: $area->id,
+                                    status: 'accepted',
+                                    supportingClaimIds: [$area->id],
+                                    evidenceRefs: [$area->evidenceRef],
+                                    reasonCode: 'arbiter_consensus',
+                                    canonicalClaim: [
+                                        'entity_key' => $area->entityKey,
+                                        'fact_type' => $area->factType,
+                                        'value' => $area->value,
+                                        'unit' => $area->unit,
+                                        'source_claim_id' => $area->id,
+                                    ],
+                                ),
+                            ],
                         ),
                     );
                 }
@@ -166,11 +211,42 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
             $persisted = EstimateGenerationProcessingUnit::query()->findOrFail($unit->id);
             self::assertSame('completed', $persisted->status->value);
             self::assertNull($persisted->failure_code);
-            self::assertSame(1, DB::table('estimate_generation_evidence')
+            self::assertSame(2, DB::table('estimate_generation_evidence')
                 ->where('organization_id', $organization->id)
                 ->where('project_id', $project->id)
                 ->where('session_id', $session->id)
                 ->where('source_version', $sourceVersion)
+                ->count());
+            self::assertDatabaseHas('estimate_generation_document_facts', [
+                'document_id' => $document->id,
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'session_id' => $session->id,
+                'fact_type' => 'total_area',
+                'scope_key' => 'building_area_total',
+                'value_number' => 72.1900,
+                'unit' => 'm2',
+                'confidence' => 1.00,
+            ]);
+            self::assertDatabaseHas('estimate_generation_document_facts', [
+                'document_id' => $document->id,
+                'fact_type' => 'material',
+                'scope_key' => 'material.page-2',
+                'value_text' => 'Обезличенный материал',
+            ]);
+            self::assertDatabaseHas('estimate_generation_quantity_takeoffs', [
+                'document_id' => $document->id,
+                'scope_key' => 'rough_floor_area',
+                'unit' => 'm2',
+                'quantity' => 72.1900,
+                'formula' => 'accepted_building_area_total',
+                'confidence' => 1.00,
+            ]);
+            self::assertSame(2, DB::table('estimate_generation_project_model_assertions')
+                ->where('organization_id', $organization->id)
+                ->where('project_id', $project->id)
+                ->where('session_id', $session->id)
+                ->where('fact_status', 'confirmed')
                 ->count());
         } finally {
             DB::rollBack();

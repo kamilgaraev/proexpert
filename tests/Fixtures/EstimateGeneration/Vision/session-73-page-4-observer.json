@@ -1,0 +1,889 @@
+{
+  "schema_version": 4,
+  "sheet_type": "combined",
+  "evidence": {
+    "title_block": {
+      "locator": {
+        "page_id": 2004,
+        "page_number": 4,
+        "processing_unit_id": 304,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      },
+      "key": "title_block"
+    },
+    "general_data": {
+      "locator": {
+        "page_id": 2004,
+        "page_number": 4,
+        "processing_unit_id": 304,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      },
+      "key": "general_data"
+    },
+    "project_indicators": {
+      "locator": {
+        "page_id": 2004,
+        "page_number": 4,
+        "processing_unit_id": 304,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      },
+      "key": "project_indicators"
+    },
+    "technical_table": {
+      "locator": {
+        "page_id": 2004,
+        "page_number": 4,
+        "processing_unit_id": 304,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      },
+      "key": "technical_table"
+    },
+    "design_notes": {
+      "locator": {
+        "page_id": 2004,
+        "page_number": 4,
+        "processing_unit_id": 304,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      },
+      "key": "design_notes"
+    }
+  },
+  "elements": [],
+  "scale_candidates": [],
+  "warnings": [
+    "scale_missing",
+    "text_uncertain"
+  ],
+  "visual_attributes": {
+    "roof_type": {
+      "value": "unknown",
+      "confidence": 0.98,
+      "evidence_ref": "general_data"
+    }
+  },
+  "project_sheet_analysis": {
+    "contractVersion": "sheet-analysis:v3",
+    "role": "explication",
+    "facts": [
+      {
+        "entityKey": "building_dimensions",
+        "factType": "area",
+        "value": {
+          "type": "string",
+          "data": "11,1 x 7,3",
+          "unit": "м"
+        },
+        "evidenceRef": "general_data",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "building_height",
+        "factType": "elevation",
+        "value": {
+          "type": "number",
+          "data": 4.32,
+          "unit": "м"
+        },
+        "evidenceRef": "general_data",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "building_area_total",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 72.19,
+          "unit": "м²"
+        },
+        "evidenceRef": "project_indicators",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "building_area_without_terrace",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 50.09,
+          "unit": "м²"
+        },
+        "evidenceRef": "project_indicators",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "above_ground_storeys",
+        "factType": "level",
+        "value": {
+          "type": "number",
+          "data": 1,
+          "unit": "этаж"
+        },
+        "evidenceRef": "project_indicators",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "below_ground_storeys",
+        "factType": "level",
+        "value": {
+          "type": "number",
+          "data": 0,
+          "unit": "этаж"
+        },
+        "evidenceRef": "project_indicators",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "foundation_type",
+        "factType": "technology_candidate",
+        "value": {
+          "type": "string",
+          "data": "свайно-винтовой; также указана утепленная шведская плита (УШП)",
+          "unit": null
+        },
+        "evidenceRef": "general_data",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "external_wall_construction",
+        "factType": "material",
+        "value": {
+          "type": "string",
+          "data": "доска сухая обрезная 42x142, шаг 0,58 м",
+          "unit": null
+        },
+        "evidenceRef": "general_data",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "internal_wall_construction",
+        "factType": "material",
+        "value": {
+          "type": "string",
+          "data": "доска сухая обрезная 42x92, шаг 0,58 м",
+          "unit": null
+        },
+        "evidenceRef": "general_data",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "facade_finish",
+        "factType": "finish_zone",
+        "value": {
+          "type": "string",
+          "data": "каменная штукатурка, имитация бруса",
+          "unit": null
+        },
+        "evidenceRef": "general_data",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "attic_floor",
+        "factType": "material",
+        "value": {
+          "type": "string",
+          "data": "деревянные балки",
+          "unit": null
+        },
+        "evidenceRef": "general_data",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "roof_form",
+        "factType": "roof_geometry",
+        "value": {
+          "type": "enum",
+          "data": "двускатная",
+          "unit": null
+        },
+        "evidenceRef": "general_data",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "roof_covering",
+        "factType": "material",
+        "value": {
+          "type": "string",
+          "data": "битумная черепица",
+          "unit": null
+        },
+        "evidenceRef": "general_data",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "facade_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 77.01,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "insulated_external_wall_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 77.01,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "insulated_internal_wall_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 43.07,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "external_wall_length",
+        "factType": "dimension_chain",
+        "value": {
+          "type": "number",
+          "data": 32.266,
+          "unit": "м"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "internal_wall_length",
+        "factType": "dimension_chain",
+        "value": {
+          "type": "number",
+          "data": 14.03,
+          "unit": "м"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "plinth_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 24.98,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "roof_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 92.58,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "insulated_roof_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 61.45,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "uninsulated_roof_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 11.92,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "soffit_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 31.14,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "basement_floor_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 57.74,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "terrace_floor_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 21.65,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "glazing_area",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": 22.76,
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "windows_doors_specification",
+        "factType": "risk",
+        "value": {
+          "type": "unknown",
+          "data": null,
+          "unit": null
+        },
+        "evidenceRef": "design_notes",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "foundation_selection",
+        "factType": "risk",
+        "value": {
+          "type": "unknown",
+          "data": null,
+          "unit": null
+        },
+        "evidenceRef": "design_notes",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "fire_resistance_class",
+        "factType": "note",
+        "value": {
+          "type": "string",
+          "data": "IV степень огнестойкости; класс конструктивной пожарной опасности C3",
+          "unit": null
+        },
+        "evidenceRef": "design_notes",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.98,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "malformed_quantity",
+        "factType": "area",
+        "value": {
+          "type": "number",
+          "data": "not-a-number",
+          "unit": "м²"
+        },
+        "evidenceRef": "technical_table",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.06,
+            0.05
+          ],
+          [
+            0.47,
+            0.25
+          ],
+          [
+            0.06,
+            0.25
+          ]
+        ],
+        "confidence": 0.91,
+        "contractVersion": "sheet-analysis:v3"
+      }
+    ]
+  },
+  "analysis_routing": {
+    "page_kind": "combined",
+    "requested_depth": "dense_ambiguous",
+    "information_density": "high",
+    "readability": "high",
+    "confidence": 0.96,
+    "ambiguous": true,
+    "material_risk": "high",
+    "reasons": [
+      "Страница сочетает общие пояснения и технико-экономическую таблицу."
+    ],
+    "semantic_regions": [
+      {
+        "label": "Общие данные",
+        "purpose": "Конструктивные решения, материалы, размеры и параметры здания",
+        "box": [
+          0.05,
+          0.02,
+          0.51,
+          0.75
+        ]
+      },
+      {
+        "label": "Технико-экономические показатели",
+        "purpose": "Таблица площадей и длин для оценки объемов",
+        "box": [
+          0.55,
+          0.02,
+          0.99,
+          0.49
+        ]
+      }
+    ]
+  }
+}

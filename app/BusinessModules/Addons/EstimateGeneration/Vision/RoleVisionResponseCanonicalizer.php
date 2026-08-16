@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 
 final class RoleVisionResponseCanonicalizer
@@ -48,7 +49,9 @@ final class RoleVisionResponseCanonicalizer
             ]);
         }
 
-        $projected = $this->projectObserverEvidence($payload, $input);
+        $projected = $this->repairObserverRepresentation(
+            $this->projectObserverEvidence($payload, $input),
+        );
         $projectSheetAnalysis = is_array($projected['project_sheet_analysis'] ?? null)
             ? $projected['project_sheet_analysis']
             : [
@@ -85,11 +88,15 @@ final class RoleVisionResponseCanonicalizer
         $references = [];
         $projectedEvidence = [];
         foreach ($evidence as $outerKey => $item) {
-            if (! is_array($item) || ! is_string($item['key'] ?? null)) {
+            if (! is_array($item)) {
                 continue;
             }
-            $localReference = trim($item['key']);
-            if (! array_is_list($evidence) && (! is_string($outerKey) || ! hash_equals($outerKey, $localReference))) {
+            $embeddedReference = $item['key'] ?? null;
+            $localReference = is_string($embeddedReference)
+                ? trim($embeddedReference)
+                : (! array_is_list($evidence) && is_string($outerKey) ? trim($outerKey) : '');
+            if (! array_is_list($evidence) && is_string($embeddedReference)
+                && (! is_string($outerKey) || ! hash_equals($outerKey, $localReference))) {
                 return $payload;
             }
             if ($localReference === '' || mb_strlen($localReference) > 200) {
@@ -119,6 +126,84 @@ final class RoleVisionResponseCanonicalizer
         $payload['evidence'] = $projectedEvidence;
 
         return $this->replaceEvidenceReferences($payload, $references);
+    }
+
+    /** @param array<string,mixed> $payload @return array<string,mixed> */
+    private function repairObserverRepresentation(array $payload): array
+    {
+        $elements = $payload['elements'] ?? null;
+        if (is_array($elements) && ! array_is_list($elements)) {
+            $normalized = [];
+            foreach ($elements as $outerKey => $element) {
+                if (! is_array($element)) {
+                    $normalized[] = $element;
+
+                    continue;
+                }
+                $embeddedKey = $element['key'] ?? null;
+                if (! is_string($embeddedKey) && is_string($outerKey)
+                    && preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/D', $outerKey) === 1) {
+                    $element['key'] = $outerKey;
+                } elseif (is_string($embeddedKey) && (! is_string($outerKey) || ! hash_equals($outerKey, $embeddedKey))) {
+                    $element['canonical_key_mismatch'] = true;
+                }
+                $normalized[] = $element;
+            }
+            $payload['elements'] = $normalized;
+        }
+
+        $analysis = $payload['project_sheet_analysis'] ?? null;
+        if (! is_array($analysis) || ! is_array($analysis['facts'] ?? null)
+            || ! array_is_list($analysis['facts']) || count($analysis['facts']) > 500) {
+            return $payload;
+        }
+        if (! VisionAnalysisData::isSupportedSheetType($payload['sheet_type'] ?? null)) {
+            $analysis['role'] = 'unknown';
+        }
+        foreach ($analysis['facts'] as $index => $fact) {
+            if (! is_array($fact)) {
+                continue;
+            }
+            $value = $fact['value'] ?? null;
+            if (! is_array($value)
+                || count($value) !== 3
+                || array_diff(array_keys($value), ['type', 'data', 'unit']) !== []) {
+                continue;
+            }
+            $nestedUnit = $value['unit'];
+            if (array_key_exists('unit', $fact) && $fact['unit'] !== $nestedUnit) {
+                continue;
+            }
+            unset($value['unit']);
+            $fact['value'] = $value;
+            $fact['unit'] = $this->canonicalUnit($nestedUnit, $fact['factType'] ?? null);
+            $analysis['facts'][$index] = $fact;
+        }
+        $payload['project_sheet_analysis'] = $analysis;
+
+        return $payload;
+    }
+
+    private function canonicalUnit(mixed $unit, mixed $factType): mixed
+    {
+        if (! is_string($unit)) {
+            return $unit;
+        }
+        $normalized = mb_strtolower(trim($unit));
+        if ($factType === 'level' && in_array($normalized, ['этаж', 'этажа', 'этажей', 'floor', 'floors'], true)) {
+            return 'pcs';
+        }
+
+        return match ($normalized) {
+            'м', 'm' => 'm',
+            'м2', 'м²', 'm2', 'm²', 'кв. м' => 'm2',
+            'м3', 'м³', 'm3', 'm³', 'куб. м' => 'm3',
+            'шт', 'шт.', 'pcs' => 'pcs',
+            'кг', 'kg' => 'kg',
+            'т', 't' => 't',
+            'ч', 'h' => 'h',
+            default => $unit,
+        };
     }
 
     /** @param array<string,string> $references */

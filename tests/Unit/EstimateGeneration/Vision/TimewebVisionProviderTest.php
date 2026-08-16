@@ -120,6 +120,58 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    #[DataProvider('capturedProductionObserverResponses')]
+    public function captured_production_observer_shapes_pass_the_real_parser_and_replay_without_a_second_call(
+        string $fixture,
+        int $expectedFacts,
+        int $expectedElements,
+    ): void {
+        $payload = $this->analysisFixture($fixture);
+        Http::fake(['*' => Http::response([
+            'model' => 'openai/gpt-5.6-luna',
+            'choices' => [[
+                'message' => ['content' => json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)],
+                'finish_reason' => 'stop',
+            ]],
+            'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 20, 'total_tokens' => 120],
+        ])]);
+        $input = (new ObserverInputBuilder)->build(
+            $this->input(),
+            ObserverProfile::Literal,
+            static function (string $attemptId): void {},
+        );
+
+        $first = $this->provider()->analyze($input);
+        $replay = $this->provider()->analyze($input);
+
+        self::assertCount($expectedFacts, $first->projectSheetAnalysis?->facts ?? []);
+        self::assertCount($expectedElements, $first->elements);
+        self::assertSame($first->toArray(), $replay->toArray());
+        self::assertCount(1, $this->attempts);
+        Http::assertSentCount(1);
+        if ($fixture === 'session-73-page-4-observer.json') {
+            $facts = [];
+            foreach ($first->projectSheetAnalysis?->facts ?? [] as $fact) {
+                $facts[$fact['entityKey']] = $fact;
+            }
+            self::assertSame(72.19, $facts['building_area_total']['value']['data']);
+            self::assertSame('m2', $facts['building_area_total']['unit']);
+            self::assertSame('битумная черепица', $facts['roof_covering']['value']['data']);
+            self::assertArrayNotHasKey('malformed_quantity', $facts);
+        }
+    }
+
+    /** @return array<string, array{string, int, int}> */
+    public static function capturedProductionObserverResponses(): array
+    {
+        return [
+            'page 2 associative element and nested null unit' => ['session-73-page-2-observer.json', 1, 1],
+            'page 3 associative evidence without embedded keys' => ['session-73-page-3-observer.json', 26, 0],
+            'page 4 unsupported sheet type and nested units' => ['session-73-page-4-observer.json', 29, 0],
+        ];
+    }
+
+    #[Test]
     public function it_returns_strict_typed_analysis_and_records_one_physical_attempt(): void
     {
         Http::fake(fn () => Http::response($this->response()));
@@ -1872,6 +1924,16 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     private function fixtureResponse(string $name): array
     {
         $path = base_path('tests/Fixtures/EstimateGeneration/vision/'.$name);
+        $contents = file_get_contents($path);
+        self::assertIsString($contents);
+
+        return json_decode($contents, true, 64, JSON_THROW_ON_ERROR);
+    }
+
+    /** @return array<string, mixed> */
+    private function analysisFixture(string $name): array
+    {
+        $path = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/'.$name;
         $contents = file_get_contents($path);
         self::assertIsString($contents);
 
