@@ -650,6 +650,8 @@ final class PipelineStageFunctionalTest extends TestCase
             self::assertArrayNotHasKey('price', $workItem['composition_intent']);
         }
         self::assertArrayNotHasKey('work_composition_advice', $planned['package_plan']);
+        $builtDraft = $state->priorOutputs($seed)->payload(ProcessingStage::BuildDraft)['draft'];
+        self::assertSame($planned['estimate_composition'], $builtDraft['estimate_composition']);
         $extracted = $state->priorOutputs($seed)->payload(ProcessingStage::ExtractQuantities);
         $floorAreaRows = array_values(array_filter(
             $extracted['building_quantities']['quantities'] ?? [],

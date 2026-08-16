@@ -39,6 +39,9 @@ final readonly class CrossDocumentFactLinker
         $groups = [];
         $limitations = [];
         foreach ($factList as $fact) {
+            if ($fact->status === 'invalidated') {
+                continue;
+            }
             if ($fact->status !== 'confirmed' || $fact->origin === 'ai_technology_recommendation') {
                 $limitations[] = $this->conflictResolver->insufficientEvidence();
 

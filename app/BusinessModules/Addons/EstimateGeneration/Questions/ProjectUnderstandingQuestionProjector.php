@@ -64,8 +64,14 @@ final class ProjectUnderstandingQuestionProjector
         sort($pageNumbers, SORT_NUMERIC);
         $choices = [];
         $seen = [];
+        $quarantinedChoiceCount = 0;
         foreach (is_array($question['options'] ?? null) ? $question['options'] : [] as $option) {
-            if (count($choices) >= self::MAX_AI_CHOICES || ! is_array($option) || array_is_list($option)) {
+            if (count($choices) >= self::MAX_AI_CHOICES) {
+                break;
+            }
+            if (! is_array($option) || array_is_list($option)) {
+                $quarantinedChoiceCount++;
+
                 continue;
             }
             $kind = $option['value'] ?? null;
@@ -77,10 +83,22 @@ final class ProjectUnderstandingQuestionProjector
             $value = is_string($kind) && trim($kind) !== ''
                 ? trim($kind)
                 : (is_string($factId) && trim($factId) !== '' ? 'select:'.trim($factId) : null);
-            if (! is_string($label) || ! is_string($value) || strlen($value) > 160 || isset($seen[$value])) {
+            if (isset($seen[$value])) {
                 continue;
             }
-            $choices[] = new EstimateClarificationChoice($value, trim($label));
+            if (! is_string($label) || ! is_string($value) || strlen($value) > 160) {
+                $quarantinedChoiceCount++;
+
+                continue;
+            }
+            try {
+                $choice = new EstimateClarificationChoice($value, trim($label));
+            } catch (InvalidArgumentException) {
+                $quarantinedChoiceCount++;
+
+                continue;
+            }
+            $choices[] = $choice;
             $seen[$value] = true;
         }
         $choices[] = new EstimateClarificationChoice(
@@ -111,6 +129,12 @@ final class ProjectUnderstandingQuestionProjector
                 'fact_ids' => $factIds,
                 'evidence_ids' => $evidenceIds,
                 'page_numbers' => array_slice($pageNumbers, 0, 64),
+                ...($quarantinedChoiceCount > 0 ? [
+                    'limitations' => [[
+                        'type' => 'choice_quarantined',
+                        'count' => $quarantinedChoiceCount,
+                    ]],
+                ] : []),
             ],
         );
     }

@@ -75,4 +75,91 @@ final class DocumentSemanticUnderstandingSummarizerTest extends TestCase
         self::assertArrayNotHasKey('questions', $summary);
         self::assertTrue($summary['analysis_roles_complete']);
     }
+
+    #[Test]
+    public function completed_drawing_analysis_projects_quantity_capability_only_from_an_accepted_numeric_claim(): void
+    {
+        $summary = (new DocumentSemanticUnderstandingSummarizer)->summarize([[
+            'schema_version' => 4,
+            'page_number' => 4,
+            'role_completion' => [
+                'observer_literal' => true,
+                'observer_construction' => true,
+                'observer_risk' => true,
+                'arbiter' => true,
+            ],
+            'analysis_routing' => [
+                'observer_roles' => ['observer_literal', 'observer_construction', 'observer_risk'],
+                'arbiter_required' => true,
+            ],
+            'vision_analysis' => ['sheet_type' => 'floor_plan'],
+            'independent_observations' => ['observer_literal' => [
+                'claims' => [[
+                    'factType' => 'area',
+                    'value' => ['type' => 'number', 'data' => 72.19],
+                    'unit' => 'm2',
+                    'evidenceRef' => 'page-4-literal',
+                ], [
+                    'factType' => 'area',
+                    'value' => ['type' => 'string', 'data' => 'not-a-number'],
+                    'unit' => 'm2',
+                    'evidenceRef' => 'page-4-malformed',
+                ]],
+            ]],
+            'document_arbitration' => [
+                'decisions' => [[
+                    'claim_id' => 'literal:1',
+                    'status' => 'accepted',
+                    'evidence_refs' => ['page-4-literal'],
+                ], [
+                    'claim_id' => 'literal:2',
+                    'status' => 'accepted',
+                    'evidence_refs' => ['page-4-malformed'],
+                ]],
+            ],
+        ]]);
+
+        self::assertSame('drawing_analysis', $summary['document_understanding']['role_for_estimation']);
+        self::assertTrue($summary['document_understanding']['extracted_capabilities']['has_quantities']);
+        self::assertFalse($summary['document_understanding']['extracted_capabilities']['requires_manual_review']);
+        self::assertSame(1, $summary['document_understanding']['extracted_capabilities']['accepted_quantity_claims']);
+    }
+
+    #[Test]
+    public function incomplete_or_unaccepted_drawing_analysis_cannot_promote_quantity_evidence(): void
+    {
+        $summary = (new DocumentSemanticUnderstandingSummarizer)->summarize([[
+            'schema_version' => 4,
+            'page_number' => 4,
+            'role_completion' => [
+                'observer_literal' => true,
+                'arbiter' => false,
+            ],
+            'analysis_routing' => [
+                'observer_roles' => ['observer_literal'],
+                'arbiter_required' => true,
+            ],
+            'vision_analysis' => ['sheet_type' => 'floor_plan'],
+            'independent_observations' => ['observer_literal' => [
+                'claims' => [[
+                    'factType' => 'area',
+                    'value' => ['type' => 'number', 'data' => 72.19],
+                    'unit' => 'm2',
+                    'evidenceRef' => 'page-4-literal',
+                ]],
+            ]],
+            'document_arbitration' => [
+                'decisions' => [[
+                    'claim_id' => 'literal:1',
+                    'status' => 'unresolved',
+                    'evidence_refs' => ['page-4-literal'],
+                ]],
+            ],
+        ]]);
+
+        self::assertSame('needs_review', $summary['document_understanding']['role_for_estimation']);
+        self::assertFalse($summary['document_understanding']['extracted_capabilities']['has_quantities']);
+        self::assertTrue($summary['document_understanding']['extracted_capabilities']['requires_manual_review']);
+        self::assertSame(0, $summary['document_understanding']['extracted_capabilities']['accepted_quantity_claims']);
+    }
 }

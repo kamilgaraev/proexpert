@@ -48,12 +48,12 @@ final readonly class DocumentProcessingOutcomeResolver
             $qualityFlags = is_array($page['quality_flags'] ?? null) ? $page['quality_flags'] : [];
             $hasPartialReview = $hasPartialReview || in_array('ai_partial_result', $qualityFlags, true);
 
-            if (in_array($pageStatus, ['queued', 'processing'], true)
-                || in_array($unitStatus, ['pending', 'running'], true)) {
-                $counts['processing']++;
-            } elseif ($unitStatus === 'superseded'
+            if ($unitStatus === 'superseded'
                 && ($metadata['processing_control_status'] ?? null) === 'cancelled') {
                 $counts['cancelled']++;
+            } elseif (in_array($pageStatus, ['queued', 'processing'], true)
+                || in_array($unitStatus, ['pending', 'running'], true)) {
+                $counts['processing']++;
             } elseif ($category === 'user_action_required') {
                 $counts['needs_user_action']++;
             } elseif ($unitStatus === 'completed'

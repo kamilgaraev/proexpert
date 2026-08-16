@@ -4,16 +4,23 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisModel;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessEstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningPipeline;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningResult;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationEvidence;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -84,6 +91,7 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         $this->app->instance(FileService::class, $files);
         $provider = new RecordedFullPdfVisionProvider(
             $recording['pages'],
+            $recording['recorded_source_facts'],
             app(VisionPhysicalAttemptStore::class),
             app(AiUsageStore::class),
         );
@@ -94,6 +102,8 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         $this->app->instance(EstimateComposerModel::class, $composer);
         $auditor = new RecordedFullPdfEstimateAuditModel;
         $this->app->instance(EstimateAuditModel::class, $auditor);
+        $corrector = new RecordedFullPdfEstimateComposerCorrectionModel;
+        $this->app->instance(EstimateComposerCorrectionModel::class, $corrector);
         config()->set('estimate-generation.ocr.geometry.python_binary', 'python');
         config()->set('estimate-generation.ocr.geometry.timeout_seconds', 180);
         config()->set('estimate-generation.generation.document_cost_limit_rub', '100000.00');
@@ -111,11 +121,9 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             'processing_stage' => 'draft',
             'processing_progress' => 0,
             'input_payload' => [
-                'description' => 'house 80 m2, one floor, roof, facade, engineering systems',
+                'description' => 'Одноэтажный жилой дом. Требуется устройство цементной стяжки пола по документированной площади.',
                 'building_type' => 'house',
                 'generation_mode' => 'ai_assisted',
-                'area' => 80,
-                'floors' => 1,
                 'regional_context' => [
                     'region_name' => 'Республика Татарстан',
                     'year' => 2026,
@@ -212,7 +220,10 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertSame(82, $provider->logicalCalls);
         self::assertSame(82, $provider->physicalCalls);
         self::assertSame($this->expectedCallsByPage(), $provider->callsByPage);
-        self::assertSame(array_fill_keys(range(3, 22), 3), $provider->arbitrationClaimCounts);
+        $expectedArbitrationClaimCounts = array_fill_keys(range(3, 22), 3);
+        $expectedArbitrationClaimCounts[9] = 2;
+        self::assertSame($expectedArbitrationClaimCounts, $provider->arbitrationClaimCounts);
+        self::assertSame([2, 1], array_values($provider->arbitrationValueCounts[6]));
 
         $beforeReplay = [$provider->logicalCalls, $provider->physicalCalls];
         foreach ($terminal as $unit) {
@@ -236,6 +247,17 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
 
         $document = $document->fresh(['pages', 'processingUnits']);
         self::assertNotNull($document);
+        self::assertSame($sourceVersion, $document->units_finalized_source_version);
+        self::assertSame($sourceVersion, $document->units_reconciled_source_version);
+        self::assertNotSame('processing', $document->status);
+        self::assertSame(0, $document->processingUnits->filter(
+            static fn (EstimateGenerationProcessingUnit $unit): bool => in_array(
+                $unit->status->value,
+                ['pending', 'running'],
+                true,
+            ),
+        )->count());
+        self::assertNotSame('processing_documents', $session->fresh()->status->value);
         self::assertCount(22, $document->pages);
         self::assertSame(22, $document->pages->whereIn('status', ['ready', 'needs_review'])->count());
         foreach ($document->pages->sortBy('page_number') as $page) {
@@ -246,8 +268,24 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             $expectedObserverCount = (int) $page->page_number <= 2 ? 1 : 3;
             self::assertCount($expectedObserverCount, $observations);
             foreach ($observations as $observation) {
-                self::assertCount(1, is_array($observation['claims'] ?? null) ? $observation['claims'] : []);
+                $claims = is_array($observation['claims'] ?? null) ? $observation['claims'] : [];
+                $isMalformedObservation = (int) $page->page_number === 9
+                    && ($observation['role'] ?? null) === 'observer_risk';
+                self::assertCount($isMalformedObservation ? 0 : 1, $claims);
                 self::assertCount(1, is_array($observation['evidence'] ?? null) ? $observation['evidence'] : []);
+                if ($isMalformedObservation) {
+                    self::assertSame('project_sheet_analysis',
+                        $observation['observation']['quarantined_items'][0]['section'] ?? null);
+                }
+            }
+            if (in_array((int) $page->page_number, [7, 10], true)) {
+                $literalObservation = array_values(array_filter(
+                    $observations,
+                    static fn (array $observation): bool => ($observation['role'] ?? null) === 'observer_literal',
+                ))[0] ?? null;
+                self::assertIsArray($literalObservation);
+                self::assertNotEmpty($literalObservation['observation']['quarantined_items'] ?? []);
+                self::assertCount(1, $literalObservation['claims'] ?? []);
             }
             if ((int) $page->page_number <= 2) {
                 self::assertNull($payload['document_arbitration'] ?? null);
@@ -259,9 +297,16 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                 $quarantined = is_array($payload['document_arbitration']['quarantined_intents'] ?? null)
                     ? $payload['document_arbitration']['quarantined_intents']
                     : [];
-                self::assertGreaterThanOrEqual(2, count($decisions));
-                self::assertSame(3, count($decisions) + count($quarantined));
-                if ((int) $page->page_number === 3) {
+                self::assertGreaterThanOrEqual(
+                    1,
+                    count($decisions),
+                    'page='.(int) $page->page_number.' decisions='.json_encode($decisions, JSON_THROW_ON_ERROR),
+                );
+                self::assertSame((int) $page->page_number === 9 ? 2 : 3, array_sum(array_map(
+                    static fn (array $decision): int => count($decision['supporting_claim_ids'] ?? []),
+                    $decisions,
+                )) + count($quarantined));
+                if ((int) $page->page_number === 4) {
                     $pageClaims = array_merge(...array_values(array_map(
                         static fn (array $observation): array => is_array($observation['claims'] ?? null)
                             ? $observation['claims']
@@ -321,6 +366,61 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             ->where('entity.entity_kind', 'room')
             ->count());
 
+        $documentUnderstanding = is_array($document->facts_summary['document_understanding'] ?? null)
+            ? $document->facts_summary['document_understanding']
+            : [];
+        $pageFourPayload = $document->pages->firstWhere('page_number', 4)?->normalized_payload;
+        self::assertSame('drawing_analysis', $documentUnderstanding['role_for_estimation'] ?? null, json_encode($document->facts_summary, JSON_THROW_ON_ERROR));
+        self::assertTrue($documentUnderstanding['extracted_capabilities']['has_quantities'] ?? false, json_encode([
+            'understanding' => $documentUnderstanding,
+            'observations' => is_array($pageFourPayload) ? ($pageFourPayload['independent_observations'] ?? null) : null,
+            'arbitration' => is_array($pageFourPayload) ? ($pageFourPayload['document_arbitration'] ?? null) : null,
+        ], JSON_THROW_ON_ERROR));
+
+        $projectModels = app(ProjectModelRepository::class);
+        $acceptedAreaFacts = array_values(array_filter(
+            $projectModels->currentFacts(
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->id,
+            ),
+            static fn ($fact): bool => $fact->type === 'area'
+                && $fact->status === 'confirmed'
+                && $fact->sourceVersion === $sourceVersion,
+        ));
+        self::assertCount(1, $acceptedAreaFacts);
+        $acceptedAreaFact = $acceptedAreaFacts[0];
+        self::assertIsNumeric($acceptedAreaFact->value);
+        $acceptedArea = (float) $acceptedAreaFact->value;
+        self::assertSame((float) $recording['recorded_source_facts']['total_area_m2'], $acceptedArea);
+
+        $areaPage = $document->pages()->where('page_number', 4)->sole();
+        $planningTakeoff = $document->quantityTakeoffs()->create([
+            'session_id' => $session->id,
+            'page_id' => $areaPage->id,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'source_element_ids' => [],
+            'scope_key' => 'rough_floor_area',
+            'work_intent' => ['scope' => 'rough_finishing', 'operation' => 'cement_screed'],
+            'name' => 'Площадь цементной стяжки по листу общих данных',
+            'unit' => 'm2',
+            'quantity' => $acceptedArea,
+            'formula' => 'document_total_area',
+            'confidence' => 0.91,
+            'source_refs' => [[
+                'document_id' => (int) $document->id,
+                'page_number' => 4,
+                'source_version' => $sourceVersion,
+            ]],
+            'normalized_payload' => [
+                'review_required' => false,
+                'accepted_project_fact_id' => $acceptedAreaFact->id,
+                'accepted_project_fact_version' => $acceptedAreaFact->version,
+            ],
+        ]);
+        self::assertSame($acceptedArea, (float) $planningTakeoff->quantity);
+
         app(ProjectUnderstandingCoordinator::class)->refresh(
             (int) $organization->id,
             (int) $project->id,
@@ -335,18 +435,48 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             (int) $session->id,
         );
         self::assertNotEmpty($questions);
-        self::assertMatchesRegularExpression('/^project_question_[a-f0-9]{32}$/D', (string) $questions[0]['code']);
+        $materialQuestion = array_values(array_filter(
+            $questions,
+            static fn (array $question): bool => in_array(
+                5,
+                is_array($question['source_locator']['page_numbers'] ?? null)
+                    ? $question['source_locator']['page_numbers']
+                    : [],
+                true,
+            ),
+        ))[0] ?? null;
+        self::assertIsArray($materialQuestion);
+        self::assertMatchesRegularExpression('/^project_question_[a-f0-9]{32}$/D', (string) $materialQuestion['code']);
         self::assertSame(
             'В документах указаны разные значения для «материал». Какое значение использовать?',
-            $questions[0]['subject'],
+            $materialQuestion['subject'],
         );
-        self::assertSame([5], $questions[0]['source_locator']['page_numbers']);
-        self::assertSame($sourceVersion, $questions[0]['source_version']);
+        self::assertSame([5], $materialQuestion['source_locator']['page_numbers']);
+        self::assertSame($sourceVersion, $materialQuestion['source_version']);
+        self::assertSame($synthesis->selectedConflictId, $materialQuestion['source_locator']['conflict_id']);
+        self::assertSame(
+            [['type' => 'choice_quarantined', 'count' => 1]],
+            $materialQuestion['source_locator']['limitations'],
+        );
+        self::assertNotContains(str_repeat('Повреждённый вариант ', 9), array_column($materialQuestion['choices'], 'label'));
+        self::assertContains('other', array_column($materialQuestion['choices'], 'value'));
+        self::assertContains('leave_unresolved', array_column($materialQuestion['choices'], 'value'));
 
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('can')->willReturn(true);
         $this->app->instance(AuthorizationService::class, $authorization);
-        $selectedResponse = (string) ($questions[0]['choices'][0]['value'] ?? '');
+        $reanalysis = new RecordedFullPdfPlanningReanalysisTrigger(app(ProjectPlanningPipeline::class));
+        $this->app->instance(PlanningReanalysisTrigger::class, $reanalysis);
+        $selectedChoice = array_values(array_filter(
+            $materialQuestion['choices'],
+            static fn (array $choice): bool => ! in_array(
+                $choice['value'] ?? null,
+                ['other', 'leave_unresolved'],
+                true,
+            ),
+        ))[0] ?? null;
+        self::assertIsArray($selectedChoice);
+        $selectedResponse = (string) ($selectedChoice['value'] ?? '');
         self::assertNotSame('', $selectedResponse);
         $answer = app(AnswerEstimateClarification::class)->handle(
             $user,
@@ -356,13 +486,31 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                 (int) $project->id,
                 (int) $user->id,
                 'full-pdf-question-answer-0001',
-                (string) $questions[0]['source_version'],
-                (string) $questions[0]['answer_fingerprint'],
+                (string) $materialQuestion['source_version'],
+                (string) $materialQuestion['answer_fingerprint'],
             ),
-            (string) $questions[0]['code'],
+            (string) $materialQuestion['code'],
             $selectedResponse,
         );
         self::assertSame('answered', $answer->status);
+        self::assertInstanceOf(ProjectPlanningResult::class, $reanalysis->result);
+        self::assertTrue($reanalysis->result->isReadyForCompleteness(), json_encode([
+            'status' => $reanalysis->result->status,
+            'limitations' => $reanalysis->result->limitations,
+            'source_version' => $reanalysis->result->sourceVersion,
+            'input_fingerprint' => $reanalysis->result->inputFingerprint,
+            'current_fact_states' => DB::table('estimate_generation_project_model_fact_projections as projection')
+                ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
+                ->where('projection.session_id', $session->id)
+                ->where('projection.is_current', true)
+                ->selectRaw('fact.assertion_type, fact.fact_status, fact.fact_origin, count(*) as aggregate')
+                ->groupBy('fact.assertion_type', 'fact.fact_status', 'fact.fact_origin')
+                ->orderBy('fact.assertion_type')
+                ->orderBy('fact.fact_status')
+                ->get()
+                ->map(static fn (object $row): array => (array) $row)
+                ->all(),
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         self::assertSame(1, $synthesis->physicalCalls);
         self::assertSame(1, DB::table('estimate_generation_project_model_fact_projections as projection')
             ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
@@ -371,11 +519,52 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             ->where('fact.assertion_type', 'area')
             ->where('fact.fact_status', 'confirmed')
             ->count());
+        $remainingQuestions = app(ListEstimateClarifications::class)->handle(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+        );
+        self::assertSame([], $remainingQuestions, json_encode(array_map(
+            static fn (array $question): array => [
+                'subject' => $question['subject'] ?? null,
+                'pages' => $question['source_locator']['page_numbers'] ?? [],
+                'choices' => array_column($question['choices'] ?? [], 'label'),
+            ],
+            $remainingQuestions,
+        ), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         self::assertSame([], app(ListEstimateClarifications::class)->handle(
             (int) $organization->id,
             (int) $project->id,
             (int) $session->id,
         ));
+
+        $planningCapture = $projectModels->snapshotForPlanning(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+            10_001,
+        );
+        $technology = $projectModels->currentTechnologyRecommendations(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+        );
+        $completeness = $projectModels->currentCompleteness(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+        );
+        $stageFiveDiagnostic = json_encode([
+            'token' => $planningCapture['token'],
+            'technology' => $technology,
+            'completeness' => $completeness,
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        self::assertIsArray($technology, $stageFiveDiagnostic);
+        self::assertIsArray($completeness, $stageFiveDiagnostic);
+        self::assertTrue($technology['is_current'] ?? false, $stageFiveDiagnostic);
+        self::assertTrue($completeness['is_current'] ?? false, $stageFiveDiagnostic);
+        self::assertSame($planningCapture['token'], $technology['input_fingerprint'] ?? null, $stageFiveDiagnostic);
+        self::assertSame($planningCapture['token'], $completeness['input_fingerprint'] ?? null, $stageFiveDiagnostic);
 
         $generationAttemptId = (string) Str::uuid();
         $session->refresh();
@@ -453,8 +642,20 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                         'retrieval_issues' => $item['normative_retrieval']['blocking_issues'] ?? null,
                         'price_status' => $item['price_snapshot']['status'] ?? null,
                     ], $payload['draft']['stage6_candidate_rows'] ?? []),
-                ], JSON_THROW_ON_ERROR) : $expectedStage->value;
+                ], JSON_THROW_ON_ERROR) : json_encode([
+                    'stage' => $expectedStage->value,
+                    'regional_context' => $payload['regional_context'] ?? null,
+                    'normative_context_pin' => $payload['normative_context_pin'] ?? null,
+                    'candidates' => $this->workItemDiagnostics($localEstimates),
+                ], JSON_THROW_ON_ERROR);
                 self::assertGreaterThan(0, $this->workItemCount($localEstimates), $diagnostic);
+                if ($expectedStage === ProcessingStage::PlanWorkItems) {
+                    self::assertSame('pinned', $payload['normative_context_pin']['status'] ?? null, $diagnostic);
+                    self::assertNotNull(
+                        $this->workItemDiagnostics($localEstimates)[0]['quantity_evidence']['formula_inputs']['snapshot_identity']['input_fingerprint'] ?? null,
+                        $diagnostic,
+                    );
+                }
             }
         }
         $session->refresh();
@@ -498,7 +699,9 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             $normativeContext['estimate_regional_price_version_id'],
             $pricedItem['price_snapshot']['version_id'] ?? null,
         );
-        self::assertTrue(BigDecimal::of((string) $pricedItem['quantity'])->isEqualTo('80'));
+        self::assertTrue(BigDecimal::of((string) $pricedItem['quantity'])->isEqualTo(
+            (string) $recording['recorded_source_facts']['total_area_m2'],
+        ));
         $resourceTotal = BigDecimal::zero();
         foreach (['materials', 'labor', 'machinery', 'other_resources'] as $resourceGroup) {
             foreach ($pricedItem[$resourceGroup] ?? [] as $resource) {
@@ -510,12 +713,56 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertTrue($resourceTotal->isEqualTo((string) $pricedItem['total_cost']));
         self::assertSame(1, $composer->logicalCalls);
         self::assertSame(1, $composer->physicalCalls);
-        self::assertSame(1, $auditor->logicalCalls);
-        self::assertSame(1, $auditor->physicalCalls);
-        self::assertSame(
-            85,
-            $provider->physicalCalls + $synthesis->physicalCalls + $composer->physicalCalls + $auditor->physicalCalls,
-        );
+        self::assertSame(2, $auditor->logicalCalls);
+        self::assertSame(2, $auditor->physicalCalls);
+        self::assertSame(1, $corrector->logicalCalls);
+        self::assertSame(1, $corrector->physicalCalls);
+        self::assertSame('accepted', $draft['independent_audit']['status'] ?? null);
+        self::assertSame(1, $draft['independent_audit']['correction_cycles'] ?? null);
+        self::assertCount(2, $draft['independent_audit']['history'] ?? []);
+        $beforeFullReplay = [
+            'model_calls' => [
+                $provider->logicalCalls, $provider->physicalCalls,
+                $synthesis->logicalCalls, $synthesis->physicalCalls,
+                $composer->logicalCalls, $composer->physicalCalls,
+                $auditor->logicalCalls, $auditor->physicalCalls,
+                $corrector->logicalCalls, $corrector->physicalCalls,
+            ],
+            'usage_count' => DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count(),
+            'usage_cost' => (string) DB::table('estimate_generation_ai_usage')
+                ->where('session_id', $session->id)
+                ->sum('cost_amount'),
+            'role_runs' => DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->count(),
+            'checkpoints' => DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)->count(),
+            'project_facts' => DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count(),
+            'draft_hash' => hash('sha256', json_encode($session->draft_payload, JSON_THROW_ON_ERROR)),
+        ];
+
+        try {
+            $pipeline->run($generationSnapshot);
+            self::fail('Completed pipeline replay must be rejected by the exact state-version fence.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState $error) {
+            self::assertStringContainsString('no longer has state version', $error->getMessage());
+        }
+        $session->refresh();
+
+        self::assertSame($beforeFullReplay, [
+            'model_calls' => [
+                $provider->logicalCalls, $provider->physicalCalls,
+                $synthesis->logicalCalls, $synthesis->physicalCalls,
+                $composer->logicalCalls, $composer->physicalCalls,
+                $auditor->logicalCalls, $auditor->physicalCalls,
+                $corrector->logicalCalls, $corrector->physicalCalls,
+            ],
+            'usage_count' => DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count(),
+            'usage_cost' => (string) DB::table('estimate_generation_ai_usage')
+                ->where('session_id', $session->id)
+                ->sum('cost_amount'),
+            'role_runs' => DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->count(),
+            'checkpoints' => DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)->count(),
+            'project_facts' => DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count(),
+            'draft_hash' => hash('sha256', json_encode($session->draft_payload, JSON_THROW_ON_ERROR)),
+        ]);
     }
 
     private function workItemCount(mixed $localEstimates): int
@@ -528,6 +775,31 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         }
 
         return $count;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function workItemDiagnostics(mixed $localEstimates): array
+    {
+        $diagnostics = [];
+        foreach (is_array($localEstimates) ? $localEstimates : [] as $localEstimate) {
+            foreach (is_array($localEstimate['sections'] ?? null) ? $localEstimate['sections'] : [] as $section) {
+                foreach (is_array($section['work_items'] ?? null) ? $section['work_items'] : [] as $item) {
+                    if (! is_array($item)) {
+                        continue;
+                    }
+                    $diagnostics[] = [
+                        'key' => $item['key'] ?? null,
+                        'pricing_blocker' => $item['pricing_blocker'] ?? null,
+                        'quantity_evidence' => $item['quantity_evidence'] ?? null,
+                        'normative_match' => $item['normative_match'] ?? null,
+                        'normative_retrieval' => $item['normative_retrieval'] ?? null,
+                        'price_snapshot' => $item['price_snapshot'] ?? null,
+                    ];
+                }
+            }
+        }
+
+        return array_slice($diagnostics, 0, 5);
     }
 
     /** @param array<string, array<string, mixed>> $objects */
@@ -681,14 +953,18 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         $normId = (int) DB::table('estimate_norms')->insertGetId([
             'collection_id' => $collectionId,
             'code' => '11-01-011-01',
-            'name' => 'Устройство цементной стяжки пола',
+            'name' => 'Устройство стяжек цементных толщиной 20 мм',
             'unit' => 'm2',
             'canonical_unit' => 'm2',
             'unit_dimension' => 'area',
+            'material' => 'цементная стяжка',
+            'object_type' => 'жилой дом',
+            'valid_from' => '2020-01-01',
+            'valid_to' => '2030-12-31',
             'section_code' => '11-01',
             'section_name' => 'Стяжки',
             'work_composition' => json_encode(
-                ['Устройство цементной стяжки пола'],
+                ['Устройство стяжек цементных толщиной 20 мм'],
                 JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
             ),
             'created_at' => $now,
@@ -783,11 +1059,31 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
     }
 }
 
+final class RecordedFullPdfPlanningReanalysisTrigger implements PlanningReanalysisTrigger
+{
+    public ?ProjectPlanningResult $result = null;
+
+    public function __construct(private readonly ProjectPlanningPipeline $pipeline) {}
+
+    public function trigger(int $sessionId, ActorContext $context): void
+    {
+        $this->result = $this->pipeline->refresh(
+            $context->organizationId,
+            $context->projectId,
+            $sessionId,
+            (string) Str::uuid(),
+            1,
+        );
+    }
+}
+
 final class RecordedFullPdfProjectSynthesisModel implements ProjectSynthesisModel
 {
     public int $logicalCalls = 0;
 
     public int $physicalCalls = 0;
+
+    public ?string $selectedConflictId = null;
 
     public function synthesize(
         ProjectSynthesisInput $input,
@@ -797,19 +1093,37 @@ final class RecordedFullPdfProjectSynthesisModel implements ProjectSynthesisMode
     ): array {
         $this->logicalCalls++;
         $fingerprint = $input->fingerprint();
-        $questionConflictId = null;
-        foreach ($candidateQuestions as $candidateQuestion) {
-            if (is_string($candidateQuestion['conflict_id'] ?? null)) {
-                $questionConflictId = $candidateQuestion['conflict_id'];
-                break;
-            }
-        }
-        if ($questionConflictId === null) {
+        $currentMaterialFactIds = array_fill_keys(array_column(array_filter(
+            $input->facts,
+            static fn (array $fact): bool => ($fact['current'] ?? false) === true
+                && ($fact['type'] ?? null) === 'material',
+        ), 'id'), true);
+        $matchingQuestions = array_values(array_filter(
+            $candidateQuestions,
+            static function (array $question) use ($currentMaterialFactIds): bool {
+                $pages = $question['source_locator']['page_numbers'] ?? [];
+                $factIds = is_array($question['fact_ids'] ?? null) ? $question['fact_ids'] : [];
+
+                return in_array(5, is_array($pages) ? $pages : [], true)
+                    && $factIds !== []
+                    && array_diff($factIds, array_keys($currentMaterialFactIds)) === [];
+            },
+        ));
+        usort($matchingQuestions, static fn (array $left, array $right): int => strcmp(
+            (string) ($left['conflict_id'] ?? ''),
+            (string) ($right['conflict_id'] ?? ''),
+        ));
+        $hasPersistedDecision = $input->decisions !== [];
+        $questionConflictId = $matchingQuestions[0]['conflict_id'] ?? null;
+        if (! $hasPersistedDecision && $questionConflictId === null) {
             throw new \LogicException('recorded_project_synthesis_question_candidate_missing');
+        }
+        if (! $hasPersistedDecision) {
+            $this->selectedConflictId = $questionConflictId;
         }
         $selection = [
             'accepted_link_ids' => [],
-            'question_conflict_ids' => [$questionConflictId],
+            'question_conflict_ids' => $hasPersistedDecision ? [] : [$questionConflictId],
         ];
         $hex = hash('sha256', 'recorded-project-synthesis|'.$fingerprint);
         $attemptId = substr($hex, 0, 8).'-'.substr($hex, 8, 4).'-4'.substr($hex, 13, 3)
@@ -866,35 +1180,11 @@ final class RecordedFullPdfEstimateComposerModel implements EstimateComposerMode
             'missing_document_recommendations' => [],
         ], $input->candidates);
         if ($intents === []) {
-            $quantity = array_values(array_filter(
-                $input->derivedQuantities,
-                static fn (array $quantity): bool => ($quantity['unit'] ?? null) === 'm2'
-                    && is_numeric($quantity['value'] ?? null)
-                    && (float) $quantity['value'] > 0,
-            ))[0] ?? null;
-            $source = array_values(array_filter(
-                $input->facts,
-                static fn (array $fact): bool => ($fact['status'] ?? null) === 'confirmed'
-                    && ($fact['type'] ?? null) === 'area'
-                    && is_numeric($fact['value'] ?? null),
-            ))[0] ?? null;
-            if (is_array($source) && is_array($quantity) && is_string($quantity['id'] ?? null)) {
-                $intents[] = [
-                    'kind' => 'supplementary',
-                    'candidate_id' => null,
-                    'work_key' => 'floor-screed-from-documented-area',
-                    'name' => 'Устройство цементной стяжки пола',
-                    'derived_quantity_id' => $quantity['id'],
-                    'source_fact_ids' => [$source['id']],
-                    'technology_package_candidate' => null,
-                    'assumptions' => [],
-                    'exclusions' => [],
-                    'missing_document_recommendations' => [],
-                ];
-            }
-        }
-        if ($intents === []) {
-            throw new \RuntimeException('recorded_composer_source_grounding_missing');
+            throw new \RuntimeException('recorded_composer_requires_production_planning_candidates '.json_encode([
+                'derived_quantities' => $input->derivedQuantities,
+                'facts' => $input->facts,
+                'missing_documents' => $input->missingDocuments,
+            ], JSON_THROW_ON_ERROR));
         }
         $attemptId = RecordedFullPdfPhysicalAttempt::uuid('composer|'.$input->fingerprint());
         $onPhysicalAttemptReserved($attemptId);
@@ -919,14 +1209,83 @@ final class RecordedFullPdfEstimateAuditModel implements EstimateAuditModel
         $this->logicalCalls++;
         $attemptId = RecordedFullPdfPhysicalAttempt::uuid('audit|'.$input->fingerprint());
         $onAttemptStarted($attemptId);
+        $workItem = self::firstWorkItem($input->draft);
+        $factId = (string) ($input->facts[0]['id'] ?? '');
+        if ($workItem === null || $factId === '') {
+            throw new \RuntimeException('recorded_auditor_grounding_missing');
+        }
+        $result = $input->cycle === 0 ? [
+            'accepted' => false,
+            'findings' => [[
+                'finding_id' => 'full-pdf-quantity-review',
+                'type' => 'quantity_mismatch',
+                'severity' => 'material',
+                'item_key' => $workItem['key'],
+                'source_fact_ids' => [$factId],
+                'source_locator' => ['fact_id' => $factId],
+                'reason' => 'Количество требует повторной сверки с документированной площадью.',
+                'impact' => 'Неточная величина изменяет стоимость работы и связанных ресурсов.',
+                'recommendation' => 'Повторно применить каноническое количество из проверенного факта.',
+                'correction' => ['operation' => 'operator_review'],
+            ]],
+        ] : ['accepted' => true, 'findings' => []];
         RecordedFullPdfPhysicalAttempt::complete($attemptId, [
             'recording' => 'ar-1-estimate-audit-v1',
-            'accepted' => true,
-            'findings' => [],
+            ...$result,
         ]);
         $this->physicalCalls++;
 
-        return ['accepted' => true, 'findings' => []];
+        return $result;
+    }
+
+    /** @return array<string,mixed>|null */
+    public static function firstWorkItem(array $draft): ?array
+    {
+        foreach ($draft['local_estimates'] ?? [] as $estimate) {
+            foreach (is_array($estimate) ? ($estimate['sections'] ?? []) : [] as $section) {
+                foreach (is_array($section) ? ($section['work_items'] ?? []) : [] as $item) {
+                    if (is_array($item) && is_string($item['key'] ?? null)) {
+                        return $item;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+}
+
+final class RecordedFullPdfEstimateComposerCorrectionModel implements EstimateComposerCorrectionModel
+{
+    public int $logicalCalls = 0;
+
+    public int $physicalCalls = 0;
+
+    public function correct(EstimateComposerCorrectionInput $input, callable $onPhysicalAttemptReserved): array
+    {
+        $this->logicalCalls++;
+        $item = RecordedFullPdfEstimateAuditModel::firstWorkItem($input->audit->draft);
+        $quantity = $input->audit->derivedQuantities[0] ?? null;
+        if (! is_array($item) || ! is_array($quantity)
+            || ! is_string($item['key'] ?? null) || ! is_string($quantity['id'] ?? null)) {
+            throw new \RuntimeException('recorded_correction_grounding_missing');
+        }
+        $corrections = [[
+            'operation' => 'replace_quantity',
+            'finding_id' => (string) $input->findings[0]['finding_id'],
+            'target_item_key' => $item['key'],
+            'expected_target_fingerprint' => ApplyComposerCorrectionCycle::itemFingerprint($item),
+            'derived_quantity_id' => $quantity['id'],
+        ]];
+        $attemptId = RecordedFullPdfPhysicalAttempt::uuid('correction|'.$input->fingerprint());
+        $onPhysicalAttemptReserved($attemptId);
+        RecordedFullPdfPhysicalAttempt::complete($attemptId, [
+            'recording' => 'ar-1-estimate-correction-v1',
+            'corrections' => $corrections,
+        ]);
+        $this->physicalCalls++;
+
+        return ['corrections' => $corrections];
     }
 }
 
@@ -974,12 +1333,16 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
     /** @var array<int, int> */
     public array $arbitrationClaimCounts = [];
 
+    /** @var array<int, array<string, int>> */
+    public array $arbitrationValueCounts = [];
+
     /** @var array<int, array<string, mixed>> */
     private array $pages = [];
 
     /** @param list<array<string, mixed>> $pages */
     public function __construct(
         array $pages,
+        private readonly array $recordedSourceFacts,
         private readonly VisionPhysicalAttemptStore $physicalAttempts,
         private readonly AiUsageStore $usage,
     ) {
@@ -1073,21 +1436,72 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
         $profile = str_replace('observer_', '', $role);
         $evidenceKey = sprintf('page-%d-%s', $input->pageNumber, $profile);
         $factValue = match (true) {
-            $input->pageNumber === 3 && $profile === 'literal' => 80.0,
-            $input->pageNumber === 5 && $profile === 'literal' => 'Газобетон',
-            $input->pageNumber === 5 && $profile === 'construction' => 'Керамический блок',
+            $input->pageNumber === 4 && $profile === 'literal' => (float) $this->recordedSourceFacts['total_area_m2'],
+            $input->pageNumber === 5 && $profile === 'literal' => $this->recordedSourceFacts['majority_wall_material'],
+            $input->pageNumber === 5 && $profile === 'construction' => $this->recordedSourceFacts['majority_wall_material'],
+            $input->pageNumber === 5 && $profile === 'risk' => str_repeat('Повреждённый вариант ', 9),
+            $input->pageNumber === 6 && in_array($profile, ['literal', 'risk'], true) => $this->recordedSourceFacts['majority_wall_material'],
+            $input->pageNumber === 6 && $profile === 'construction' => $this->recordedSourceFacts['minority_wall_material'],
             $profile === 'literal' => (string) $page['title'],
             $profile === 'construction' => 'Кладка и отделка учитываются раздельно',
-            $profile === 'risk' => $input->pageNumber === 5 ? 'Требуется подтвердить толщину наружной стены' : 'Требуется проверка размерных границ',
+            $profile === 'risk' => 'Требуется проверка размерных границ',
             default => 'Наблюдение',
         };
         $factType = match (true) {
-            $input->pageNumber === 3 && $profile === 'literal' => 'area',
-            $input->pageNumber === 5 && in_array($profile, ['literal', 'construction'], true) => 'material',
+            $input->pageNumber === 4 && $profile === 'literal' => 'area',
+            in_array($input->pageNumber, [5, 6], true) => 'material',
             $profile === 'literal' => 'note',
             $profile === 'construction' => 'material',
             default => 'risk',
         };
+        $facts = [[
+            'entityKey' => match (true) {
+                $input->pageNumber === 4 && $profile === 'literal' => 'room:main',
+                in_array($input->pageNumber, [5, 6], true) => 'building-1',
+                default => sprintf('sheet:page-%d:%s', $input->pageNumber, $profile),
+            },
+            'factType' => $factType,
+            'value' => ['type' => is_float($factValue) ? 'number' : 'string', 'data' => $factValue],
+            'unit' => is_float($factValue) ? 'm2' : null,
+            'evidenceRef' => $evidenceKey,
+            'sourcePolygonOrNativeRef' => [[0.1, 0.1], [0.9, 0.9]],
+            'confidence' => 0.91,
+            'contractVersion' => 'sheet-analysis:v3',
+        ]];
+        if ($input->pageNumber === 7 && $profile === 'literal') {
+            $facts[] = [
+                ...$facts[0],
+                'entityKey' => 'malformed-secondary-observation',
+                'evidenceRef' => 'unknown-evidence',
+                'confidence' => 1.2,
+            ];
+        }
+        if ($input->pageNumber === 10 && $profile === 'literal') {
+            $facts[] = [
+                ...$facts[0],
+                'entityKey' => 'unknown-optional-field-observation',
+                'unknown_optional_field' => ['provider' => 'future-version'],
+            ];
+        }
+        $elements = $input->pageNumber === 8 && $profile === 'literal' ? [[
+            'key' => 'malformed-element',
+            'type' => 'text',
+            'label' => 'Повреждённая геометрия наблюдения',
+            'polygon' => [[0.1, 0.1]],
+            'confidence' => 0.9,
+            'evidence_ref' => $evidenceKey,
+        ]] : [];
+        $projectSheetAnalysis = $input->pageNumber === 9 && $profile === 'risk'
+            ? [
+                'contractVersion' => 'malformed-observation:v1',
+                'role' => 'unknown',
+                'facts' => 'malformed-observation',
+            ]
+            : [
+                'contractVersion' => 'sheet-analysis:v3',
+                'role' => 'unknown',
+                'facts' => $facts,
+            ];
         $payload = [
             'schema_version' => 4,
             'sheet_type' => in_array($page['kind'], ['drawing'], true) ? 'floor_plan' : 'schedule',
@@ -1102,26 +1516,11 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
                     'explicit' => $profile === 'literal',
                 ],
             ]],
-            'elements' => [],
+            'elements' => $elements,
             'scale_candidates' => [],
             'warnings' => ['scale_missing'],
             'visual_attributes' => [],
-            'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v3',
-                'role' => 'unknown',
-                'facts' => [[
-                    'entityKey' => $input->pageNumber === 3 && $profile === 'literal'
-                        ? 'room:main'
-                        : 'building-1',
-                    'factType' => $factType,
-                    'value' => ['type' => is_float($factValue) ? 'number' : 'string', 'data' => $factValue],
-                    'unit' => is_float($factValue) ? 'm2' : null,
-                    'evidenceRef' => $evidenceKey,
-                    'sourcePolygonOrNativeRef' => [[0.1, 0.1], [0.9, 0.9]],
-                    'confidence' => 0.91,
-                    'contractVersion' => 'sheet-analysis:v3',
-                ]],
-            ],
+            'project_sheet_analysis' => $projectSheetAnalysis,
             'analysis_routing' => [
                 'page_kind' => $page['kind'],
                 'requested_depth' => $page['route'],
@@ -1154,31 +1553,67 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
     {
         $claims = $input->auxiliaryMetadata['arbitration']['claims'] ?? [];
         $this->arbitrationClaimCounts[$input->pageNumber] = is_array($claims) ? count($claims) : 0;
-        $decisions = array_map(function (array $claim) use ($input): array {
-            $claimId = (string) $claim['id'];
-            $role = (string) $claim['role'];
-            $evidenceRef = (string) $claim['evidence_ref'];
-            $hasExplicitEvidence = ($claim['explicit_evidence'] ?? false) === true;
-            $isConstruction = str_contains($role, 'construction');
-            $isConstructionConflict = $input->pageNumber === 5 && $isConstruction;
+        $groups = [];
+        foreach (is_array($claims) ? $claims : [] as $claim) {
+            $identity = implode('|', [
+                (string) ($claim['entity_key'] ?? ''),
+                (string) ($claim['fact_type'] ?? ''),
+                json_encode($claim['value'] ?? null, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                (string) ($claim['unit'] ?? ''),
+            ]);
+            $groups[$identity][] = $claim;
+        }
+        $counts = [];
+        foreach ($groups as $identity => $group) {
+            $counts[$identity] = count($group);
+        }
+        arsort($counts, SORT_NUMERIC);
+        $this->arbitrationValueCounts[$input->pageNumber] = $counts;
+        $decisions = [];
+        foreach ($groups as $group) {
+            $representative = $group[0];
+            $supportingClaimIds = array_values(array_map(
+                static fn (array $claim): string => (string) $claim['id'],
+                $group,
+            ));
+            $evidenceRefs = array_values(array_unique(array_map(
+                static fn (array $claim): string => (string) $claim['evidence_ref'],
+                $group,
+            )));
+            $hasExplicitEvidence = in_array(true, array_map(
+                static fn (array $claim): bool => ($claim['explicit_evidence'] ?? false) === true,
+                $group,
+            ), true);
+            $majority = count($group) >= 2;
+            $isMaterialConflict = in_array($input->pageNumber, [5, 6], true)
+                && ($representative['fact_type'] ?? null) === 'material';
+            if ($input->pageNumber === 6 && ! $majority) {
+                $decisions[] = [
+                    'claim_id' => (string) $representative['id'],
+                    'status' => 'minority',
+                    'supporting_claim_ids' => [(string) $representative['id']],
+                    'evidence_refs' => [(string) $representative['evidence_ref']],
+                    'reason_code' => 'minority_without_explicit_source_evidence',
+                ];
 
-            return [
-                'claim_id' => $claimId,
-                'status' => match (true) {
-                    $hasExplicitEvidence => 'accepted',
-                    $isConstructionConflict => 'unresolved',
-                    default => 'candidate',
-                },
-                'supporting_claim_ids' => [$claimId],
-                'evidence_refs' => [$evidenceRef],
+                continue;
+            }
+            $decisions[] = [
+                'claim_id' => (string) $representative['id'],
+                'status' => $isMaterialConflict && ! $majority && ! $hasExplicitEvidence
+                    ? 'unresolved'
+                    : 'accepted',
+                'supporting_claim_ids' => $supportingClaimIds,
+                'evidence_refs' => $evidenceRefs,
                 'reason_code' => match (true) {
+                    $majority && $hasExplicitEvidence => 'majority_with_explicit_source_evidence',
+                    $majority => 'independent_observer_majority',
                     $hasExplicitEvidence => 'explicit_source_observation',
-                    $isConstructionConflict => 'source_conflict',
-                    $isConstruction => 'construction_interpretation_requires_review',
-                    default => 'bounded_risk_observation',
+                    $isMaterialConflict => 'preserved_source_conflict_for_project_review',
+                    default => 'bounded_observer_observation',
                 },
             ];
-        }, $claims);
+        }
 
         return new VisionAnalysisData(
             'detail',

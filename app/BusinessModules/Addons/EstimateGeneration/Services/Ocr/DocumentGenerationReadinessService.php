@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenera
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DocumentReadinessClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityReviewPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
@@ -18,8 +19,6 @@ use Illuminate\Support\Collection;
 class DocumentGenerationReadinessService
 {
     private const PENDING_STATUSES = ['uploaded', 'queued', 'processing'];
-
-    private const ACTION_REQUIRED_STATUSES = ['failed', 'needs_review'];
 
     private const REQUIRED_CAPABILITY_KEYS = [
         'has_room_areas',
@@ -40,6 +39,8 @@ class DocumentGenerationReadinessService
 
     private DocumentSystemFailureDetector $systemFailures;
 
+    private DocumentReadinessClassifier $readinessClassifier;
+
     public function __construct(
         private readonly ?EffectiveSettingsResolver $settingsResolver = null,
         ?EstimateGenerationQualityReviewPolicy $qualityReview = null,
@@ -47,6 +48,7 @@ class DocumentGenerationReadinessService
     ) {
         $this->qualityReview = $qualityReview ?? new EstimateGenerationQualityReviewPolicy;
         $this->systemFailures = $systemFailures ?? new DocumentSystemFailureDetector;
+        $this->readinessClassifier = new DocumentReadinessClassifier($this->systemFailures);
     }
 
     /**
@@ -60,7 +62,12 @@ class DocumentGenerationReadinessService
         $hasSystemFailure = $documents->contains(
             fn (EstimateGenerationDocument $document): bool => $this->systemFailures->detected($document),
         );
-        $effective = $documents->isEmpty() || $hasSystemFailure
+        $needsQualitySettings = $documents->contains(
+            fn (EstimateGenerationDocument $document): bool => ! $this->systemFailures->detected($document)
+                && ! $this->readinessClassifier->requiresAction($document)
+                && ! in_array((string) $document->status, self::PENDING_STATUSES, true),
+        );
+        $effective = ! $needsQualitySettings || $hasSystemFailure
             ? null
             : $this->settingsResolver?->forOperation(
                 AiOperationContext::deterministicId(implode('|', [
@@ -169,9 +176,10 @@ class DocumentGenerationReadinessService
         ?EffectiveEstimateGenerationSettings $settings,
     ): array {
         $status = (string) ($document->status ?? 'uploaded');
-        $isPending = in_array($status, self::PENDING_STATUSES, true);
+        $requiresCanonicalAction = $this->readinessClassifier->requiresAction($document);
+        $isPending = in_array($status, self::PENDING_STATUSES, true) && ! $requiresCanonicalAction;
         $isSystemFailure = $this->systemFailures->detected($document);
-        $isActionStatus = in_array($status, self::ACTION_REQUIRED_STATUSES, true) && ! $isSystemFailure;
+        $isActionStatus = $requiresCanonicalAction && ! $isSystemFailure;
         $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
         $usesMultiAgentAnalysis = array_key_exists('analysis_roles_complete', $factsSummary);
         $analysisRolesComplete = ($factsSummary['analysis_roles_complete'] ?? false) === true;

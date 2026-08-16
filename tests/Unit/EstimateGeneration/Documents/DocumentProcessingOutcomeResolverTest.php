@@ -10,6 +10,28 @@ use PHPUnit\Framework\TestCase;
 
 final class DocumentProcessingOutcomeResolverTest extends TestCase
 {
+    public function test_cancelled_terminal_unit_overrides_a_stale_queued_page_projection(): void
+    {
+        $outcome = (new DocumentProcessingOutcomeResolver)->resolve(
+            [['processing_unit_id' => 1, 'status' => 'queued', 'quality_flags' => []]],
+            [[
+                'id' => 1,
+                'status' => 'superseded',
+                'output_count' => 0,
+                'failure_code' => null,
+                'metadata' => [
+                    'processing_control_status' => 'cancelled',
+                    'processing_control_reason' => 'operator_stop',
+                ],
+            ]],
+        );
+
+        self::assertSame('cancelled', $outcome->type);
+        self::assertSame('needs_review', $outcome->documentStatus);
+        self::assertSame(0, $outcome->counts['processing']);
+        self::assertSame(1, $outcome->counts['cancelled']);
+    }
+
     #[Test]
     public function all_ready_pages_report_honest_completed_outcome_even_without_text(): void
     {

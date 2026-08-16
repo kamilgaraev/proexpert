@@ -89,6 +89,15 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 array_values($quantities),
             );
         }
+        $generationIdentity = [
+            'input_snapshot_hash' => $stage6Context['input_snapshot_hash'] ?? null,
+            'scope_identity' => [
+                'organization_id' => $context->organizationId,
+                'project_id' => $context->projectId,
+                'session_id' => $context->sessionId,
+                'source_version' => $stage6Context['source_version'] ?? null,
+            ],
+        ];
         $payload = $this->compiler->compile($analysis, null, true);
         $this->logProgress($context, 'baseline_compiled');
         $this->renewAfterProgress($heartbeat);
@@ -113,7 +122,12 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
-                    $mapped = $this->attachCanonicalQuantity($item, $quantities, $this->quantityResolver);
+                    $mapped = $this->attachCanonicalQuantity(
+                        $item,
+                        $quantities,
+                        $this->quantityResolver,
+                        $generationIdentity,
+                    );
                     $quantity = $mapped['quantity_evidence'] ?? null;
                     if (is_array($quantity) && ($quantity['review_blockers'] ?? []) === []) {
                         $node = $this->acceptedEvidence->materialize($context, QuantityData::fromArray($quantity), $mapped);
@@ -152,7 +166,12 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                     if (($item['composition_intent']['kind'] ?? null) !== 'supplementary') {
                         continue;
                     }
-                    $mapped = $this->attachCanonicalQuantity($item, $quantities, $this->quantityResolver);
+                    $mapped = $this->attachCanonicalQuantity(
+                        $item,
+                        $quantities,
+                        $this->quantityResolver,
+                        $generationIdentity,
+                    );
                     $quantity = $mapped['quantity_evidence'] ?? null;
                     if (is_array($quantity) && ($quantity['review_blockers'] ?? []) === []) {
                         $node = $this->acceptedEvidence->materialize($context, QuantityData::fromArray($quantity), $mapped);
@@ -274,9 +293,11 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
     private function attachCanonicalQuantity(
         array $workItem,
         array $quantities,
-        ?WorkItemQuantityResolver $quantityResolver = null
+        ?WorkItemQuantityResolver $quantityResolver = null,
+        array $generationIdentity = [],
     ): array {
-        $quantity = ($quantityResolver ?? new WorkItemQuantityResolver)->resolve($workItem, $quantities)?->toArray();
+        $quantity = ($quantityResolver ?? new WorkItemQuantityResolver)
+            ->resolve($workItem, $quantities, $generationIdentity)?->toArray();
         if (! is_array($quantity)) {
             unset($workItem['quantity'], $workItem['quantity_evidence']);
             $workItem['pricing_status'] = 'not_calculated';

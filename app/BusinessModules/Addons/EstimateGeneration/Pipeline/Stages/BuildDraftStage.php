@@ -51,6 +51,9 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
             'document_requirements' => $plan['document_requirements'],
             'object_profile' => $plan['object_profile'],
             'package_plan' => $plan['package_plan'],
+            'estimate_composition' => is_array($plan['estimate_composition'] ?? null)
+                ? $plan['estimate_composition']
+                : [],
             'source_documents' => Arr::get($analysis, 'source_documents', []),
             'local_estimates' => $data['local_estimates'],
             'traceability' => [

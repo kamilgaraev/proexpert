@@ -18,6 +18,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProce
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Organization;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Testing\TestCase;
@@ -47,13 +49,17 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
                     && getenv('RUN_ESTIMATE_GENERATION_CONTRACT_PROVISIONER') === '1'),
             'Explicit retry contract requires an isolated testing database.',
         );
-        $this->createContractTables();
+        $organization = Organization::query()->find(38)
+            ?? Organization::factory()->create(['id' => 38]);
+        Project::query()->find(52)
+            ?? Project::factory()->for($organization)->create(['id' => 52]);
+        User::query()->find(7)
+            ?? User::factory()->create(['id' => 7, 'current_organization_id' => $organization->id]);
     }
 
     protected function tearDown(): void
     {
         Mockery::close();
-        $this->dropContractTables();
         parent::tearDown();
     }
 
@@ -104,11 +110,13 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
                 'source_version' => $sourceVersion,
                 'status' => $completed ? 'completed' : 'failed',
                 'attempt_count' => $completed ? 1 : 3,
+                'output_version' => $completed ? 'sha256:'.hash('sha256', 'completed-'.$index) : null,
                 'output_count' => $completed ? 1 : 0,
                 'failure_code' => $completed ? null : ($breakerStopped ? 'breaker_stopped' : 'vision_provider_response_invalid'),
                 'failure_fingerprint' => $completed ? null : hash('sha256', 'same-system-root'),
-                'locator' => ['page' => $index],
-                'metadata' => $completed ? [] : ['failure_category' => 'terminal'],
+                'locator' => $this->unitLocator($sourceVersion, $index),
+                'metadata' => $completed ? ['fixture' => true] : ['failure_category' => 'terminal'],
+                'completed_at' => $completed ? now() : null,
                 'failed_at' => $completed ? null : now(),
             ]);
             EstimateGenerationDocumentPage::query()->create([
@@ -221,6 +229,8 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
             $unit->forceFill([
                 'status' => 'failed',
                 'attempt_count' => 3,
+                'output_version' => null,
+                'output_count' => 0,
                 'failure_code' => 'document_geometry_processing_failed',
                 'failure_fingerprint' => hash('sha256', 'same-system-root-after-retry'),
                 'metadata' => [
@@ -228,6 +238,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
                     'failure_category' => 'terminal',
                     'processing_attempt_id' => $accepted->attemptId,
                 ],
+                'completed_at' => null,
                 'failed_at' => now(),
             ])->save();
         });
@@ -316,7 +327,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
             'output_count' => 0,
             'failure_code' => 'document_geometry_processing_failed',
             'failure_fingerprint' => hash('sha256', 'resumable-system-root'),
-            'locator' => ['page' => 1],
+            'locator' => $this->unitLocator($sourceVersion, 1),
             'metadata' => ['failure_category' => 'terminal'],
             'failed_at' => now(),
         ]);
@@ -422,7 +433,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
                 'output_count' => 0,
                 'failure_code' => $failureCode,
                 'failure_fingerprint' => $fingerprint,
-                'locator' => ['page' => $index],
+                'locator' => $this->unitLocator($sourceVersion, $index),
                 'metadata' => ['failure_category' => 'terminal'],
                 'failed_at' => now(),
             ]);
@@ -437,16 +448,21 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
                 'status' => 'failed',
             ]);
         }
-        DB::table('estimate_generation_ai_usage')->insert([
-            'attempt_id' => 'old-physical-attempt',
-            'session_id' => $session->id,
-            'document_id' => $document->id,
-            'cost_amount' => '17.420000',
-            'request_context' => json_encode([
-                'processing_attempt_id' => 'old-concurrent-lineage',
-            ], JSON_THROW_ON_ERROR),
-        ]);
-        $oldUsage = DB::table('estimate_generation_ai_usage')->first();
+        DB::table('estimate_generation_ai_usage')->insert($this->usageRow(
+            $session,
+            $document,
+            EstimateGenerationDocumentPage::query()
+                ->where('document_id', $document->id)
+                ->where('page_number', 1)
+                ->firstOrFail(),
+            EstimateGenerationProcessingUnit::query()
+                ->where('document_id', $document->id)
+                ->where('unit_index', 1)
+                ->firstOrFail(),
+        ));
+        $oldUsage = DB::table('estimate_generation_ai_usage')
+            ->where('document_id', $document->id)
+            ->first();
         DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION explicit_retry_hold_document_lock() RETURNS trigger AS $$
 BEGIN
@@ -492,11 +508,21 @@ SQL);
         self::assertCount(1, array_filter($results, static fn (array $result): bool => $result['dispatches'] === 1));
         self::assertCount(1, array_unique(array_column($results, 'attempt_id')));
         self::assertCount(1, EstimateGenerationDocument::query()->findOrFail($document->id)->meta['explicit_document_retry_history']);
-        self::assertSame(1, EstimateGenerationAuditEvent::query()->count());
+        self::assertSame(1, EstimateGenerationAuditEvent::query()
+            ->where('session_id', $session->id)
+            ->count());
         $retriedDocument = EstimateGenerationDocument::query()->findOrFail($document->id);
         self::assertNotSame('old-concurrent-lineage', $retriedDocument->meta['processing_attempt_id']);
-        self::assertSame(1, DB::table('estimate_generation_ai_usage')->count());
-        self::assertEquals($oldUsage, DB::table('estimate_generation_ai_usage')->first());
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')
+            ->where('document_id', $document->id)
+            ->count());
+        self::assertEquals($oldUsage, DB::table('estimate_generation_ai_usage')
+            ->where('document_id', $document->id)
+            ->first());
+        DB::unprepared(<<<'SQL'
+DROP TRIGGER IF EXISTS explicit_retry_hold_document_lock ON estimate_generation_documents;
+DROP FUNCTION IF EXISTS explicit_retry_hold_document_lock();
+SQL);
     }
 
     public function test_terminal_retry_repair_migration_closes_only_matching_lineage(): void
@@ -557,7 +583,7 @@ SQL);
                 'output_count' => 0,
                 'failure_code' => 'document_unit_processing_failed',
                 'failure_fingerprint' => $fingerprint,
-                'locator' => ['page' => $index],
+                'locator' => $this->unitLocator($sourceVersion, $index),
                 'metadata' => ['failure_category' => 'terminal', 'processing_attempt_id' => $attemptId],
                 'started_at' => now()->subSecond(),
                 'failed_at' => now(),
@@ -625,65 +651,69 @@ SQL);
         return $result;
     }
 
-    private function createContractTables(): void
+    /** @return array<string, int|string> */
+    private function unitLocator(string $sourceVersion, int $page): array
     {
-        $this->dropContractTables();
-        DB::unprepared(<<<'SQL'
-CREATE TABLE estimate_generation_sessions (
- id bigserial PRIMARY KEY, organization_id bigint, project_id bigint, user_id bigint, status varchar(40),
- processing_stage varchar(80), processing_progress integer default 0, input_payload jsonb default '{}',
- analysis_payload jsonb, draft_payload jsonb, problem_flags jsonb default '[]', applied_estimate_id bigint,
- last_error text, failure_code varchar(80), state_version integer default 0, resume_status varchar(40),
- created_at timestamptz, updated_at timestamptz
-);
-CREATE TABLE estimate_generation_documents (
- id bigserial PRIMARY KEY, session_id bigint, organization_id bigint, project_id bigint, user_id bigint,
- filename varchar(255), mime_type varchar(255), storage_path varchar(255), status varchar(40), processing_stage varchar(80),
- progress_percent integer default 0, file_size_bytes bigint, checksum_sha256 varchar(64), source_version varchar(80),
- units_finalized_source_version varchar(80), units_reconciled_source_version varchar(80), units_reconcile_claim_token varchar(36),
- units_reconcile_lease_expires_at timestamptz, page_count integer, processed_page_count integer default 0,
- ocr_provider varchar(255), ocr_model varchar(255), ocr_attempts integer default 0, quality_score numeric,
- quality_level varchar(40), quality_flags jsonb default '[]', facts_summary jsonb default '{}', error_code varchar(80),
- error_message_key varchar(255), error_context jsonb, ocr_started_at timestamptz, ocr_finished_at timestamptz,
- ignored_at timestamptz, extracted_text text, structured_payload jsonb default '{}', meta jsonb default '{}',
- created_at timestamptz, updated_at timestamptz
-);
-CREATE TABLE estimate_generation_processing_units (
- id bigserial PRIMARY KEY, organization_id bigint, project_id bigint, session_id bigint, document_id bigint,
- unit_type varchar(40), unit_index integer, source_version varchar(80), status varchar(20), attempt_count integer default 0,
- claim_token varchar(36), lease_expires_at timestamptz, output_version varchar(80), output_count integer default 0,
- dispatch_attempt_count integer default 0, last_dispatched_at timestamptz, next_dispatch_at timestamptz,
- failure_code varchar(80), failure_fingerprint varchar(64), locator jsonb default '{}', metadata jsonb default '{}',
- started_at timestamptz, completed_at timestamptz, failed_at timestamptz, created_at timestamptz, updated_at timestamptz
-);
-CREATE TABLE estimate_generation_document_pages (
- id bigserial PRIMARY KEY, document_id bigint, processing_unit_id bigint, source_version varchar(80), output_version varchar(80),
- organization_id bigint, project_id bigint, session_id bigint, page_number integer, width integer, height integer,
- rotation integer, language_codes jsonb, text text, text_hash varchar(64), confidence numeric, raw_payload_path varchar(255),
- normalized_payload jsonb, quality_flags jsonb, status varchar(20), excluded_at timestamptz, excluded_reason text,
- retry_attempt_id varchar(36), last_retry_requested_at timestamptz, created_at timestamptz, updated_at timestamptz
-);
-CREATE TABLE estimate_generation_audit_events (
- id bigserial PRIMARY KEY, session_id bigint, package_id bigint, user_id bigint, event_type varchar(100),
- payload jsonb default '{}', created_at timestamptz, updated_at timestamptz
-);
-CREATE TABLE estimate_generation_ai_usage (
- attempt_id varchar(80) PRIMARY KEY, session_id bigint, document_id bigint,
- cost_amount numeric(18, 6), request_context jsonb default '{}'
-);
-SQL);
+        return [
+            'page' => $page,
+            'source_kind' => 'pdf',
+            'source_version' => $sourceVersion,
+            'coordinate_space' => 'pdf_page_pixels',
+            'artifact_path' => 'org-38/estimate-generation/explicit-retry.pdf',
+            'artifact_sha256' => $sourceVersion,
+            'artifact_version_id' => 'explicit-retry-fixture-v1',
+        ];
     }
 
-    private function dropContractTables(): void
-    {
-        DB::unprepared(<<<'SQL'
-DROP TABLE IF EXISTS estimate_generation_audit_events CASCADE;
-DROP TABLE IF EXISTS estimate_generation_ai_usage CASCADE;
-DROP TABLE IF EXISTS estimate_generation_document_pages CASCADE;
-DROP TABLE IF EXISTS estimate_generation_processing_units CASCADE;
-DROP TABLE IF EXISTS estimate_generation_documents CASCADE;
-DROP TABLE IF EXISTS estimate_generation_sessions CASCADE;
-DROP FUNCTION IF EXISTS explicit_retry_hold_document_lock();
-SQL);
+    /** @return array<string, mixed> */
+    private function usageRow(
+        EstimateGenerationSession $session,
+        EstimateGenerationDocument $document,
+        EstimateGenerationDocumentPage $page,
+        EstimateGenerationProcessingUnit $unit,
+    ): array {
+        return [
+            'attempt_id' => (string) Str::uuid(),
+            'correlation_id' => (string) Str::uuid(),
+            'immutable_fingerprint' => 'sha256:'.hash('sha256', 'explicit-retry-usage'),
+            'organization_id' => $session->organization_id,
+            'project_id' => $session->project_id,
+            'session_id' => $session->id,
+            'document_id' => $document->id,
+            'page_id' => $page->id,
+            'unit_id' => $unit->id,
+            'stage' => 'understand_documents',
+            'operation' => 'vision',
+            'attempt_ordinal' => 1,
+            'provider' => 'timeweb',
+            'requested_model' => 'fixture-model',
+            'reported_model' => 'fixture-model',
+            'usage_status' => 'measured',
+            'status' => 'succeeded',
+            'http_code' => 200,
+            'input_tokens' => 1,
+            'cached_input_tokens' => 0,
+            'output_tokens' => 1,
+            'reasoning_tokens' => 0,
+            'image_count' => 0,
+            'image_detail' => null,
+            'page_count' => 0,
+            'duration_ms' => 1,
+            'price_snapshot' => json_encode([
+                'source' => 'fixture',
+                'version' => 'explicit-retry-v1',
+                'currency' => 'RUB',
+                'input_per_million' => '0',
+                'cached_input_per_million' => '0',
+                'output_per_million' => '0',
+                'reasoning_mode' => 'excluded_from_output',
+                'effective_at' => now()->format('Y-m-d\\TH:i:sP'),
+            ], JSON_THROW_ON_ERROR),
+            'cost_amount' => '17.42000000',
+            'currency' => 'RUB',
+            'pricing_status' => 'available',
+            'created_at' => now(),
+            'request_context' => json_encode((object) [], JSON_THROW_ON_ERROR),
+        ];
     }
 }

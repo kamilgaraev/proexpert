@@ -23,6 +23,8 @@ final readonly class DocumentSemanticUnderstandingSummarizer
         $factOverflow = false;
         $roleRunsComplete = true;
         $arbitratedPageCount = 0;
+        $schemaFourPageKinds = [];
+        $acceptedQuantityClaimIds = [];
 
         foreach ($payloads as $payload) {
             if (! is_array($payload)) {
@@ -42,6 +44,16 @@ final readonly class DocumentSemanticUnderstandingSummarizer
                     && array_diff($expectedRoles, array_keys($completion)) === []
                     && ! in_array(false, array_intersect_key($completion, array_flip($expectedRoles)), true);
                 $arbitratedPageCount++;
+                $visionAnalysis = is_array($payload['vision_analysis'] ?? null) ? $payload['vision_analysis'] : [];
+                $pageKind = is_string($routing['page_kind'] ?? null)
+                    ? trim($routing['page_kind'])
+                    : (is_string($visionAnalysis['sheet_type'] ?? null) ? trim($visionAnalysis['sheet_type']) : '');
+                if ($pageKind !== '') {
+                    $schemaFourPageKinds[$pageKind] = true;
+                }
+                foreach ($this->acceptedQuantityClaimIds($payload) as $claimId) {
+                    $acceptedQuantityClaimIds[$claimId] = true;
+                }
 
                 continue;
             }
@@ -103,11 +115,31 @@ final readonly class DocumentSemanticUnderstandingSummarizer
             }
         }
 
+        $hasDrawingPages = array_intersect(
+            array_keys($schemaFourPageKinds),
+            ['drawing', 'floor_plan', 'plan', 'section', 'facade', 'detail'],
+        ) !== [];
+        $acceptedQuantityClaimCount = $roleRunsComplete ? count($acceptedQuantityClaimIds) : 0;
+        $documentUnderstanding = $arbitratedPageCount === 0 ? null : [
+            'document_type' => $hasDrawingPages ? 'drawing' : 'context',
+            'role_for_estimation' => ! $roleRunsComplete
+                ? 'needs_review'
+                : ($hasDrawingPages ? 'drawing_analysis' : 'context_document'),
+            'extracted_capabilities' => [
+                'has_quantities' => $acceptedQuantityClaimCount > 0,
+                'accepted_quantity_claims' => $acceptedQuantityClaimCount,
+                'requires_manual_review' => ! $roleRunsComplete,
+            ],
+            'page_kinds' => array_values(array_keys($schemaFourPageKinds)),
+            'pages_count' => $arbitratedPageCount,
+        ];
+
         return [
             'pages_checked' => count($coverage) + $arbitratedPageCount,
             'roles' => $roles,
             'facts' => $facts,
             'analysis_roles_complete' => $arbitratedPageCount > 0 && $roleRunsComplete,
+            ...($documentUnderstanding === null ? [] : ['document_understanding' => $documentUnderstanding]),
             'recommendations' => array_slice($recommendations, 0, self::MAX_ITEMS_PER_GROUP),
             'coverage' => array_slice($coverage, 0, self::MAX_ITEMS_PER_GROUP),
             'cross_page_connections' => $connections,
@@ -118,6 +150,79 @@ final readonly class DocumentSemanticUnderstandingSummarizer
                 || count($coverage) > self::MAX_ITEMS_PER_GROUP
                 || $connectionOverflow,
         ];
+    }
+
+    /** @return list<string> */
+    private function acceptedQuantityClaimIds(array $payload): array
+    {
+        $claims = [];
+        foreach (is_array($payload['independent_observations'] ?? null) ? $payload['independent_observations'] : [] as $observerRole => $observation) {
+            if (! is_array($observation)) {
+                continue;
+            }
+            foreach (is_array($observation['claims'] ?? null) ? $observation['claims'] : [] as $claimIndex => $claim) {
+                if (! is_array($claim)) {
+                    continue;
+                }
+                $claimId = is_string($claim['id'] ?? null) ? trim($claim['id']) : '';
+                if ($claimId === '' && is_string($observerRole) && is_int($claimIndex)) {
+                    $claimId = str_replace('observer_', '', $observerRole).':'.($claimIndex + 1);
+                }
+                $evidenceRef = is_string($claim['evidence_ref'] ?? null)
+                    ? trim($claim['evidence_ref'])
+                    : (is_string($claim['evidenceRef'] ?? null) ? trim($claim['evidenceRef']) : '');
+                $factType = is_string($claim['fact_type'] ?? null)
+                    ? $claim['fact_type']
+                    : (is_string($claim['factType'] ?? null) ? $claim['factType'] : '');
+                if (($claimId === '' && $evidenceRef === '')
+                    || ! in_array($factType, ['area', 'quantity', 'length', 'height', 'count'], true)
+                    || ! $this->isPositiveNumericClaimValue($claim['value'] ?? null)) {
+                    continue;
+                }
+                $identity = $claimId !== '' ? 'claim:'.$claimId : 'evidence:'.$evidenceRef;
+                $claims[$identity] = ['claim_id' => $claimId, 'evidence_ref' => $evidenceRef];
+            }
+        }
+
+        $accepted = [];
+        $arbitration = is_array($payload['document_arbitration'] ?? null) ? $payload['document_arbitration'] : [];
+        foreach (is_array($arbitration['decisions'] ?? null) ? $arbitration['decisions'] : [] as $decision) {
+            if (! is_array($decision) || ($decision['status'] ?? null) !== 'accepted') {
+                continue;
+            }
+            $acceptedClaimIds = array_fill_keys(array_values(array_filter([
+                is_string($decision['claim_id'] ?? null) ? trim($decision['claim_id']) : '',
+                ...array_values(array_filter(
+                    is_array($decision['supporting_claim_ids'] ?? null) ? $decision['supporting_claim_ids'] : [],
+                    'is_string',
+                )),
+            ], static fn (string $value): bool => $value !== '')), true);
+            $acceptedEvidenceRefs = array_fill_keys(array_values(array_filter(
+                is_array($decision['evidence_refs'] ?? null) ? $decision['evidence_refs'] : [],
+                static fn (mixed $value): bool => is_string($value) && $value !== '',
+            )), true);
+            foreach ($claims as $identity => $claim) {
+                if (($claim['claim_id'] !== '' && isset($acceptedClaimIds[$claim['claim_id']]))
+                    || ($claim['evidence_ref'] !== '' && isset($acceptedEvidenceRefs[$claim['evidence_ref']]))) {
+                    $accepted[] = $identity;
+                }
+            }
+        }
+
+        return array_values(array_unique($accepted));
+    }
+
+    private function isPositiveNumericClaimValue(mixed $value): bool
+    {
+        if (is_array($value)) {
+            if (($value['type'] ?? null) !== 'number') {
+                return false;
+            }
+            $value = $value['data'] ?? null;
+        }
+
+        return (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)))
+            && (float) $value > 0;
     }
 
     /** @return list<string> */

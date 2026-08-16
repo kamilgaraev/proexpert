@@ -7,8 +7,10 @@ namespace Tests\Unit\EstimateGeneration\Workflow;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\CurrentEstimateClarification;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationAnswerRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\EstimateClarificationCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ProjectUnderstandingQuestionProjector;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Testing\TestCase;
@@ -294,6 +296,75 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
+    public function quarantined_option_keeps_one_question_blocking_draft_until_it_is_answered(): void
+    {
+        $projector = new ProjectUnderstandingQuestionProjector(static fn (string $key): string => match ($key) {
+            'estimate_generation.ai_questions.other' => 'Другое',
+            'estimate_generation.ai_questions.leave_unresolved' => 'Оставить нерешённым',
+            default => $key,
+        });
+        $questions = $projector->project([[
+            'conflict_id' => 'conflict:wall-material',
+            'text' => 'Какой материал наружных стен использовать?',
+            'reason' => 'В документах указаны разные материалы наружных стен.',
+            'impact' => 'Выбор материала влияет на объёмы и стоимость работ.',
+            'recommendation' => 'Выберите подтверждённый материал или оставьте вопрос нерешённым.',
+            'fact_ids' => ['fact:wall'],
+            'evidence_ids' => ['evidence:page:4'],
+            'source_locator' => ['page_numbers' => [4]],
+            'options' => [
+                ['value' => 'select:fact:wall:valid', 'fact_id' => 'fact:wall', 'label' => 'Газобетон'],
+                ['value' => 'select:fact:wall:broken', 'fact_id' => 'fact:wall', 'label' => str_repeat('Я', 161)],
+            ],
+        ]], 'sha256:'.str_repeat('c', 64));
+        self::assertCount(1, $questions);
+        $current = new CurrentEstimateClarification(
+            $questions[0],
+            'sha256:'.str_repeat('a', 64),
+            str_repeat('b', 64),
+            str_repeat('d', 64),
+            'fact:wall',
+        );
+        $documentsSummary = [
+            'total' => 1,
+            'ready' => 1,
+            'pending' => 0,
+            'action_required' => 0,
+            'ignored' => 0,
+            'drawing_elements' => 1,
+        ];
+
+        $this->bindClarifications([$current], []);
+        $session = $this->makeSession(EstimateGenerationStatus::InputReviewRequired);
+        $builder = app(BuildSessionSnapshot::class);
+        $counter = new \ReflectionMethod($builder, 'unansweredQuestionCount');
+        self::assertSame(1, $counter->invoke($builder, $session));
+        $blocked = $builder->handle(
+            session: $session,
+            permissions: ['estimate_generation.review'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+            documentsSummary: $documentsSummary,
+        );
+
+        self::assertSame('ai_questions', $blocked->recommendedStep);
+        self::assertTrue($blocked->workflowSteps[2]['available']);
+        self::assertFalse($blocked->workflowSteps[3]['available']);
+        self::assertFalse($blocked->workflowSteps[4]['available']);
+
+        $this->bindClarifications([$current], [$questions[0]->code]);
+        $continued = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
+            permissions: ['estimate_generation.review'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+            documentsSummary: $documentsSummary,
+        );
+
+        self::assertSame('draft', $continued->recommendedStep);
+        self::assertTrue($continued->workflowSteps[3]['available']);
+        self::assertTrue($continued->workflowSteps[4]['available']);
+    }
+
+    #[Test]
     public function document_requiring_review_recommends_the_available_documents_step(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
@@ -566,5 +637,38 @@ final class BuildSessionSnapshotTest extends TestCase
         $session->setRelation('documents', collect());
 
         return $session;
+    }
+
+    /**
+     * @param  list<CurrentEstimateClarification>  $questions
+     * @param  list<string>  $answeredKeys
+     */
+    private function bindClarifications(array $questions, array $answeredKeys): void
+    {
+        $this->app->instance(
+            EstimateClarificationCatalog::class,
+            new class($questions) implements EstimateClarificationCatalog
+            {
+                public function __construct(private readonly array $questions) {}
+
+                public function allCurrent(int $organizationId, int $projectId, int $sessionId): array
+                {
+                    return $this->questions;
+                }
+            },
+        );
+        $this->app->instance(
+            EstimateClarificationAnswerRegistry::class,
+            new class($answeredKeys) implements EstimateClarificationAnswerRegistry
+            {
+                public function __construct(private readonly array $answeredKeys) {}
+
+                public function answeredKeys(int $organizationId, int $projectId, int $sessionId): array
+                {
+                    return $this->answeredKeys;
+                }
+            },
+        );
+        $this->app->forgetInstance(BuildSessionSnapshot::class);
     }
 }

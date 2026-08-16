@@ -21,7 +21,7 @@ final class PlannedDirectTakeoffQuantityFactory
         'work_volume_takeoff',
     ];
 
-    public function make(array $workItem): ?QuantityData
+    public function make(array $workItem, array $generationIdentity = []): ?QuantityData
     {
         $sourceRefs = is_array($workItem['source_refs'] ?? null)
             ? array_values(array_filter($workItem['source_refs'], 'is_array'))
@@ -31,11 +31,20 @@ final class PlannedDirectTakeoffQuantityFactory
         $quantitySource = (string) ($workItem['metadata']['quantity_source'] ?? '');
         $amount = $workItem['quantity'] ?? null;
         $unit = NormativeUnitNormalizer::parseDetailed((string) ($workItem['unit'] ?? ''));
+        $snapshotHash = $generationIdentity['input_snapshot_hash'] ?? null;
+        $scope = is_array($generationIdentity['scope_identity'] ?? null)
+            ? $generationIdentity['scope_identity']
+            : [];
 
         if ($quantityKey === '' || ! in_array($quantitySource, self::DIRECT_SOURCES, true)
             || $sourceRefs === [] || ! is_numeric($amount)
             || BigDecimal::of((string) $amount)->isLessThanOrEqualTo(BigDecimal::zero())
             || array_intersect($flags, ['document_takeoff_required', 'quantity_review_required', 'requires_quantity_review']) !== []
+            || ! is_string($snapshotHash) || preg_match('/^[a-f0-9]{64}$/D', $snapshotHash) !== 1
+            || ! is_int($scope['organization_id'] ?? null)
+            || ! is_int($scope['project_id'] ?? null)
+            || ! is_int($scope['session_id'] ?? null)
+            || ! is_string($scope['source_version'] ?? null)
         ) {
             return null;
         }
@@ -69,6 +78,11 @@ final class PlannedDirectTakeoffQuantityFactory
             formulaInputs: [
                 'basis' => (string) ($workItem['quantity_basis'] ?? ''),
                 'source_refs' => $canonicalRefs,
+                'snapshot_identity' => ['input_fingerprint' => $snapshotHash],
+                'operands' => array_map(
+                    static fn (array $sourceRef): array => [...$sourceRef, ...$scope],
+                    $sourceRefs,
+                ),
             ],
             source: QuantitySource::Evidenced,
             evidenceIds: array_map(static fn (string $ref): string => 'source-ref:'.hash('sha256', $ref), $canonicalRefs),
