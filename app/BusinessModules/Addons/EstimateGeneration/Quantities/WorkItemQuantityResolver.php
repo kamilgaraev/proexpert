@@ -11,9 +11,9 @@ final readonly class WorkItemQuantityResolver
         private WorkItemQuantityMapper $mapper = new WorkItemQuantityMapper,
     ) {}
 
-    public function resolve(array $workItem, array $quantities): ?QuantityData
+    public function resolve(array $workItem, array $quantities, array $generationIdentity = []): ?QuantityData
     {
-        return $this->directTakeoff->make($workItem)
+        return $this->directTakeoff->make($workItem, $generationIdentity)
             ?? $this->mapper->map((string) ($workItem['metadata']['quantity_key'] ?? ''), $quantities);
     }
 }

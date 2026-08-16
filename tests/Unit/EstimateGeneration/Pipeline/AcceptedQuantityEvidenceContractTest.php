@@ -20,7 +20,9 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
         self::assertStringNotContainsString('quantity_evidence_descriptor', $stage);
         self::assertStringContainsString("\$quantityOutput['building_quantities']['quantities']", $stage);
         self::assertStringContainsString('WorkItemQuantityResolver', $stage);
-        self::assertStringContainsString('->resolve($workItem, $quantities)', $stage);
+        self::assertStringContainsString("'input_snapshot_hash' => \$stage6Context['input_snapshot_hash'] ?? null", $stage);
+        self::assertStringContainsString("'source_version' => \$stage6Context['source_version'] ?? null", $stage);
+        self::assertStringContainsString('->resolve($workItem, $quantities, $generationIdentity)', $stage);
         self::assertStringContainsString("'quantity_evidence'", $stage);
         self::assertStringContainsString("'quantity_mapping_missing'", $stage);
         self::assertFileExists($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/AcceptedQuantityEvidenceMaterializer.php');

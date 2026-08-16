@@ -1,6 +1,12 @@
 {
   "contract_version": "most-recorded-page-routes:v1",
   "source_pages": 22,
+  "recorded_source_facts": {
+    "total_area_m2": 72.19,
+    "floor_screed_work": "Устройство цементной стяжки пола",
+    "majority_wall_material": "Деревянный каркас",
+    "minority_wall_material": "Керамический блок"
+  },
   "pages": [
     {"page": 1, "route": "simple_context", "kind": "cover", "title": "Обложка архитектурного проекта"},
     {"page": 2, "route": "simple_context", "kind": "title", "title": "Архитектурные решения"},

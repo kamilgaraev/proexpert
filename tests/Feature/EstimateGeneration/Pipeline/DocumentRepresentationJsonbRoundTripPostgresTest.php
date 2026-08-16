@@ -7,8 +7,10 @@ namespace Tests\Feature\EstimateGeneration\Pipeline;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentRepresentation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitAggregateReconciler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitDispatchStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverStalledEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ResetDocumentProcessingUnitsForAttempt;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
@@ -584,6 +586,7 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
                 'user_id' => $user->id,
                 'filename' => 'architecture.pdf',
                 'mime_type' => 'application/pdf',
+                'checksum_sha256' => str_repeat('a', 64),
                 'source_version' => $sourceVersion,
                 'status' => 'processing',
                 'processing_stage' => 'quality_check',
@@ -609,7 +612,10 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
                     'output_count' => $completed ? 1 : 0,
                     'completed_at' => $completed ? now() : null,
                     'locator' => $this->locator($organization->id, $sourceVersion, $pageNumber),
-                    'metadata' => (object) [],
+                    'metadata' => $completed ? (object) [] : [
+                        'processing_control_status' => 'cancelled',
+                        'processing_control_reason' => 'operator_stop',
+                    ],
                 ]);
                 EstimateGenerationDocumentPage::query()->create([
                     'organization_id' => $organization->id,
@@ -698,6 +704,50 @@ final class DocumentRepresentationJsonbRoundTripPostgresTest extends TestCase
             self::assertSame($payload['recommended_step'], $recommended[0]['id']);
             self::assertSame('processing_documents', $session->fresh()->status->value);
             self::assertSame(5, $session->fresh()->processing_progress);
+
+            EstimateGenerationDocument::query()->whereKey($document->id)->update([
+                'updated_at' => now()->subMinutes(10),
+            ]);
+            EstimateGenerationSession::query()->whereKey($session->id)->update([
+                'updated_at' => now()->subMinutes(10),
+            ]);
+
+            self::assertSame(1, EstimateGenerationDocument::query()
+                ->whereKey($document->id)
+                ->where(static function ($query): void {
+                    $query->whereIn('status', ['ready', 'needs_review'])
+                        ->orWhere(static function ($cancelled): void {
+                            $cancelled->where('status', 'processing')
+                                ->where('processing_control_status', 'cancelled');
+                        });
+                })
+                ->whereNotNull('source_version')
+                ->where('updated_at', '<=', now()->subSeconds(120))
+                ->where(function ($query): void {
+                    $query->whereNull('units_reconciled_source_version')
+                        ->orWhereColumn('units_reconciled_source_version', '<>', 'source_version');
+                })
+                ->count());
+            $recovered = app(RecoverStalledEstimateGenerationDocuments::class)->handle(120, 10);
+
+            self::assertGreaterThanOrEqual(1, $recovered);
+            self::assertSame([
+                $sourceVersion,
+                $sourceVersion,
+            ], [
+                $document->fresh()->units_finalized_source_version,
+                $document->fresh()->units_reconciled_source_version,
+            ]);
+            self::assertSame('needs_review', $document->fresh()->status);
+            self::assertSame('completed', $document->fresh()->processing_stage);
+            self::assertSame('cancelled', $document->fresh()->processing_control_status);
+            self::assertSame('input_review_required', $session->fresh()->status->value);
+            $currentSourceRecovery = array_values(array_filter(
+                (new EloquentDocumentUnitDispatchStore(DB::connection()))
+                    ->dueForRecovery(now()->toDateTimeImmutable(), 64),
+                static fn ($candidate): bool => $candidate->sourceVersion === $sourceVersion,
+            ));
+            self::assertSame([], $currentSourceRecovery);
         } finally {
             $session?->delete();
             $project?->delete();

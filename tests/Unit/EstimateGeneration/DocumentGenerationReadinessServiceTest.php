@@ -49,6 +49,50 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertSame('{}', json_encode($result['summary']['statuses'], JSON_THROW_ON_ERROR));
     }
 
+    public function test_stopped_processing_document_is_settled_without_pinning_ai_settings(): void
+    {
+        $store = new class implements EffectiveSettingsOperationStore
+        {
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                throw new DomainException('Stopped document recovery must not pin AI settings.');
+            }
+        };
+        $document = new EstimateGenerationDocument;
+        $document->forceFill([
+            'id' => 174,
+            'organization_id' => 7,
+            'project_id' => 17,
+            'session_id' => 72,
+            'filename' => 'Остановленный документ.pdf',
+            'status' => 'processing',
+            'processing_stage' => 'quality_check',
+            'processing_control_status' => 'cancelled',
+            'processing_control_reason' => 'operator_stop',
+            'progress_percent' => 10,
+            'page_count' => 22,
+            'processed_page_count' => 2,
+            'facts_summary' => [],
+        ]);
+        $session = new EstimateGenerationSession;
+        $session->forceFill([
+            'id' => 72,
+            'organization_id' => 7,
+            'state_version' => 1,
+            'status' => EstimateGenerationStatus::ProcessingDocuments,
+        ]);
+        $session->exists = true;
+        $session->setRelation('documents', collect([$document]));
+
+        $result = (new DocumentGenerationReadinessService(new EffectiveSettingsResolver($store)))
+            ->evaluate($session);
+
+        self::assertSame(0, $result['summary']['pending_count']);
+        self::assertSame(1, $result['summary']['action_required_count']);
+        self::assertTrue($result['summary']['items'][0]['is_action_required']);
+        self::assertFalse($result['can_generate']);
+    }
+
     public function test_threshold_and_toggle_change_final_document_readiness_decision(): void
     {
         $document = $this->qualitySignalDocument([

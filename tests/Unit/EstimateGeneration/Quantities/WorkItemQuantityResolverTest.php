@@ -29,7 +29,7 @@ final class WorkItemQuantityResolverTest extends TestCase
                 'formula_inputs' => [], 'source' => 'evidenced', 'evidence_ids' => ['plan:1'],
                 'model_version' => 'building-model:v1', 'assumptions' => [], 'review_blockers' => [],
             ],
-        ]);
+        ], $this->generationIdentity());
 
         self::assertNotNull($quantity);
         self::assertSame('stairs.flights', $quantity->key);
@@ -83,11 +83,25 @@ final class WorkItemQuantityResolverTest extends TestCase
                 'source_refs' => [['type' => 'document', 'filename' => 'Ведомость.pdf', 'page_number' => 2]],
                 'validation_flags' => ['normative_required'],
                 'metadata' => ['quantity_key' => 'foundation.concrete', 'quantity_source' => $source],
-            ], []);
+            ], [], $this->generationIdentity());
 
             self::assertNotNull($quantity, $source);
             self::assertSame('12.500000', $quantity->amount, $source);
             self::assertSame(QuantitySource::Evidenced, $quantity->source, $source);
         }
+    }
+
+    /** @return array<string, mixed> */
+    private function generationIdentity(): array
+    {
+        return [
+            'input_snapshot_hash' => str_repeat('a', 64),
+            'scope_identity' => [
+                'organization_id' => 10,
+                'project_id' => 20,
+                'session_id' => 30,
+                'source_version' => 'sha256:'.str_repeat('d', 64),
+            ],
+        ];
     }
 }

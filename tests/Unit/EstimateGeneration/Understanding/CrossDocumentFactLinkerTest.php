@@ -214,6 +214,23 @@ final class CrossDocumentFactLinkerTest extends TestCase
     }
 
     #[Test]
+    public function invalidated_alternatives_from_an_answered_conflict_do_not_keep_understanding_limited(): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $facts[1] = $this->fact('fact:right', 'entity:right', 'area', 19.1, 'evidence:2', 'invalidated');
+        $arbitrator = new RecordingCrossDocumentFactArbitrator;
+
+        $result = $this->linker($arbitrator)->link($entities, $facts, $evidence);
+
+        self::assertSame([], $result->links);
+        self::assertSame([], $result->conflicts);
+        self::assertSame([], $result->questions);
+        self::assertSame([], $result->limitations);
+        self::assertSame(0, $result->providerCalls);
+        self::assertSame([], $arbitrator->payloads);
+    }
+
+    #[Test]
     public function permutation_and_duplicate_replay_produce_one_stable_link(): void
     {
         [$entities, $facts, $evidence] = $this->pair('equipment_plan', 'equipment_specification', 'position', 'E-12', 'equipment');
