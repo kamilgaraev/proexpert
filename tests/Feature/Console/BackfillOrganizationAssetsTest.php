@@ -257,6 +257,39 @@ final class BackfillOrganizationAssetsTest extends TestCase
         self::assertDatabaseHas('organization_assets', ['id' => $mapped->id]);
     }
 
+    public function test_matching_canonical_module_link_without_legacy_metadata_is_idempotently_accepted(): void
+    {
+        $context = AdminApiTestContext::create();
+        $legacy = $this->createMachineryAsset(
+            (int) $context->organization->id,
+            'BF-CANONICAL-LINK',
+            'INV-BF-CANONICAL-LINK',
+        );
+        $canonical = OrganizationAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => $legacy->name,
+            'inventory_number' => $legacy->inventory_number,
+            'ownership_type' => $legacy->ownership_type,
+            'machinery_id' => $legacy->machinery_id,
+            'metadata' => [
+                'asset_type' => 'machinery',
+                'canonical_source' => 'machinery_operations',
+            ],
+        ]);
+        $legacy->update(['organization_asset_id' => $canonical->id]);
+
+        self::assertSame(0, Artisan::call('assets:backfill', ['--format' => 'json']));
+        $report = $this->jsonOutput();
+
+        self::assertSame(0, $report['conflicts']);
+        self::assertSame(0, $report['created']);
+        self::assertSame(0, $report['links_updated']);
+        self::assertSame(1, $report['already_linked']);
+        self::assertSame($canonical->id, $legacy->fresh()->organization_asset_id);
+        self::assertSame('machinery_operations', $canonical->fresh()->metadata['canonical_source']);
+        self::assertArrayNotHasKey('legacy_source', $canonical->fresh()->metadata);
+    }
+
     public function test_serialized_warehouse_balance_is_imported_and_explicit_movements_are_linked(): void
     {
         $context = AdminApiTestContext::create();
