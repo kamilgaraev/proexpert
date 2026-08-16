@@ -1,0 +1,1053 @@
+{
+  "schema_version": 4,
+  "sheet_type": "schedule",
+  "evidence": {
+    "title": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "schedule_table": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "titleblock": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_01": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_02": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_03": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_04": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_05": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_06": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_07": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_08": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_09": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_10": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_11": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_12": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_13": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_14": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_15": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_16": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_17": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_18": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_19": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_20_1": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_20_2": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    },
+    "row_20_3": {
+      "locator": {
+        "page_id": 2003,
+        "page_number": 3,
+        "processing_unit_id": 303,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      }
+    }
+  },
+  "elements": [],
+  "scale_candidates": [],
+  "warnings": [
+    "scale_missing"
+  ],
+  "visual_attributes": {
+    "roof_type": {
+      "value": "unknown",
+      "confidence": 1,
+      "evidence_ref": "title"
+    }
+  },
+  "project_sheet_analysis": {
+    "contractVersion": "sheet-analysis:v3",
+    "role": "specification",
+    "facts": [
+      {
+        "entityKey": "sheet_01",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "01 — Обложка"
+        },
+        "unit": null,
+        "evidenceRef": "row_01",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_02",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "02 — Титульный лист"
+        },
+        "unit": null,
+        "evidenceRef": "row_02",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_03",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "03 — Ведомость чертежей"
+        },
+        "unit": null,
+        "evidenceRef": "row_03",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_04",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "04 — Общие данные"
+        },
+        "unit": null,
+        "evidenceRef": "row_04",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_05",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "05 — Технологический план на отм. ±0,000"
+        },
+        "unit": null,
+        "evidenceRef": "row_05",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_06",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "06 — План на отм. +0,000"
+        },
+        "unit": null,
+        "evidenceRef": "row_06",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_07",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "07 — Схема расположения светильников"
+        },
+        "unit": null,
+        "evidenceRef": "row_07",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_08",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "08 — Схема расположения розеток и выключателей"
+        },
+        "unit": null,
+        "evidenceRef": "row_08",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_09",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "09 — План включения групп света"
+        },
+        "unit": null,
+        "evidenceRef": "row_09",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_10",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "10 — Фасад 1-6"
+        },
+        "unit": null,
+        "evidenceRef": "row_10",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_11",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "11 — Фасад 1-4"
+        },
+        "unit": null,
+        "evidenceRef": "row_11",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_12",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "12 — Фасад 4-1"
+        },
+        "unit": null,
+        "evidenceRef": "row_12",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_13",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "13 — Фасад Д-А"
+        },
+        "unit": null,
+        "evidenceRef": "row_13",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_14",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "14 — Разрез 1-1"
+        },
+        "unit": null,
+        "evidenceRef": "row_14",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_15",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "15 — Разрез 2-2"
+        },
+        "unit": null,
+        "evidenceRef": "row_15",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_16",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "16 — План кровли"
+        },
+        "unit": null,
+        "evidenceRef": "row_16",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_17",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "17 — Ведомость оконных и дверных проемов"
+        },
+        "unit": null,
+        "evidenceRef": "row_17",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_18",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "18 — Видовая точка 1"
+        },
+        "unit": null,
+        "evidenceRef": "row_18",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_19",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "19 — Видовая точка 2"
+        },
+        "unit": null,
+        "evidenceRef": "row_19",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_20_1",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "20.1 — Вариант отделки 1"
+        },
+        "unit": null,
+        "evidenceRef": "row_20_1",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_20_2",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "20.2 — Вариант отделки 2"
+        },
+        "unit": null,
+        "evidenceRef": "row_20_2",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "sheet_20_3",
+        "factType": "table",
+        "value": {
+          "type": "string",
+          "data": "20.3 — Вариант отделки 3"
+        },
+        "unit": null,
+        "evidenceRef": "row_20_3",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "document_title",
+        "factType": "note",
+        "value": {
+          "type": "string",
+          "data": "Ведомость рабочих чертежей основного комплекта - АР"
+        },
+        "unit": null,
+        "evidenceRef": "title",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "project_type",
+        "factType": "note",
+        "value": {
+          "type": "string",
+          "data": "Типовой индивидуальный одноэтажный жилой каркасно-панельный дом с деревянным каркасом"
+        },
+        "unit": null,
+        "evidenceRef": "titleblock",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "project_code",
+        "factType": "note",
+        "value": {
+          "type": "string",
+          "data": "ВСХ-70-АР"
+        },
+        "unit": null,
+        "evidenceRef": "titleblock",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      },
+      {
+        "entityKey": "current_sheet",
+        "factType": "note",
+        "value": {
+          "type": "string",
+          "data": "Стадия П, лист 03"
+        },
+        "unit": null,
+        "evidenceRef": "titleblock",
+        "sourcePolygonOrNativeRef": [
+          [
+            0.048,
+            0.116
+          ],
+          [
+            0.49,
+            0.116
+          ],
+          [
+            0.49,
+            0.139
+          ],
+          [
+            0.048,
+            0.139
+          ]
+        ],
+        "confidence": 0.99,
+        "contractVersion": "sheet-analysis:v3"
+      }
+    ]
+  },
+  "analysis_routing": {
+    "page_kind": "schedule",
+    "requested_depth": "structured_textual",
+    "information_density": "medium",
+    "readability": "high",
+    "confidence": 0.99,
+    "ambiguous": false,
+    "material_risk": "low",
+    "reasons": [
+      "The page is a drawing-list schedule with a clearly bounded table."
+    ],
+    "semantic_regions": [
+      {
+        "label": "Drawing list table",
+        "purpose": "Sheet numbers and drawing names",
+        "box": [
+          0.048,
+          0.075,
+          0.49,
+          0.636
+        ]
+      }
+    ]
+  }
+}

@@ -22,6 +22,59 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     private const SOURCE = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     #[Test]
+    public function accepted_whole_building_area_is_a_direct_floor_quantity_without_a_synthetic_takeoff(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $buildingFloor = new Entity(
+            'room:building-floor',
+            10,
+            20,
+            30,
+            self::SOURCE,
+            'room',
+            'room:building-floor',
+            ['area_m2' => 72.19, 'document_role' => 'building_floor'],
+        );
+        $evidence = new Evidence(
+            'evidence:building-area',
+            10,
+            20,
+            30,
+            self::SOURCE,
+            'artifact:general-data',
+            'document',
+            4,
+            null,
+            'building_area_total',
+        );
+        $repository->saveSourceModel([$buildingFloor], [
+            new Fact(
+                'fact:building-area',
+                10,
+                20,
+                30,
+                self::SOURCE,
+                $buildingFloor->id,
+                'area',
+                '72.19',
+                'm2',
+                1.0,
+                'document',
+                'confirmed',
+                [$evidence->id],
+            ),
+        ], [$evidence]);
+        $this->makeStageFiveCurrent($repository);
+
+        $result = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))
+            ->derive(10, 20, 30);
+
+        self::assertSame('72.19', $result['quantities']['floor_area']->amount ?? null);
+        self::assertSame('direct_floor_area', $result['quantities']['floor_area']->formulaKey ?? null);
+        self::assertSame('fact:building-area', $result['quantities']['floor_area']->formulaInputs['operands'][0]['fact_id'] ?? null);
+    }
+
+    #[Test]
     public function simulation_uses_proposed_decimal_value_and_never_persists_projection(): void
     {
         $repository = new InMemoryProjectModelRepository;

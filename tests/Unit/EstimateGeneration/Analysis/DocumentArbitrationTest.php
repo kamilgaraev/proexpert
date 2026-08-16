@@ -32,6 +32,51 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class DocumentArbitrationTest extends TestCase
 {
     #[Test]
+    public function validated_source_polygon_is_explicit_document_evidence_for_arbiter_consensus(): void
+    {
+        $sourceVersion = 'sha256:'.str_repeat('a', 64);
+        $claim = ObservationClaim::fromObserverPayload(
+            'observer_literal',
+            0,
+            [
+                'entityKey' => 'building_area_total',
+                'factType' => 'area',
+                'value' => ['type' => 'number', 'data' => 72.19],
+                'unit' => 'м²',
+                'evidenceRef' => 'literal:evidence:area',
+                'sourcePolygonOrNativeRef' => [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]],
+            ],
+            ['literal:evidence:area' => [
+                'organization_id' => 7,
+                'project_id' => 9,
+                'session_id' => 11,
+                'source_version' => $sourceVersion,
+                'page_id' => 17,
+                'page_number' => 4,
+                'processing_unit_id' => 19,
+                'coordinate_space' => 'normalized_source_v1',
+            ]],
+            7,
+            9,
+            11,
+            $sourceVersion,
+        );
+
+        self::assertTrue($claim->explicitEvidence);
+        $ingestion = (new ArbitrationIntentIngestor)->ingest([[
+            'claim_id' => 'literal:1',
+            'status' => 'accepted',
+            'supporting_claim_ids' => ['literal:1'],
+            'evidence_refs' => ['literal:evidence:area'],
+            'reason' => 'Значение подтверждено размерной областью исходного листа.',
+        ]], [$claim]);
+
+        self::assertCount(1, $ingestion->accepted);
+        self::assertSame([], $ingestion->quarantined);
+        self::assertSame(72.19, $ingestion->accepted[0]->canonicalClaim['value']['data']);
+    }
+
+    #[Test]
     public function explicit_retry_lineages_keep_logical_arbitration_correlation_and_change_physical_attempt_identity(): void
     {
         $builder = new ArbitrationInputBuilder;

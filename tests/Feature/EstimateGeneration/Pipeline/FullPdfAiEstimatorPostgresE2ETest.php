@@ -43,6 +43,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionEvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\RoleVisionResponseCanonicalizer;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -162,7 +163,11 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
 
         $processor = app(ProcessDocumentUnit::class);
         foreach ($units as $unit) {
-            $processor->handle((int) $unit->id, $sourceVersion);
+            try {
+                $processor->handle((int) $unit->id, $sourceVersion);
+            } catch (\Throwable $error) {
+                throw new \RuntimeException('full_pdf_page_failed:'.$unit->unit_index, 0, $error);
+            }
         }
 
         $terminal = EstimateGenerationProcessingUnit::query()
@@ -221,6 +226,8 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertSame(82, $provider->physicalCalls);
         self::assertSame($this->expectedCallsByPage(), $provider->callsByPage);
         $expectedArbitrationClaimCounts = array_fill_keys(range(3, 22), 3);
+        $expectedArbitrationClaimCounts[3] = 28;
+        $expectedArbitrationClaimCounts[4] = 31;
         $expectedArbitrationClaimCounts[9] = 2;
         self::assertSame($expectedArbitrationClaimCounts, $provider->arbitrationClaimCounts);
         self::assertSame([2, 1], array_values($provider->arbitrationValueCounts[6]));
@@ -271,8 +278,23 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                 $claims = is_array($observation['claims'] ?? null) ? $observation['claims'] : [];
                 $isMalformedObservation = (int) $page->page_number === 9
                     && ($observation['role'] ?? null) === 'observer_risk';
-                self::assertCount($isMalformedObservation ? 0 : 1, $claims);
-                self::assertCount(1, is_array($observation['evidence'] ?? null) ? $observation['evidence'] : []);
+                $isCapturedLiteral = ($observation['role'] ?? null) === 'observer_literal';
+                $expectedClaims = match (true) {
+                    $isMalformedObservation => 0,
+                    $isCapturedLiteral && (int) $page->page_number === 3 => 26,
+                    $isCapturedLiteral && (int) $page->page_number === 4 => 29,
+                    default => 1,
+                };
+                $expectedEvidence = match (true) {
+                    $isCapturedLiteral && (int) $page->page_number === 3 => 25,
+                    $isCapturedLiteral && (int) $page->page_number === 4 => 5,
+                    default => 1,
+                };
+                self::assertCount($expectedClaims, $claims);
+                self::assertCount(
+                    $expectedEvidence,
+                    is_array($observation['evidence'] ?? null) ? $observation['evidence'] : [],
+                );
                 if ($isMalformedObservation) {
                     self::assertSame('project_sheet_analysis',
                         $observation['observation']['quarantined_items'][0]['section'] ?? null);
@@ -302,7 +324,13 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                     count($decisions),
                     'page='.(int) $page->page_number.' decisions='.json_encode($decisions, JSON_THROW_ON_ERROR),
                 );
-                self::assertSame((int) $page->page_number === 9 ? 2 : 3, array_sum(array_map(
+                $expectedDecisionCoverage = match ((int) $page->page_number) {
+                    3 => 28,
+                    4 => 31,
+                    9 => 2,
+                    default => 3,
+                };
+                self::assertSame($expectedDecisionCoverage, array_sum(array_map(
                     static fn (array $decision): int => count($decision['supporting_claim_ids'] ?? []),
                     $decisions,
                 )) + count($quarantined));
@@ -318,21 +346,16 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                         static fn (array $claim): bool => ($claim['factType'] ?? null) === 'area',
                     ))[0] ?? null;
                     self::assertIsArray($areaClaim);
-                    $pageEvidence = array_merge(...array_values(array_map(
-                        static fn (array $observation): array => is_array($observation['evidence'] ?? null)
-                            ? $observation['evidence']
-                            : [],
-                        $observations,
-                    )));
-                    $areaEvidence = array_values(array_filter(
-                        $pageEvidence,
-                        static fn (array $evidence): bool => ($evidence['key'] ?? null) === $areaClaim['evidenceRef'],
-                    ))[0] ?? null;
-                    self::assertSame(true, $areaEvidence['locator']['explicit'] ?? null);
-                    self::assertSame('accepted', array_values(array_filter(
+                    $areaDecision = array_values(array_filter(
                         $decisions,
-                        static fn (array $decision): bool => ($decision['status'] ?? null) === 'accepted',
-                    ))[0]['status'] ?? null);
+                        static fn (array $decision): bool => ($decision['canonical_claim']['entity_key'] ?? null)
+                            === 'building_area_total',
+                    ))[0] ?? null;
+                    self::assertIsArray($areaDecision);
+                    self::assertSame('accepted', $areaDecision['status'] ?? null);
+                    self::assertSame(72.19, $areaDecision['canonical_claim']['value']['data'] ?? null);
+                    self::assertSame('m2', $areaDecision['canonical_claim']['unit'] ?? null);
+                    self::assertNotEmpty($areaDecision['evidence_refs'] ?? []);
                 }
             }
         }
@@ -344,26 +367,26 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             ->where('session_id', $session->id)
             ->where('assertion_type', 'area')
             ->count());
-        self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
+        self::assertSame(13, DB::table('estimate_generation_project_model_assertions')
             ->where('session_id', $session->id)
             ->where('assertion_type', 'area')
             ->where('fact_status', 'confirmed')
             ->count());
-        self::assertSame(1, DB::table('estimate_generation_project_model_fact_projections as projection')
+        self::assertSame(13, DB::table('estimate_generation_project_model_fact_projections as projection')
             ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
             ->where('projection.session_id', $session->id)
             ->where('projection.is_current', true)
             ->where('fact.assertion_type', 'area')
             ->where('fact.fact_status', 'confirmed')
             ->count());
-        self::assertSame(1, DB::table('estimate_generation_project_model_fact_projections as projection')
+        self::assertSame(12, DB::table('estimate_generation_project_model_fact_projections as projection')
             ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
             ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'fact.entity_id')
             ->where('projection.session_id', $session->id)
             ->where('projection.is_current', true)
             ->where('fact.assertion_type', 'area')
             ->where('fact.fact_status', 'confirmed')
-            ->where('entity.entity_kind', 'room')
+            ->where('entity.entity_kind', 'dimension')
             ->count());
 
         $documentUnderstanding = is_array($document->facts_summary['document_understanding'] ?? null)
@@ -386,7 +409,8 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             ),
             static fn ($fact): bool => $fact->type === 'area'
                 && $fact->status === 'confirmed'
-                && $fact->sourceVersion === $sourceVersion,
+                && $fact->sourceVersion === $sourceVersion
+                && (float) $fact->value === (float) $recording['recorded_source_facts']['total_area_m2'],
         ));
         self::assertCount(1, $acceptedAreaFacts);
         $acceptedAreaFact = $acceptedAreaFacts[0];
@@ -394,32 +418,19 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         $acceptedArea = (float) $acceptedAreaFact->value;
         self::assertSame((float) $recording['recorded_source_facts']['total_area_m2'], $acceptedArea);
 
-        $areaPage = $document->pages()->where('page_number', 4)->sole();
-        $planningTakeoff = $document->quantityTakeoffs()->create([
-            'session_id' => $session->id,
-            'page_id' => $areaPage->id,
-            'organization_id' => $organization->id,
-            'project_id' => $project->id,
-            'source_element_ids' => [],
-            'scope_key' => 'rough_floor_area',
-            'work_intent' => ['scope' => 'rough_finishing', 'operation' => 'cement_screed'],
-            'name' => 'Площадь цементной стяжки по листу общих данных',
+        self::assertDatabaseHas('estimate_generation_document_facts', [
+            'document_id' => $document->id,
+            'fact_type' => 'total_area',
+            'scope_key' => 'building_area_total',
+            'value_number' => 72.1900,
             'unit' => 'm2',
-            'quantity' => $acceptedArea,
-            'formula' => 'document_total_area',
-            'confidence' => 0.91,
-            'source_refs' => [[
-                'document_id' => (int) $document->id,
-                'page_number' => 4,
-                'source_version' => $sourceVersion,
-            ]],
-            'normalized_payload' => [
-                'review_required' => false,
-                'accepted_project_fact_id' => $acceptedAreaFact->id,
-                'accepted_project_fact_version' => $acceptedAreaFact->version,
-            ],
+            'confidence' => 1.00,
         ]);
-        self::assertSame($acceptedArea, (float) $planningTakeoff->quantity);
+        self::assertSame(28, DB::table('estimate_generation_document_facts')
+            ->where('document_id', $document->id)
+            ->where('page_id', $document->pages()->where('page_number', 4)->value('id'))
+            ->where('normalized_payload->projection', 'arbiter_consensus:v1')
+            ->count());
 
         app(ProjectUnderstandingCoordinator::class)->refresh(
             (int) $organization->id,
@@ -512,7 +523,7 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                 ->all(),
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         self::assertSame(1, $synthesis->physicalCalls);
-        self::assertSame(1, DB::table('estimate_generation_project_model_fact_projections as projection')
+        self::assertSame(13, DB::table('estimate_generation_project_model_fact_projections as projection')
             ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
             ->where('projection.session_id', $session->id)
             ->where('projection.is_current', true)
@@ -1432,6 +1443,9 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
 
     private function observation(VisionDocumentInput $input, string $role): VisionAnalysisData
     {
+        if ($role === 'observer_literal' && in_array($input->pageNumber, [2, 3, 4], true)) {
+            return $this->capturedProductionObservation($input);
+        }
         $page = $this->pages[$input->pageNumber];
         $profile = str_replace('observer_', '', $role);
         $evidenceKey = sprintf('page-%d-%s', $input->pageNumber, $profile);
@@ -1549,6 +1563,30 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
         );
     }
 
+    private function capturedProductionObservation(VisionDocumentInput $input): VisionAnalysisData
+    {
+        $payload = json_decode((string) file_get_contents(sprintf(
+            '%s/tests/Fixtures/EstimateGeneration/Vision/session-73-page-%d-observer.json',
+            dirname(__DIR__, 4),
+            $input->pageNumber,
+        )), true, flags: JSON_THROW_ON_ERROR);
+        $canonical = (new RoleVisionResponseCanonicalizer)->canonicalize($payload, $input);
+
+        return VisionAnalysisData::fromProviderArray(
+            $canonical->payload,
+            'recorded',
+            'openai/gpt-5.6-luna',
+            'openai/gpt-5.6-luna',
+            'recorded-session-73-v1',
+            'measured',
+            100,
+            50,
+            64,
+            64,
+            $input->nativeReferences,
+        );
+    }
+
     private function arbitration(VisionDocumentInput $input): VisionAnalysisData
     {
         $claims = $input->auxiliaryMetadata['arbitration']['claims'] ?? [];
@@ -1600,7 +1638,7 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
             }
             $decisions[] = [
                 'claim_id' => (string) $representative['id'],
-                'status' => $isMaterialConflict && ! $majority && ! $hasExplicitEvidence
+                'status' => $isMaterialConflict && ! $majority
                     ? 'unresolved'
                     : 'accepted',
                 'supporting_claim_ids' => $supportingClaimIds,

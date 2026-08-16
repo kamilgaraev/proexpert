@@ -1,0 +1,59 @@
+{
+  "schema_version": 4,
+  "sheet_type": "unknown",
+  "evidence": {
+    "title.ar": {
+      "locator": {
+        "page_id": 2002,
+        "page_number": 2,
+        "processing_unit_id": 302,
+        "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinate_space": "normalized_derivative_v1"
+      },
+      "key": "title.ar"
+    }
+  },
+  "elements": {
+    "text.title.ar": {
+      "type": "text",
+      "label": "Архитектурные решения (АР)",
+      "polygon": [[0.354, 0.458], [0.706, 0.458], [0.706, 0.497], [0.354, 0.497]],
+      "confidence": 0.99,
+      "evidence_ref": "title.ar"
+    }
+  },
+  "scale_candidates": [],
+  "warnings": ["scale_missing"],
+  "visual_attributes": {
+    "roof_type": {"value": "unknown", "confidence": 1, "evidence_ref": "title.ar"}
+  },
+  "project_sheet_analysis": {
+    "contractVersion": "sheet-analysis:v3",
+    "role": "unknown",
+    "facts": [{
+      "entityKey": "sheet_title_ar",
+      "factType": "note",
+      "value": {"type": "string", "data": "Архитектурные решения (АР)", "unit": null},
+      "unit": null,
+      "evidenceRef": "title.ar",
+      "sourcePolygonOrNativeRef": [[0.354, 0.458], [0.706, 0.458], [0.706, 0.497], [0.354, 0.497]],
+      "confidence": 0.99,
+      "contractVersion": "sheet-analysis:v3"
+    }]
+  },
+  "analysis_routing": {
+    "page_kind": "cover",
+    "requested_depth": "simple_context",
+    "information_density": "low",
+    "readability": "high",
+    "confidence": 0.99,
+    "ambiguous": false,
+    "material_risk": "low",
+    "reasons": ["The page contains only a centered architectural-design title."],
+    "semantic_regions": [{
+      "label": "Architectural design title",
+      "purpose": "Centered sheet title identifying the architectural solutions section",
+      "box": [0.354, 0.458, 0.706, 0.497]
+    }]
+  }
+}

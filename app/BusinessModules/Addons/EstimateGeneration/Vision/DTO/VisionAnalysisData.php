@@ -23,6 +23,11 @@ final readonly class VisionAnalysisData
 
     private const SHEET_TYPES = ['floor_plan', 'elevation', 'section', 'detail', 'site_plan', 'schedule', 'sketch', 'photo', 'unknown'];
 
+    public static function isSupportedSheetType(mixed $sheetType): bool
+    {
+        return is_string($sheetType) && in_array($sheetType, self::SHEET_TYPES, true);
+    }
+
     private const WARNINGS = ['scale_missing', 'scale_conflict', 'low_confidence', 'perspective_confirmation_required', 'geometry_incomplete', 'text_uncertain'];
 
     /** @param list<VisionEvidenceData> $evidence @param list<VisionElementData> $elements @param list<VisionScaleCandidateData> $scaleCandidates @param list<string> $warnings */

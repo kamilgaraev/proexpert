@@ -149,6 +149,126 @@ final class RoleVisionResponseCanonicalizerTest extends TestCase
         self::assertSame(true, $analysis->evidence[0]->locator['explicit'] ?? null);
     }
 
+    #[Test]
+    public function production_page_two_preserves_the_associative_element_and_nested_unit_fact(): void
+    {
+        $analysis = $this->analysisFromFixture('session-73-page-2-observer.json');
+
+        self::assertCount(1, $analysis->elements);
+        self::assertSame('text.title.ar', $analysis->elements[0]->key);
+        self::assertSame('Архитектурные решения (АР)', $analysis->elements[0]->label);
+        self::assertCount(1, $analysis->projectSheetAnalysis?->facts ?? []);
+        self::assertSame([
+            'type' => 'string',
+            'data' => 'Архитектурные решения (АР)',
+        ], $analysis->projectSheetAnalysis?->facts[0]['value'] ?? null);
+        self::assertNull($analysis->projectSheetAnalysis?->facts[0]['unit'] ?? null);
+        self::assertSame([], $analysis->quarantinedItems);
+    }
+
+    #[Test]
+    public function production_page_three_preserves_all_twenty_six_facts_with_associative_evidence(): void
+    {
+        $analysis = $this->analysisFromFixture('session-73-page-3-observer.json');
+        $facts = $analysis->projectSheetAnalysis?->facts ?? [];
+
+        self::assertCount(26, $facts);
+        self::assertSame('01 — Обложка', $facts[0]['value']['data'] ?? null);
+        self::assertSame('Типовой индивидуальный одноэтажный жилой каркасно-панельный дом с деревянным каркасом', $facts[23]['value']['data'] ?? null);
+        self::assertSame('ВСХ-70-АР', $facts[24]['value']['data'] ?? null);
+        self::assertSame($this->version(), $analysis->evidence[0]->locator['source_version'] ?? null);
+        self::assertSame([], $analysis->quarantinedItems);
+    }
+
+    #[Test]
+    public function production_page_four_repairs_only_representation_and_quarantines_one_malformed_fact(): void
+    {
+        $analysis = $this->analysisFromFixture('session-73-page-4-observer.json');
+        $facts = $analysis->projectSheetAnalysis?->facts ?? [];
+        $byEntity = [];
+        foreach ($facts as $fact) {
+            $byEntity[$fact['entityKey']] = $fact;
+        }
+
+        self::assertSame('unknown', $analysis->sheetType);
+        self::assertCount(29, $facts);
+        self::assertSame(['type' => 'number', 'data' => 72.19], $byEntity['building_area_total']['value']);
+        self::assertSame('m2', $byEntity['building_area_total']['unit']);
+        self::assertSame(['type' => 'number', 'data' => 4.32], $byEntity['building_height']['value']);
+        self::assertSame('m', $byEntity['building_height']['unit']);
+        self::assertSame('pcs', $byEntity['above_ground_storeys']['unit']);
+        self::assertSame('свайно-винтовой; также указана утепленная шведская плита (УШП)', $byEntity['foundation_type']['value']['data']);
+        self::assertSame('доска сухая обрезная 42x142, шаг 0,58 м', $byEntity['external_wall_construction']['value']['data']);
+        self::assertSame('двускатная', $byEntity['roof_form']['value']['data']);
+        self::assertSame('битумная черепица', $byEntity['roof_covering']['value']['data']);
+        self::assertSame(92.58, $byEntity['roof_area']['value']['data']);
+        self::assertArrayNotHasKey('malformed_quantity', $byEntity);
+        self::assertSame([
+            ['section' => 'sheet_type', 'index' => 0, 'reason' => 'invalid_sheet_type'],
+            ['section' => 'facts', 'index' => 29, 'reason' => 'invalid_project_sheet_value'],
+        ], $analysis->quarantinedItems);
+    }
+
+    #[Test]
+    public function production_representation_repair_rejects_a_conflicting_unit_without_affecting_other_facts(): void
+    {
+        $payload = json_decode((string) file_get_contents(
+            dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/session-73-page-4-observer.json',
+        ), true, flags: JSON_THROW_ON_ERROR);
+        $payload['project_sheet_analysis']['facts'][0]['unit'] = 'см';
+
+        $canonical = (new RoleVisionResponseCanonicalizer)->canonicalize(
+            $payload,
+            $this->input(['observer' => ['index' => 1]]),
+        );
+        $analysis = VisionAnalysisData::fromProviderArray(
+            $canonical->payload,
+            'recorded',
+            'openai/gpt-5.6-luna',
+            'openai/gpt-5.6-luna',
+            'recording:v1',
+            'measured',
+            1,
+            1,
+            100,
+            100,
+        );
+
+        self::assertCount(28, $analysis->projectSheetAnalysis?->facts ?? []);
+        self::assertNotContains(
+            'building_dimensions',
+            array_column($analysis->projectSheetAnalysis?->facts ?? [], 'entityKey'),
+        );
+        self::assertContains(
+            ['section' => 'facts', 'index' => 0, 'reason' => 'invalid_project_sheet_value'],
+            $analysis->quarantinedItems,
+        );
+    }
+
+    private function analysisFromFixture(string $fixture): VisionAnalysisData
+    {
+        $payload = json_decode((string) file_get_contents(
+            dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/'.$fixture,
+        ), true, flags: JSON_THROW_ON_ERROR);
+        $canonical = (new RoleVisionResponseCanonicalizer)->canonicalize(
+            $payload,
+            $this->input(['observer' => ['index' => 1]]),
+        );
+
+        return VisionAnalysisData::fromProviderArray(
+            $canonical->payload,
+            'recorded',
+            'openai/gpt-5.6-luna',
+            'openai/gpt-5.6-luna',
+            'recording:v1',
+            'measured',
+            1,
+            1,
+            100,
+            100,
+        );
+    }
+
     /** @param array<string,mixed> $auxiliaryMetadata */
     private function input(array $auxiliaryMetadata): VisionDocumentInput
     {

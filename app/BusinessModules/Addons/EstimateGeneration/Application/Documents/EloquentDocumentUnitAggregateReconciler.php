@@ -51,10 +51,6 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
             if ((string) $document->units_finalized_source_version !== $sourceVersion) {
                 $units = (clone $base)->get(['id', 'status', 'attempt_count', 'output_count', 'failure_code', 'failure_fingerprint', 'metadata']);
                 $currentUnitIds = $units->pluck('id');
-                $document->facts()->delete();
-                $document->drawingElements()->delete();
-                $document->quantityTakeoffs()->delete();
-                $document->scopeInferences()->delete();
                 $document->pages()->where('source_version', '<>', $sourceVersion)->delete();
                 $document->pages()->whereNotIn('processing_unit_id', $currentUnitIds)->delete();
                 $pages = $document->pages()
@@ -62,6 +58,17 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     ->where('source_version', $sourceVersion)
                     ->orderBy('page_number')
                     ->get();
+                $currentPageIds = $pages->pluck('id')->all();
+                foreach (['facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'] as $relation) {
+                    $document->{$relation}()
+                        ->where(function (Builder $query) use ($currentPageIds): void {
+                            $query->whereNull('page_id');
+                            if ($currentPageIds !== []) {
+                                $query->orWhereNotIn('page_id', $currentPageIds);
+                            }
+                        })
+                        ->delete();
+                }
                 $includedPages = $pages->reject(static fn ($page): bool => (string) $page->status === 'excluded');
                 $excludedCount = $pages->count() - $includedPages->count();
                 $outcome = $this->outcomes->resolve(
