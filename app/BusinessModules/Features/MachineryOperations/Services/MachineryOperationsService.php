@@ -5,10 +5,14 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\MachineryOperations\Services;
 
 use App\BusinessModules\Core\AssetManagement\DTO\AssetPlacementData;
+use App\BusinessModules\Core\AssetManagement\DTO\CreateOrganizationAssetData;
+use App\BusinessModules\Core\AssetManagement\Enums\AssetAccountingMode;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetLifecycleStatus;
+use App\BusinessModules\Core\AssetManagement\Enums\AssetOperationalMode;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Core\AssetManagement\Services\OrganizationAssetService;
+use App\BusinessModules\Features\MachineryOperations\DTO\CreateMachineryAssetData;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryDefect;
@@ -37,6 +41,7 @@ final class MachineryOperationsService
     public function __construct(
         private readonly MachineryAssetReadRepository $assets,
         private readonly OrganizationAssetService $organizationAssets,
+        private readonly MachineryAssetRegistryProjector $assetProjector,
         private readonly MachineryWorkflowPolicy $workflow,
         private readonly MachineryCostService $costs,
     ) {}
@@ -44,6 +49,42 @@ final class MachineryOperationsService
     public function paginateAssets(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
     {
         return $this->assets->paginate($organizationId, $perPage, $filters);
+    }
+
+    public function createAsset(int $organizationId, int $actorId, CreateMachineryAssetData $data): MachineryAsset
+    {
+        return DB::transaction(function () use ($organizationId, $actorId, $data): MachineryAsset {
+            $canonical = $this->organizationAssets->create(
+                $organizationId,
+                new CreateOrganizationAssetData(
+                    name: trim($data->name),
+                    inventoryNumber: trim($data->inventoryNumber),
+                    serialNumber: $data->serialNumber !== null ? trim($data->serialNumber) : null,
+                    accountingMode: AssetAccountingMode::Serialized,
+                    ownershipType: $data->ownershipType,
+                    actorId: $actorId,
+                    metadata: [
+                        'asset_type' => $data->assetType->value,
+                        'canonical_source' => 'machinery_operations',
+                    ],
+                    operationalMode: AssetOperationalMode::ShiftOperation,
+                    tracksMeter: $data->tracksMeter,
+                    tracksFuel: $data->tracksFuel,
+                    tracksProduction: $data->tracksProduction,
+                    maintenanceEnabled: $data->maintenanceEnabled,
+                    meterUnit: $data->meterUnit,
+                    operatingCostPerHour: $data->operatingCostPerHour,
+                    fuelType: $data->fuelType,
+                    fuelConsumptionRate: $data->fuelConsumptionRate,
+                    meterValue: $data->meterValue,
+                ),
+            );
+
+            return $this->assetProjector->project($canonical)->fresh([
+                'organizationAsset.operationProfile',
+                'organizationAsset.currentProject:id,name',
+            ]);
+        });
     }
 
     public function paginateShifts(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator

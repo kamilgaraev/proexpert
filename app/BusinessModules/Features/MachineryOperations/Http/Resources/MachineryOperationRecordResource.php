@@ -10,6 +10,7 @@ use App\BusinessModules\Features\MachineryOperations\Models\MachineryDowntime;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryFuelIssue;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryMaintenanceOrder;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryProductionRecord;
+use App\BusinessModules\Features\MachineryOperations\Support\MachineryStatusLabel;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -41,6 +42,7 @@ final class MachineryOperationRecordResource extends JsonResource
             'requested_by_user_id' => $assignment->requested_by_user_id,
             'approved_by_user_id' => $assignment->approved_by_user_id,
             'status' => $assignment->status,
+            'status_label' => MachineryStatusLabel::for('assignment_statuses', $assignment->status),
             'planned_start_at' => $assignment->planned_start_at?->toIso8601String(),
             'planned_end_at' => $assignment->planned_end_at?->toIso8601String(),
             'actual_start_at' => $assignment->actual_start_at?->toIso8601String(),
@@ -137,7 +139,7 @@ final class MachineryOperationRecordResource extends JsonResource
             'maintenance_type' => $order->maintenance_type,
             'priority' => $order->priority,
             'status' => $order->status,
-            'status_label' => trans_message("machinery_operations.maintenance_statuses.{$order->status}"),
+            'status_label' => MachineryStatusLabel::for('maintenance_statuses', $order->status),
             'description' => $order->description,
             'planned_at' => $order->planned_at?->toIso8601String(),
             'completed_at' => $order->completed_at?->toIso8601String(),
@@ -152,7 +154,7 @@ final class MachineryOperationRecordResource extends JsonResource
             'workflow_summary' => [
                 'stage' => $order->status,
                 'status' => $order->status,
-                'stage_label' => trans_message("machinery_operations.maintenance_statuses.{$order->status}"),
+                'stage_label' => MachineryStatusLabel::for('maintenance_statuses', $order->status),
                 'next_action' => $actions[0] ?? null,
                 'next_action_label' => $actions === [] ? null : trans_message("machinery_operations.actions.{$actions[0]}"),
                 'available_actions' => $actions,

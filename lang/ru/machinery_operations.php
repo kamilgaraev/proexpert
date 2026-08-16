@@ -3,6 +3,10 @@
 declare(strict_types=1);
 
 return [
+    'asset_types' => [
+        'machinery' => 'Техника',
+    ],
+    'status_fallback' => 'Статус не определён',
     'asset_statuses' => [
         'available' => 'Доступна',
         'assigned' => 'Назначена',
@@ -16,6 +20,25 @@ return [
         'submitted' => 'На проверке',
         'approved' => 'Утвержден',
         'rejected' => 'Возвращен',
+    ],
+    'assignment_statuses' => [
+        'active' => 'Активно',
+        'completed' => 'Завершено',
+        'cancelled' => 'Отменено',
+        'replaced' => 'Заменено',
+    ],
+    'request_statuses' => [
+        'pending' => 'Ожидает решения',
+        'approved' => 'Согласована',
+        'assigned' => 'Техника назначена',
+        'rejected' => 'Отклонена',
+        'cancelled' => 'Отменена',
+    ],
+    'priorities' => [
+        'low' => 'Низкий',
+        'normal' => 'Обычный',
+        'high' => 'Высокий',
+        'urgent' => 'Срочный',
     ],
     'maintenance_statuses' => [
         'open' => 'Открыта',
@@ -61,6 +84,7 @@ return [
         'asset_in_maintenance' => 'Техника находится на обслуживании.',
     ],
     'messages' => [
+        'asset_created' => 'Техника добавлена в реестр.',
         'shift_created' => 'Сменный рапорт техники создан.',
         'downtime_created' => 'Простой техники зафиксирован.',
         'fuel_created' => 'Выдача ГСМ зафиксирована.',
@@ -111,6 +135,12 @@ return [
         'validation_failed' => 'Проверьте данные операции по технике.',
     ],
     'validation' => [
+        'asset_type_required' => 'Укажите тип актива.',
+        'asset_type_invalid' => 'В этом разделе можно создать только технику.',
+        'name_required' => 'Укажите название техники.',
+        'inventory_number_required' => 'Укажите инвентарный номер техники.',
+        'planned_start_required' => 'Укажите начало периода назначения.',
+        'planned_end_after_start' => 'Окончание периода должно быть позже начала.',
         'asset_required' => 'Выберите технику.',
         'project_required' => 'Выберите объект.',
         'report_date_required' => 'Укажите дату сменного рапорта.',

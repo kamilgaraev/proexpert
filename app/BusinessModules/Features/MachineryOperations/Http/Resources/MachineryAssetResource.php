@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\MachineryOperations\Http\Resources;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetProjection;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryWorkflowPolicy;
+use App\BusinessModules\Features\MachineryOperations\Support\MachineryStatusLabel;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -31,6 +32,8 @@ final class MachineryAssetResource extends JsonResource
 
         return [
             ...$view,
+            'asset_type' => 'machinery',
+            'asset_type_label' => trans_message('machinery_operations.asset_types.machinery'),
             'operational_mode' => $operationProfile?->operational_mode?->value,
             'operation_profile' => $operationProfile ? [
                 'operational_mode' => $operationProfile->operational_mode->value,
@@ -40,11 +43,11 @@ final class MachineryAssetResource extends JsonResource
                 'maintenance_enabled' => $operationProfile->maintenance_enabled,
                 'meter_unit' => $operationProfile->meter_unit,
             ] : null,
-            'status_label' => trans_message("machinery_operations.asset_statuses.{$status}"),
+            'status_label' => MachineryStatusLabel::for('asset_statuses', $status),
             'workflow_summary' => [
                 'stage' => $status,
                 'status' => $status,
-                'stage_label' => trans_message("machinery_operations.asset_statuses.{$status}"),
+                'stage_label' => MachineryStatusLabel::for('asset_statuses', $status),
                 'next_action' => $actions[0] ?? null,
                 'next_action_label' => $actions === [] ? null : trans_message("machinery_operations.actions.{$actions[0]}"),
                 'available_actions' => $actions,
@@ -80,6 +83,7 @@ final class MachineryAssetResource extends JsonResource
                 'project_id' => $asset->currentAssignment->project_id,
                 'schedule_task_id' => $asset->currentAssignment->schedule_task_id,
                 'status' => $asset->currentAssignment->status,
+                'status_label' => MachineryStatusLabel::for('assignment_statuses', $asset->currentAssignment->status),
                 'planned_start_at' => $asset->currentAssignment->planned_start_at?->toIso8601String(),
                 'planned_end_at' => $asset->currentAssignment->planned_end_at?->toIso8601String(),
                 'actual_start_at' => $asset->currentAssignment->actual_start_at?->toIso8601String(),

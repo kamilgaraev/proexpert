@@ -37,7 +37,9 @@ final class MachineryAssetRegistryProjector
             'meter_hours' => $profile?->meter_value ?? 0,
             'metadata' => [
                 'registry_projection' => true,
-                'canonical_source' => 'warehouse_receipt',
+                'canonical_source' => is_array($asset->metadata)
+                    ? ($asset->metadata['canonical_source'] ?? 'warehouse_receipt')
+                    : 'warehouse_receipt',
             ],
         ]);
     }
