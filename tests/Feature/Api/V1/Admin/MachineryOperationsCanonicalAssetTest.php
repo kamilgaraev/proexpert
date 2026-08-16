@@ -115,7 +115,53 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
 
     }
 
-    public function test_legacy_physical_asset_create_route_is_removed(): void
+    public function test_module_create_facade_writes_canonical_asset_and_projects_it_for_operations(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->actingAs($context->user, 'api_admin');
+        $this->allowAccess();
+
+        $created = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/machinery-operations/assets', [
+                'asset_type' => 'machinery',
+                'name' => 'Гусеничный экскаватор',
+                'inventory_number' => 'MCH-NEW-001',
+                'serial_number' => 'SER-MCH-001',
+                'ownership_type' => 'owned',
+                'tracks_meter' => true,
+                'tracks_fuel' => true,
+                'maintenance_enabled' => true,
+                'meter_unit' => 'мч',
+                'operating_cost_per_hour' => 2500,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.asset_type', 'machinery')
+            ->assertJsonPath('data.asset_type_label', 'Техника')
+            ->assertJsonPath('data.name', 'Гусеничный экскаватор')
+            ->assertJsonPath('data.inventory_number', 'MCH-NEW-001')
+            ->assertJsonPath('data.status_label', 'Доступна');
+
+        $canonicalId = (int) $created->json('data.organization_asset_id');
+        self::assertGreaterThan(0, $canonicalId);
+
+        $this->assertDatabaseHas('organization_assets', [
+            'id' => $canonicalId,
+            'organization_id' => $context->organization->id,
+            'name' => 'Гусеничный экскаватор',
+            'inventory_number' => 'MCH-NEW-001',
+        ]);
+        $this->assertDatabaseHas('machinery_assets', [
+            'id' => $created->json('data.id'),
+            'organization_asset_id' => $canonicalId,
+        ]);
+
+        $canonical = OrganizationAsset::query()->findOrFail($canonicalId);
+        self::assertSame('machinery', $canonical->metadata['asset_type']);
+        self::assertSame('machinery_operations', $canonical->metadata['canonical_source']);
+        self::assertSame('shift_operation', $canonical->operationProfile()->firstOrFail()->operational_mode->value);
+    }
+
+    public function test_module_create_facade_rejects_warehouse_asset_types(): void
     {
         $context = AdminApiTestContext::create();
         $this->actingAs($context->user, 'api_admin');
@@ -123,10 +169,56 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/machinery-operations/assets', [
-                'asset_code' => 'REMOVED',
-                'name' => 'Removed legacy create',
+                'asset_type' => 'equipment',
+                'name' => 'Не техника',
+                'inventory_number' => 'WRONG-TYPE-1',
             ])
-            ->assertStatus(405);
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['asset_type']);
+
+        $this->assertDatabaseMissing('organization_assets', [
+            'organization_id' => $context->organization->id,
+            'inventory_number' => 'WRONG-TYPE-1',
+        ]);
+    }
+
+    public function test_workspace_returns_russian_assignment_status_labels_with_safe_fallback(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->actingAs($context->user, 'api_admin');
+        $this->allowAccess();
+        $asset = MachineryOperationsAssetFactory::create((int) $context->organization->id, [
+            'asset_code' => 'STATUS-LABEL-1',
+            'name' => 'Статусная техника',
+        ]);
+
+        $assignment = MachineryAssignment::query()->create([
+            'organization_id' => $context->organization->id,
+            'organization_asset_id' => $asset->organization_asset_id,
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'requested_by_user_id' => $context->user->id,
+            'approved_by_user_id' => $context->user->id,
+            'status' => 'completed',
+            'planned_start_at' => now()->subDay(),
+            'actual_start_at' => now()->subDay(),
+            'actual_end_at' => now(),
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/machinery-operations/assets/{$asset->id}/workspace")
+            ->assertOk()
+            ->assertJsonPath('data.assignments.0.id', $assignment->id)
+            ->assertJsonPath('data.assignments.0.status', 'completed')
+            ->assertJsonPath('data.assignments.0.status_label', 'Завершено');
+
+        $assignment->update(['status' => 'future_status']);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/machinery-operations/assets/{$asset->id}/workspace")
+            ->assertOk()
+            ->assertJsonPath('data.assignments.0.status_label', 'Статус не определён');
     }
 
     public function test_strict_canonical_reads_reject_direct_access_without_a_live_canonical_asset(): void

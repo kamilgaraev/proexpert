@@ -6,8 +6,12 @@ namespace App\BusinessModules\Features\MachineryOperations\Http\Controllers;
 
 use App\BusinessModules\Features\MachineryOperations\DTO\AssetRequestData;
 use App\BusinessModules\Features\MachineryOperations\DTO\AssignmentData;
+use App\BusinessModules\Features\MachineryOperations\DTO\CreateMachineryAssetData;
+use App\BusinessModules\Features\MachineryOperations\Enums\MachineryAssetType;
 use App\BusinessModules\Features\MachineryOperations\Http\Requests\AssignAssetRequest;
+use App\BusinessModules\Features\MachineryOperations\Http\Requests\AssignMachineryAssetRequest;
 use App\BusinessModules\Features\MachineryOperations\Http\Requests\CreateAssetRequest;
+use App\BusinessModules\Features\MachineryOperations\Http\Requests\CreateMachineryAssetRequest;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\AssetRequestResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryAssetResource;
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryOperationRecordResource;
@@ -81,6 +85,18 @@ final class MachineryOperationsController extends Controller
             return AdminResponse::error(trans_message('machinery_operations.errors.asset_not_found'), 404);
         }
         $workspace['asset'] = new MachineryAssetResource($workspace['asset']);
+        $workspace['assignments'] = $workspace['assignments']->map(
+            static fn ($record): array => (new MachineryOperationRecordResource($record))->toArray($request),
+        );
+        $workspace['shifts'] = $workspace['shifts']->map(
+            static fn ($record): array => (new MachineryShiftReportResource($record))->toArray($request),
+        );
+        $workspace['fuel_issues'] = $workspace['fuel_issues']->map(
+            static fn ($record): array => (new MachineryOperationRecordResource($record))->toArray($request),
+        );
+        $workspace['maintenance_orders'] = $workspace['maintenance_orders']->map(
+            static fn ($record): array => (new MachineryOperationRecordResource($record))->toArray($request),
+        );
 
         return AdminResponse::success($workspace);
     }
@@ -126,17 +142,42 @@ final class MachineryOperationsController extends Controller
         }
     }
 
-    public function assignAsset(Request $request, int $id): JsonResponse
+    public function storeAsset(CreateMachineryAssetRequest $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'project_id' => ['required', 'integer'],
-                'schedule_task_id' => ['nullable', 'integer'],
-                'planned_start_at' => ['required', 'date'],
-                'planned_end_at' => ['nullable', 'date', 'after:planned_start_at'],
-                'planned_hours' => ['nullable', 'numeric', 'min:0'],
-                'comment' => ['nullable', 'string', 'max:2000'],
-            ]);
+            $data = $request->validated();
+
+            return AdminResponse::success(new MachineryAssetResource($this->service->createAsset(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()->id,
+                new CreateMachineryAssetData(
+                    assetType: MachineryAssetType::from((string) $data['asset_type']),
+                    name: (string) $data['name'],
+                    inventoryNumber: (string) $data['inventory_number'],
+                    serialNumber: $data['serial_number'] ?? null,
+                    ownershipType: (string) ($data['ownership_type'] ?? 'owned'),
+                    tracksMeter: (bool) ($data['tracks_meter'] ?? true),
+                    tracksFuel: (bool) ($data['tracks_fuel'] ?? false),
+                    tracksProduction: (bool) ($data['tracks_production'] ?? false),
+                    maintenanceEnabled: (bool) ($data['maintenance_enabled'] ?? true),
+                    meterUnit: $data['meter_unit'] ?? 'мч',
+                    operatingCostPerHour: (float) ($data['operating_cost_per_hour'] ?? 0),
+                    fuelType: $data['fuel_type'] ?? null,
+                    fuelConsumptionRate: isset($data['fuel_consumption_rate']) ? (float) $data['fuel_consumption_rate'] : null,
+                    meterValue: (float) ($data['meter_value'] ?? 0),
+                ),
+            )), trans_message('machinery_operations.messages.asset_created'), 201);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'assets.store');
+        }
+    }
+
+    public function assignAsset(AssignMachineryAssetRequest $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validated();
             $asset = $this->findAssetOrFail($request, $id);
 
             return AdminResponse::success(new MachineryOperationRecordResource($this->service->assignAsset(

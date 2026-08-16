@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\MachineryOperations\Http\Resources;
 
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryShiftReport;
+use App\BusinessModules\Features\MachineryOperations\Support\MachineryStatusLabel;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -46,7 +47,7 @@ final class MachineryShiftReportResource extends JsonResource
             'approved_by_user_id' => $shift->approved_by_user_id,
             'report_date' => $shift->report_date?->toDateString(),
             'status' => $shift->status,
-            'status_label' => trans_message("machinery_operations.shift_statuses.{$shift->status}"),
+            'status_label' => MachineryStatusLabel::for('shift_statuses', $shift->status),
             'planned_hours' => $shift->planned_hours,
             'actual_hours' => $shift->actual_hours,
             'hourly_rate_snapshot' => $shift->hourly_rate_snapshot,
@@ -62,7 +63,7 @@ final class MachineryShiftReportResource extends JsonResource
             'workflow_summary' => [
                 'stage' => $shift->status,
                 'status' => $shift->status,
-                'stage_label' => trans_message("machinery_operations.shift_statuses.{$shift->status}"),
+                'stage_label' => MachineryStatusLabel::for('shift_statuses', $shift->status),
                 'next_action' => $actions[0] ?? null,
                 'next_action_label' => $actions === [] ? null : trans_message("machinery_operations.actions.{$actions[0]}"),
                 'available_actions' => $actions,
