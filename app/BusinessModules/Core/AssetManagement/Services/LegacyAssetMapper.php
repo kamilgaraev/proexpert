@@ -192,7 +192,7 @@ final readonly class LegacyAssetMapper
             return;
         }
 
-        $canonical = $matches->first();
+        $canonical = $matches->first() ?? $this->matchingLinkedMachineryAsset($legacy);
 
         if ($canonical?->trashed()) {
             $this->addConflict($report, $source, 'canonical_mapping_deleted');
@@ -470,6 +470,22 @@ final readonly class LegacyAssetMapper
         }
 
         return false;
+    }
+
+    private function matchingLinkedMachineryAsset(object $legacy): ?OrganizationAsset
+    {
+        if ($legacy->organization_asset_id === null) {
+            return null;
+        }
+
+        $canonical = OrganizationAsset::query()
+            ->withTrashed()
+            ->forOrganization((int) $legacy->organization_id)
+            ->find((int) $legacy->organization_asset_id);
+
+        return $canonical !== null && $this->machineryFieldsMatch($legacy, $canonical)
+            ? $canonical
+            : null;
     }
 
     private function hasWarehouseMovementLinkConflict(object $legacy, ?OrganizationAsset $canonical): bool
