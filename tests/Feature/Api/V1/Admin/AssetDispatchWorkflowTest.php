@@ -101,6 +101,42 @@ final class AssetDispatchWorkflowTest extends TestCase
         self::assertTrue($blocked);
     }
 
+    public function test_requires_decision_filter_and_overview_include_pending_and_approved_requests_only(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->actingAs($context->user, 'api_admin');
+        $this->allowAccess();
+
+        $requestIds = collect(['pending', 'approved', 'assigned'])->mapWithKeys(function (string $status) use ($context, $project): array {
+            $assetRequest = AssetRequest::query()->create([
+                'organization_id' => $context->organization->id,
+                'project_id' => $project->id,
+                'requested_by_user_id' => $context->user->id,
+                'status' => $status,
+                'priority' => 'normal',
+                'planned_start_at' => now()->addDay(),
+                'purpose' => "Заявка {$status}",
+            ]);
+
+            return [$status => (int) $assetRequest->id];
+        });
+
+        $queue = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/machinery-operations/asset-requests?requires_decision=1');
+
+        $queue->assertOk()->assertJsonCount(2, 'data');
+        self::assertEqualsCanonicalizing(
+            [$requestIds['pending'], $requestIds['approved']],
+            collect($queue->json('data'))->pluck('id')->all(),
+        );
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/machinery-operations/overview')
+            ->assertOk()
+            ->assertJsonPath('data.pending_requests', 2);
+    }
+
     public function test_direct_assignment_requires_permission_and_reason_and_records_audit(): void
     {
         $context = AdminApiTestContext::create();

@@ -65,6 +65,7 @@ final readonly class AssetDispatchService
             ->with(['project:id,name', 'organizationAsset:id,name,inventory_number,technical_status'])
             ->withCount('events')
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', $filters['status']))
+            ->when(filter_var($filters['requires_decision'] ?? false, FILTER_VALIDATE_BOOL), fn ($query) => $query->requiresDecision())
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->orderByRaw("CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END")
             ->orderBy('planned_start_at')
@@ -76,7 +77,7 @@ final readonly class AssetDispatchService
     {
         return [
             'open_downtimes' => MachineryDowntime::forOrganization($organizationId)->whereNull('ended_at')->count(),
-            'pending_requests' => DB::table('asset_requests')->where('organization_id', $organizationId)->whereIn('status', ['pending', 'approved'])->whereNull('deleted_at')->count(),
+            'pending_requests' => AssetRequest::forOrganization($organizationId)->requiresDecision()->count(),
             'shift_variances' => MachineryShiftReport::forOrganization($organizationId)->where('status', 'submitted')->whereColumn('actual_hours', '<>', 'planned_hours')->count(),
             'overdue_maintenance' => MachineryMaintenanceOrder::forOrganization($organizationId)->whereIn('status', ['open', 'in_progress'])->where('planned_at', '<', now())->count(),
         ];

@@ -64,7 +64,7 @@ final class MachineryOperationsController extends Controller
         return $this->paginated($this->dispatch->paginateRequests(
             (int) $request->attributes->get('current_organization_id'),
             (int) $request->input('per_page', 20),
-            $request->only(['status', 'project_id']),
+            $request->only(['status', 'project_id', 'requires_decision']),
         ), AssetRequestResource::class);
     }
 
