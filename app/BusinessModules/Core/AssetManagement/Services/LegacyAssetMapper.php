@@ -483,7 +483,11 @@ final readonly class LegacyAssetMapper
             ->forOrganization((int) $legacy->organization_id)
             ->find((int) $legacy->organization_asset_id);
 
-        return $canonical !== null && $this->machineryFieldsMatch($legacy, $canonical)
+        return $canonical !== null
+            && $this->machineryFieldsMatch($legacy, $canonical)
+            && $canonical->lifecycle_status === AssetLifecycleStatus::Active
+            && ($canonical->metadata['asset_type'] ?? null) === 'machinery'
+            && ($canonical->metadata['canonical_source'] ?? null) === 'machinery_operations'
             ? $canonical
             : null;
     }

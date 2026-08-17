@@ -534,7 +534,7 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
                 'package_item_id' => $item->id,
                 'estimate_norm_id' => $item->estimate_norm_id,
                 'logical_key' => $item->logical_key,
-                'message' => $exception->getMessage(),
+                'exception_class' => $exception::class,
             ]);
 
             throw $exception;

@@ -423,6 +423,7 @@ final class EstimateGenerationFailureLedgerPostgresTest extends TestCase
             'tenant mismatch' => [...$base, 'event_id' => (string) Str::uuid(), 'organization_id' => $fixture['organization_id'] + 999999],
             'fingerprint mismatch' => [...$base, 'event_id' => (string) Str::uuid(), 'fingerprint' => 'sha256:'.str_repeat('b', 64)],
             'unsafe prompt' => [...$base, 'event_id' => (string) Str::uuid(), 'safe_context' => json_encode(['provider_code' => 'prompt'], JSON_THROW_ON_ERROR)],
+            'invalid invariant code' => [...$base, 'event_id' => (string) Str::uuid(), 'safe_context' => json_encode(['invariant_code' => '../invalid'], JSON_THROW_ON_ERROR)],
             'invalid http code' => [...$base, 'event_id' => (string) Str::uuid(), 'safe_context' => json_encode(['http_code' => 700], JSON_THROW_ON_ERROR)],
             'unknown context key' => [...$base, 'event_id' => (string) Str::uuid(), 'safe_context' => json_encode(['unknown' => 'safe'], JSON_THROW_ON_ERROR)],
             'occurred with resolution' => [...$base, 'event_id' => (string) Str::uuid(), 'resolution_code' => 'retry_succeeded'],

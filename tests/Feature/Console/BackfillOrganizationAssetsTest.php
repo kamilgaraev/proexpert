@@ -290,6 +290,65 @@ final class BackfillOrganizationAssetsTest extends TestCase
         self::assertArrayNotHasKey('legacy_source', $canonical->fresh()->metadata);
     }
 
+    public function test_retired_canonical_module_link_is_rejected_as_shadow_link_mismatch(): void
+    {
+        $context = AdminApiTestContext::create();
+        $legacy = $this->createMachineryAsset(
+            (int) $context->organization->id,
+            'BF-RETIRED-CANONICAL-LINK',
+            'INV-BF-RETIRED-CANONICAL-LINK',
+        );
+        $canonical = OrganizationAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => $legacy->name,
+            'inventory_number' => $legacy->inventory_number,
+            'ownership_type' => $legacy->ownership_type,
+            'machinery_id' => $legacy->machinery_id,
+            'lifecycle_status' => AssetLifecycleStatus::Retired,
+            'metadata' => [
+                'asset_type' => 'machinery',
+                'canonical_source' => 'machinery_operations',
+            ],
+        ]);
+        $legacy->update(['organization_asset_id' => $canonical->id]);
+
+        self::assertSame(1, Artisan::call('assets:backfill', ['--format' => 'json']));
+        $report = $this->jsonOutput();
+
+        self::assertSame(1, $report['conflicts']);
+        self::assertSame('shadow_link_mismatch', $report['conflict_records'][0]['reason']);
+        self::assertSame($canonical->id, $legacy->fresh()->organization_asset_id);
+    }
+
+    public function test_non_machinery_canonical_source_link_is_rejected_as_shadow_link_mismatch(): void
+    {
+        $context = AdminApiTestContext::create();
+        $legacy = $this->createMachineryAsset(
+            (int) $context->organization->id,
+            'BF-WRONG-CANONICAL-SOURCE',
+            'INV-BF-WRONG-CANONICAL-SOURCE',
+        );
+        $canonical = OrganizationAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => $legacy->name,
+            'inventory_number' => $legacy->inventory_number,
+            'ownership_type' => $legacy->ownership_type,
+            'machinery_id' => $legacy->machinery_id,
+            'metadata' => [
+                'asset_type' => 'warehouse_item',
+                'canonical_source' => 'warehouse_balances',
+            ],
+        ]);
+        $legacy->update(['organization_asset_id' => $canonical->id]);
+
+        self::assertSame(1, Artisan::call('assets:backfill', ['--format' => 'json']));
+        $report = $this->jsonOutput();
+
+        self::assertSame(1, $report['conflicts']);
+        self::assertSame('shadow_link_mismatch', $report['conflict_records'][0]['reason']);
+        self::assertSame($canonical->id, $legacy->fresh()->organization_asset_id);
+    }
+
     public function test_serialized_warehouse_balance_is_imported_and_explicit_movements_are_linked(): void
     {
         $context = AdminApiTestContext::create();
