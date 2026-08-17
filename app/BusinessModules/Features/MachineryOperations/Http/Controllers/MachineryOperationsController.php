@@ -113,6 +113,9 @@ final class MachineryOperationsController extends Controller
             'eligible' => $candidate['eligible'],
             'exclusion_reasons' => $candidate['exclusion_reasons'],
             'score' => $candidate['score'],
+            'suitability' => $candidate['suitability'],
+            'suitability_label' => $candidate['suitability_label'],
+            'score_breakdown' => $candidate['score_breakdown'],
             'distance_km' => $candidate['distance_km'],
         ]);
 
@@ -211,7 +214,11 @@ final class MachineryOperationsController extends Controller
 
     public function returnAvailable(Request $request, int $id): JsonResponse
     {
-        return $this->assetAction($request, $id, fn ($asset) => $this->service->returnAvailable($asset));
+        return $this->assetAction(
+            $request,
+            $id,
+            fn ($asset) => $this->service->returnAvailable($asset, (int) $request->user()->id),
+        );
     }
 
     public function archiveAsset(Request $request, int $id): JsonResponse

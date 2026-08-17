@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\MachineryOperations\Models;
 
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Models\Project;
 use App\Models\ScheduleTask;
 use App\Models\User;
@@ -19,9 +20,9 @@ final class AssetRequest extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'organization_id', 'project_id', 'schedule_task_id', 'requested_by_user_id',
+        'organization_id', 'project_id', 'site_request_id', 'schedule_task_id', 'requested_by_user_id',
         'approved_by_user_id', 'organization_asset_id', 'status', 'priority',
-        'planned_start_at', 'planned_end_at', 'required_profile', 'purpose', 'decision_comment',
+        'origin_type', 'planned_start_at', 'planned_end_at', 'required_profile', 'requirements', 'purpose', 'decision_comment',
     ];
 
     protected $casts = [
@@ -33,6 +34,11 @@ final class AssetRequest extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    public function siteRequest(): BelongsTo
+    {
+        return $this->belongsTo(SiteRequest::class);
     }
 
     public function scheduleTask(): BelongsTo
@@ -53,6 +59,11 @@ final class AssetRequest extends Model
     public function events(): HasMany
     {
         return $this->hasMany(AssetRequestEvent::class);
+    }
+
+    public function assignments(): HasMany
+    {
+        return $this->hasMany(MachineryAssignment::class);
     }
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder

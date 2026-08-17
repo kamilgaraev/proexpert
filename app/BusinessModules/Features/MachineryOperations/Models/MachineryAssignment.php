@@ -19,6 +19,7 @@ final class MachineryAssignment extends Model
 
     protected $fillable = [
         'organization_id',
+        'asset_request_id',
         'organization_asset_id',
         'asset_id',
         'project_id',
@@ -44,6 +45,11 @@ final class MachineryAssignment extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(MachineryAsset::class, 'asset_id');
+    }
+
+    public function assetRequest(): BelongsTo
+    {
+        return $this->belongsTo(AssetRequest::class);
     }
 
     public function organizationAsset(): BelongsTo
