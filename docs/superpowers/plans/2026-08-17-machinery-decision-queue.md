@@ -23,7 +23,8 @@
 **Files:**
 - Modify: `app/BusinessModules/Features/MachineryOperations/Models/AssetRequest.php`
 - Modify: `app/BusinessModules/Features/MachineryOperations/Services/AssetDispatchService.php`
-- Test: `tests/Feature/Api/V1/Admin/MachineryOperationsWorkflowTest.php`
+- Test: `tests/Feature/Api/V1/Admin/AssetDispatchWorkflowTest.php`
+- Test: `tests/Unit/MachineryOperations/AssetRequestDecisionScopeTest.php`
 
 **Interfaces:**
 - Produces: `AssetRequest::scopeRequiresDecision(Builder $query): Builder`
@@ -45,7 +46,7 @@
 - Create: `src/pages/MachineryOperations/components/CreateMachineryRequestDialog.test.tsx`
 
 **Interfaces:**
-- Produces: `CreateMachineryAssetRequestPayload`, `machineryOperationsService.createAssetRequest(payload)`, `CreateMachineryRequestDialog`
+- Produces: `CreateMachineryRequestPayload`, `machineryOperationsService.createAssetRequest(payload)`, `CreateMachineryRequestDialog`
 - Consumes: existing asset-request endpoint and active project collection
 
 - [ ] Add failing service and component tests for the POST payload and business-only fields.
