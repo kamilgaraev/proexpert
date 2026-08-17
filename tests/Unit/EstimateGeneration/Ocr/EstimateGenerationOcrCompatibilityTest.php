@@ -9,9 +9,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentStorag
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use ReflectionClass;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class EstimateGenerationOcrCompatibilityTest extends TestCase
+class EstimateGenerationOcrCompatibilityTest extends EstimateGenerationApplicationTestCase
 {
     public function test_document_parsing_service_uses_new_ocr_pipeline_dependencies(): void
     {

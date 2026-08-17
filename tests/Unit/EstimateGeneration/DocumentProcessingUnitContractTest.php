@@ -1108,6 +1108,70 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
+    public function three_sixty_four_page_documents_keep_dispatch_windows_isolated(): void
+    {
+        $store = new class implements DocumentUnitDispatchStore
+        {
+            /** @var list<array{document_id: int, limit: int}> */
+            public array $requests = [];
+
+            public function dueForDocument(int $documentId, string $sourceVersion, DateTimeImmutable $now, int $limit): array
+            {
+                $this->requests[] = ['document_id' => $documentId, 'limit' => $limit];
+
+                return array_map(
+                    static fn (int $page): DocumentUnitDispatchCandidate => new DocumentUnitDispatchCandidate(
+                        ($documentId * 1000) + $page,
+                        $sourceVersion,
+                    ),
+                    range(1, min(64, $limit)),
+                );
+            }
+
+            public function dueForRecovery(DateTimeImmutable $now, int $limit): array
+            {
+                return [];
+            }
+
+            public function dispatchIfAllowed(
+                DocumentUnitDispatchCandidate $candidate,
+                DateTimeImmutable $now,
+                DateTimeImmutable $nextDispatchAt,
+                callable $dispatch,
+            ): bool {
+                $dispatch();
+
+                return true;
+            }
+        };
+        $jobs = new class implements EstimateGenerationUnitJobDispatcher
+        {
+            /** @var list<int> */
+            public array $unitIds = [];
+
+            public function dispatch(int $unitId, string $sourceVersion, bool $priority = false): void
+            {
+                $this->unitIds[] = $unitId;
+            }
+        };
+        $dispatcher = new DispatchDocumentProcessingUnits($store, $jobs);
+
+        foreach ([41, 42, 43] as $documentId) {
+            self::assertSame(16, $dispatcher->forDocument($documentId, 'source-'.$documentId));
+        }
+
+        self::assertSame([
+            ['document_id' => 41, 'limit' => 16],
+            ['document_id' => 42, 'limit' => 16],
+            ['document_id' => 43, 'limit' => 16],
+        ], $store->requests);
+        self::assertCount(48, $jobs->unitIds);
+        self::assertSame(range(41001, 41016), array_slice($jobs->unitIds, 0, 16));
+        self::assertSame(range(42001, 42016), array_slice($jobs->unitIds, 16, 16));
+        self::assertSame(range(43001, 43016), array_slice($jobs->unitIds, 32, 16));
+    }
+
+    #[Test]
     public function busy_unit_is_released_until_lease_then_reclaimed(): void
     {
         Carbon::setTestNow('2026-07-11 10:00:00');

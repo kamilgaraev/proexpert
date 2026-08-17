@@ -4,15 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class EstimateGenerationPipelineQualityTest extends TestCase
+class EstimateGenerationPipelineQualityTest extends EstimateGenerationApplicationTestCase
 {
-    public function test_zero_total_priced_work_is_marked_not_calculated(): void
+    public function test_priced_work_without_snapshot_is_marked_not_calculated(): void
     {
         $items = app(EstimatePricingService::class)->price([[
             'key' => 'foundation.zero',
@@ -27,13 +26,13 @@ class EstimateGenerationPipelineQualityTest extends TestCase
             'validation_flags' => [],
         ]]);
 
-        $this->assertSame(0.0, $items[0]['total_cost']);
+        $this->assertSame(0, $items[0]['total_cost']);
         $this->assertSame('not_calculated', $items[0]['pricing_status']);
-        $this->assertSame('pricing_not_calculated', $items[0]['pricing_blocker']);
-        $this->assertContains('pricing_not_calculated', $items[0]['validation_flags']);
+        $this->assertSame('missing_price_snapshot', $items[0]['pricing_blocker']);
+        $this->assertContains('missing_price_snapshot', $items[0]['validation_flags']);
     }
 
-    public function test_generated_house_estimate_requires_normative_review_instead_of_market_prices(): void
+    public function test_generated_house_without_source_takeoff_does_not_invent_priced_work(): void
     {
         $analysis = [
             'object' => [
@@ -50,15 +49,27 @@ class EstimateGenerationPipelineQualityTest extends TestCase
             ],
         ];
 
-        $decomposition = app(EstimateDecompositionService::class)->decompose($analysis);
-        $items = app(NormativeWorkItemPlannerService::class)->build($decomposition[0], $decomposition[0]['sections'][0], $analysis);
+        $localEstimate = [
+            'key' => 'foundation',
+            'title' => 'Фундамент',
+            'scope_type' => 'foundation',
+            'target_items_min' => 12,
+            'sections' => [[
+                'key' => 'foundation-section',
+                'title' => 'Фундамент',
+                'construction_part' => 'foundation',
+                'source_refs' => [],
+            ]],
+        ];
+        $items = app(NormativeWorkItemPlannerService::class)->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            $analysis,
+        );
         $items = app(ResourceAssemblyService::class)->enrich($items, ['scope_type' => 'foundation']);
         $items = app(EstimatePricingService::class)->price($items);
         $pricedItems = array_values(array_filter($items, static fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
 
-        $this->assertNotEmpty($pricedItems);
-        $this->assertEquals(0, array_sum(array_column($pricedItems, 'total_cost')));
-        $this->assertNotContains('market_price_used', $pricedItems[0]['validation_flags']);
-        $this->assertContains('requires_normative_review', $pricedItems[0]['validation_flags']);
+        $this->assertSame([], $pricedItems);
     }
 }

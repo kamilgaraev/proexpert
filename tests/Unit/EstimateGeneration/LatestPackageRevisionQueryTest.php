@@ -17,7 +17,8 @@ final class LatestPackageRevisionQueryTest extends TestCase
     {
         $source = file_get_contents(dirname(__DIR__, 3).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php');
         $start = strpos($source, 'private function refreshPackagePricingState');
-        $end = strpos($source, 'private function appendItemRevision', $start);
+        $bodyStart = strpos($source, '{', $start);
+        $end = strpos($source, "\n    private function ", $bodyStart);
         $method = substr($source, $start, $end - $start);
 
         self::assertStringContainsString('ROW_NUMBER() OVER (PARTITION BY', $method);

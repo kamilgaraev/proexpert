@@ -9,18 +9,26 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeR
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalRolloutService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRolloutFaultInjector;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
+use Illuminate\Database\PostgresConnection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-final class PostgresNormativeRetrievalContractTest extends TestCase
+final class PostgresNormativeRetrievalContractTest extends EstimateGenerationApplicationTestCase
 {
-    public function refreshDatabase(): void {}
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
+        self::assertInstanceOf(PostgresConnection::class, DB::connection());
+        self::assertStringEndsWith('_contract', (string) DB::getDatabaseName());
+    }
 
     public function test_moving_high_water_future_writes_branch_plans_and_resumable_deploy(): void
     {
-        $this->requireDisposableContractDatabase();
+        $transactionLevel = DB::connection()->transactionLevel();
         $suffix = Str::lower(Str::random(12));
         $version = 'contract-'.$suffix;
         $datasetIds = [];
@@ -44,7 +52,7 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
                 $second = $backfill->resume(1000);
             }
 
-            self::assertSame(0, DB::connection()->transactionLevel());
+            self::assertSame($transactionLevel, DB::connection()->transactionLevel());
             foreach (['index_collection', 'constraint_validity', 'validate'] as $faultPhase) {
                 $this->assertFaultResume($faultPhase);
             }
@@ -115,15 +123,6 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
         self::assertSame('enabled', $resumed['deploy_status']);
         self::assertTrue(DB::table('pg_indexes')->where('indexname', 'estimate_norms_search_vector_gin')->exists());
         self::assertTrue(DB::table('pg_constraint')->where('conname', 'estimate_norms_validity_ck')->exists());
-    }
-
-    private function requireDisposableContractDatabase(): void
-    {
-        $database = (string) DB::connection()->getDatabaseName();
-        $allowed = str_ends_with($database, '_contract') || getenv('ALLOW_DESTRUCTIVE_CONTRACT_DB') === '1';
-        if (getenv('RUN_POSTGRES_NORMATIVE_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql' || ! $allowed) {
-            self::markTestSkipped('Requires explicit disposable PostgreSQL _contract database.');
-        }
     }
 
     private function targetMaxId(): int

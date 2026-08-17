@@ -7,9 +7,9 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-final class EstimateGenerationLearningExampleModelTest extends TestCase
+final class EstimateGenerationLearningExampleModelTest extends EstimateGenerationApplicationTestCase
 {
     public function test_model_casts_learning_payloads_and_dates(): void
     {

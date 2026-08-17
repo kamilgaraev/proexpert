@@ -123,6 +123,7 @@ final class TruthfulSettingsContractTest extends TestCase
                 'BusinessModules/Addons/EstimateGeneration/Vision/Providers/TimewebVisionProvider.php',
                 'BusinessModules/Addons/EstimateGeneration/Services/Ocr/Clients/TimewebVisionOcrClient.php',
                 'BusinessModules/Addons/EstimateGeneration/Observability/AttemptAwareNormativeLlmClient.php',
+                'BusinessModules/Addons/EstimateGeneration/Settings/EffectiveSettingsResolver.php',
                 'BusinessModules/Addons/EstimateGeneration/Services/Quality/EstimateGenerationQualityReviewPolicy.php',
                 'BusinessModules/Addons/EstimateGeneration/Application/Documents/UploadEstimateGenerationDocuments.php',
                 'BusinessModules/Addons/EstimateGeneration/Settings/DocumentRuntimeLimitsGuard.php',
@@ -131,6 +132,7 @@ final class TruthfulSettingsContractTest extends TestCase
         ));
 
         foreach ([
+            'visionModelForOperation(',
             "model('vision')", "model('classification')", "model('normative_matching')",
             "timeoutSeconds('vision')", "timeoutSeconds('classification')", "timeoutSeconds('normative_matching')",
             "retryAttempts('vision')", "retryAttempts('classification')", "retryAttempts('normative_matching')",

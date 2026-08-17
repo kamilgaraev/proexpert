@@ -7,9 +7,9 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\FgiscsDownloadUnavailableException;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsClient;
 use Illuminate\Support\Facades\Http;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class FgiscsClientTest extends TestCase
+class FgiscsClientTest extends EstimateGenerationApplicationTestCase
 {
     public function test_it_reads_country_subjects_from_fgiscs_contract(): void
     {
@@ -20,7 +20,7 @@ class FgiscsClientTest extends TestCase
             ]),
         ]);
 
-        $subjects = (new FgiscsClient())->countrySubjects();
+        $subjects = (new FgiscsClient)->countrySubjects();
 
         $this->assertSame([
             ['id' => 296, 'name' => 'Республика Татарстан'],
@@ -40,7 +40,7 @@ class FgiscsClientTest extends TestCase
             ]),
         ]);
 
-        $client = new FgiscsClient();
+        $client = new FgiscsClient;
 
         $zones = $client->priceZones(296);
         $periods = $client->periods(202);
@@ -66,7 +66,7 @@ class FgiscsClientTest extends TestCase
             ),
         ]);
 
-        $download = (new FgiscsClient())->downloadWorkerSalary(202, 425);
+        $download = (new FgiscsClient)->downloadWorkerSalary(202, 425);
 
         $this->assertSame("PK\x03\x04", $download->content);
         $this->assertSame('worker-salary.xlsx', $download->fileName);
@@ -86,6 +86,6 @@ class FgiscsClientTest extends TestCase
         $this->expectException(FgiscsDownloadUnavailableException::class);
         $this->expectExceptionMessage('Отсутствуют ценовая зона');
 
-        (new FgiscsClient())->downloadWorkerSalary(245, 425);
+        (new FgiscsClient)->downloadWorkerSalary(245, 425);
     }
 }

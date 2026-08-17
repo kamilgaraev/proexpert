@@ -11,9 +11,13 @@ final class StorageServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
+        if (! $this->app->environment('production')) {
+            return;
+        }
+
         StorageRuntimeConfiguration::fromConfig(
             (array) config('filesystems'),
-            $this->app->environment('production'),
+            true,
         );
     }
 }

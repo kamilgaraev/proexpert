@@ -7,9 +7,9 @@ namespace Tests\Unit\EstimateGeneration\Ocr;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrQualityAnalyzer;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class OcrQualityAnalyzerTest extends TestCase
+class OcrQualityAnalyzerTest extends EstimateGenerationApplicationTestCase
 {
     public function test_it_marks_clear_document_as_good(): void
     {

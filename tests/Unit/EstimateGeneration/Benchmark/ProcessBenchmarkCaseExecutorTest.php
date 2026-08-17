@@ -108,10 +108,7 @@ final class ProcessBenchmarkCaseExecutorTest extends TestCase
         self::assertGreaterThanOrEqual(0.15, $elapsed);
         self::assertLessThan(1.5, $elapsed);
         self::assertSame('technical_failure', $result->status);
-        self::assertSame(
-            PHP_OS_FAMILY === 'Windows' ? 'worker_process_group_termination_failed' : 'case_timeout',
-            $result->failureCode,
-        );
+        self::assertSame('case_timeout', $result->failureCode);
         usleep(6_000_000);
         self::assertFileDoesNotExist($treeMarker);
     }

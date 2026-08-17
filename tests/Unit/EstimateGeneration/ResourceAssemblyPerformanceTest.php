@@ -5,16 +5,17 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class ResourceAssemblyPerformanceTest extends TestCase
+class ResourceAssemblyPerformanceTest extends EstimateGenerationApplicationTestCase
 {
     public function test_normative_matching_is_cached_by_search_key(): void
     {
-        $matcher = new class extends EstimateNormativeMatcher {
+        $matcher = new class extends EstimateNormativeMatcher
+        {
             public int $calls = 0;
 
             public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
@@ -34,8 +35,8 @@ class ResourceAssemblyPerformanceTest extends TestCase
 
         for ($index = 1; $index <= 24; $index++) {
             $items[] = [
-                'key' => 'item-' . $index,
-                'name' => 'Бетонирование фундаментной ленты: детализация ' . $index,
+                'key' => 'item-'.$index,
+                'name' => 'Бетонирование фундаментной ленты: детализация '.$index,
                 'work_category' => 'concrete',
                 'unit' => 'м3',
                 'quantity' => 1,
@@ -54,7 +55,8 @@ class ResourceAssemblyPerformanceTest extends TestCase
 
     public function test_enrichment_reports_progress_for_long_batches(): void
     {
-        $matcher = new class extends EstimateNormativeMatcher {
+        $matcher = new class extends EstimateNormativeMatcher
+        {
             public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
             {
                 return null;
@@ -71,12 +73,12 @@ class ResourceAssemblyPerformanceTest extends TestCase
 
         for ($index = 1; $index <= 25; $index++) {
             $items[] = [
-                'key' => 'item-' . $index,
-                'name' => 'Работа ' . $index,
+                'key' => 'item-'.$index,
+                'name' => 'Работа '.$index,
                 'work_category' => 'custom',
                 'unit' => 'ед.',
                 'quantity' => 1,
-                'normative_search_key' => 'custom|' . $index,
+                'normative_search_key' => 'custom|'.$index,
                 'materials' => [],
                 'labor' => [],
                 'machinery' => [],

@@ -55,7 +55,7 @@ final class EstimateGenerationNoAirWorkItemPolicy
         $genericTitle = $this->isGenericTitle((string) ($workItem['name'] ?? ''))
             || $this->isGenericTitle((string) ($workItem['normative_search_text'] ?? ''));
 
-        return $genericTitle || ! $this->hasMatchedNormativeDecision($workItem) && in_array('requires_normative_review', $flags, true);
+        return $genericTitle;
     }
 
     /**

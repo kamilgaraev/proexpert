@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvide
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlannerResponseData;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\AuthoritativePackagePricingGuard;
@@ -66,12 +67,34 @@ final class PinnedNormativePipelineIntegrationTest extends TestCase
             new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
             $resolver,
         );
+        $workPlannerResponse = new WorkPlannerResponseData([[
+            'section_key' => 'walls-section-1',
+            'scope_type' => 'walls',
+            'work_intents' => [[
+                'intent_key' => 'work-1',
+                'name' => 'Кладка стен',
+                'category' => 'walls',
+                'unit' => 'm2',
+                'quantity' => '2',
+                'quantity_key' => 'wall_area',
+                'quantity_source_refs' => ['1'],
+                'confidence' => 1.0,
+                'work_intent' => [
+                    'material' => 'brick',
+                    'action' => 'masonry',
+                    'scope' => 'wall',
+                    'object' => 'residential',
+                    'dimensions' => ['area'],
+                    'preferred_section_prefixes' => ['10-01'],
+                ],
+            ]],
+        ]]);
         $plan = $compiler->compile([
             'object' => ['description' => 'Монтаж стены', 'area' => 12],
             'detected_structure' => ['scopes' => [['scope_type' => 'walls', 'title' => 'Стены', 'source_refs' => []]]],
             'document_context' => [], 'planning_signals' => ['generation_mode' => 'strict'],
             'regional_context' => $regional,
-        ]);
+        ], $workPlannerResponse);
         $pin = $plan['normative_context_pin'];
         $candidate = new NormativeCandidateData(
             '101', 101, 77, 'fsnb-2026.1', 'parsed', '10-01-001-01', 'Монтаж стены',
@@ -114,7 +137,12 @@ final class PinnedNormativePipelineIntegrationTest extends TestCase
         self::assertSame(7001, $item['materials'][0]['normative_ref']['norm_resource_id']);
         self::assertSame('350.00', $priced['total_cost']);
         self::assertSame(11, $priced['price_snapshot']['version_id']);
-        self::assertSame([['norm_resource_id' => 7001, 'resource_price_id' => 9001, 'unit_conversion_id' => null]], $inputs);
+        self::assertSame([[
+            'norm_resource_id' => 7001,
+            'resource_price_id' => 9001,
+            'unit_conversion_id' => null,
+            'pinned_abstract_resource_conversion_id' => null,
+        ]], $inputs);
         self::assertNull($guard->inputs(10, 20, 30, (string) $pipeline->baseInputVersion, array_replace_recursive($priced, [
             'materials' => [0 => ['normative_ref' => ['norm_resource_id' => 0]]],
         ])));

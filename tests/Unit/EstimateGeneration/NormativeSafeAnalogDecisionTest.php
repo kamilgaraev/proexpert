@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-final class NormativeSafeAnalogDecisionTest extends TestCase
+final class NormativeSafeAnalogDecisionTest extends EstimateGenerationApplicationTestCase
 {
     public function test_middle_confidence_safe_analog_can_be_used_for_review_pricing(): void
     {

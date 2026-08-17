@@ -118,6 +118,12 @@ final class NormativeCandidateFeedbackService
 
     private function attachConfirmedQuantityEvidence(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback, array $draft): array
     {
+        $sourceVersion = $draft['source_input_version'] ?? null;
+        if (! is_string($sourceVersion) || preg_match('/^sha256:[a-f0-9]{64}$/D', $sourceVersion) !== 1) {
+            throw $this->validationException([
+                'draft' => [$this->message('estimate_generation.stage6_snapshot_stale')],
+            ]);
+        }
         $repository = $this->evidenceRepository ?? app(EvidenceRepository::class);
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
@@ -137,7 +143,7 @@ final class NormativeCandidateFeedbackService
                         type: EvidenceType::WorkItem,
                         sourceType: EvidenceSourceType::UserInput,
                         sourceRef: 'input:'.(int) $feedback->id,
-                        sourceVersion: 'semver:v1',
+                        sourceVersion: $sourceVersion,
                         locator: ['item_key' => 'item:'.$identity],
                         value: ['work_code' => 'work_type:'.$identity, 'quantity' => (string) $workItem['quantity'], 'unit' => $workItem['unit']],
                         confidence: 1.0,

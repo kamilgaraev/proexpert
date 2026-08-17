@@ -19,10 +19,13 @@ final class PostgresCheckConstraintDefinition
 
         $expression = array_slice($tokens, 2, -1);
         $expression = self::withoutTextCasts($expression);
+        $expression = self::normalizeNumericConstants($expression);
         $expression = self::normalizeScalarArrayComparisons($expression);
+        $expression = $expression === null ? null : self::normalizeBetweenRanges($expression);
         if ($expression === null || ! self::balanced($expression)) {
             return self::incompatible($definition);
         }
+        $expression = self::withoutRedundantAndGroups($expression);
         while (self::wrappedBy($expression, 0, count($expression) - 1)) {
             $expression = array_slice($expression, 1, -1);
         }
@@ -187,6 +190,36 @@ final class PostgresCheckConstraintDefinition
     }
 
     /** @param list<string> $tokens
+     * @return list<string>
+     */
+    private static function normalizeNumericConstants(array $tokens): array
+    {
+        for ($index = 0; $index + 2 < count($tokens); $index++) {
+            $literal = $tokens[$index];
+            if (preg_match('/^(?:\d+(?:\.\d+)?|\.\d+)$/D', $literal) === 1
+                && ($tokens[$index + 1] ?? null) === '::'
+                && ($tokens[$index + 2] ?? null) === 'numeric') {
+                array_splice($tokens, $index + 1, 2);
+
+                continue;
+            }
+            if (! str_starts_with($literal, '@s[')
+                || ($tokens[$index + 1] ?? null) !== '::'
+                || ($tokens[$index + 2] ?? null) !== 'integer') {
+                continue;
+            }
+            $value = hex2bin(substr($literal, 3, -1));
+            if ($value === false || preg_match('/^-\d+$/D', $value) !== 1) {
+                continue;
+            }
+            array_splice($tokens, $index, 3, ['-', substr($value, 1)]);
+            $index++;
+        }
+
+        return $tokens;
+    }
+
+    /** @param list<string> $tokens
      * @return list<string>|null
      */
     private static function normalizeScalarArrayComparisons(array $tokens): ?array
@@ -236,6 +269,107 @@ final class PostgresCheckConstraintDefinition
         }
 
         return $tokens;
+    }
+
+    /** @param list<string> $tokens
+     * @return list<string>
+     */
+    private static function withoutRedundantAndGroups(array $tokens): array
+    {
+        do {
+            $changed = false;
+            for ($open = 0; $open < count($tokens); $open++) {
+                if ($tokens[$open] !== '(') {
+                    continue;
+                }
+                $close = self::matchingClose($tokens, $open, '(', ')');
+                if ($close === null || $close === $open + 1) {
+                    continue;
+                }
+                $depth = 0;
+                $hasOr = false;
+                for ($index = $open + 1; $index < $close; $index++) {
+                    if (in_array($tokens[$index], ['(', '['], true)) {
+                        $depth++;
+                    } elseif (in_array($tokens[$index], [')', ']'], true)) {
+                        $depth--;
+                    } elseif ($depth === 0 && $tokens[$index] === 'or') {
+                        $hasOr = true;
+                    }
+                }
+                $before = $tokens[$open - 1] ?? null;
+                $after = $tokens[$close + 1] ?? null;
+                $booleanParent = ($before === null || in_array($before, ['(', 'and', 'or'], true))
+                    && ($after === null || in_array($after, [')', 'and', 'or'], true));
+                if (! $hasOr && $booleanParent) {
+                    array_splice($tokens, $close, 1);
+                    array_splice($tokens, $open, 1);
+                    $changed = true;
+                    break;
+                }
+            }
+        } while ($changed);
+
+        return $tokens;
+    }
+
+    /** @param list<string> $tokens
+     * @return list<string>|null
+     */
+    private static function normalizeBetweenRanges(array $tokens): ?array
+    {
+        for ($index = 0; $index < count($tokens); $index++) {
+            if ($tokens[$index] !== 'between') {
+                continue;
+            }
+            $operandEnd = $index - 1;
+            $operandStart = $operandEnd;
+            if (($tokens[$operandEnd] ?? null) === ')') {
+                $open = self::matchingOpen($tokens, $operandEnd, '(', ')');
+                if ($open === null || ! self::identifierToken($tokens[$open - 1] ?? '')) {
+                    return null;
+                }
+                $operandStart = $open - 1;
+            }
+            $lower = self::scalarBound($tokens, $index + 1);
+            if ($operandStart < 0 || $lower === null || ($tokens[$lower[1]] ?? null) !== 'and') {
+                return null;
+            }
+            $upper = self::scalarBound($tokens, $lower[1] + 1);
+            if ($upper === null) {
+                return null;
+            }
+            $operand = array_slice($tokens, $operandStart, $operandEnd - $operandStart + 1);
+            array_splice($tokens, $operandStart, $upper[1] - $operandStart, [
+                ...$operand, '>=', ...$lower[0], 'and', ...$operand, '<=', ...$upper[0],
+            ]);
+            $index = $operandStart;
+        }
+
+        return $tokens;
+    }
+
+    /** @param list<string> $tokens
+     * @return array{list<string>, int}|null
+     */
+    private static function scalarBound(array $tokens, int $start): ?array
+    {
+        $value = $tokens[$start] ?? null;
+        if (in_array($value, ['+', '-'], true)) {
+            $number = $tokens[$start + 1] ?? null;
+            if ($number === null || preg_match('/^(?:\d+(?:\.\d+)?|\.\d+)$/D', $number) !== 1) {
+                return null;
+            }
+
+            return [[$value, $number], $start + 2];
+        }
+        if ($value === null || (! str_starts_with($value, '@s[')
+            && ! str_starts_with($value, '@e[')
+            && preg_match('/^(?:\d+(?:\.\d+)?|\.\d+)$/D', $value) !== 1)) {
+            return null;
+        }
+
+        return [[$value], $start + 1];
     }
 
     /** @param list<string> $tokens */

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
@@ -14,9 +15,11 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use Tests\TestCase;
+use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
 
-class StrictNormativeGenerationTest extends TestCase
+#[Group('postgres-contract')]
+class StrictNormativeGenerationTest extends EstimateGenerationPostgresTestCase
 {
     public function test_normative_work_item_planner_does_not_create_market_resources(): void
     {
@@ -36,6 +39,25 @@ class StrictNormativeGenerationTest extends TestCase
             'object' => [
                 'area' => 150,
                 'building_type' => 'Жилой',
+            ],
+            'document_context' => [
+                'quantity_takeoffs' => [[
+                    'quantity_key' => 'foundation.concrete',
+                    'name' => 'Объём бетонирования фундамента',
+                    'quantity' => 32.5,
+                    'unit' => 'м3',
+                    'confidence' => 0.98,
+                    'source_refs' => [[
+                        'type' => 'document',
+                        'filename' => 'КЖ.pdf',
+                        'page_number' => 2,
+                    ]],
+                    'normalized_payload' => [
+                        'quantity_key' => 'foundation.concrete',
+                        'unit' => 'м3',
+                        'review_required' => false,
+                    ],
+                ]],
             ],
         ]);
 
@@ -101,7 +123,7 @@ class StrictNormativeGenerationTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'review_required',
+            'status' => EstimateGenerationStatus::EstimateReviewRequired->value,
             'processing_stage' => 'validation_and_normalization',
             'processing_progress' => 100,
             'input_payload' => ['description' => 'Дом 150 м2'],
@@ -133,7 +155,7 @@ class StrictNormativeGenerationTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'review_required',
+            'status' => EstimateGenerationStatus::EstimateReviewRequired->value,
             'processing_stage' => 'validation_and_normalization',
             'processing_progress' => 100,
             'input_payload' => ['description' => 'Дом 150 м2'],
@@ -151,7 +173,7 @@ class StrictNormativeGenerationTest extends TestCase
 
         $session->refresh();
 
-        self::assertSame('review_required', $session->status);
+        self::assertSame(EstimateGenerationStatus::EstimateReviewRequired, $session->status);
         self::assertNull($session->applied_estimate_id);
     }
 
@@ -249,6 +271,10 @@ class StrictNormativeGenerationTest extends TestCase
     {
         return [
             'title' => 'Дом 150 м2',
+            'source_input_version' => 'sha256:'.str_repeat('a', 64),
+            'regional_context' => [
+                'normative_dataset_version' => '2026-05-07',
+            ],
             'local_estimates' => [[
                 'key' => 'foundation',
                 'title' => 'Фундамент',

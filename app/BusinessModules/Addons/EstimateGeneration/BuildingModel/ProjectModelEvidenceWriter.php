@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceAttribute;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceNode;
@@ -231,6 +232,9 @@ final readonly class ProjectModelEvidenceWriter
     private function evidenceScalar(ObservationClaim $claim): string|int|float|bool
     {
         $value = $claim->value['data'];
+        if (($claim->value['type'] ?? null) === 'number' && CanonicalSourceDecimal::isValid($value)) {
+            return $value;
+        }
         if (is_int($value) || is_float($value) || is_bool($value)) {
             return $value;
         }
@@ -314,7 +318,8 @@ final readonly class ProjectModelEvidenceWriter
             ]];
         }
 
-        $numeric = (is_int($value) || is_float($value)) && $value > 0;
+        $numeric = ($claim->value['type'] ?? null) === 'number'
+            && CanonicalSourceDecimal::isPositive($value);
         $unit = $claim->unit;
         $allowedUnits = ['m', 'm2', 'm3', 'pcs', 'kg', 't', 'h'];
         if ($type === 'area' && $numeric && $unit === 'm2'

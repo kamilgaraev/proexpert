@@ -12,39 +12,47 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRelation;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class EvidencePostgresContractTest extends TestCase
+final class EvidencePostgresContractTest extends EstimateGenerationPostgresTestCase
 {
     private string $runSuffix;
 
-    private bool $transactionStarted = false;
+    private int $organizationId;
+
+    private int $projectId;
+
+    private int $sessionId;
 
     protected function setUp(): void
     {
-        if (getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') !== '1') {
-            $this->markTestSkipped('Requires an explicit isolated PostgreSQL contract environment.');
-        }
         parent::setUp();
-        if (DB::getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('Requires PostgreSQL.');
-        }
-        DB::beginTransaction();
-        $this->transactionStarted = true;
         $this->runSuffix = bin2hex(random_bytes(6));
-    }
-
-    protected function tearDown(): void
-    {
-        if ($this->transactionStarted && DB::transactionLevel() > 0) {
-            DB::rollBack();
-        }
-        parent::tearDown();
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => 'draft',
+            'processing_stage' => 'draft',
+            'processing_progress' => 0,
+            'input_payload' => [],
+            'state_version' => 0,
+        ]);
+        $this->organizationId = (int) $organization->id;
+        $this->projectId = (int) $project->id;
+        $this->sessionId = (int) $session->id;
     }
 
     #[Test]
@@ -149,9 +157,9 @@ final class EvidencePostgresContractTest extends TestCase
     public function semantic_trigger_rejects_direct_identity_and_json_bypasses(): void
     {
         $base = [
-            'organization_id' => (int) getenv('EG_TEST_ORGANIZATION_ID'),
-            'project_id' => (int) getenv('EG_TEST_PROJECT_ID'),
-            'session_id' => (int) getenv('EG_TEST_SESSION_ID'),
+            'organization_id' => $this->organizationId,
+            'project_id' => $this->projectId,
+            'session_id' => $this->sessionId,
             'type' => 'source_fact', 'source_type' => 'document', 'source_ref' => 'document:1',
             'source_version' => 'test:'.$this->runSuffix, 'locator' => json_encode(['document_id' => 1], JSON_THROW_ON_ERROR),
             'value' => json_encode(['fact_key' => 'area', 'fact_value' => 1], JSON_THROW_ON_ERROR),
@@ -187,9 +195,9 @@ final class EvidencePostgresContractTest extends TestCase
     private function data(string $sourceRef = 'document:contract', EvidenceType $type = EvidenceType::SourceFact): EvidenceData
     {
         return new EvidenceData(
-            organizationId: (int) getenv('EG_TEST_ORGANIZATION_ID'),
-            projectId: (int) getenv('EG_TEST_PROJECT_ID'),
-            sessionId: (int) getenv('EG_TEST_SESSION_ID'),
+            organizationId: $this->organizationId,
+            projectId: $this->projectId,
+            sessionId: $this->sessionId,
             type: $type,
             sourceType: EvidenceSourceType::Document,
             sourceRef: 'document:'.sprintf('%u', crc32($sourceRef.':'.$this->runSuffix)),

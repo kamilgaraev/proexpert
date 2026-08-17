@@ -57,44 +57,32 @@ final class AnalysisBasisPayloadServiceTest extends TestCase
     public function test_document_question_basis_uses_the_same_canonical_question_id_as_admin(): void
     {
         $models = $this->createMock(ProjectModelRepository::class);
-        $models->method('currentUnderstanding')->willReturn(['questions' => []]);
-        $query = Mockery::mock(Builder::class);
-        foreach (['join', 'where', 'whereColumn', 'orderBy', 'limit'] as $method) {
-            $query->shouldReceive($method)->andReturnSelf();
-        }
-        $query->shouldReceive('get')->once()->andReturn(new Collection([(object) [
-            'normalized_payload' => json_encode([
-                'ai_questions' => [[
-                    'code' => 'partial_opening_geometry_abc123',
-                    'reason' => 'На разрезе не указана высота проёма.',
-                    'impact' => 'Без высоты нельзя точно определить площадь.',
-                    'recommendation' => 'Укажите высоту по ведомости проёмов.',
-                    'source_locator' => [
-                        'sources' => [[
-                            'document_id' => 44,
-                            'page_id' => 55,
-                            'page_number' => 3,
-                            'source_version' => 'sha256:'.str_repeat('a', 64),
-                        ]],
-                    ],
-                ]],
-            ], JSON_THROW_ON_ERROR),
-        ]]));
-        $database = Mockery::mock(DatabaseManager::class);
-        $database->shouldReceive('table')
-            ->once()
-            ->with('estimate_generation_document_pages as page')
-            ->andReturn($query);
+        $models->expects(self::once())
+            ->method('currentUnderstanding')
+            ->with(10, 20, 30)
+            ->willReturn(['questions' => [[
+                'conflict_id' => 'partial_opening_geometry_abc123',
+                'reason' => 'На разрезе не указана высота проёма.',
+                'impact' => 'Без высоты нельзя точно определить площадь.',
+                'recommendation' => 'Укажите высоту по ведомости проёмов.',
+                'source_locator' => [
+                    'sources' => [[
+                        'document_id' => 44,
+                        'page_id' => 55,
+                        'page_number' => 3,
+                        'source_version' => 'sha256:'.str_repeat('a', 64),
+                    ]],
+                ],
+            ]]]);
 
         $payload = (new AnalysisBasisPayloadService(
-            $database,
+            $this->createMock(DatabaseManager::class),
             $models,
             static fn (string $key): string => $key,
         ))->handle(10, 20, 30, 'question', 'partial_opening_geometry_abc123');
 
         self::assertSame('partial_opening_geometry_abc123', $payload['id'] ?? null);
         self::assertSame(44, $payload['sources'][0]['locator']['document_id'] ?? null);
-        Mockery::close();
     }
 
     public function test_quantity_basis_rejects_ambiguous_current_source_versions(): void

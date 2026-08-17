@@ -579,7 +579,7 @@ final class DocumentArbitrationTest extends TestCase
         $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
         $claims = [new ObservationClaim(
             'literal:1', 'observer_literal', 'room:main', 'area',
-            ['type' => 'number', 'data' => 80.0], 'm2', 'area-label', true,
+            ['type' => 'number', 'data' => '80.0'], 'm2', 'area-label', true,
             7, 9, 11, $this->version(), ['page_number' => 4],
         )];
         $decisions = [$this->decision([

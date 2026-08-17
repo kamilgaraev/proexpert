@@ -49,6 +49,39 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function numeric_facts_require_canonical_decimal_strings_and_isolate_one_malformed_item(): void
+    {
+        $payload = $this->payload();
+        $payload['facts'] = [];
+        for ($index = 0; $index < 30; $index++) {
+            $fact = $this->payload()['facts'][0];
+            $fact['entityKey'] = 'room-'.$index;
+            $fact['value']['data'] = (string) ($index + 1).'.25';
+            $payload['facts'][] = $fact;
+        }
+        $payload['facts'][14]['value']['data'] = 15.25;
+
+        $analysis = ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+
+        self::assertCount(29, $analysis->facts);
+        self::assertSame('room-13', $analysis->facts[13]['entityKey']);
+        self::assertSame('room-15', $analysis->facts[14]['entityKey']);
+        self::assertSame([[
+            'section' => 'facts',
+            'index' => 14,
+            'reason' => 'invalid_project_sheet_value',
+        ]], $analysis->quarantinedItems);
+
+        foreach (['1e3', 'NaN', 'Infinity', '-0', '-0.0', '+1', '01', '.5', '1.', '1000000000001', '-1000000000001', '0.12345'] as $invalid) {
+            $candidate = $this->payload();
+            $candidate['facts'][0]['value']['data'] = $invalid;
+            $result = ProjectSheetAnalysisData::fromProviderArray($candidate, ['page-1']);
+            self::assertSame([], $result->facts, $invalid);
+            self::assertSame('invalid_project_sheet_value', $result->quarantinedItems[0]['reason'], $invalid);
+        }
+    }
+
+    #[Test]
     public function it_preserves_an_unknown_professional_fact_for_arbitration_without_confirming_it(): void
     {
         $analysis = ProjectSheetAnalysisData::fromProviderArray($this->payload('facade', 'room'), ['page-1']);
@@ -170,7 +203,7 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
             'facts' => [[
                 'entityKey' => 'room-1',
                 'factType' => $factType,
-                'value' => ['type' => 'number', 'data' => 7.94],
+                'value' => ['type' => 'number', 'data' => '7.94'],
                 'unit' => 'm2',
                 'evidenceRef' => 'page-1',
                 'sourcePolygonOrNativeRef' => [[0.1, 0.1], [0.8, 0.8]],

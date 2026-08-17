@@ -93,7 +93,7 @@ final class EvidenceSchema
             'quantity_ref' => self::boundedString($value, 80, '/^[a-z][a-z0-9_.-]{0,79}$/D'),
             'sha256' => self::boundedString($value, 64, '/^[a-f0-9]{64}$/D'),
             'normalized_scalar' => is_bool($value) || ((is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0 && $value <= 1_000_000_000_000)
-                || (is_string($value) && self::validDomainCode($value)),
+                || (is_string($value) && (self::validDomainCode($value) || CanonicalSourceDecimal::isNonNegative($value))),
             'bbox' => self::validBbox($value),
             default => false,
         };

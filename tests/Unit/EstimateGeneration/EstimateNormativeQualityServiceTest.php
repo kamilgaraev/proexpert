@@ -6,9 +6,11 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateNormativeQualityService;
 use Illuminate\Support\Facades\DB;
-use Tests\TestCase;
+use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
 
-class EstimateNormativeQualityServiceTest extends TestCase
+#[Group('postgres-contract')]
+class EstimateNormativeQualityServiceTest extends EstimateGenerationPostgresTestCase
 {
     public function test_quality_service_reports_linked_and_unlinked_resources(): void
     {
@@ -161,7 +163,7 @@ class EstimateNormativeQualityServiceTest extends TestCase
             'estimate_norm_id' => $normId,
             'construction_resource_id' => $resourceId,
             'resource_code' => $code,
-            'resource_name' => 'Ресурс ' . $code,
+            'resource_name' => 'Ресурс '.$code,
             'unit' => 'шт',
             'quantity' => 1,
             'resource_type' => $type,

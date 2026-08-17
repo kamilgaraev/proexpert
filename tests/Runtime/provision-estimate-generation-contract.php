@@ -29,6 +29,9 @@ $database->setAsGlobal();
 $database->bootEloquent();
 Facade::setFacadeApplication($database->getContainer());
 Container::setInstance($database->getContainer());
+if (! class_exists('DB', false)) {
+    class_alias(\Illuminate\Support\Facades\DB::class, 'DB');
+}
 $database->getContainer()->instance('db', $database->getDatabaseManager());
 $database->getContainer()->instance('db.schema', $database->getConnection()->getSchemaBuilder());
 $database->getContainer()->instance('log', new NullLogger);

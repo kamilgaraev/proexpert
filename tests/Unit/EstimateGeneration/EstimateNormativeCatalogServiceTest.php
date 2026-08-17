@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
-use App\BusinessModules\Features\BudgetEstimates\Services\Normative\EstimateNormativeCatalogService;
-use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Normative\EstimateNormativeCatalogService;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -15,9 +15,11 @@ use App\Models\Project;
 use App\Repositories\EstimateItemRepository;
 use Illuminate\Support\Facades\DB;
 use Mockery;
-use Tests\TestCase;
+use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
 
-class EstimateNormativeCatalogServiceTest extends TestCase
+#[Group('postgres-contract')]
+class EstimateNormativeCatalogServiceTest extends EstimateGenerationPostgresTestCase
 {
     public function test_search_returns_new_estimate_normatives_with_price_summary(): void
     {

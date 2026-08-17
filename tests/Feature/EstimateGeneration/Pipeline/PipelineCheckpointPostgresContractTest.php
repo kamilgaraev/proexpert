@@ -4,43 +4,37 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class PipelineCheckpointPostgresContractTest extends TestCase
+final class PipelineCheckpointPostgresContractTest extends EstimateGenerationPostgresTestCase
 {
-    private bool $transactionStarted = false;
-
-    protected function setUp(): void
-    {
-        if (getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') !== '1') {
-            $this->markTestSkipped('Requires an explicit isolated PostgreSQL contract environment.');
-        }
-        parent::setUp();
-        if (DB::getDriverName() !== 'pgsql') {
-            $this->markTestSkipped('Requires PostgreSQL.');
-        }
-        DB::beginTransaction();
-        $this->transactionStarted = true;
-    }
-
-    protected function tearDown(): void
-    {
-        if ($this->transactionStarted && DB::transactionLevel() > 0) {
-            DB::rollBack();
-        }
-        parent::tearDown();
-    }
-
     public function test_completed_checkpoint_is_immutable_and_aggregate_budget_is_enforced(): void
     {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => 'draft',
+            'processing_stage' => 'draft',
+            'processing_progress' => 0,
+            'input_payload' => [],
+            'state_version' => 0,
+        ]);
         $scope = [
-            'organization_id' => (int) getenv('EG_TEST_ORGANIZATION_ID'),
-            'project_id' => (int) getenv('EG_TEST_PROJECT_ID'),
-            'session_id' => (int) getenv('EG_TEST_SESSION_ID'),
+            'organization_id' => (int) $organization->id,
+            'project_id' => (int) $project->id,
+            'session_id' => (int) $session->id,
         ];
         $attempt = '018f4a20-3f4c-7a11-8a22-'.bin2hex(random_bytes(6));
         $first = $this->completed($scope, $attempt, 'understand_documents', 5_000_000, 'a');

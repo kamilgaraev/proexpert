@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FsbcXmlParser;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class FsbcXmlParserTest extends TestCase
+class FsbcXmlParserTest extends EstimateGenerationApplicationTestCase
 {
     public function test_parse_reads_machine_price_decomposition(): void
     {
-        $filePath = tempnam(sys_get_temp_dir(), 'fsbc-mach-') . '.xml';
+        $filePath = tempnam(sys_get_temp_dir(), 'fsbc-mach-').'.xml';
 
         file_put_contents($filePath, <<<'XML'
 <?xml version="1.0" encoding="utf-8"?>
