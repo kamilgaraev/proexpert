@@ -29,6 +29,8 @@ final readonly class AssetDispatchService
     public function __construct(
         private MachineryOperationsService $operations,
         private AuthorizationService $authorization,
+        private CandidateScoreService $scores,
+        private SiteRequestAssetProjectionService $siteRequestProjection,
     ) {}
 
     public function request(int $organizationId, int $actorId, AssetRequestData $data): AssetRequest
@@ -42,6 +44,7 @@ final readonly class AssetDispatchService
                 'project_id' => $data->projectId,
                 'schedule_task_id' => $data->scheduleTaskId,
                 'requested_by_user_id' => $actorId,
+                'origin_type' => 'manual',
                 'status' => 'pending',
                 'priority' => $data->priority,
                 'planned_start_at' => $data->plannedStartAt,
@@ -104,13 +107,13 @@ final readonly class AssetDispatchService
     }
 
     /**
-     * @return Collection<int, array{asset: MachineryAsset, eligible: bool, exclusion_reasons: list<string>, score: float, distance_km: float|null}>
+     * @return Collection<int, array<string, mixed>>
      */
     public function candidates(AssetRequest $request): Collection
     {
         $request->loadMissing('project');
 
-        return MachineryAsset::forOrganization((int) $request->organization_id)
+        $candidates = MachineryAsset::forOrganization((int) $request->organization_id)
             ->whereNotNull('organization_asset_id')
             ->with(['organizationAsset.operationProfile', 'organizationAsset.currentProject'])
             ->get()
@@ -120,16 +123,18 @@ final readonly class AssetDispatchService
                 $distance = $canonical === null ? null : $this->distanceKm($request->project, $canonical->currentProject);
                 $sameProject = $canonical?->current_project_id === $request->project_id;
                 $cost = (float) ($canonical?->operationProfile?->operating_cost_per_hour ?? $legacy->operating_cost_per_hour);
-                $score = ($sameProject ? 100000.0 : 0.0) - (($distance ?? 1000.0) * 100.0) - $cost;
 
                 return [
                     'asset' => $legacy,
                     'eligible' => $reasons === [],
                     'exclusion_reasons' => $reasons,
-                    'score' => $score,
+                    'same_project' => $sameProject,
+                    'operating_cost_per_hour' => $cost,
                     'distance_km' => $distance,
                 ];
-            })
+            });
+
+        return $this->scores->score($candidates)
             ->sortBy([
                 ['eligible', 'desc'],
                 ['score', 'desc'],
@@ -175,6 +180,7 @@ final readonly class AssetDispatchService
                     'schedule_task_id' => $data->scheduleTaskId,
                     'requested_by_user_id' => $actorId,
                     'approved_by_user_id' => $actorId,
+                    'origin_type' => 'direct',
                     'status' => 'approved',
                     'priority' => 'urgent',
                     'planned_start_at' => $data->plannedStartAt,
@@ -201,6 +207,7 @@ final readonly class AssetDispatchService
             }
 
             $assignment = $this->operations->assignAsset($legacy, $actorId, [
+                'asset_request_id' => $request?->id,
                 'project_id' => $data->projectId,
                 'schedule_task_id' => $data->scheduleTaskId,
                 'planned_start_at' => $data->plannedStartAt,
@@ -222,6 +229,7 @@ final readonly class AssetDispatchService
                     'reason' => $reason,
                     'replaces_assignment_id' => $data->replacesAssignmentId,
                 ]);
+                $this->siteRequestProjection->markSiteRequestInProgress($request, $actorId);
             }
 
             return $assignment;

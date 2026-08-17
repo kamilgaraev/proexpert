@@ -2,9 +2,9 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Http\Resources;
 
-use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
+use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestActionSummaryService;
 use App\Services\Storage\FileService;
@@ -83,6 +83,8 @@ class SiteRequestResource extends JsonResource
             'equipment_specs' => $this->equipment_specs,
             'rental_start_date' => $this->rental_start_date?->format('Y-m-d'),
             'rental_end_date' => $this->rental_end_date?->format('Y-m-d'),
+            'equipment_start_at' => $this->equipment_start_at?->toIso8601String(),
+            'equipment_end_at' => $this->equipment_end_at?->toIso8601String(),
             'rental_hours_per_day' => $this->rental_hours_per_day,
             'with_operator' => $this->with_operator,
             'equipment_location' => $this->equipment_location,
@@ -104,11 +106,11 @@ class SiteRequestResource extends JsonResource
             'procurement_chain_summary' => $chainSummary->compact()->toArray(),
 
             // Связи
-            'project' => $this->whenLoaded('project', fn() => [
+            'project' => $this->whenLoaded('project', fn () => [
                 'id' => $this->project->id,
                 'name' => $this->project->name,
             ]),
-            'estimate_item' => $this->whenLoaded('estimateItem', fn() => $this->estimateItem ? [
+            'estimate_item' => $this->whenLoaded('estimateItem', fn () => $this->estimateItem ? [
                 'id' => $this->estimateItem->id,
                 'estimate_id' => $this->estimateItem->estimate_id,
                 'position_number' => $this->estimateItem->position_number,
@@ -123,17 +125,17 @@ class SiteRequestResource extends JsonResource
                     'short_name' => $this->estimateItem->measurementUnit->short_name,
                 ] : null,
             ] : null),
-            'user' => $this->whenLoaded('user', fn() => [
+            'user' => $this->whenLoaded('user', fn () => [
                 'id' => $this->user->id,
                 'name' => $this->user->name,
                 'email' => $this->user->email,
             ]),
-            'assigned_user' => $this->whenLoaded('assignedUser', fn() => $this->assignedUser ? [
+            'assigned_user' => $this->whenLoaded('assignedUser', fn () => $this->assignedUser ? [
                 'id' => $this->assignedUser->id,
                 'name' => $this->assignedUser->name,
                 'email' => $this->assignedUser->email,
             ] : null),
-            'files' => $this->whenLoaded('files', fn() => $this->files->map(fn($file) => [
+            'files' => $this->whenLoaded('files', fn () => $this->files->map(fn ($file) => [
                 'id' => $file->id,
                 'name' => $file->name,
                 'url' => app(FileService::class)->temporaryUrl($file->path, 60, $this->organization),
@@ -141,14 +143,14 @@ class SiteRequestResource extends JsonResource
                 'mime_type' => $file->mime_type,
                 'created_at' => $file->created_at?->toIso8601String(),
             ])),
-            'calendar_event' => $this->whenLoaded('calendarEvent', fn() => $this->calendarEvent ? [
+            'calendar_event' => $this->whenLoaded('calendarEvent', fn () => $this->calendarEvent ? [
                 'id' => $this->calendarEvent->id,
                 'title' => $this->calendarEvent->title,
                 'start_date' => $this->calendarEvent->start_date->format('Y-m-d'),
                 'end_date' => $this->calendarEvent->end_date?->format('Y-m-d'),
                 'color' => $this->calendarEvent->color,
             ] : null),
-            'payment_documents' => $this->whenLoaded('paymentDocuments', fn() => $this->paymentDocuments->map(fn($payment) => [
+            'payment_documents' => $this->whenLoaded('paymentDocuments', fn () => $this->paymentDocuments->map(fn ($payment) => [
                 'id' => $payment->id,
                 'document_number' => $payment->document_number,
                 'document_type' => $payment->document_type->value,
@@ -160,7 +162,7 @@ class SiteRequestResource extends JsonResource
                 'due_date' => $payment->due_date?->format('Y-m-d'),
                 'created_at' => $payment->created_at->toIso8601String(),
             ])),
-            'payment_document' => $this->whenLoaded('paymentDocument', fn() => $this->paymentDocument ? [
+            'payment_document' => $this->whenLoaded('paymentDocument', fn () => $this->paymentDocument ? [
                 'id' => $this->paymentDocument->id,
                 'document_number' => $this->paymentDocument->document_number,
                 'document_type' => $this->paymentDocument->document_type->value,
@@ -173,7 +175,7 @@ class SiteRequestResource extends JsonResource
                 'created_at' => $this->paymentDocument->created_at->toIso8601String(),
             ] : null),
 
-            'group' => $this->whenLoaded('group', fn() => $this->group ? [
+            'group' => $this->whenLoaded('group', fn () => $this->group ? [
                 'id' => $this->group->id,
                 'title' => $this->group->title,
                 'status' => $this->group->status,
@@ -182,7 +184,7 @@ class SiteRequestResource extends JsonResource
             ] : null),
 
             // Даты
-            'purchase_requests' => $this->whenLoaded('purchaseRequests', fn() => $this->purchaseRequests->map(fn($purchaseRequest) => [
+            'purchase_requests' => $this->whenLoaded('purchaseRequests', fn () => $this->purchaseRequests->map(fn ($purchaseRequest) => [
                 'id' => $purchaseRequest->id,
                 'request_number' => $purchaseRequest->request_number,
                 'status' => $purchaseRequest->status->value,
@@ -196,7 +198,7 @@ class SiteRequestResource extends JsonResource
                     ? $purchaseRequest->purchaseOrders->count()
                     : null,
             ])->values()),
-            'purchase_orders' => $this->whenLoaded('purchaseOrders', fn() => $this->purchaseOrders->map(fn($purchaseOrder) => [
+            'purchase_orders' => $this->whenLoaded('purchaseOrders', fn () => $this->purchaseOrders->map(fn ($purchaseOrder) => [
                 'id' => $purchaseOrder->id,
                 'purchase_request_id' => $purchaseOrder->purchase_request_id,
                 'order_number' => $purchaseOrder->order_number,
@@ -213,8 +215,8 @@ class SiteRequestResource extends JsonResource
                     'name' => $purchaseOrder->supplier->name,
                 ] : null,
             ])->values()),
-            'delivery_summary' => $this->whenLoaded('materialDeliveries', fn() => $this->buildDeliverySummary()),
-            'purchaseRequests' => $this->whenLoaded('purchaseRequests', fn() => $this->purchaseRequests->map(fn($purchaseRequest) => [
+            'delivery_summary' => $this->whenLoaded('materialDeliveries', fn () => $this->buildDeliverySummary()),
+            'purchaseRequests' => $this->whenLoaded('purchaseRequests', fn () => $this->purchaseRequests->map(fn ($purchaseRequest) => [
                 'id' => $purchaseRequest->id,
                 'request_number' => $purchaseRequest->request_number,
                 'status' => $purchaseRequest->status->value,
@@ -228,7 +230,7 @@ class SiteRequestResource extends JsonResource
                     ? $purchaseRequest->purchaseOrders->count()
                     : null,
             ])->values()),
-            'purchaseOrders' => $this->whenLoaded('purchaseOrders', fn() => $this->purchaseOrders->map(fn($purchaseOrder) => [
+            'purchaseOrders' => $this->whenLoaded('purchaseOrders', fn () => $this->purchaseOrders->map(fn ($purchaseOrder) => [
                 'id' => $purchaseOrder->id,
                 'purchase_request_id' => $purchaseOrder->purchase_request_id,
                 'order_number' => $purchaseOrder->order_number,
@@ -252,7 +254,7 @@ class SiteRequestResource extends JsonResource
 
     private function buildDeliverySummary(): ?array
     {
-        if (!$this->relationLoaded('materialDeliveries') || $this->materialDeliveries->isEmpty()) {
+        if (! $this->relationLoaded('materialDeliveries') || $this->materialDeliveries->isEmpty()) {
             return null;
         }
 

@@ -44,6 +44,7 @@ final class MachineryOperationsService
         private readonly MachineryAssetRegistryProjector $assetProjector,
         private readonly MachineryWorkflowPolicy $workflow,
         private readonly MachineryCostService $costs,
+        private readonly SiteRequestAssetProjectionService $siteRequestProjection,
     ) {}
 
     public function paginateAssets(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
@@ -125,7 +126,7 @@ final class MachineryOperationsService
 
         return [
             'asset' => $asset,
-            'assignments' => MachineryAssignment::forOrganization($organizationId)->where('asset_id', $id)->with('project:id,name')->latest()->limit(50)->get(),
+            'assignments' => MachineryAssignment::forOrganization($organizationId)->where('asset_id', $id)->with(['project:id,name', 'assetRequest'])->latest()->limit(50)->get(),
             'shifts' => MachineryShiftReport::forOrganization($organizationId)->where('asset_id', $id)->with('project:id,name')->latest('report_date')->limit(50)->get(),
             'fuel_issues' => MachineryFuelIssue::forOrganization($organizationId)->where('asset_id', $id)->latest('issued_at')->limit(50)->get(),
             'maintenance_orders' => MachineryMaintenanceOrder::forOrganization($organizationId)->where('asset_id', $id)->latest()->limit(50)->get(),
@@ -163,6 +164,7 @@ final class MachineryOperationsService
 
             $assignment = MachineryAssignment::query()->create([
                 'organization_id' => $lockedAsset->organization_id,
+                'asset_request_id' => $data['asset_request_id'] ?? null,
                 'organization_asset_id' => $lockedAsset->organization_asset_id,
                 'asset_id' => $lockedAsset->id,
                 'project_id' => (int) $data['project_id'],
@@ -224,30 +226,37 @@ final class MachineryOperationsService
         return $asset->fresh(self::ASSET_RELATIONS);
     }
 
-    public function returnAvailable(MachineryAsset $asset): MachineryAsset
+    public function returnAvailable(MachineryAsset $asset, int $actorId): MachineryAsset
     {
         if (! in_array($this->workflow->status($asset), ['assigned', 'in_operation', 'maintenance', 'unavailable'], true)) {
             throw new DomainException(trans_message('machinery_operations.errors.asset_available_invalid_status'));
         }
 
-        $asset->update([
-            'status' => 'available',
-            'current_project_id' => null,
-            'current_schedule_task_id' => null,
-        ]);
-        $this->updateCanonicalState(
-            $asset,
-            operationStatus: 'available',
-            technicalStatus: AssetTechnicalStatus::Serviceable,
-            clearPlacement: true,
-        );
+        return DB::transaction(function () use ($asset, $actorId): MachineryAsset {
+            $asset->update([
+                'status' => 'available',
+                'current_project_id' => null,
+                'current_schedule_task_id' => null,
+            ]);
+            $this->updateCanonicalState(
+                $asset,
+                operationStatus: 'available',
+                technicalStatus: AssetTechnicalStatus::Serviceable,
+                clearPlacement: true,
+            );
 
-        MachineryAssignment::forOrganization((int) $asset->organization_id)
-            ->where('asset_id', $asset->id)
-            ->where('status', 'active')
-            ->update(['status' => 'completed', 'actual_end_at' => now()]);
+            $assignments = MachineryAssignment::forOrganization((int) $asset->organization_id)
+                ->where('asset_id', $asset->id)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->get();
+            foreach ($assignments as $assignment) {
+                $assignment->update(['status' => 'completed', 'actual_end_at' => now()]);
+                $this->siteRequestProjection->completeFromAssignment($assignment, $actorId);
+            }
 
-        return $asset->fresh(self::ASSET_RELATIONS);
+            return $asset->fresh(self::ASSET_RELATIONS);
+        });
     }
 
     public function archiveAsset(MachineryAsset $asset): MachineryAsset

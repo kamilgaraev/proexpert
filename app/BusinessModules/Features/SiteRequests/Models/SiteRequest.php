@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\SiteRequests\Models;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\MachineryOperations\Models\AssetRequest;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
@@ -87,6 +88,8 @@ class SiteRequest extends Model
         'equipment_specs',
         'rental_start_date',
         'rental_end_date',
+        'equipment_start_at',
+        'equipment_end_at',
         'rental_hours_per_day',
         'with_operator',
         'equipment_location',
@@ -107,6 +110,8 @@ class SiteRequest extends Model
         'work_end_date' => 'date',
         'rental_start_date' => 'date',
         'rental_end_date' => 'date',
+        'equipment_start_at' => 'datetime',
+        'equipment_end_at' => 'datetime',
         'hourly_rate' => 'decimal:2',
         'material_quantity' => 'decimal:3',
         'equipment_count' => 'integer',
@@ -251,6 +256,11 @@ class SiteRequest extends Model
     public function materialDeliveries(): HasMany
     {
         return $this->hasMany(ProjectMaterialDelivery::class, 'site_request_id');
+    }
+
+    public function assetRequest(): HasOne
+    {
+        return $this->hasOne(AssetRequest::class, 'site_request_id');
     }
 
     // ============================================

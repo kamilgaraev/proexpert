@@ -78,6 +78,16 @@ final class MachineryAssetResource extends JsonResource
             ] : null),
             'current_assignment' => $this->whenLoaded('currentAssignment', fn () => $asset->currentAssignment ? [
                 'id' => $asset->currentAssignment->id,
+                'asset_request_id' => $asset->currentAssignment->asset_request_id,
+                'site_request_id' => $asset->currentAssignment->assetRequest?->site_request_id,
+                'origin_type' => $asset->currentAssignment->assetRequest?->origin_type,
+                'request_number' => match ($asset->currentAssignment->assetRequest?->origin_type) {
+                    'site_request' => $asset->currentAssignment->assetRequest->site_request_id === null
+                        ? null
+                        : (string) $asset->currentAssignment->assetRequest->site_request_id,
+                    'manual' => (string) $asset->currentAssignment->assetRequest->id,
+                    default => null,
+                },
                 'asset_id' => $asset->currentAssignment->asset_id,
                 'organization_asset_id' => $asset->currentAssignment->organization_asset_id,
                 'project_id' => $asset->currentAssignment->project_id,

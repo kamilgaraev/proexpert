@@ -2,14 +2,14 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Http\Requests;
 
-use Illuminate\Foundation\Http\FormRequest;
-use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rules\Exists;
-use Illuminate\Validation\Rule;
 
 /**
  * Валидация создания заявки
@@ -53,7 +53,7 @@ class StoreSiteRequestRequest extends FormRequest
                     'materials.*.quantity' => ['required', 'numeric', 'min:0.001'],
                     'materials.*.unit' => ['required', 'string', 'max:50'],
                     'materials.*.note' => ['nullable', 'string'],
-                    
+
                     // Общие поля доставки для всей заявки
                     'delivery_address' => ['nullable', 'string'],
                     'delivery_time_from' => ['nullable', 'date_format:H:i'],
@@ -100,6 +100,8 @@ class StoreSiteRequestRequest extends FormRequest
                 'equipment_specs' => ['nullable', 'string'],
                 'rental_start_date' => ['required', 'date', 'after_or_equal:today'],
                 'rental_end_date' => ['nullable', 'date', 'after_or_equal:rental_start_date'],
+                'equipment_start_at' => ['nullable', 'date', 'after_or_equal:today'],
+                'equipment_end_at' => ['nullable', 'date', 'after:equipment_start_at'],
                 'rental_hours_per_day' => ['nullable', 'integer', 'min:1', 'max:24'],
                 'with_operator' => ['nullable', 'boolean'],
                 'equipment_location' => ['nullable', 'string'],
@@ -183,4 +185,3 @@ class StoreSiteRequestRequest extends FormRequest
         ];
     }
 }
-

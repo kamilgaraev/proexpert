@@ -2,13 +2,13 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Http\Requests;
 
-use Illuminate\Foundation\Http\FormRequest;
-use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rules\Exists;
-use Illuminate\Validation\Rule;
 
 /**
  * Валидация обновления заявки
@@ -65,6 +65,8 @@ class UpdateSiteRequestRequest extends FormRequest
             'equipment_specs' => ['nullable', 'string'],
             'rental_start_date' => ['nullable', 'date'],
             'rental_end_date' => ['nullable', 'date', 'after_or_equal:rental_start_date'],
+            'equipment_start_at' => ['nullable', 'date'],
+            'equipment_end_at' => ['nullable', 'date', 'after:equipment_start_at'],
             'rental_hours_per_day' => ['nullable', 'integer', 'min:1', 'max:24'],
             'with_operator' => ['nullable', 'boolean'],
             'equipment_location' => ['nullable', 'string'],
@@ -101,4 +103,3 @@ class UpdateSiteRequestRequest extends FormRequest
         ];
     }
 }
-

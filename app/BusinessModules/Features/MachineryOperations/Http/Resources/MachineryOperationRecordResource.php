@@ -33,8 +33,18 @@ final class MachineryOperationRecordResource extends JsonResource
 
     private function assignment(MachineryAssignment $assignment): array
     {
+        $assetRequest = $assignment->relationLoaded('assetRequest') ? $assignment->assetRequest : null;
+
         return [
             'id' => $assignment->id,
+            'asset_request_id' => $assignment->asset_request_id,
+            'site_request_id' => $assetRequest?->site_request_id,
+            'origin_type' => $assetRequest?->origin_type,
+            'request_number' => match ($assetRequest?->origin_type) {
+                'site_request' => $assetRequest->site_request_id === null ? null : (string) $assetRequest->site_request_id,
+                'manual' => (string) $assetRequest->id,
+                default => null,
+            },
             'asset_id' => $assignment->asset_id,
             'organization_asset_id' => $assignment->organization_asset_id,
             'project_id' => $assignment->project_id,
@@ -49,7 +59,9 @@ final class MachineryOperationRecordResource extends JsonResource
             'actual_end_at' => $assignment->actual_end_at?->toIso8601String(),
             'planned_hours' => $assignment->planned_hours,
             'comment' => $assignment->comment,
+            'project' => $assignment->relationLoaded('project') ? $assignment->project : null,
             'linked_entities' => [
+                'asset_request_id' => $assignment->asset_request_id,
                 'asset_id' => $assignment->asset_id,
                 'organization_asset_id' => $assignment->organization_asset_id,
                 'project_id' => $assignment->project_id,

@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\SiteRequests\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\MachineryOperations\Services\SiteRequestAssetProjectionService;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
@@ -42,7 +43,8 @@ class SiteRequestService
         private readonly SiteRequestWorkflowService $workflowService,
         private readonly SiteRequestCalendarService $calendarService,
         private readonly SiteRequestsModule $module,
-        private readonly SiteRequestSortResolver $sortResolver
+        private readonly SiteRequestSortResolver $sortResolver,
+        private readonly SiteRequestAssetProjectionService $machineryProjection,
     ) {}
 
     /**
@@ -131,6 +133,10 @@ class SiteRequestService
 
             // Записываем в историю
             SiteRequestHistory::logCreated($request, $userId);
+
+            if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST) {
+                $this->machineryProjection->synchronizeFromSiteRequest($request, $userId);
+            }
 
             return $request;
         });
@@ -311,6 +317,10 @@ class SiteRequestService
 
             // Записываем в историю
             SiteRequestHistory::logUpdated($request, $userId, $oldValues, $data);
+
+            if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST) {
+                $this->machineryProjection->synchronizeFromSiteRequest($request, $userId);
+            }
         });
 
         // Инвалидируем кеш
@@ -352,6 +362,10 @@ class SiteRequestService
                 'old_value' => $request->toArray(),
             ]);
 
+            if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST) {
+                $this->machineryProjection->cancelDeletedSiteRequest($request, $userId);
+            }
+
             return $request->delete();
         });
 
@@ -389,6 +403,9 @@ class SiteRequestService
 
             // Записываем в историю
             SiteRequestHistory::logStatusChanged($request, $userId, $oldStatus, $newStatus, $notes);
+            if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST) {
+                $this->machineryProjection->synchronizeFromSiteRequest($request, $userId);
+            }
             $freshRequest = $request->fresh();
 
             if ($freshRequest instanceof SiteRequest) {
