@@ -268,6 +268,23 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertNotSame('processing_documents', $session->fresh()->status->value);
         self::assertCount(22, $document->pages);
         self::assertSame(22, $document->pages->whereIn('status', ['ready', 'needs_review'])->count());
+        $capturedPageFourFacts = [
+            'building_dimensions' => ['11,1 x 7,3', 'm'],
+            'building_height' => ['4.32', 'm'],
+            'building_area_total' => ['72.19', 'm2'],
+            'building_area_without_terrace' => ['50.09', 'm2'],
+            'above_ground_storeys' => ['1', 'pcs'],
+            'below_ground_storeys' => ['0', 'pcs'],
+            'foundation_type' => ['свайно-винтовой; также указана утепленная шведская плита (УШП)', null],
+            'external_wall_construction' => ['доска сухая обрезная 42x142, шаг 0,58 м', null],
+            'internal_wall_construction' => ['доска сухая обрезная 42x92, шаг 0,58 м', null],
+            'facade_finish' => ['каменная штукатурка, имитация бруса', null],
+            'attic_floor' => ['деревянные балки', null],
+            'roof_form' => ['двускатная', null],
+            'roof_covering' => ['битумная черепица', null],
+            'facade_area' => ['77.01', 'm2'],
+            'roof_area' => ['92.58', 'm2'],
+        ];
         foreach ($document->pages->sortBy('page_number') as $page) {
             $payload = is_array($page->normalized_payload) ? $page->normalized_payload : [];
             $observations = is_array($payload['independent_observations'] ?? null)
@@ -296,6 +313,17 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                     $expectedEvidence,
                     is_array($observation['evidence'] ?? null) ? $observation['evidence'] : [],
                 );
+                if ($isCapturedLiteral && (int) $page->page_number === 2) {
+                    self::assertCount(1, $observation['observation']['elements'] ?? []);
+                }
+                if ($isCapturedLiteral && (int) $page->page_number === 4) {
+                    $claimsByEntity = array_column($claims, null, 'entityKey');
+                    foreach ($capturedPageFourFacts as $entityKey => [$expectedValue, $expectedUnit]) {
+                        self::assertArrayHasKey($entityKey, $claimsByEntity);
+                        self::assertSame($expectedValue, $claimsByEntity[$entityKey]['value']['data'] ?? null);
+                        self::assertSame($expectedUnit, $claimsByEntity[$entityKey]['unit'] ?? null);
+                    }
+                }
                 if ($isMalformedObservation) {
                     self::assertSame('project_sheet_analysis',
                         $observation['observation']['quarantined_items'][0]['section'] ?? null);
@@ -402,36 +430,87 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         ], JSON_THROW_ON_ERROR));
 
         $projectModels = app(ProjectModelRepository::class);
+        $currentProjectFacts = $projectModels->currentFacts(
+            (int) $organization->id,
+            (int) $project->id,
+            (int) $session->id,
+        );
         $acceptedAreaFacts = array_values(array_filter(
-            $projectModels->currentFacts(
-                (int) $organization->id,
-                (int) $project->id,
-                (int) $session->id,
-            ),
+            $currentProjectFacts,
             static fn ($fact): bool => $fact->type === 'area'
                 && $fact->status === 'confirmed'
                 && $fact->sourceVersion === $sourceVersion
-                && (float) $fact->value === (float) $recording['recorded_source_facts']['total_area_m2'],
+                && (string) $fact->value === $recording['recorded_source_facts']['total_area_m2'],
         ));
         self::assertCount(1, $acceptedAreaFacts);
         $acceptedAreaFact = $acceptedAreaFacts[0];
-        self::assertIsNumeric($acceptedAreaFact->value);
-        $acceptedArea = (float) $acceptedAreaFact->value;
-        self::assertSame((float) $recording['recorded_source_facts']['total_area_m2'], $acceptedArea);
+        self::assertSame($recording['recorded_source_facts']['total_area_m2'], (string) $acceptedAreaFact->value);
 
-        self::assertDatabaseHas('estimate_generation_document_facts', [
-            'document_id' => $document->id,
-            'fact_type' => 'total_area',
-            'scope_key' => 'building_area_total',
-            'value_number' => 72.1900,
-            'unit' => 'm2',
-            'confidence' => 1.00,
-        ]);
+        $areaDocumentFact = DB::table('estimate_generation_document_facts')
+            ->where('document_id', $document->id)
+            ->where('fact_type', 'total_area')
+            ->where('scope_key', 'building_area_total')
+            ->where('unit', 'm2')
+            ->where('confidence', '1.00')
+            ->selectRaw('value_number::text as value_number')
+            ->first();
+        self::assertNotNull($areaDocumentFact);
+        self::assertSame('72.1900', $areaDocumentFact->value_number);
         self::assertSame(28, DB::table('estimate_generation_document_facts')
             ->where('document_id', $document->id)
             ->where('page_id', $document->pages()->where('page_number', 4)->value('id'))
             ->where('normalized_payload->projection', 'arbiter_consensus:v1')
             ->count());
+        $expectedDocumentFacts = [
+            'building_dimensions' => ['11,1 x 7,3', null],
+            'building_height' => [null, '4.3200'],
+            'building_area_total' => [null, '72.1900'],
+            'building_area_without_terrace' => [null, '50.0900'],
+            'above_ground_storeys' => [null, '1.0000'],
+            'below_ground_storeys' => [null, '0.0000'],
+            'foundation_type' => ['свайно-винтовой; также указана утепленная шведская плита (УШП)', null],
+            'external_wall_construction' => ['доска сухая обрезная 42x142, шаг 0,58 м', null],
+            'internal_wall_construction' => ['доска сухая обрезная 42x92, шаг 0,58 м', null],
+            'facade_finish' => ['каменная штукатурка, имитация бруса', null],
+            'attic_floor' => ['деревянные балки', null],
+            'roof_form' => ['двускатная', null],
+            'roof_covering' => ['битумная черепица', null],
+            'facade_area' => [null, '77.0100'],
+            'roof_area' => [null, '92.5800'],
+        ];
+        foreach ($expectedDocumentFacts as $scopeKey => [$expectedText, $expectedNumber]) {
+            $fact = DB::table('estimate_generation_document_facts')
+                ->where('document_id', $document->id)
+                ->where('scope_key', $scopeKey)
+                ->selectRaw('value_text, value_number::text as value_number')
+                ->first();
+            self::assertNotNull($fact, $scopeKey);
+            self::assertSame($expectedText, $fact->value_text, $scopeKey);
+            self::assertSame($expectedNumber, $fact->value_number, $scopeKey);
+        }
+        $currentFactsByEntity = [];
+        foreach ($currentProjectFacts as $fact) {
+            if ($fact->status === 'confirmed' && $fact->sourceVersion === $sourceVersion) {
+                $currentFactsByEntity[$fact->entityId] = (string) $fact->value;
+            }
+        }
+        foreach ([
+            'building_height' => ['dimension', '4.32'],
+            'building_area_total' => ['room', '72.19'],
+            'building_area_without_terrace' => ['dimension', '50.09'],
+            'above_ground_storeys' => ['dimension', '1'],
+            'below_ground_storeys' => ['dimension', '0'],
+            'external_wall_construction' => ['material', 'доска сухая обрезная 42x142, шаг 0,58 м'],
+            'internal_wall_construction' => ['material', 'доска сухая обрезная 42x92, шаг 0,58 м'],
+            'attic_floor' => ['material', 'деревянные балки'],
+            'roof_covering' => ['material', 'битумная черепица'],
+            'facade_area' => ['dimension', '77.01'],
+            'roof_area' => ['dimension', '92.58'],
+        ] as $entityKey => [$entityType, $expectedValue]) {
+            $entityId = 'entity:'.hash('sha256', implode('|', [$entityType, $entityKey]));
+            self::assertArrayHasKey($entityId, $currentFactsByEntity, $entityKey);
+            self::assertSame($expectedValue, $currentFactsByEntity[$entityId], $entityKey);
+        }
 
         app(ProjectUnderstandingCoordinator::class)->refresh(
             (int) $organization->id,

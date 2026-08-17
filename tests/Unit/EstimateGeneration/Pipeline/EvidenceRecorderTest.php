@@ -264,6 +264,30 @@ final class EvidenceRecorderTest extends TestCase
     }
 
     #[Test]
+    public function signed_elevation_is_the_only_negative_source_scalar_contract(): void
+    {
+        try {
+            $elevation = $this->data(type: EvidenceType::SourceFact, value: [
+                'fact_key' => 'elevation',
+                'fact_value' => '-0.3000',
+                'unit' => 'm',
+            ]);
+        } catch (InvalidArgumentException) {
+            $elevation = null;
+        }
+
+        self::assertNotNull($elevation, 'A signed elevation is a valid exact source fact.');
+        self::assertSame('-0.3000', $elevation->value['fact_value']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->data(type: EvidenceType::SourceFact, value: [
+            'fact_key' => 'area',
+            'fact_value' => '-0.3000',
+            'unit' => 'm2',
+        ]);
+    }
+
+    #[Test]
     public function work_item_quantity_preserves_canonical_high_precision_decimal(): void
     {
         $data = $this->data(type: EvidenceType::WorkItem, value: [

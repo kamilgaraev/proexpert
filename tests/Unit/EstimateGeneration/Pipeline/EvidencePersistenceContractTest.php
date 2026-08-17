@@ -19,6 +19,7 @@ final class EvidencePersistenceContractTest extends TestCase
     public function postgres_schema_and_repository_encode_graph_invariants(): void
     {
         $migration = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000300_create_estimate_generation_evidence_table.php'));
+        $evidenceContract = $migration.file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_18_000100_accept_signed_elevation_source_facts.php'));
         $checkpointMigration = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000100_create_estimate_generation_pipeline_checkpoints_table.php'));
         $repository = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/Evidence/EloquentEvidenceRepository.php'));
 
@@ -50,7 +51,7 @@ final class EvidencePersistenceContractTest extends TestCase
         self::assertStringNotContainsString("table('estimate_generation_evidence')->delete", $repository);
         foreach ([EvidenceAttribute::cases(), EvidenceProducer::cases(), EvidenceUnit::cases(), EvidenceMeasurementMethod::cases(), EvidenceConfidenceBand::cases(), CurrencyCode::cases()] as $cases) {
             foreach ($cases as $case) {
-                self::assertStringContainsString("'{$case->value}'", $migration);
+                self::assertStringContainsString("'{$case->value}'", $evidenceContract);
             }
         }
     }

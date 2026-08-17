@@ -318,11 +318,13 @@ final readonly class ProjectModelEvidenceWriter
             ]];
         }
 
-        $numeric = ($claim->value['type'] ?? null) === 'number'
-            && CanonicalSourceDecimal::isPositive($value);
+        $canonicalNumeric = ($claim->value['type'] ?? null) === 'number'
+            && CanonicalSourceDecimal::isValid($value);
+        $nonNegativeNumeric = $canonicalNumeric && CanonicalSourceDecimal::isNonNegative($value);
+        $positiveNumeric = $canonicalNumeric && CanonicalSourceDecimal::isPositive($value);
         $unit = $claim->unit;
         $allowedUnits = ['m', 'm2', 'm3', 'pcs', 'kg', 't', 'h'];
-        if ($type === 'area' && $numeric && $unit === 'm2'
+        if ($type === 'area' && $positiveNumeric && $unit === 'm2'
             && $claim->entityKey === 'building_area_total') {
             return [
                 'type' => 'room',
@@ -332,7 +334,7 @@ final readonly class ProjectModelEvidenceWriter
                 ],
             ];
         }
-        if ($type === 'area' && $numeric && $unit === 'm2'
+        if ($type === 'area' && $positiveNumeric && $unit === 'm2'
             && preg_match('/^room[:._-]/D', mb_strtolower($claim->entityKey)) === 1) {
             return ['type' => 'room', 'attributes' => ['area_m2' => $value]];
         }
@@ -348,13 +350,27 @@ final readonly class ProjectModelEvidenceWriter
         ];
         if ($semanticType !== null
             && in_array($type, $semanticFactTypes[$semanticType], true)
-            && $numeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
+            && $positiveNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
             return ['type' => $semanticType, 'attributes' => ['semantic_type' => $semanticType]];
         }
         $kind = $type === 'quantity'
             ? 'quantity'
             : (in_array($type, ['area', 'dimension_chain', 'elevation', 'level'], true) ? 'dimension' : null);
-        if ($kind !== null && $numeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
+        if ($type === 'elevation' && $canonicalNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
+            return ['type' => 'dimension', 'attributes' => [
+                'value' => $value,
+                'unit' => $unit,
+                'measurement_kind' => 'elevation',
+            ]];
+        }
+        if ($type === 'level' && $nonNegativeNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
+            return ['type' => 'dimension', 'attributes' => [
+                'value' => $value,
+                'unit' => $unit,
+                'measurement_kind' => 'level',
+            ]];
+        }
+        if ($kind !== null && $positiveNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
 
             return ['type' => $kind, 'attributes' => ['value' => $value, 'unit' => $unit]];
         }

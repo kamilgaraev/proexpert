@@ -469,6 +469,114 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
     }
 
     #[Test]
+    public function signed_elevation_zero_level_and_thirty_neighbor_facts_are_published_atomically(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, , $store] = $this->publicationFixture('f', 7);
+            $now = now()->toDateTimeImmutable();
+            $claim = $store->claim(
+                (int) $unit->id,
+                $sourceVersion,
+                $now,
+                $now->modify('+120 seconds'),
+                ProcessDocumentUnit::MAX_ATTEMPTS,
+            );
+            $context = $store->executionContext($claim);
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $context);
+
+            $claims = [];
+            $decisions = [];
+            for ($index = 1; $index <= 30; $index++) {
+                $observation = $this->numericObservation($context, 'room:'.$index, $index.'.1234');
+                $claims[] = $observation;
+                $decisions[] = $this->acceptedDecision($observation);
+            }
+            $elevation = $this->numericObservation(
+                $context,
+                'level:below-grade',
+                '-0.3000',
+                'elevation',
+                'm',
+            );
+            $claims[] = $elevation;
+            $decisions[] = $this->acceptedDecision($elevation);
+            $belowGroundStoreys = $this->numericObservation(
+                $context,
+                'building:below_ground_storeys',
+                '0',
+                'level',
+                'pcs',
+            );
+            $claims[] = $belowGroundStoreys;
+            $decisions[] = $this->acceptedDecision($belowGroundStoreys);
+            $negativeArea = $this->numericObservation(
+                $context,
+                'building:invalid-area',
+                '-72.19',
+            );
+            $claims[] = $negativeArea;
+            $decisions[] = $this->acceptedDecision($negativeArea);
+
+            try {
+                $published = $store->publish($claim, new DocumentUnitOutput(
+                    version: 'signed-elevation:v1',
+                    text: 'Отметка -0,300',
+                    confidence: 0.95,
+                    unitType: $context->type,
+                    unitIndex: $context->index,
+                    sourceVersion: $context->sourceVersion,
+                    publication: new DocumentUnitPublication($claims, $decisions),
+                ), $now->modify('+1 second'));
+            } catch (\InvalidArgumentException) {
+                $published = false;
+            }
+
+            self::assertTrue($published, 'A valid signed elevation must not roll back its thirty valid neighbors.');
+            $evidenceCount = DB::table('estimate_generation_evidence')
+                ->where('organization_id', $context->organizationId)
+                ->where('project_id', $context->projectId)
+                ->where('session_id', $context->sessionId)
+                ->where('source_version', $sourceVersion)
+                ->count();
+            $elevationDocumentFactValue = EstimateGenerationDocumentFact::query()
+                ->where('document_id', $context->documentId)
+                ->where('scope_key', 'level:below-grade')
+                ->firstOrFail()
+                ->value_number;
+            $levelDocumentFactValue = EstimateGenerationDocumentFact::query()
+                ->where('document_id', $context->documentId)
+                ->where('scope_key', 'building:below_ground_storeys')
+                ->firstOrFail()
+                ->value_number;
+            $negativeAreaDocumentFactCount = EstimateGenerationDocumentFact::query()
+                ->where('document_id', $context->documentId)
+                ->where('scope_key', 'building:invalid-area')
+                ->count();
+            $projectModelCount = DB::table('estimate_generation_project_model_assertions')
+                ->where('organization_id', $context->organizationId)
+                ->where('project_id', $context->projectId)
+                ->where('session_id', $context->sessionId)
+                ->where('fact_status', 'confirmed')
+                ->count();
+            self::assertSame(
+                [32, '-0.3000', '0.0000', 0, 32],
+                [
+                    $evidenceCount,
+                    $elevationDocumentFactValue,
+                    $levelDocumentFactValue,
+                    $negativeAreaDocumentFactCount,
+                    $projectModelCount,
+                ],
+                'Document facts, evidence, and project model must preserve signed elevations and explicit zero levels.',
+            );
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
     public function lineage_created_by_a_concurrent_writer_after_claim_remains_fail_closed(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
@@ -763,6 +871,8 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
         DocumentUnitExecutionContext $context,
         string $entityKey,
         string $value,
+        string $factType = 'area',
+        string $unit = 'm2',
     ): ObservationClaim {
         $id = 'literal:area:'.$entityKey;
 
@@ -770,9 +880,9 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
             $id,
             'observer_literal',
             $entityKey,
-            'area',
+            $factType,
             ['type' => 'number', 'data' => $value],
-            'm2',
+            $unit,
             $id,
             true,
             $context->organizationId,

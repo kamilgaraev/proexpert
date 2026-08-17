@@ -245,7 +245,8 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
             return null;
         }
         $isNumber = ($claim->value['type'] ?? null) === 'number';
-        if ($isNumber && ! CanonicalSourceDecimal::isValid($value)) {
+        if ($isNumber && (! CanonicalSourceDecimal::isValid($value)
+            || ($claim->factType !== 'elevation' && ! CanonicalSourceDecimal::isNonNegative($value)))) {
             return null;
         }
         $numeric = $isNumber;

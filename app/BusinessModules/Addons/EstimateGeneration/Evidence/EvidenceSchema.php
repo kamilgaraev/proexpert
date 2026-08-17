@@ -47,6 +47,11 @@ final class EvidenceSchema
             EvidenceType::NormativeMatch => [['norm_key' => 'norm_ref', 'score' => 'confidence', 'dataset_version' => 'version'], ['norm_key', 'score', 'dataset_version']],
             EvidenceType::Price => [['amount' => 'nonnegative_number', 'currency' => 'currency', 'price_version' => 'version', 'region_code' => 'region_code'], ['amount', 'currency', 'price_version']],
         };
+        if ($type === EvidenceType::SourceFact && ($value['fact_key'] ?? null) === EvidenceAttribute::Elevation->value) {
+            $schema['fact_value'] = 'signed_source_decimal';
+        } elseif ($type === EvidenceType::Extracted && ($value['field_key'] ?? null) === EvidenceAttribute::Elevation->value) {
+            $schema['field_value'] = 'signed_source_decimal';
+        }
         self::assertClosed($value, $schema, 'value');
         foreach ($required as $key) {
             if (! array_key_exists($key, $value)) {
@@ -94,6 +99,7 @@ final class EvidenceSchema
             'sha256' => self::boundedString($value, 64, '/^[a-f0-9]{64}$/D'),
             'normalized_scalar' => is_bool($value) || ((is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0 && $value <= 1_000_000_000_000)
                 || (is_string($value) && (self::validDomainCode($value) || CanonicalSourceDecimal::isNonNegative($value))),
+            'signed_source_decimal' => CanonicalSourceDecimal::isValid($value),
             'bbox' => self::validBbox($value),
             default => false,
         };

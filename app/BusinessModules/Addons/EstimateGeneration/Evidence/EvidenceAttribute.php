@@ -17,6 +17,7 @@ enum EvidenceAttribute: string
     case RoomTypeCode = 'room_type_code';
     case FloorCount = 'floor_count';
     case FloorHeight = 'floor_height';
+    case Elevation = 'elevation';
     case RoofArea = 'roof_area';
     case RoofSlope = 'roof_slope';
     case MaterialCode = 'material_code';
