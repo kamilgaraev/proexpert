@@ -41,7 +41,8 @@ final class EstimateGenerationSessionControllerTest extends LaravelTestCase
         };
         $stateStore = $this->createMock(SessionStateStore::class);
         $normativePins = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeDatasetPinPolicy::class);
-        $controller = new EstimateGenerationSessionController(new CreateEstimateGenerationSession($stateStore), new EstimateGenerationRegionalContextResolver, $builder, $normativePins);
+        $quota = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService::class);
+        $controller = new EstimateGenerationSessionController(new CreateEstimateGenerationSession($stateStore), new EstimateGenerationRegionalContextResolver, $builder, $normativePins, $quota);
         $request = Request::create('/snapshot');
         $user = new User;
         $user->forceFill(['id' => 11, 'current_organization_id' => 7]);

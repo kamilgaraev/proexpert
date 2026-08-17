@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfParserRuntime;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class PdfParserRuntimeTest extends TestCase
+class PdfParserRuntimeTest extends EstimateGenerationApplicationTestCase
 {
     public function test_it_temporarily_raises_and_restores_memory_limit(): void
     {
@@ -49,7 +49,7 @@ class PdfParserRuntimeTest extends TestCase
             return PHP_INT_MAX;
         }
 
-        if (!preg_match('/^([0-9]+)\s*([KMG])?$/i', $value, $matches)) {
+        if (! preg_match('/^([0-9]+)\s*([KMG])?$/i', $value, $matches)) {
             return PHP_INT_MAX;
         }
 

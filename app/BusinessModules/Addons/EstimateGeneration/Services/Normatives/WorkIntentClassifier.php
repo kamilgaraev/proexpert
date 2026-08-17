@@ -263,6 +263,12 @@ final class WorkIntentClassifier
             return 'backfill';
         }
 
+        if ($this->containsAny($text, ['разработк']) && $this->containsAny($text, ['грунт'])) {
+            $signals[] = 'action_excavation';
+
+            return 'excavation';
+        }
+
         foreach ([
             'insulation' => ['утепл', 'теплоизоляц'],
             'plastering' => ['штукатур'],

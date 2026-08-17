@@ -28,7 +28,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionP
 use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\TargetedSheetRecheckScope;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -154,7 +153,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             foreach ($first->projectSheetAnalysis?->facts ?? [] as $fact) {
                 $facts[$fact['entityKey']] = $fact;
             }
-            self::assertSame(72.19, $facts['building_area_total']['value']['data']);
+            self::assertSame('72.19', $facts['building_area_total']['value']['data']);
             self::assertSame('m2', $facts['building_area_total']['unit']);
             self::assertSame('битумная черепица', $facts['roof_covering']['value']['data']);
             self::assertArrayNotHasKey('malformed_quantity', $facts);
@@ -1245,10 +1244,10 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'contractVersion' => 'sheet-analysis:v3',
             'role' => $fixture['semantic_role'],
             'facts' => [
-                $this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => 0.0], 'm'),
+                $this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => '0.0'], 'm'),
                 $this->semanticFact('roof-form', 'roof_geometry', ['type' => 'enum', 'data' => 'gable']),
                 $this->semanticFact('opening-window', 'opening', ['type' => 'string', 'data' => 'window']),
-                $this->semanticFact('dimension-main', 'dimension_chain', ['type' => 'number', 'data' => 7300], 'mm'),
+                $this->semanticFact('dimension-main', 'dimension_chain', ['type' => 'number', 'data' => '7300'], 'mm'),
             ],
         ];
         $response['choices'][0]['message']['content'] = json_encode($analysis, JSON_THROW_ON_ERROR);
@@ -1288,7 +1287,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'contractVersion' => 'sheet-analysis:v3',
             'role' => 'facade',
             'facts' => [
-                $this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => 0.0], 'm'),
+                $this->semanticFact('level-ground', 'elevation', ['type' => 'number', 'data' => '0.0'], 'm'),
                 $this->semanticFact('roof-form', 'roof_geometry', ['type' => 'enum', 'data' => 'gable']),
                 $this->semanticFact('finish-unknown', 'unknown', ['type' => 'unknown', 'data' => null]),
                 $this->semanticFact('finish-recommendation', 'recommendation', ['type' => 'string', 'data' => 'Сверить ведомость отделки и узлы фасада']),
@@ -1354,7 +1353,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 'role' => 'plan',
                 'facts' => [
                     $this->semanticFact('room-1', 'room', ['type' => 'string', 'data' => 'Гостиная']),
-                    $this->semanticFact('room-1', 'area', ['type' => 'number', 'data' => 24.5], 'm2'),
+                    $this->semanticFact('room-1', 'area', ['type' => 'number', 'data' => '24.5'], 'm2'),
                 ],
             ],
         ]);
@@ -1766,82 +1765,6 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         Http::assertSentCount(1);
         self::assertCount(1, $this->attempts);
         self::assertSame(4081, $this->attempts[0]->outputTokens);
-    }
-
-    public function production_targeted_call_returns_only_enrichment_and_merges_it_into_primary(): void
-    {
-        self::markTestSkipped('Удалён вместе со старым targeted-контуром.');
-        $targeted = [
-            'schema_version' => 1,
-            'evidence' => [['key' => 'targeted-page-1', 'locator' => [
-                'page_id' => 17, 'page_number' => 2, 'processing_unit_id' => 19,
-                'source_version' => 'sha256:'.str_repeat('a', 64),
-                'coordinate_space' => 'normalized_derivative_v1',
-            ]]],
-            'project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v3',
-                'role' => 'plan',
-                'facts' => [[
-                    'entityKey' => 'room-1',
-                    'factType' => 'room',
-                    'value' => ['type' => 'unknown', 'data' => null],
-                    'unit' => null,
-                    'evidenceRef' => 'targeted-page-1',
-                    'sourcePolygonOrNativeRef' => $this->responsePolygon(),
-                    'confidence' => 0.95,
-                    'contractVersion' => 'sheet-analysis:v3',
-                ]],
-            ],
-        ];
-        Http::fakeSequence()
-            ->push($this->response(['project_sheet_analysis' => [
-                'contractVersion' => 'sheet-analysis:v3',
-                'role' => 'plan',
-                'facts' => [
-                    $this->semanticFact('room-1', 'room', ['type' => 'string', 'data' => 'Комната']),
-                    $this->semanticFact('room-1', 'area', ['type' => 'number', 'data' => 18.4], 'm2'),
-                ],
-            ]]))
-            ->push([
-                'model' => 'openai/gpt-5.6-luna',
-                'choices' => [[
-                    'message' => ['content' => json_encode($targeted, JSON_THROW_ON_ERROR)],
-                    'finish_reason' => 'stop',
-                ]],
-                'usage' => [
-                    'prompt_tokens' => 6170,
-                    'completion_tokens' => 2032,
-                    'completion_tokens_details' => ['reasoning_tokens' => 1366],
-                ],
-            ]);
-        $primary = $this->provider()->analyze($this->input());
-        $scope = TargetedSheetRecheckScope::forEntity(
-            'plan',
-            'sheet_role_insufficient_evidence',
-            'room-1',
-            'document:13/sheet:17',
-        );
-
-        $analysis = $this->provider()->analyze($this->input(
-            recheckScope: $scope,
-            claim: 2,
-            primaryAnalysis: $primary,
-        ));
-
-        self::assertSame($primary->elements[0]->key, $analysis->elements[0]->key);
-        self::assertSame('plan', $analysis->projectSheetAnalysis?->sheetRole);
-        self::assertSame(['room', 'area'], array_column($analysis->projectSheetAnalysis?->facts ?? [], 'factType'));
-        self::assertSame(0.95, $analysis->projectSheetAnalysis?->facts[0]['confidence']);
-        self::assertSame(1366, $this->attempts[1]->reasoningTokens);
-        Http::assertSent(static function ($request): bool {
-            $system = (string) $request['messages'][0]['content'];
-
-            return $request['max_tokens'] === 6144
-                && ! array_key_exists('temperature', $request->data())
-                && $request['reasoning_effort'] === 'medium'
-                && $request['response_format'] === ['type' => 'json_object']
-                && str_contains($system, 'exact keys schema_version, evidence, project_sheet_analysis');
-        });
     }
 
     private function provider(): TimewebVisionProvider

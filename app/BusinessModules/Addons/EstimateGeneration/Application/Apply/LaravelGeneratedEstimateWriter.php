@@ -510,13 +510,13 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         ?string $requestedName,
     ): string {
         $requestedName = trim((string) $requestedName);
-        if ($requestedName !== '') {
-            return mb_substr($requestedName, 0, self::ESTIMATE_NAME_MAX_LENGTH);
+        if ($requestedName !== '' && mb_strlen($requestedName) <= self::ESTIMATE_NAME_MAX_LENGTH) {
+            return $requestedName;
         }
 
         $draftTitle = trim((string) ($draft['title'] ?? ''));
-        if ($draftTitle !== '') {
-            return mb_substr($draftTitle, 0, self::ESTIMATE_NAME_MAX_LENGTH);
+        if ($draftTitle !== '' && mb_strlen($draftTitle) <= self::ESTIMATE_NAME_MAX_LENGTH) {
+            return $draftTitle;
         }
 
         $input = $session->input_payload ?? [];
@@ -526,16 +526,16 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             $parts[] = $buildingType;
         }
 
-        $region = trim((string) ($input['region'] ?? ($input['regional_context']['region_name'] ?? '')));
-        if ($region !== '') {
-            $parts[] = $region;
-        }
-
         if (($input['area'] ?? null) !== null && $input['area'] !== '') {
             try {
                 $parts[] = BigDecimal::of((string) $input['area'])->strippedOfTrailingZeros().' м²';
             } catch (\Throwable) {
             }
+        }
+
+        $region = trim((string) ($input['region'] ?? ($input['regional_context']['region_name'] ?? '')));
+        if ($region !== '') {
+            $parts[] = $region;
         }
 
         return mb_substr(implode(' • ', $parts), 0, self::ESTIMATE_NAME_MAX_LENGTH);

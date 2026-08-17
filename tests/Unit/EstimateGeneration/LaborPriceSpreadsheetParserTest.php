@@ -8,13 +8,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateResou
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\LaborPriceSpreadsheetParser;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class LaborPriceSpreadsheetParserTest extends TestCase
+class LaborPriceSpreadsheetParserTest extends EstimateGenerationApplicationTestCase
 {
     public function test_parse_reads_worker_and_machinist_prices_from_csv(): void
     {
-        $filePath = tempnam(sys_get_temp_dir(), 'labor-prices-') . '.csv';
+        $filePath = tempnam(sys_get_temp_dir(), 'labor-prices-').'.csv';
         file_put_contents($filePath, implode("\n", [
             'Код,Наименование,Ед. изм.,Цена',
             '2-100-05,Рабочий 5 разряда,чел.-ч,37.80',
@@ -40,8 +40,8 @@ class LaborPriceSpreadsheetParserTest extends TestCase
     {
         ini_set('memory_limit', '512M');
 
-        $filePath = tempnam(sys_get_temp_dir(), 'fgiscs-labor-prices-') . '.xlsx';
-        $spreadsheet = new Spreadsheet();
+        $filePath = tempnam(sys_get_temp_dir(), 'fgiscs-labor-prices-').'.xlsx';
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->fromArray([
             ['СМЕТНЫЕ ЦЕНЫ НА ЗАТРАТЫ ТРУДА РАБОТНИКОВ В СТРОИТЕЛЬСТВЕ'],

@@ -66,7 +66,7 @@ final class ResourceAssemblySafetyTest extends TestCase
     {
         $workItem = [
             'key' => 'roof-insulation-1',
-            'name' => 'Утепление кровли 200 мм',
+            'name' => 'Утепление кровли минераловатными плитами 200 мм',
             'unit' => 'м2',
             'quantity' => 194.25,
             'confidence' => 0.7,
@@ -136,6 +136,11 @@ final class ResourceAssemblySafetyTest extends TestCase
                 'action' => 'insulation',
                 'preferred_section_prefixes' => ['12', '26'],
                 'forbidden_section_prefixes' => ['01', '16'],
+                'specialization_evidence' => [[
+                    'source' => 'user_confirmation',
+                    'text' => 'Минераловатные плиты',
+                    'evidence_refs' => ['answer:roof-insulation'],
+                ]],
             ],
         ];
         $match = [
@@ -215,7 +220,7 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertSame('Сохраненный ресурс нормы', $item['machinery'][0]['name']);
     }
 
-    public function test_generic_title_policy_does_not_clear_a_matched_norm(): void
+    public function test_generic_title_policy_requires_review_even_with_a_matched_norm(): void
     {
         $workItem = [
             'name' => 'Строительные работы',
@@ -232,8 +237,8 @@ final class ResourceAssemblySafetyTest extends TestCase
 
         $policy = new EstimateGenerationNoAirWorkItemPolicy;
 
-        $this->assertFalse($policy->requiresReview($workItem));
-        self::assertSame('Сохраненный ресурс нормы', $policy->markRequiresReview($workItem)['materials'][0]['name']);
+        $this->assertTrue($policy->requiresReview($workItem));
+        self::assertSame([], $policy->markRequiresReview($workItem)['materials']);
     }
 
     public function test_quantity_review_item_is_not_matched_or_priced_before_quantity_confirmation(): void
@@ -484,7 +489,7 @@ final class ResourceAssemblySafetyTest extends TestCase
     {
         $workItem = [
             'key' => 'foundation-waterproofing',
-            'name' => 'Foundation waterproofing',
+            'name' => 'Гидроизоляция фундамента',
             'unit' => 'm2',
             'quantity' => 50,
             'confidence' => 0.82,
@@ -519,7 +524,7 @@ final class ResourceAssemblySafetyTest extends TestCase
     {
         $workItem = [
             'key' => 'roof-insulation-manual',
-            'name' => 'Утепление кровли 200 мм',
+            'name' => 'Утепление кровли минераловатными плитами 200 мм',
             'unit' => 'м2',
             'quantity' => 100,
             'confidence' => 0.7,
@@ -532,6 +537,11 @@ final class ResourceAssemblySafetyTest extends TestCase
                 'action' => 'insulation',
                 'preferred_section_prefixes' => ['12', '26'],
                 'forbidden_section_prefixes' => ['01', '16'],
+                'specialization_evidence' => [[
+                    'source' => 'user_confirmation',
+                    'text' => 'Минераловатные плиты',
+                    'evidence_refs' => ['answer:roof-insulation'],
+                ]],
             ],
         ];
         $match = [
@@ -881,15 +891,15 @@ final class ResourceAssemblySafetyTest extends TestCase
             'key' => 'norm-151',
             'norm_id' => 151,
             'code' => '08-01-003-01',
-            'name' => 'Foundation waterproofing',
+            'name' => 'Гидроизоляция фундамента',
             'unit' => 'm2',
             'collection' => ['code' => 'gesn', 'name' => 'ГЭСН', 'norm_type' => 'gesn'],
-            'section' => ['code' => '08-01', 'name' => 'Waterproofing'],
+            'section' => ['code' => '08-01', 'name' => 'Гидроизоляция'],
             'score' => 96,
             'confidence' => 0.91,
             'match_reasons' => ['manual_catalog_selection'],
             'warnings' => [],
-            'work_composition' => ['Waterproofing'],
+            'work_composition' => ['Устройство гидроизоляции'],
             'resources' => [
                 'materials' => [[
                     'code' => '08.1.01.03-0001',

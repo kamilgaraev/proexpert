@@ -261,16 +261,16 @@ final class RoleVisionResponseCanonicalizerTest extends TestCase
 
         self::assertSame('unknown', $analysis->sheetType);
         self::assertCount(29, $facts);
-        self::assertSame(['type' => 'number', 'data' => 72.19], $byEntity['building_area_total']['value']);
+        self::assertSame(['type' => 'number', 'data' => '72.19'], $byEntity['building_area_total']['value']);
         self::assertSame('m2', $byEntity['building_area_total']['unit']);
-        self::assertSame(['type' => 'number', 'data' => 4.32], $byEntity['building_height']['value']);
+        self::assertSame(['type' => 'number', 'data' => '4.32'], $byEntity['building_height']['value']);
         self::assertSame('m', $byEntity['building_height']['unit']);
         self::assertSame('pcs', $byEntity['above_ground_storeys']['unit']);
         self::assertSame('свайно-винтовой; также указана утепленная шведская плита (УШП)', $byEntity['foundation_type']['value']['data']);
         self::assertSame('доска сухая обрезная 42x142, шаг 0,58 м', $byEntity['external_wall_construction']['value']['data']);
         self::assertSame('двускатная', $byEntity['roof_form']['value']['data']);
         self::assertSame('битумная черепица', $byEntity['roof_covering']['value']['data']);
-        self::assertSame(92.58, $byEntity['roof_area']['value']['data']);
+        self::assertSame('92.58', $byEntity['roof_area']['value']['data']);
         self::assertArrayNotHasKey('malformed_quantity', $byEntity);
         self::assertSame([
             ['section' => 'sheet_type', 'index' => 0, 'reason' => 'invalid_sheet_type'],

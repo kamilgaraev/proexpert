@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 
 final class ProjectSheetAnalysisValidator
@@ -153,7 +154,7 @@ final class ProjectSheetAnalysisValidator
             return;
         }
         $valid = match ($value['type']) {
-            'number' => (is_int($value['data']) || is_float($value['data'])) && is_finite((float) $value['data']),
+            'number' => CanonicalSourceDecimal::isValid($value['data']),
             'string', 'enum' => is_string($value['data']) && mb_strlen($value['data']) <= 500
                 && preg_match('~[\x00-\x08\x0B\x0C\x0E-\x1F]~u', $value['data']) !== 1,
             'boolean' => is_bool($value['data']),

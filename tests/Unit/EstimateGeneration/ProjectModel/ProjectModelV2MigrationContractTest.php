@@ -64,7 +64,9 @@ final class ProjectModelV2MigrationContractTest extends TestCase
         self::assertStringContainsString('evidence.invalidated_at IS NULL', $backfill);
         self::assertStringContainsString('selected_fact_id AS fact_id', $backfill);
         self::assertStringContainsString('LEFT JOIN LATERAL', $backfill);
-        self::assertStringContainsString('ORDER BY candidate.conflict_version DESC, candidate.id DESC', $backfill);
+        self::assertStringContainsString('min(candidate.stable_key) AS stable_key, count(*) AS match_count', $backfill);
+        self::assertStringContainsString('historical_conflict_ambiguous', $backfill);
+        self::assertStringNotContainsString('ORDER BY candidate.conflict_version DESC, candidate.id DESC', $backfill);
     }
 
     #[Test]

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Ocr;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
@@ -13,10 +14,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use Illuminate\Support\Carbon;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class EstimateGenerationDocumentResourceTest extends TestCase
+class EstimateGenerationDocumentResourceTest extends EstimateGenerationApplicationTestCase
 {
     public function test_document_resource_returns_safe_processing_contract(): void
     {
@@ -52,7 +54,8 @@ class EstimateGenerationDocumentResourceTest extends TestCase
         $this->assertSame(100, $payload['progress_percent']);
         $this->assertSame(0.86, $payload['quality']['score']);
         $this->assertSame('good', $payload['quality']['level']);
-        $this->assertSame(1280.5, $payload['facts_summary']['total_area_m2']);
+        $this->assertArrayNotHasKey('facts_summary', $payload);
+        $this->assertNull($payload['document_understanding']);
         $this->assertSame('provider_error', $payload['error']['code']);
         $this->assertSame('estimate_generation.documents_upload_error', $payload['error']['message_key']);
         $this->assertArrayNotHasKey('storage_path', $payload);
@@ -88,7 +91,7 @@ class EstimateGenerationDocumentResourceTest extends TestCase
             'scope_key' => 'total_area',
             'label' => 'Общая площадь',
             'value_text' => '1200 м2',
-            'value_number' => 1200.0,
+            'value_number' => '1200.0000',
             'unit' => 'м2',
             'confidence' => 0.9,
             'source_ref' => [
@@ -110,7 +113,7 @@ class EstimateGenerationDocumentResourceTest extends TestCase
         $this->assertSame('Склад 1200 м2', $payload['pages'][0]['text']);
         $this->assertArrayNotHasKey('raw_payload_path', $payload['pages'][0]);
         $this->assertSame('total_area', $payload['facts'][0]['fact_type']);
-        $this->assertSame(1200.0, $payload['facts'][0]['value_number']);
+        $this->assertSame('1200.0000', $payload['facts'][0]['value_number']);
         $this->assertSame(1, $payload['facts'][0]['source_ref']['page_number']);
     }
 
@@ -119,6 +122,8 @@ class EstimateGenerationDocumentResourceTest extends TestCase
         $document = new EstimateGenerationDocument([
             'filename' => 'drawing.pdf',
             'mime_type' => 'application/pdf',
+            'status' => 'ready',
+            'processing_stage' => 'completed',
             'facts_summary' => [
                 'drawing_understanding' => [
                     'review_required_pages' => [],
@@ -162,18 +167,22 @@ class EstimateGenerationDocumentResourceTest extends TestCase
         $this->assertNotEmpty($payload['pages'][0]['overlay']);
     }
 
-    public function test_session_resource_uses_document_resource_contract(): void
+    public function test_session_resource_does_not_duplicate_document_resource_contract(): void
     {
         $session = new EstimateGenerationSession([
-            'status' => 'created',
-            'processing_stage' => 'created',
+            'status' => 'draft',
+            'processing_stage' => 'draft',
             'processing_progress' => 0,
             'input_payload' => [
                 'description' => 'Склад',
             ],
             'problem_flags' => [],
+            'organization_id' => 1,
+            'project_id' => 2,
+            'state_version' => 0,
         ]);
         $session->id = 7;
+        $session->setAttribute('ai_estimate_quota_snapshot', []);
 
         $document = new EstimateGenerationDocument([
             'filename' => 'plan.pdf',
@@ -185,13 +194,16 @@ class EstimateGenerationDocumentResourceTest extends TestCase
         $document->id = 15;
 
         $session->setRelation('documents', collect([$document]));
+        $this->app->instance(
+            BuildSessionSnapshot::class,
+            new BuildSessionSnapshot($this->app->make(AiEstimateQuotaService::class)),
+        );
 
         $payload = (new EstimateGenerationSessionResource($session))->resolve();
 
-        $this->assertSame(15, $payload['documents'][0]['id']);
-        $this->assertSame('queued', $payload['documents'][0]['status']);
-        $this->assertSame('ocr_request', $payload['documents'][0]['processing_stage']);
-        $this->assertArrayHasKey('quality', $payload['documents'][0]);
+        $this->assertSame(7, $payload['id']);
+        $this->assertSame('draft', $payload['status']);
+        $this->assertArrayNotHasKey('documents', $payload);
     }
 
     public function test_ocr_result_array_hides_raw_payload_by_default(): void

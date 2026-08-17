@@ -80,6 +80,66 @@ SQL;
     }
 
     #[DataProvider('migrations')]
+    public function test_check_comparison_accepts_postgres_boolean_precedence_deparsing(string $file): void
+    {
+        $expected = 'CHECK (((is_current AND invalidated_at IS NULL) OR (NOT is_current AND invalidated_at IS NOT NULL)))';
+        $deparsed = 'CHECK ((is_current AND invalidated_at IS NULL OR NOT is_current AND invalidated_at IS NOT NULL))';
+
+        self::assertSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint($file, $deparsed),
+        );
+    }
+
+    #[DataProvider('migrations')]
+    public function test_check_comparison_accepts_postgres_between_deparsing(string $file): void
+    {
+        $expected = 'CHECK (length(btrim(question)) BETWEEN 1 AND 4000)';
+        $deparsed = 'CHECK (length(btrim(question)) >= 1 AND length(btrim(question)) <= 4000)';
+
+        self::assertSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint($file, $deparsed),
+        );
+    }
+
+    #[DataProvider('migrations')]
+    public function test_check_comparison_accepts_postgres_signed_integer_deparsing(string $file): void
+    {
+        $expected = 'CHECK (score BETWEEN -1000 AND 1000)';
+        $deparsed = "CHECK (score >= '-1000'::integer AND score <= 1000)";
+
+        self::assertSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint($file, $deparsed),
+        );
+    }
+
+    #[DataProvider('migrations')]
+    public function test_check_comparison_accepts_postgres_atomic_boolean_grouping(string $file): void
+    {
+        $expected = "CHECK (status IN ('ready', 'blocked') AND score >= 0)";
+        $deparsed = "CHECK ((status IN ('ready', 'blocked')) AND score >= 0)";
+
+        self::assertSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint($file, $deparsed),
+        );
+    }
+
+    #[DataProvider('migrations')]
+    public function test_check_comparison_accepts_postgres_numeric_constant_casts(string $file): void
+    {
+        $expected = 'CHECK (confidence BETWEEN 0 AND 1)';
+        $deparsed = 'CHECK (confidence >= 0::numeric AND confidence <= 1::numeric)';
+
+        self::assertSame(
+            $this->canonicalConstraint($file, $expected),
+            $this->canonicalConstraint($file, $deparsed),
+        );
+    }
+
+    #[DataProvider('migrations')]
     public function test_check_comparison_preserves_string_literal_bytes(string $file): void
     {
         $expected = "CHECK (status IN ('unknown', 'owner''s review', E'line\\\\nitem'))";

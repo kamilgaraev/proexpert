@@ -354,7 +354,7 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                     ))[0] ?? null;
                     self::assertIsArray($areaDecision);
                     self::assertSame('accepted', $areaDecision['status'] ?? null);
-                    self::assertSame(72.19, $areaDecision['canonical_claim']['value']['data'] ?? null);
+                    self::assertSame('72.19', $areaDecision['canonical_claim']['value']['data'] ?? null);
                     self::assertSame('m2', $areaDecision['canonical_claim']['unit'] ?? null);
                     self::assertNotEmpty($areaDecision['evidence_refs'] ?? []);
                 }

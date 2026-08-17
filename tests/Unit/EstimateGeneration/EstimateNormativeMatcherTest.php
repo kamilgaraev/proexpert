@@ -18,9 +18,11 @@ use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Support\Facades\DB;
-use Tests\TestCase;
+use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
 
-class EstimateNormativeMatcherTest extends TestCase
+#[Group('postgres-contract')]
+class EstimateNormativeMatcherTest extends EstimateGenerationPostgresTestCase
 {
     public function test_matcher_does_not_price_abstract_resource_from_exact_group_price(): void
     {
@@ -56,11 +58,16 @@ class EstimateNormativeMatcherTest extends TestCase
 
         $match = app(EstimateNormativeMatcher::class)->searchWorkItemCandidates([
             'name' => 'Монтаж оконных блоков',
-            'description' => 'Установка оконных блоков из ПВХ профилей',
+            'description' => 'Установка оконных блоков из ПВХ профилей двухстворчатых площадью до 2 м2',
             'normative_rate_code' => '10-01-034-05',
             'work_category' => 'openings',
             'unit' => 'м2',
             'quantity' => 23.136,
+            'specialization_evidence' => [[
+                'source' => 'document',
+                'text' => 'Оконные блоки из ПВХ профилей двухстворчатые площадью до 2 м2',
+                'evidence_refs' => ['evidence:window-specification'],
+            ]],
         ], [
             'scope_type' => 'openings',
             'section_title' => 'Окна и двери',
@@ -301,9 +308,14 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->createResourcePrice($priceVersionId, '12.1.01.01-0001', 'Плиты минераловатные', 'м2', 800, 'material');
 
         $match = app(EstimateNormativeMatcher::class)->matchWorkItem([
-            'name' => 'Утепление кровли 200 мм',
+            'name' => 'Утепление покрытий кровли минераловатными плитами 200 мм',
             'unit' => 'м2',
             'quantity' => 194.25,
+            'specialization_evidence' => [[
+                'source' => 'document',
+                'text' => 'Минераловатные плиты',
+                'evidence_refs' => ['evidence:roof-insulation'],
+            ]],
         ], [
             'scope_type' => 'roof',
             'section_title' => 'Кровля',
@@ -442,8 +454,8 @@ class EstimateNormativeMatcherTest extends TestCase
 
         $items = app(ResourceAssemblyService::class)->enrich([[
             'key' => 'foundation-work-1',
-            'name' => 'Опалубка ленточного фундамента',
-            'description' => 'Опалубка ленточного фундамента',
+            'name' => 'Бетонирование фундаментов',
+            'description' => 'Бетонирование фундаментов',
             'work_category' => 'foundation',
             'normative_rate_code' => '01-01-001-01',
             'unit' => 'м2',
@@ -460,7 +472,7 @@ class EstimateNormativeMatcherTest extends TestCase
 
         $this->assertSame('candidate', $item['normative_match']['status']);
         $this->assertSame([], $item['materials']);
-        $this->assertSame(0.0, $item['total_cost']);
+        $this->assertSame(0.0, (float) $item['total_cost']);
         $this->assertContains('unit_mismatch', $item['normative_match']['warnings']);
         $this->assertContains('requires_normative_review', $item['validation_flags']);
         $this->assertContains('normative_candidate_only', $item['validation_flags']);
@@ -660,7 +672,7 @@ class EstimateNormativeMatcherTest extends TestCase
             'unit' => $unit,
             'section_code' => $sectionCode ?? substr($code, 0, 8),
             'section_name' => $name,
-            'work_composition' => json_encode(['Подготовка основания', 'Укладка бетонной смеси'], JSON_UNESCAPED_UNICODE),
+            'work_composition' => json_encode([$name], JSON_UNESCAPED_UNICODE),
             'created_at' => now(),
             'updated_at' => now(),
         ]);

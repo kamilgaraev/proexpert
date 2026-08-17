@@ -7,9 +7,11 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use Illuminate\Support\Facades\DB;
-use Tests\TestCase;
+use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
 
-final class NormativeCandidateSearchServiceTest extends TestCase
+#[Group('postgres-contract')]
+final class NormativeCandidateSearchServiceTest extends EstimateGenerationPostgresTestCase
 {
     public function test_search_finds_norm_by_work_composition_when_name_is_generic(): void
     {

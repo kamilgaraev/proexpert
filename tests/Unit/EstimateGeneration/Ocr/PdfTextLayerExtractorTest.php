@@ -6,9 +6,9 @@ namespace Tests\Unit\EstimateGeneration\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 use Dompdf\Dompdf;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class PdfTextLayerExtractorTest extends TestCase
+class PdfTextLayerExtractorTest extends EstimateGenerationApplicationTestCase
 {
     public function test_it_extracts_embedded_text_from_pdf_pages(): void
     {
@@ -35,7 +35,7 @@ class PdfTextLayerExtractorTest extends TestCase
     }
 
     /**
-     * @param array<int, string> $pages
+     * @param  array<int, string>  $pages
      */
     private function pdfContent(array $pages): string
     {
@@ -43,12 +43,12 @@ class PdfTextLayerExtractorTest extends TestCase
 
         foreach ($pages as $index => $text) {
             $style = $index + 1 < count($pages) ? ' style="page-break-after: always;"' : '';
-            $html .= '<div' . $style . '><p>' . htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p></div>';
+            $html .= '<div'.$style.'><p>'.htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</p></div>';
         }
 
         $html .= '</body></html>';
 
-        $dompdf = new Dompdf();
+        $dompdf = new Dompdf;
         $dompdf->loadHtml($html, 'UTF-8');
         $dompdf->setPaper('A4');
         $dompdf->render();

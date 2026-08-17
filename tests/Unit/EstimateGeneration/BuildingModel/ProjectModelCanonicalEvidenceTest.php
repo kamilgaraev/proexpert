@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvid
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelLocatorFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelValueFingerprint;
 use PHPUnit\Framework\Attributes\Test;
-use Tests\TestCase;
+use PHPUnit\Framework\TestCase;
 
 final class ProjectModelCanonicalEvidenceTest extends TestCase
 {

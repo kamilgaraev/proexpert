@@ -19,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvid
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
@@ -132,7 +133,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                         'observer_literal',
                         'building_area_total',
                         'area',
-                        ['type' => 'number', 'data' => 72.19],
+                        ['type' => 'number', 'data' => '72.19'],
                         'm2',
                         'literal:area:page-2',
                         true,
@@ -391,6 +392,77 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 ->where('document_id', $document->id)
                 ->where('page_number', 1)
                 ->value('status'));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function thirty_valid_numeric_items_survive_oversized_and_overprecision_items(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, , $store] = $this->publicationFixture('e', 6);
+            $now = now()->toDateTimeImmutable();
+            $claim = $store->claim(
+                (int) $unit->id,
+                $sourceVersion,
+                $now,
+                $now->modify('+120 seconds'),
+                ProcessDocumentUnit::MAX_ATTEMPTS,
+            );
+            $context = $store->executionContext($claim);
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $context);
+
+            $claims = [];
+            $decisions = [];
+            for ($index = 1; $index <= 30; $index++) {
+                $observation = $this->numericObservation($context, 'room:'.$index, $index.'.1234');
+                $claims[] = $observation;
+                $decisions[] = $this->acceptedDecision($observation);
+            }
+            foreach (['room:oversized' => '1000000000001', 'room:overprecision' => '0.12345'] as $key => $value) {
+                $observation = $this->numericObservation($context, $key, $value);
+                $claims[] = $observation;
+                $decisions[] = $this->acceptedDecision($observation);
+            }
+
+            $published = $store->publish($claim, new DocumentUnitOutput(
+                version: 'numeric-quarantine:v1',
+                text: 'АР',
+                confidence: 0.95,
+                unitType: $context->type,
+                unitIndex: $context->index,
+                sourceVersion: $context->sourceVersion,
+                publication: new DocumentUnitPublication($claims, $decisions),
+            ), $now->modify('+1 second'));
+
+            self::assertTrue($published);
+            self::assertSame(30, DB::table('estimate_generation_evidence')
+                ->where('organization_id', $context->organizationId)
+                ->where('project_id', $context->projectId)
+                ->where('session_id', $context->sessionId)
+                ->where('source_version', $sourceVersion)
+                ->count());
+            self::assertSame(30, EstimateGenerationDocumentFact::query()
+                ->where('document_id', $context->documentId)
+                ->count());
+            self::assertSame('1.1234', EstimateGenerationDocumentFact::query()
+                ->where('document_id', $context->documentId)
+                ->where('scope_key', 'room:1')
+                ->firstOrFail()
+                ->value_number);
+            self::assertFalse(EstimateGenerationDocumentFact::query()
+                ->where('document_id', $context->documentId)
+                ->whereIn('scope_key', ['room:oversized', 'room:overprecision'])
+                ->exists());
+            self::assertSame(30, DB::table('estimate_generation_project_model_assertions')
+                ->where('organization_id', $context->organizationId)
+                ->where('project_id', $context->projectId)
+                ->where('session_id', $context->sessionId)
+                ->where('fact_status', 'confirmed')
+                ->count());
         } finally {
             DB::rollBack();
         }
@@ -683,6 +755,54 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 'unit_index' => $context->index,
                 'source_version' => $context->sourceVersion,
                 'explicit' => true,
+            ],
+        );
+    }
+
+    private function numericObservation(
+        DocumentUnitExecutionContext $context,
+        string $entityKey,
+        string $value,
+    ): ObservationClaim {
+        $id = 'literal:area:'.$entityKey;
+
+        return new ObservationClaim(
+            $id,
+            'observer_literal',
+            $entityKey,
+            'area',
+            ['type' => 'number', 'data' => $value],
+            'm2',
+            $id,
+            true,
+            $context->organizationId,
+            $context->projectId,
+            $context->sessionId,
+            $context->sourceVersion,
+            [
+                'page' => $context->index,
+                'unit_type' => $context->type->value,
+                'unit_index' => $context->index,
+                'source_version' => $context->sourceVersion,
+                'explicit' => true,
+            ],
+        );
+    }
+
+    private function acceptedDecision(ObservationClaim $claim): ArbitrationDecision
+    {
+        return new ArbitrationDecision(
+            claimId: $claim->id,
+            status: 'accepted',
+            supportingClaimIds: [$claim->id],
+            evidenceRefs: [$claim->evidenceRef],
+            reasonCode: 'arbiter_consensus',
+            canonicalClaim: [
+                'entity_key' => $claim->entityKey,
+                'fact_type' => $claim->factType,
+                'value' => $claim->value,
+                'unit' => $claim->unit,
+                'source_claim_id' => $claim->id,
             ],
         );
     }

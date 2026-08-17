@@ -397,7 +397,7 @@ class ConstructionSemanticParserTest extends TestCase
         $this->assertSame(78, $analysis['document_context']['review_required_documents'][0]['id']);
     }
 
-    public function test_partial_document_keeps_bounded_semantic_context_without_promoting_quantities(): void
+    public function test_partial_document_does_not_restore_legacy_semantic_summary_or_promote_quantities(): void
     {
         $analysis = (new ConstructionSemanticParser)->parse([
             'description' => 'Дом по архитектурным чертежам',
@@ -445,16 +445,11 @@ class ConstructionSemanticParserTest extends TestCase
             'facts' => [],
         ]]);
 
-        self::assertSame(1, count($analysis['document_context']['semantic_candidates']));
-        self::assertSame(13, $analysis['document_context']['semantic_candidates'][0]['pages_checked']);
-        self::assertSame(
-            'facade.finish.main',
-            $analysis['document_context']['semantic_candidates'][0]['facts'][0]['entityKey'],
-        );
+        self::assertArrayNotHasKey('semantic_candidates', $analysis['document_context']);
         self::assertNull($analysis['object']['area']);
         self::assertSame('', $analysis['document_context']['context_text']);
         self::assertSame([], $analysis['document_context']['trusted_document_ids']);
-        self::assertTrue($analysis['document_context']['review_required_documents'][0]['has_semantic_context']);
+        self::assertFalse($analysis['document_context']['review_required_documents'][0]['has_semantic_context']);
     }
 
     private function housePrompt(): string

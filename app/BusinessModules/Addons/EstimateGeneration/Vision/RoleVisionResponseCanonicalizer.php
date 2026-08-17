@@ -176,18 +176,25 @@ final class RoleVisionResponseCanonicalizer
                 continue;
             }
             $value = $fact['value'] ?? null;
-            if (! is_array($value)
-                || count($value) !== 3
-                || array_diff(array_keys($value), ['type', 'data', 'unit']) !== []) {
+            if (! is_array($value)) {
                 continue;
             }
-            $nestedUnit = $value['unit'];
-            if (array_key_exists('unit', $fact) && $fact['unit'] !== $nestedUnit) {
-                continue;
+            if (count($value) === 3 && array_diff(array_keys($value), ['type', 'data', 'unit']) === []) {
+                $nestedUnit = $value['unit'];
+                if (array_key_exists('unit', $fact) && $fact['unit'] !== $nestedUnit) {
+                    continue;
+                }
+                unset($value['unit']);
+                $fact['unit'] = $this->canonicalUnit($nestedUnit, $fact['factType'] ?? null);
             }
-            unset($value['unit']);
+            if (count($value) === 2 && array_diff(array_keys($value), ['type', 'data']) === []
+                && ($value['type'] ?? null) === 'number') {
+                $canonicalDecimal = $this->canonicalDecimal($value['data'] ?? null);
+                if ($canonicalDecimal !== null) {
+                    $value['data'] = $canonicalDecimal;
+                }
+            }
             $fact['value'] = $value;
-            $fact['unit'] = $this->canonicalUnit($nestedUnit, $fact['factType'] ?? null);
             $analysis['facts'][$index] = $fact;
         }
         $payload['project_sheet_analysis'] = $analysis;
@@ -215,6 +222,24 @@ final class RoleVisionResponseCanonicalizer
             'ч', 'h' => 'h',
             default => $unit,
         };
+    }
+
+    private function canonicalDecimal(mixed $value): ?string
+    {
+        if (! is_int($value) && ! is_float($value)) {
+            return null;
+        }
+        if (is_float($value) && ! is_finite($value)) {
+            return null;
+        }
+        $encoded = json_encode($value, JSON_PRESERVE_ZERO_FRACTION);
+
+        return is_string($encoded)
+            && strlen($encoded) <= 80
+            && preg_match('~^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$~D', $encoded) === 1
+            && preg_match('~^-0(?:\.0+)?$~D', $encoded) !== 1
+                ? $encoded
+                : null;
     }
 
     /** @param array<string,string> $references */

@@ -12,7 +12,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 {
     public function test_cable_line_cannot_be_priced_by_piece_substation_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '08-01-025-03',
             'name' => 'Подстанция блочная',
             'unit' => 'шт',
@@ -29,7 +29,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_roof_insulation_cannot_be_priced_by_trench_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '01-01-063-01',
             'name' => 'Разработка грунта в траншеях',
             'unit' => 'км',
@@ -46,7 +46,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_heating_pipe_layout_cannot_be_priced_by_earthwork_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '01-01-063-01',
             'name' => 'Разработка грунта в траншеях',
             'unit' => 'км',
@@ -71,7 +71,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
         string $candidateUnit,
         string $sectionCode
     ): void {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => $candidateCode,
             'name' => $candidateName,
             'unit' => $candidateUnit,
@@ -135,7 +135,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_gas_concrete_masonry_cannot_be_priced_by_sheet_pile_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '05-01-016-01',
             'name' => 'Обстройка деревянного шпунтового ограждения',
             'unit' => 'м3',
@@ -158,7 +158,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_roof_insulation_cannot_be_priced_by_plumbing_or_groundwork_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '02-01-001-05',
             'name' => 'Арматура фланцевая водопроводная',
             'unit' => 'м2',
@@ -181,7 +181,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_thermal_air_curtain_cannot_be_priced_by_crane_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '03-01-065-01',
             'name' => 'Кран портальный электрический полноповоротный',
             'unit' => 'шт',
@@ -205,7 +205,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_temporary_fence_cannot_be_priced_by_railway_earthwork_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '01-02-028-01',
             'name' => 'Отделка земляного полотна железнодорожного пути',
             'unit' => 'м',
@@ -228,7 +228,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_air_curtain_cannot_be_priced_by_portal_crane_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '09-05-001-01',
             'name' => 'Кран портальный электрический',
             'unit' => 'шт',
@@ -252,7 +252,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_aerated_concrete_masonry_cannot_be_priced_by_sheet_piling_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '05-01-001-01',
             'name' => 'Обстройка деревянного шпунтового ограждения',
             'unit' => 'м3',
@@ -276,7 +276,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_roof_insulation_cannot_be_priced_by_water_fittings_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '16-07-001-01',
             'name' => 'Установка водопроводной арматуры',
             'unit' => 'м2',
@@ -300,7 +300,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_facade_plaster_cannot_be_priced_by_blasting_area_cover_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '03-01-001-01',
             'name' => 'Укрытие взрываемой площади',
             'unit' => 'м2',
@@ -322,9 +322,9 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
         $this->assertContains('scope_mismatch', $decision->warnings);
     }
 
-    public function test_baseboard_can_be_priced_by_flooring_section_norm(): void
+    public function test_generic_baseboard_cannot_use_wood_specific_norm_without_material_evidence(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '11-01-039-01',
             'name' => 'Устройство плинтусов: деревянных',
             'unit' => '100 м',
@@ -335,13 +335,14 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
             'quantity' => 77,
         ]);
 
-        $this->assertTrue($decision->canUseForPricing);
+        $this->assertFalse($decision->canUseForPricing);
         $this->assertNotContains('scope_mismatch', $decision->warnings);
+        $this->assertContains('semantic_mismatch', $decision->warnings);
     }
 
     public function test_linear_baseboard_cannot_be_priced_by_wall_tiling_baseboard_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '15-01-020-01',
             'name' => 'Облицовка стен на цементном растворе с карнизными, плинтусными и угловыми плитками',
             'unit' => '100 м2',
@@ -357,9 +358,9 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
         $this->assertContains('scope_mismatch', $decision->warnings);
     }
 
-    public function test_floor_covering_can_be_priced_by_flooring_section_norm(): void
+    public function test_generic_floor_covering_cannot_use_linoleum_norm_without_material_evidence(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '11-01-036-01',
             'name' => 'Устройство покрытий: из линолеума на клее',
             'unit' => '100 м2',
@@ -370,13 +371,14 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
             'quantity' => 87.14,
         ]);
 
-        $this->assertTrue($decision->canUseForPricing);
+        $this->assertFalse($decision->canUseForPricing);
         $this->assertNotContains('scope_mismatch', $decision->warnings);
+        $this->assertContains('semantic_mismatch', $decision->warnings);
     }
 
     public function test_ceiling_finishing_cannot_be_priced_by_boiler_ceiling_equipment_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '06-01-006-14',
             'name' => 'Пароперегреватель потолочный из гладких труб',
             'unit' => '100 м2',
@@ -393,7 +395,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
 
     public function test_temporary_site_fence_cannot_be_priced_by_railway_earthwork_norm(): void
     {
-        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+        $decision = (new NormativeMatchDecisionService)->decide($this->candidate([
             'code' => '27-01-001-01',
             'name' => 'Устройство железнодорожного земляного полотна',
             'unit' => 'м',
@@ -415,7 +417,7 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $overrides
+     * @param  array<string, mixed>  $overrides
      * @return array<string, mixed>
      */
     private function candidate(array $overrides): array

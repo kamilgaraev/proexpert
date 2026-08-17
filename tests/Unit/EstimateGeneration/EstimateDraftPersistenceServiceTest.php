@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
@@ -349,28 +347,6 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_blocking_review_queue_item_blocks_apply_even_when_quality_status_is_ready(): void
     {
-        $package = new EstimateGenerationPackage([
-            'key' => 'local-1',
-            'title' => 'Local estimate',
-            'scope_type' => 'site',
-            'source_refs' => [],
-        ]);
-        $package->setRelation('items', collect([
-            new EstimateGenerationPackageItem([
-                'key' => 'package-only-blocker',
-                'item_type' => 'priced_work',
-                'name' => 'Package only blocker',
-                'unit' => 'm',
-                'quantity' => 1,
-                'total_cost' => 0,
-                'flags' => ['pricing_not_calculated'],
-                'metadata' => [
-                    'pricing_status' => 'not_calculated',
-                    'pricing_blocker' => 'normative_required',
-                    'normative_match' => ['status' => 'not_found'],
-                ],
-            ]),
-        ]));
         $session = new EstimateGenerationSession([
             'draft_payload' => [
                 'quality_summary' => [
@@ -386,12 +362,22 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
                     'sections' => [[
                         'work_items' => [
                             $this->workItem('ready-work', 'priced_work', 1000),
+                            [
+                                'key' => 'draft-blocker',
+                                'item_type' => 'priced_work',
+                                'name' => 'Draft blocker',
+                                'unit' => 'm',
+                                'quantity' => 1,
+                                'total_cost' => 0,
+                                'pricing_status' => 'not_calculated',
+                                'pricing_blocker' => 'normative_required',
+                                'normative_match' => ['status' => 'not_found'],
+                            ],
                         ],
                     ]],
                 ]],
             ],
         ]);
-        $session->setRelation('packages', collect([$package]));
 
         $this->expectException(ValidationException::class);
 

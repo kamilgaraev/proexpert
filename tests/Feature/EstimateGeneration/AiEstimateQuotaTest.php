@@ -23,21 +23,22 @@ use App\Models\OrganizationResourceAllocation;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
-use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 final class AiEstimateQuotaTest extends TestCase
 {
+    use DatabaseTransactions;
+
     public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
         parent::setUp();
-
-        $this->createSchema();
+        self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
+        self::assertSame('pgsql', DB::getDriverName());
     }
 
     public function test_snapshot_always_includes_ten_monthly_generations(): void
@@ -195,9 +196,20 @@ final class AiEstimateQuotaTest extends TestCase
         $session = $this->createSession();
         $quota = app(AiEstimateQuotaService::class);
         $this->reserveSession($quota, $session);
+        $contentVersion = 'sha256:'.str_repeat('c', 64);
+        $inputVersion = 'sha256:'.str_repeat('d', 64);
         $session->forceFill([
             'status' => EstimateGenerationStatus::EstimateReviewRequired,
             'draft_payload' => [
+                'source_input_version' => $inputVersion,
+                'quality_summary' => [
+                    'content_version' => $contentVersion,
+                    'review_items' => [
+                        'source_version' => $contentVersion,
+                        'input_version' => $inputVersion,
+                        'classifier_version' => 2,
+                    ],
+                ],
                 'local_estimates' => [[
                     'sections' => [[
                         'work_items' => [[
@@ -397,6 +409,7 @@ final class AiEstimateQuotaTest extends TestCase
             'session_id' => $previousMonthSession->id,
             'monthly_period' => now()->subMonthNoOverflow()->startOfMonth()->toDateString(),
             'status' => 'confirmed',
+            'reserved_at' => now()->subMonthNoOverflow(),
             'confirmed_at' => now()->subMonthNoOverflow(),
             'released_at' => null,
         ]);
@@ -416,7 +429,7 @@ final class AiEstimateQuotaTest extends TestCase
             ->where('session_id', $session->id)
             ->update([
                 'monthly_period' => now()->subMonthNoOverflow()->startOfMonth()->toDateString(),
-                'confirmed_at' => now()->subMonthNoOverflow(),
+                'reserved_at' => now()->subMonthNoOverflow(),
             ]);
 
         $quota->reserve($session->fresh());
@@ -508,127 +521,6 @@ final class AiEstimateQuotaTest extends TestCase
             'input_payload' => ['description' => 'Смета'],
             'problem_flags' => [],
         ]);
-    }
-
-    private function createSchema(): void
-    {
-        foreach ([
-            'estimate_generation_ai_estimate_quota_reservations',
-            'estimate_generation_packages',
-            'estimate_generation_documents',
-            'estimate_generation_sessions',
-            'organization_resource_allocations',
-            'organization_package_subscriptions',
-            'projects',
-            'users',
-            'organizations',
-        ] as $table) {
-            Schema::dropIfExists($table);
-        }
-
-        Schema::create('organizations', function (Blueprint $table): void {
-            $table->id();
-            $table->string('name');
-            $table->boolean('is_active')->default(true);
-            $table->unsignedBigInteger('parent_organization_id')->nullable();
-            $table->unsignedBigInteger('storage_used_mb')->default(0);
-            $table->timestamps();
-            $table->softDeletes();
-        });
-        Schema::create('users', function (Blueprint $table): void {
-            $table->id();
-            $table->string('name');
-            $table->string('email')->unique();
-            $table->string('password');
-            $table->unsignedBigInteger('current_organization_id')->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->timestamps();
-            $table->softDeletes();
-        });
-        Schema::create('projects', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('organization_id');
-            $table->string('name');
-            $table->string('status')->default('active');
-            $table->timestamps();
-            $table->softDeletes();
-        });
-        Schema::create('estimate_generation_sessions', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('organization_id');
-            $table->unsignedBigInteger('project_id');
-            $table->unsignedBigInteger('user_id');
-            $table->string('status');
-            $table->string('processing_stage');
-            $table->unsignedTinyInteger('processing_progress')->default(0);
-            $table->json('input_payload');
-            $table->json('analysis_payload')->nullable();
-            $table->json('draft_payload')->nullable();
-            $table->json('problem_flags')->nullable();
-            $table->unsignedBigInteger('applied_estimate_id')->nullable();
-            $table->timestamp('applied_at')->nullable();
-            $table->text('last_error')->nullable();
-            $table->string('failure_code')->nullable();
-            $table->unsignedBigInteger('state_version')->default(0);
-            $table->string('resume_status')->nullable();
-            $table->timestamps();
-            $table->unique(['id', 'organization_id']);
-        });
-        Schema::create('estimate_generation_packages', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('session_id');
-            $table->string('input_version')->nullable();
-            $table->string('key');
-            $table->string('title');
-            $table->string('scope_type');
-            $table->string('status')->nullable();
-            $table->unsignedInteger('sort_order')->default(0);
-            $table->timestamps();
-        });
-        Schema::create('estimate_generation_documents', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('session_id');
-            $table->unsignedBigInteger('organization_id');
-            $table->unsignedBigInteger('project_id');
-            $table->unsignedBigInteger('user_id');
-            $table->string('filename')->nullable();
-            $table->string('status')->default('uploaded');
-            $table->timestamps();
-        });
-        Schema::create('estimate_generation_ai_estimate_quota_reservations', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('organization_id');
-            $table->unsignedBigInteger('session_id');
-            $table->date('monthly_period');
-            $table->string('status');
-            $table->timestamp('reserved_at')->nullable();
-            $table->timestamp('confirmed_at')->nullable();
-            $table->timestamp('released_at')->nullable();
-            $table->unique(['organization_id', 'session_id']);
-        });
-        Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('organization_id');
-            $table->string('package_slug');
-            $table->string('status');
-            $table->timestamp('current_period_end_at')->nullable();
-            $table->timestamp('trial_ends_at')->nullable();
-            $table->timestamps();
-        });
-        Schema::create('organization_resource_allocations', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('organization_id');
-            $table->unsignedBigInteger('commercial_account_id')->nullable();
-            $table->string('resource_slug');
-            $table->string('limit_key');
-            $table->decimal('quantity', 20, 2)->nullable();
-            $table->string('source');
-            $table->string('status');
-            $table->timestamp('period_start_at')->nullable();
-            $table->timestamp('period_end_at')->nullable();
-            $table->json('metadata')->nullable();
-            $table->timestamps();
-        });
     }
 
     private function technicalFailure(

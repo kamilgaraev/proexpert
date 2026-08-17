@@ -31,7 +31,7 @@ class EstimateGenerationDocumentFact extends Model
     ];
 
     protected $casts = [
-        'value_number' => 'float',
+        'value_number' => 'decimal:4',
         'confidence' => 'float',
         'source_ref' => 'array',
         'normalized_payload' => 'array',

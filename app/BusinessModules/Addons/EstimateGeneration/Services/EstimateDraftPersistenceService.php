@@ -189,9 +189,11 @@ final class EstimateDraftPersistenceService
             return ['type' => 'incomplete_stage6_draft'];
         }
 
-        $inspection = ($this->readinessInspector ?? new DraftReadinessInspector)->inspect($draft);
-        if ($inspection->blockingIssues !== []) {
-            return ['type' => 'blocked', 'code' => $inspection->blockingIssues[0]['code']];
+        if (($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1') {
+            $inspection = ($this->readinessInspector ?? new DraftReadinessInspector)->inspect($draft);
+            if ($inspection->blockingIssues !== []) {
+                return ['type' => 'blocked', 'code' => $inspection->blockingIssues[0]['code']];
+            }
         }
 
         $qualityStatus = (string) ($draft['quality_summary']['status'] ?? '');

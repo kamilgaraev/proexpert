@@ -416,6 +416,11 @@ class EstimateNormativeMatcher
     ): array {
         $name = mb_strtolower($norm->name);
         $workName = mb_strtolower(trim((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? '')));
+        $semanticWorkText = mb_strtolower(trim(implode(' ', array_filter([
+            $workItem['normative_search_text'] ?? null,
+            $workItem['name'] ?? null,
+            $workItem['description'] ?? null,
+        ], static fn (mixed $value): bool => is_string($value) && trim($value) !== ''))));
         $section = mb_strtolower((string) ($norm->section_name ?? ''));
         $composition = mb_strtolower(implode(' ', $norm->work_composition ?? []));
         $score = 0.0;
@@ -483,7 +488,7 @@ class EstimateNormativeMatcher
 
         $semanticMismatch = ! $this->semanticCompatibilityService->isCompatible(
             $name.' '.$composition,
-            $workName,
+            $semanticWorkText,
             [
                 'scope' => $intent->scope,
                 'action' => $intent->action,
@@ -491,6 +496,12 @@ class EstimateNormativeMatcher
                 'object' => $intent->object,
                 'object_type' => $context['object_type'] ?? null,
                 'candidate_title' => $name,
+                'specialization_evidence' => is_array($workItem['specialization_evidence'] ?? null)
+                    ? $workItem['specialization_evidence']
+                    : [],
+                'specialization_scenario' => is_array($workItem['specialization_scenario'] ?? null)
+                    ? $workItem['specialization_scenario']
+                    : [],
             ],
             $profile->forbiddenDomainTerms,
         );

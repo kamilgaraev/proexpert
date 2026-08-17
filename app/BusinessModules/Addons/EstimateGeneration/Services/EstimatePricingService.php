@@ -79,6 +79,28 @@ class EstimatePricingService
                 $workItem['labor_cost'] = (string) $laborCost->toScale(2, RoundingMode::HalfUp);
                 $workItem['total_cost'] = (string) $total;
                 $workItem['price_snapshot'] = $this->snapshot($resourceSnapshots, $workCost, $total)->toArray();
+                if ($total->isGreaterThan(0)) {
+                    if (($workItem['pricing_status'] ?? null) !== 'calculated_review_required') {
+                        $workItem['pricing_status'] = 'calculated';
+                    }
+                    if (in_array((string) ($workItem['pricing_blocker'] ?? ''), [
+                        'quantity_review_required',
+                        'missing_price_snapshot',
+                        'missing_price',
+                        'pricing_not_calculated',
+                    ], true)) {
+                        unset($workItem['pricing_blocker']);
+                    }
+                    $workItem['validation_flags'] = array_values(array_filter(
+                        is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : [],
+                        static fn (mixed $flag): bool => ! is_string($flag) || ! in_array($flag, [
+                            'quantity_review_required',
+                            'missing_price_snapshot',
+                            'missing_price',
+                            'pricing_not_calculated',
+                        ], true),
+                    ));
+                }
                 if ($context !== null && $this->acceptedEvidence?->verify($context, $workItem) !== true) {
                     $this->blockQuantityEvidence($workItem);
 

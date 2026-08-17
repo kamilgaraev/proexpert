@@ -10,9 +10,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGene
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Support\Facades\DB;
-use Tests\TestCase;
+use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
 
-final class EstimateGenerationLearningEvidenceServiceTest extends TestCase
+#[Group('postgres-contract')]
+final class EstimateGenerationLearningEvidenceServiceTest extends EstimateGenerationPostgresTestCase
 {
     private static int $datasetVersionSequence = 0;
 
@@ -260,7 +262,7 @@ final class EstimateGenerationLearningEvidenceServiceTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $overrides
+     * @param  array<string, mixed>  $overrides
      */
     private function learningExample(int $organizationId, array $overrides): EstimateGenerationLearningExample
     {

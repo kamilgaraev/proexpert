@@ -121,10 +121,20 @@ final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
         $accepted = [...$item, 'quantity_evidence_id' => $first->id, 'quantity_evidence_fingerprint' => $first->fingerprint];
 
         self::assertSame($first->id, $retry->id);
-        self::assertTrue((new AcceptedQuantityEvidenceVerifier($repository))->verify($context, $accepted));
-        self::assertFalse((new AcceptedQuantityEvidenceVerifier($repository))->verify(
+        $verifier = new AcceptedQuantityEvidenceVerifier($repository);
+        self::assertTrue($verifier->verify($context, $accepted));
+        self::assertFalse($verifier->verify(
             new PipelineContext(31, 10, 20, 1, $context->inputVersion, 'generating', baseInputVersion: $context->baseInputVersion),
             $accepted,
+        ));
+        $wrongItem = [...$accepted, 'key' => 'another-work-item'];
+        self::assertFalse($verifier->verify($context, $wrongItem));
+        self::assertSame('item_identity_mismatch', $verifier->rejectionReason(
+            $context->organizationId,
+            $context->projectId,
+            $context->sessionId,
+            (string) $context->baseInputVersion,
+            $wrongItem,
         ));
         self::assertSame(['quantity', 'unit', 'work_code'], array_keys($first->value));
         self::assertSame('item:'.hash('sha256', 'floor-finish'), $first->locator['item_key']);

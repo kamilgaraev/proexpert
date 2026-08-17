@@ -14,8 +14,8 @@ final class NormativeCandidateManualSearchServiceTest extends TestCase
 {
     public function test_searches_same_normative_catalog_as_ai_matching_with_work_item_context(): void
     {
-        $matcher = new FakeManualSearchMatcher();
-        $service = new NormativeCandidateManualSearchService($matcher, new NormativeCandidatePresenter());
+        $matcher = new FakeManualSearchMatcher;
+        $service = new NormativeCandidateManualSearchService($matcher, new NormativeCandidatePresenter);
         $session = new EstimateGenerationSession([
             'id' => 15,
             'input_payload' => [
@@ -58,6 +58,8 @@ final class NormativeCandidateManualSearchServiceTest extends TestCase
             [
                 'key' => 'norm-101',
                 'norm_id' => 101,
+                'catalog_source' => 'estimate_norms',
+                'normative_rate_id' => null,
                 'code' => '01-02-057-01',
                 'name' => 'Обратная засыпка грунта',
                 'unit' => 'м3',
@@ -65,6 +67,8 @@ final class NormativeCandidateManualSearchServiceTest extends TestCase
                 'section' => null,
                 'confidence' => 0.91,
                 'score' => 84.0,
+                'score_kind' => 'retrieval_score',
+                'rerank' => null,
                 'resources_count' => 1,
                 'priced_resources_count' => 1,
                 'unpriced_resources_count' => 0,
@@ -78,6 +82,8 @@ final class NormativeCandidateManualSearchServiceTest extends TestCase
                     'other' => 0.0,
                 ],
                 'price_sources' => ['fsbc_base'],
+                'resource_prices' => [],
+                'base_catalog_resources_count' => 0,
                 'match_reasons' => ['exact_code'],
                 'warnings' => [],
                 'work_composition' => ['Засыпка грунта'],
@@ -91,8 +97,8 @@ final class NormativeCandidateManualSearchServiceTest extends TestCase
 
     public function test_search_returns_candidate_price_preview_for_current_work_item_quantity(): void
     {
-        $matcher = new FakeManualSearchMatcher();
-        $service = new NormativeCandidateManualSearchService($matcher, new NormativeCandidatePresenter());
+        $matcher = new FakeManualSearchMatcher;
+        $service = new NormativeCandidateManualSearchService($matcher, new NormativeCandidatePresenter);
         $session = new EstimateGenerationSession([
             'id' => 16,
             'input_payload' => [],

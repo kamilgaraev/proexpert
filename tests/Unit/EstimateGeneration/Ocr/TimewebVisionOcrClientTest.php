@@ -5,14 +5,15 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients\TimewebVisionOcrClient;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-final class TimewebVisionOcrClientTest extends TestCase
+final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTestCase
 {
     public function test_it_sends_image_to_timeweb_chat_completions_and_normalizes_json_response(): void
     {
@@ -50,6 +51,7 @@ final class TimewebVisionOcrClientTest extends TestCase
             content: 'binary-content',
             mimeType: 'image/png',
             filename: 'plan.png',
+            operationContext: $this->operationContext(),
         ));
 
         $this->assertSame(TimewebVisionOcrClient::PROVIDER, $result->provider);
@@ -112,6 +114,7 @@ final class TimewebVisionOcrClientTest extends TestCase
             mimeType: 'application/pdf',
             filename: 'project.pdf',
             pageCount: 2,
+            operationContext: $this->operationContext(),
         ));
 
         $this->assertSame("Первая страница\nВторая страница", $result->text());
@@ -153,6 +156,7 @@ final class TimewebVisionOcrClientTest extends TestCase
         $result = (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
             content: 'image',
             mimeType: 'image/jpeg',
+            operationContext: $this->operationContext(),
         ));
 
         $this->assertSame('gemini/gemini-3.1-flash-lite', $result->model);
@@ -172,6 +176,7 @@ final class TimewebVisionOcrClientTest extends TestCase
             (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
                 content: 'binary-content',
                 mimeType: 'image/png',
+                operationContext: $this->operationContext(),
             ));
         } finally {
             Http::assertNothingSent();
@@ -194,17 +199,18 @@ final class TimewebVisionOcrClientTest extends TestCase
             (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
                 content: 'binary-content',
                 mimeType: 'image/png',
+                operationContext: $this->operationContext(),
             ));
 
             $this->fail('Expected OCR provider exception.');
         } catch (OcrProviderException $exception) {
             $this->assertSame('estimate_generation.ocr_quota_exceeded', $exception->messageKey);
             $this->assertSame(429, $exception->statusCode);
-            $this->assertSame('rate_limit_exceeded', $exception->providerCode);
+            $this->assertSame('timeweb_http_failed', $exception->providerCode);
         }
     }
 
-    public function test_it_uses_plain_text_when_model_returns_non_json_content(): void
+    public function test_it_rejects_non_json_content(): void
     {
         $this->configureClient();
 
@@ -221,12 +227,17 @@ final class TimewebVisionOcrClientTest extends TestCase
             ]),
         ]);
 
-        $result = (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
-            content: 'image',
-            mimeType: 'image/jpeg',
-        ));
+        try {
+            (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
+                content: 'image',
+                mimeType: 'image/jpeg',
+                operationContext: $this->operationContext(),
+            ));
 
-        $this->assertSame('Просто распознанный текст', $result->text());
+            $this->fail('Expected strict OCR response validation failure.');
+        } catch (OcrProviderException $exception) {
+            $this->assertSame('estimate_generation.ocr_malformed_response', $exception->messageKey);
+        }
     }
 
     /**
@@ -248,5 +259,20 @@ final class TimewebVisionOcrClientTest extends TestCase
         foreach (array_merge($defaults, $overrides) as $key => $value) {
             config()->set($key, $value);
         }
+    }
+
+    private function operationContext(): AiOperationContext
+    {
+        return new AiOperationContext(
+            correlationId: '11111111-1111-4111-8111-111111111111',
+            attemptId: '22222222-2222-4222-8222-222222222222',
+            organizationId: 1,
+            projectId: 2,
+            sessionId: 3,
+            stage: 'understand_documents',
+            operation: 'ocr',
+            attemptOrdinal: 1,
+            documentId: 4,
+        );
     }
 }

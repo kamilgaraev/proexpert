@@ -272,7 +272,9 @@ final class NormativeSemanticCompatibilityService
             }
 
             if ($this->containsAny($candidateTitle, ['короб', 'лоток'])
-                && ! $this->containsAny($workText, ['короб', 'лоток'])) {
+                && ! $this->containsAny($workText, ['короб', 'лоток'])
+                && ! $catalogInstallationForm
+                && ! $catalogCableFasteningForm) {
                 return false;
             }
 

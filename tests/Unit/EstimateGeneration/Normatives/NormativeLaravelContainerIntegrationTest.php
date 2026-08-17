@@ -18,6 +18,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\LLMNormativeCandidateReranker;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsPair;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use DateTimeImmutable;
 use Illuminate\Contracts\Console\Kernel;
@@ -36,6 +41,14 @@ final class NormativeLaravelContainerIntegrationTest extends TestCase
     public function test_real_provider_bindings_record_one_usage_and_workflow_fails_unavailable_without_fallback(): void
     {
         config()->set('estimate-generation.normative_matching.reranker.models', 'openai/gpt-5-mini');
+        config()->set('estimate-generation.ai_pricing_catalog.rerank.timeweb.openai/gpt-5-mini', [[
+            'input_per_million' => '10',
+            'cached_input_per_million' => '10',
+            'output_per_million' => '20',
+            'currency' => 'RUB',
+            'version' => 'fixture-v1',
+            'effective_at' => '2026-01-01T00:00:00+00:00',
+        ]]);
         $store = new class implements AiUsageStore
         {
             public array $rows = [];
@@ -55,7 +68,7 @@ final class NormativeLaravelContainerIntegrationTest extends TestCase
 
             public function provider(): string
             {
-                return 'fake';
+                return 'timeweb';
             }
 
             public function call(string $model, array $messages, array $options): array
@@ -71,6 +84,7 @@ final class NormativeLaravelContainerIntegrationTest extends TestCase
         };
         $this->app->instance(RerankWireClient::class, $wire);
         $this->app->instance(AiUsageStore::class, $store);
+        $this->app->instance(EffectiveSettingsOperationStore::class, $this->settingsStore());
         $this->app->instance(LLMProviderInterface::class, new class implements LLMProviderInterface
         {
             public function chat(array $messages, array $options = []): array
@@ -93,7 +107,7 @@ final class NormativeLaravelContainerIntegrationTest extends TestCase
                 return 'openai/gpt-5-mini';
             }
         });
-        foreach ([NormativeRerankerModelSet::class, AttemptAwareNormativeLlmClient::class, LLMNormativeCandidateReranker::class, NormativeCandidateRerankerInterface::class] as $abstract) {
+        foreach ([EffectiveSettingsResolver::class, NormativeRerankerModelSet::class, AttemptAwareNormativeLlmClient::class, LLMNormativeCandidateReranker::class, NormativeCandidateRerankerInterface::class] as $abstract) {
             $this->app->forgetInstance($abstract);
         }
 
@@ -128,6 +142,39 @@ final class NormativeLaravelContainerIntegrationTest extends TestCase
     private function intent(): WorkIntentData
     {
         return new WorkIntentData(1, 2, 3, 'w', 'кладка', 'м2', 'area', 'кирпич', 'кладка', 'стена', '08', 'жилой', 'v1', 'parsed', null, new DateTimeImmutable('2026-01-01'), ['norm:1']);
+    }
+
+    private function settingsStore(): EffectiveSettingsOperationStore
+    {
+        $snapshot = [
+            'schema_version' => 2,
+            'models' => ['vision' => 'provider/vision', 'classification' => 'provider/classification', 'normative_matching' => 'openai/gpt-5-mini'],
+            'limits' => ['max_files' => 8, 'max_pages_per_file' => 120, 'max_total_pages' => 500],
+            'timeouts' => ['vision' => 10, 'classification' => 30, 'normative_matching' => 20],
+            'retries' => ['vision' => 2, 'classification' => 1, 'normative_matching' => 0],
+            'confidence' => ['classification' => '0.7000', 'geometry' => '0.7800', 'normative_matching' => '0.8200'],
+            'enabled_formats' => ['pdf'],
+            'manual_review' => ['low_confidence' => true],
+            'budgets' => ['daily' => '250.00', 'monthly' => '4000.00', 'currency' => 'RUB'],
+        ];
+        $settings = EffectiveEstimateGenerationSettings::fromRecord([
+            'snapshot_id' => 41,
+            'scope' => 'organization',
+            'organization_id' => 1,
+            'version' => 1,
+            'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot),
+            'snapshot' => $snapshot,
+        ], 1);
+
+        return new class($settings) implements EffectiveSettingsOperationStore
+        {
+            public function __construct(private readonly EffectiveEstimateGenerationSettings $settings) {}
+
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                return new EffectiveSettingsPair($this->settings, $this->settings);
+            }
+        };
     }
 
     private function context(): NormativeCandidateDecisionContextData

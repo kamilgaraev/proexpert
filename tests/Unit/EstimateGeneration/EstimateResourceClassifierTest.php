@@ -6,9 +6,9 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\EstimateResourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassifier;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
 
-class EstimateResourceClassifierTest extends TestCase
+class EstimateResourceClassifierTest extends EstimateGenerationApplicationTestCase
 {
     public function test_classifier_detects_resource_types_by_code_and_name(): void
     {

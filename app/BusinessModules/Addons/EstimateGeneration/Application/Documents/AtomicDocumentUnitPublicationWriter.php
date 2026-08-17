@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use Illuminate\Database\Connection;
 use LogicException;
 
@@ -94,8 +95,8 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
             if ($claim->entityKey === 'building_area_total'
                 && $claim->factType === 'area'
                 && $claim->unit === 'm2'
-                && (is_int($claim->value['data']) || is_float($claim->value['data']))
-                && (float) $claim->value['data'] > 0) {
+                && ($claim->value['type'] ?? null) === 'number'
+                && CanonicalSourceDecimal::isPositive($claim->value['data'])) {
                 $requestedArea = $claim;
             }
             $projectionKey = 'sha256:'.hash('sha256', implode('|', [
@@ -215,7 +216,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
             ], JSON_THROW_ON_ERROR),
             'name' => trans_message('estimate_generation.accepted_fact_projection.requested_area_takeoff_name'),
             'unit' => 'm2',
-            'quantity' => (float) $area->value['data'],
+            'quantity' => $area->value['data'],
             'formula' => 'accepted_building_area_total',
             'confidence' => 1.0,
             'source_refs' => json_encode([[
@@ -236,23 +237,24 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
         ]);
     }
 
-    /** @return array{fact_type:string,label:string,value_text:?string,value_number:int|float|null}|null */
+    /** @return array{fact_type:string,label:string,value_text:?string,value_number:string|null}|null */
     private function documentFact(ObservationClaim $claim): ?array
     {
         $value = $claim->value['data'];
         if ($value === null || (is_string($value) && trim($value) === '')) {
             return null;
         }
-        $numeric = is_int($value) || is_float($value);
-        if ($numeric && ! is_finite((float) $value)) {
+        $isNumber = ($claim->value['type'] ?? null) === 'number';
+        if ($isNumber && ! CanonicalSourceDecimal::isValid($value)) {
             return null;
         }
+        $numeric = $isNumber;
         $type = match ($claim->factType) {
-            'area' => is_string($value)
-                ? 'dimension'
-                : ($claim->entityKey === 'building_area_total'
+            'area' => $numeric
+                ? ($claim->entityKey === 'building_area_total'
                     ? 'total_area'
-                    : (str_starts_with($claim->entityKey, 'room:') ? 'room_area' : 'zone_area')),
+                    : (str_starts_with($claim->entityKey, 'room:') ? 'room_area' : 'zone_area'))
+                : 'dimension',
             'dimension_chain' => 'dimension',
             'elevation' => 'height',
             'level' => 'floor_count',

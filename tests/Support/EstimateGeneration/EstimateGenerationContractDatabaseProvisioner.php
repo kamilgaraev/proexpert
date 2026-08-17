@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Support\EstimateGeneration;
 
 use Illuminate\Database\ConnectionInterface;
-use Illuminate\Database\Schema\Blueprint;
 use InvalidArgumentException;
 
 final class EstimateGenerationContractDatabaseProvisioner
@@ -13,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => 'e95f3fa70e7fcf02c7a4864118c207a8875678aa51e55da305b003b27076f2c6',
-        'training' => '007ca53eafb89d92e237cfff34f1cbfa3b52d645094c6b5de7298a71e90deea0',
-        'pricing' => '007ca53eafb89d92e237cfff34f1cbfa3b52d645094c6b5de7298a71e90deea0',
+        'geometry' => '5060c3005361b28b0bc3ed73f49a21cee81168ab2339daf5b52b2d20996b7465',
+        'training' => 'd1729bdb5ed14256e3ef619248fda2efbe79cbcadece7c75e4b61617cc6764b8',
+        'pricing' => 'd1729bdb5ed14256e3ef619248fda2efbe79cbcadece7c75e4b61617cc6764b8',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '4b6969297d76316662198515d821e47ed1d211be143fd9002dcf4f548303d34d';
+    private const FRESH_INVENTORY_DIGEST = '13b7e116067e7622f21e6468fbc70e8794f0307ad8ba057745bf6ec525350824';
 
     private const SUBJECT = [
         'geometry' => [
@@ -55,11 +54,17 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const CORE = [
         'database/migrations/0001_01_01_000000_create_users_table.php',
         'database/migrations/2025_01_01_000010_create_organizations_table.php',
+        'database/migrations/2025_01_01_000100_create_subscription_plans_table.php',
         'database/migrations/2025_01_01_000015_create_measurement_units_table.php',
         'database/migrations/2025_01_01_000020_create_projects_table.php',
         'database/migrations/2025_01_01_000025_create_work_types_table.php',
         'database/migrations/2025_01_01_000030_create_contractors_table.php',
+        'database/migrations/2025_01_01_000035_create_materials_table.php',
+        'database/migrations/2025_01_01_000040_create_completed_works_table.php',
         'database/migrations/2025_01_01_000070_create_project_organization_table.php',
+        'database/migrations/2025_01_01_000250_create_project_schedules_table.php',
+        'database/migrations/2025_01_01_000260_create_schedule_tasks_table.php',
+        'app/BusinessModules/Features/ScheduleManagement/migrations/2025_01_01_000295_create_project_events_table.php',
         'database/migrations/2025_05_03_161545_create_organization_user_table.php',
         'database/migrations/2025_05_03_161553_add_fields_to_users_table.php',
         'database/migrations/2025_05_03_173813_create_project_user_table.php',
@@ -67,6 +72,8 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2025_05_15_000002_create_contracts_table.php',
         'database/migrations/2025_05_16_000001_add_customer_and_designer_to_projects_table.php',
         'database/migrations/2025_06_22_164437_add_verification_fields_to_organizations_table.php',
+        'database/migrations/2025_07_31_000000_enable_trgm_and_indexes_to_organizations.php',
+        'database/migrations/2025_08_01_000000_create_organization_subscriptions_table.php',
         'database/migrations/2025_09_12_000002_create_new_modules_table.php',
         'database/migrations/2025_09_12_000003_create_new_organization_module_activations_table.php',
         'database/migrations/2025_09_12_000004_add_can_deactivate_to_modules_table.php',
@@ -80,10 +87,26 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2025_10_21_120000_create_estimates_table.php',
         'database/migrations/2025_10_21_120100_create_estimate_sections_table.php',
         'database/migrations/2025_10_21_120200_create_estimate_items_table.php',
+        'database/migrations/2025_10_21_120300_create_estimate_item_resources_table.php',
+        'database/migrations/2025_10_21_184941_add_extended_price_columns_to_estimate_items_table.php',
+        'database/migrations/2025_10_21_224058_add_item_type_to_estimate_items_table.php',
+        'database/migrations/2025_11_01_000001_create_normative_bases_tables.php',
+        'database/migrations/2025_11_01_000003_extend_estimate_items_table.php',
+        'database/migrations/2025_11_05_150000_add_full_section_number_to_estimate_sections.php',
+        'database/migrations/2025_11_06_000003_add_hierarchy_fields_to_estimate_items.php',
+        'database/migrations/2025_11_13_092257_add_is_onboarding_demo_to_multiple_tables.php',
+        'database/migrations/2026_02_16_193000_increase_estimate_sections_column_lengths.php',
+        'database/migrations/2026_02_19_203122_update_estimate_items_item_type_check_constraint.php',
+        'database/migrations/2026_03_04_000001_create_organization_package_subscriptions_table.php',
+        'database/migrations/2026_04_25_000002_add_subscription_bundling_to_package_subscriptions.php',
+        'database/migrations/2026_04_29_000001_allow_standalone_package_upgrade_over_bundled_packages.php',
+        'database/migrations/2026_05_12_000001_create_user_auth_sessions_table.php',
         'database/migrations/2026_05_14_120000_add_project_access_mode_to_organization_user_table.php',
         'database/migrations/2026_05_14_120100_extend_project_user_assignments.php',
         'app/BusinessModules/Core/Mdm/migrations/2026_05_16_000000_create_mdm_core_tables.php',
         'app/BusinessModules/Core/Mdm/migrations/2026_05_16_010000_extend_mdm_product_tables.php',
+        'database/migrations/2026_07_14_000001_create_commercial_package_model.php',
+        'database/migrations/2026_07_24_000001_create_organization_resource_allocations_table.php',
     ];
 
     private const MODULE = [
@@ -201,6 +224,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_15_000100_separate_vision_logical_request_from_processing_lineage.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_15_000200_add_document_processing_control.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_17_000100_require_string_ai_usage_price_snapshot_rates.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_17_000150_accept_canonical_decimal_source_evidence.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_17_000200_harden_failure_diagnostics_contract.php',
     ];
 
@@ -382,35 +406,6 @@ final class EstimateGenerationContractDatabaseProvisioner
                 'sha256' => hash_file('sha256', $root.DIRECTORY_SEPARATOR.$entry),
             ]);
         }
-        self::provisionCommercialQuotaProjection($connection);
-    }
-
-    private static function provisionCommercialQuotaProjection(ConnectionInterface $connection): void
-    {
-        $schema = $connection->getSchemaBuilder();
-        $schema->create('organization_package_subscriptions', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('organization_id');
-            $table->string('package_slug');
-            $table->string('status');
-            $table->timestampTz('current_period_end_at')->nullable();
-            $table->timestampTz('trial_ends_at')->nullable();
-            $table->timestampsTz();
-        });
-        $schema->create('organization_resource_allocations', function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('organization_id');
-            $table->unsignedBigInteger('commercial_account_id')->nullable();
-            $table->string('resource_slug');
-            $table->string('limit_key');
-            $table->decimal('quantity', 14, 2)->nullable();
-            $table->string('source');
-            $table->string('status');
-            $table->timestampTz('period_start_at')->nullable();
-            $table->timestampTz('period_end_at')->nullable();
-            $table->jsonb('metadata')->nullable();
-            $table->timestampsTz();
-        });
     }
 
     private static function validateCompleteInventory(string $root): void

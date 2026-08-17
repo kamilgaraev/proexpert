@@ -119,12 +119,15 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             ));
         }
 
-        self::assertCount(22, $vision->inputs);
+        self::assertCount(44, $vision->inputs);
+        $inputsByPage = [];
         foreach ($vision->inputs as $input) {
             self::assertSame('image/png', $input->contentType);
             self::assertSame('high', $input->imageDetail);
             self::assertSame([2382, 1684], array_slice(getimagesizefromstring($input->imageContent), 0, 2));
+            $inputsByPage[$input->pageNumber] = ($inputsByPage[$input->pageNumber] ?? 0) + 1;
         }
+        self::assertSame(array_fill_keys(range(1, 22), 2), $inputsByPage);
     }
 
     #[Test]
@@ -583,7 +586,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         $processor = $this->cadFailureProcessor($original);
 
         try {
-            $processor->process($this->context(DocumentUnitType::CadDrawing));
+            $processor->process($this->cadContext());
             self::fail('Arbitration input failure must be classified.');
         } catch (TypedFailureException $exception) {
             self::assertSame('arbitration_claims_missing', $exception->safeCode);

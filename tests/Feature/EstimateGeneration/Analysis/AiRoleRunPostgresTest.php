@@ -8,6 +8,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
 use DateTimeImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\PostgresConnection;
@@ -19,6 +25,18 @@ use RuntimeException;
 
 final class AiRoleRunPostgresTest extends TestCase
 {
+    private int $organizationId;
+
+    private int $otherOrganizationId;
+
+    private int $projectId;
+
+    private int $sessionId;
+
+    private int $documentId;
+
+    private int $pageId;
+
     public function createApplication(): Application
     {
         $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
@@ -117,6 +135,9 @@ final class AiRoleRunPostgresTest extends TestCase
             $claim = $repository->claim($input, $owner);
             $attemptId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
             $repository->startPhysicalAttempt($claim->runId, $owner, $attemptId);
+            $connection->table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $attemptId)
+                ->update(['state' => 'response_received']);
             $connection->table('estimate_generation_ai_role_runs')->where('id', $claim->runId)->update([
                 'lease_expires_at' => new DateTimeImmutable('-1 minute'),
             ]);
@@ -150,7 +171,7 @@ final class AiRoleRunPostgresTest extends TestCase
             self::assertNotNull($repository->loadCurrent($input));
             self::assertNull($repository->loadCurrent($this->input(
                 'sha256:'.str_repeat('d', 64),
-                organizationId: 11,
+                organizationId: $this->otherOrganizationId,
             )));
 
             $this->expectException(QueryException::class);
@@ -237,32 +258,42 @@ final class AiRoleRunPostgresTest extends TestCase
         );
         $connection->statement("SET statement_timeout TO '5000ms'");
         $connection->statement("SET lock_timeout TO '5000ms'");
-        $schema = 'most_ci_ai_role_run_'.bin2hex(random_bytes(8));
-        $connection->unprepared('CREATE SCHEMA "'.$schema.'"');
-        $connection->unprepared('SET search_path TO "'.$schema.'"');
-        $connection->unprepared(<<<'SQL'
-            CREATE TABLE organizations (id bigint PRIMARY KEY);
-            CREATE TABLE projects (id bigint PRIMARY KEY);
-            CREATE TABLE estimate_generation_sessions (id bigint PRIMARY KEY);
-            CREATE TABLE estimate_generation_documents (id bigint PRIMARY KEY);
-            CREATE TABLE estimate_generation_document_pages (id bigint PRIMARY KEY);
-            CREATE TABLE estimate_generation_vision_physical_attempts (
-                attempt_id uuid PRIMARY KEY,
-                state varchar(32) NOT NULL
-            );
-            SQL);
-        $migration = require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000100_create_estimate_generation_ai_role_runs.php');
-        $migration->up();
-        $connection->table('organizations')->insert([['id' => 10], ['id' => 11]]);
-        $connection->table('projects')->insert(['id' => 20]);
-        $connection->table('estimate_generation_sessions')->insert(['id' => 30]);
-        $connection->table('estimate_generation_documents')->insert(['id' => 40]);
-        $connection->table('estimate_generation_document_pages')->insert(['id' => 50]);
-        $connection->table('estimate_generation_vision_physical_attempts')->insert([
-            ['attempt_id' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'state' => 'completed'],
-            ['attempt_id' => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'state' => 'wire_started'],
-            ['attempt_id' => 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'state' => 'response_received'],
+        $schema = 'public';
+        $organization = Organization::factory()->create();
+        $otherOrganization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => 'draft',
+            'processing_stage' => 'draft',
+            'processing_progress' => 0,
+            'input_payload' => [],
+            'state_version' => 0,
         ]);
+        $document = EstimateGenerationDocument::query()->create([
+            'session_id' => $session->id,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'filename' => 'ai-role-run-contract.pdf',
+            'mime_type' => 'application/pdf',
+        ]);
+        $page = EstimateGenerationDocumentPage::query()->create([
+            'document_id' => $document->id,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'session_id' => $session->id,
+            'page_number' => 1,
+        ]);
+        $this->organizationId = (int) $organization->id;
+        $this->otherOrganizationId = (int) $otherOrganization->id;
+        $this->projectId = (int) $project->id;
+        $this->sessionId = (int) $session->id;
+        $this->documentId = (int) $document->id;
+        $this->pageId = (int) $page->id;
 
         return [$connection, $schema];
     }
@@ -306,23 +337,33 @@ final class AiRoleRunPostgresTest extends TestCase
 
     private function cleanup(PostgresConnection $connection, string $schema): void
     {
-        if (preg_match('/^most_ci_ai_role_run_[a-f0-9]{16}$/D', $schema) !== 1) {
+        if ($schema !== 'public') {
             return;
         }
-        $connection->unprepared('SET search_path TO public');
-        $connection->unprepared('DROP SCHEMA "'.$schema.'" CASCADE');
+        foreach ([
+            'estimate_generation_ai_role_runs',
+            'estimate_generation_vision_physical_attempts',
+            'estimate_generation_document_pages',
+            'estimate_generation_documents',
+            'estimate_generation_sessions',
+            'projects',
+            'users',
+            'organizations',
+        ] as $table) {
+            $connection->table($table)->delete();
+        }
     }
 
-    private function input(string $sourceVersion, int $organizationId = 10): AiRoleRunInput
+    private function input(string $sourceVersion, ?int $organizationId = null): AiRoleRunInput
     {
         return new AiRoleRunInput(
-            organizationId: $organizationId,
-            projectId: 20,
-            sessionId: 30,
-            documentId: 40,
-            pageId: 50,
+            organizationId: $organizationId ?? $this->organizationId,
+            projectId: $this->projectId,
+            sessionId: $this->sessionId,
+            documentId: $this->documentId,
+            pageId: $this->pageId,
             subjectType: 'document_page',
-            subjectId: '50',
+            subjectId: (string) $this->pageId,
             subjectVersion: $sourceVersion,
             role: AiAnalysisRole::LiteralObserver,
             model: 'pinned-multimodal-model',

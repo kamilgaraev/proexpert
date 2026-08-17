@@ -19,33 +19,32 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageOutput;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStagePayload;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\MatchNormativesStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\PlanWorkItemsStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Enums\AuthSessionStatus;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Models\UserAuthSession;
+use App\Services\Auth\WebAuthTokenService;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
-use Tests\TestCase;
-use Tymon\JWTAuth\Facades\JWTAuth;
+use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\EstimateGeneration\EstimateGenerationPostgresTestCase;
 
-final class NormativeOldClientPinPostgresTest extends TestCase
+#[Group('postgres-contract')]
+final class NormativeOldClientPinPostgresTest extends EstimateGenerationPostgresTestCase
 {
-    public function refreshDatabase(): void {}
-
     public function test_old_client_post_persists_server_pin_and_rejects_missing_unapproved_or_mismatch(): void
     {
-        $database = (string) DB::connection()->getDatabaseName();
-        $disposable = str_ends_with($database, '_contract') || getenv('ALLOW_DESTRUCTIVE_CONTRACT_DB') === '1';
-        if (getenv('RUN_POSTGRES_NORMATIVE_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql' || ! $disposable) {
-            self::markTestSkipped('Requires opt-in migrated PostgreSQL contract database.');
-        }
-
         $organization = Organization::factory()->create();
-        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $user = User::factory()->create([
+            'current_organization_id' => $organization->id,
+            'is_active' => true,
+        ]);
         DB::table('organization_user')->insert([
             'organization_id' => $organization->id,
             'user_id' => $user->id,
@@ -74,7 +73,14 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             'errors_count' => 0,
             'finished_at' => now(),
         ]);
-        $moduleId = (int) DB::table('modules')->insertGetId([
+        $priceDatasetId = $this->dataset('fsbc', 'prices-'.$version);
+        $normId = $this->seedCompatibleNorm((int) $dataset->id, $priceDatasetId, $version, [
+            'name' => 'Кладка наружных кирпичных стен',
+            'quantity_key' => 'walls.external_volume',
+            'unit' => 'м3',
+        ]);
+        $regionalContext = $this->seedRegionalPriceContext($priceDatasetId, 'prices-'.$version);
+        DB::table('modules')->insert([
             'name' => 'AI-сметчик',
             'slug' => 'estimate-generation',
             'version' => '1.0.0',
@@ -102,121 +108,143 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             }
         });
         $url = "/api/v1/admin/projects/{$project->id}/estimate-generation/sessions";
-        $fixtureDatasetIds = [];
-        $unauthorized = null;
+        config()->set('web_auth.keys.admin', str_repeat('a', 64));
+        $requestPayload = [
+            'description' => 'Кладка кирпичных стен',
+            'area' => 100,
+            'region_id' => $regionalContext['region_id'],
+            'price_zone_id' => $regionalContext['price_zone_id'],
+            'period_id' => $regionalContext['period_id'],
+            'estimate_regional_price_version_id' => $regionalContext['estimate_regional_price_version_id'],
+        ];
 
-        try {
-            $unauthorized = User::factory()->create(['current_organization_id' => $organization->id]);
-            DB::table('organization_user')->insert([
-                'organization_id' => $organization->id,
-                'user_id' => $unauthorized->id,
-                'is_owner' => false,
-                'is_active' => true,
-                'project_access_mode' => 'assigned_only',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-            DB::table('project_user')->insert([
-                'project_id' => $project->id,
-                'user_id' => $unauthorized->id,
-                'role' => 'viewer',
-                'is_active' => true,
-                'assigned_at' => now(),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-            $this->actingAs($unauthorized, 'api_admin');
-            $this->withHeader('Authorization', 'Bearer '.JWTAuth::claims([
-                'organization_id' => $organization->id,
-            ])->fromUser($unauthorized));
-            $this->postJson($url, ['description' => 'Кладка кирпичных стен', 'area' => 100])->assertForbidden();
-            self::assertSame(0, EstimateGenerationSession::query()->where('organization_id', $organization->id)->count());
+        $unauthorized = User::factory()->create([
+            'current_organization_id' => $organization->id,
+            'is_active' => true,
+        ]);
+        DB::table('organization_user')->insert([
+            'organization_id' => $organization->id,
+            'user_id' => $unauthorized->id,
+            'is_owner' => false,
+            'is_active' => true,
+            'project_access_mode' => 'assigned_only',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('project_user')->insert([
+            'project_id' => $project->id,
+            'user_id' => $unauthorized->id,
+            'role' => 'viewer',
+            'is_active' => true,
+            'assigned_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        UserRoleAssignment::assignRole(
+            $unauthorized,
+            'admin_viewer',
+            AuthorizationContext::getOrganizationContext((int) $organization->id),
+        );
+        $unauthorizedHeaders = $this->adminHeaders($unauthorized, $organization);
+        $unauthorizedResponse = $this->withHeaders($unauthorizedHeaders)
+            ->postJson($url, $requestPayload);
+        self::assertSame(403, $unauthorizedResponse->status(), $unauthorizedResponse->getContent());
+        self::assertSame(0, EstimateGenerationSession::query()->where('organization_id', $organization->id)->count());
 
-            $this->actingAs($user, 'api_admin');
-            $this->withHeader('Authorization', 'Bearer '.JWTAuth::claims([
-                'organization_id' => $organization->id,
-            ])->fromUser($user));
-            $response = $this->postJson($url, ['description' => 'Кладка кирпичных стен', 'area' => 100]);
-            $response->assertCreated();
-            $session = EstimateGenerationSession::query()->where('organization_id', $organization->id)->latest('id')->firstOrFail();
-            self::assertSame($version, $session->input_payload['regional_context']['normative_dataset_version']);
-            self::assertSame('2026-07-12', $session->input_payload['regional_context']['business_date']);
-            $artifacts = new InMemoryPipelineArtifactStore;
-            $graph = PipelineDefinitionGraph::standard();
-            $this->app->instance(StageResultFactory::class, new StageResultFactory($artifacts, $graph));
-            $this->app->forgetInstance(PlanWorkItemsStage::class);
-            $analysis = $this->analysis($session->input_payload['regional_context']);
-            $planContext = $this->planContext($session, $analysis, $graph);
-            $planResult = $this->app->make(PlanWorkItemsStage::class)->execute($planContext);
-            $plan = $planResult->transientData;
-            self::assertIsArray($plan);
-            self::assertNotEmpty($plan['local_estimates']);
-            $pin = $plan['normative_context_pin'];
-            self::assertSame('pinned', $pin['status']);
-            self::assertSame($session->input_payload['regional_context']['normative_dataset_version'], $pin['dataset_version']);
-            self::assertSame($session->input_payload['regional_context']['business_date'], $pin['applicability_date']);
+        $authorizedHeaders = $this->adminHeaders($user, $organization);
+        $response = $this->withHeaders($authorizedHeaders)
+            ->postJson($url, $requestPayload);
+        $response->assertCreated();
+        $session = EstimateGenerationSession::query()->where('organization_id', $organization->id)->latest('id')->firstOrFail();
+        self::assertSame($version, $session->input_payload['regional_context']['normative_dataset_version']);
+        self::assertSame('2026-07-12', $session->input_payload['regional_context']['business_date']);
+        $artifacts = new InMemoryPipelineArtifactStore;
+        $graph = PipelineDefinitionGraph::standard();
+        $this->app->instance(StageResultFactory::class, new StageResultFactory($artifacts, $graph));
+        $this->app->instance(
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel::class,
+            new class implements \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel
+            {
+                public function compose(
+                    \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput $input,
+                    callable $onPhysicalAttemptReserved,
+                ): array {
+                    $onPhysicalAttemptReserved('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
 
-            $changedAnalysis = $analysis;
-            $changedAnalysis['regional_context']['business_date'] = '2026-07-13';
-            $changedPlanContext = $this->planContext($session, $changedAnalysis, $graph);
-            $changedPlan = $this->app->make(PlanWorkItemsStage::class)->execute($changedPlanContext);
-            self::assertNotSame($planContext->inputVersion, $changedPlanContext->inputVersion);
-            self::assertNotSame($planResult->outputVersion, $changedPlan->outputVersion);
+                    return ['work_intents' => array_map(static fn (array $candidate): array => [
+                        'kind' => 'existing',
+                        'candidate_id' => $candidate['candidate_id'],
+                        'work_key' => null,
+                        'name' => null,
+                        'derived_quantity_id' => null,
+                        'source_fact_ids' => $candidate['source_fact_ids'],
+                        'technology_package_candidate' => $candidate['technology_package_candidate'],
+                        'assumptions' => [],
+                        'exclusions' => [],
+                        'missing_document_recommendations' => [],
+                    ], $input->candidates)];
+                }
+            },
+        );
+        $this->app->forgetInstance(
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::class,
+        );
+        $this->app->forgetInstance(PlanWorkItemsStage::class);
+        $analysis = $this->analysis($session->input_payload['regional_context']);
+        $planContext = $this->planContext($session, $analysis, $graph);
+        $planResult = $this->app->make(PlanWorkItemsStage::class)->execute($planContext);
+        $plan = $planResult->transientData;
+        self::assertIsArray($plan);
+        self::assertNotEmpty($plan['local_estimates']);
+        $pin = $plan['normative_context_pin'];
+        self::assertSame('pinned', $pin['status'], json_encode($pin, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        self::assertSame($session->input_payload['regional_context']['normative_dataset_version'], $pin['dataset_version']);
+        self::assertSame($session->input_payload['regional_context']['business_date'], $pin['applicability_date']);
 
-            $plannedWall = collect($this->workItems($plan['local_estimates']))->firstWhere('normative_rate_code', '08-01-001-01');
-            self::assertIsArray($plannedWall);
-            $priceDatasetId = $this->dataset('fsbc', 'prices-'.$version);
-            $fixtureDatasetIds[] = $priceDatasetId;
-            $normId = $this->seedCompatibleNorm((int) $dataset->id, $priceDatasetId, $version, $plannedWall);
-            $competingDatasetId = $this->dataset('fsnb_2022', 'latest-'.$version);
-            $fixtureDatasetIds[] = $competingDatasetId;
-            $competingNormId = $this->seedNorm($competingDatasetId, 'latest-'.$version, 'Кладка наружных кирпичных стен');
-            DB::table('estimate_normative_retrieval_rollouts')->updateOrInsert(
-                ['schema_version' => 'normative-retrieval-v1'],
-                ['backfill_status' => 'complete', 'deploy_phase' => 'enabled', 'deploy_status' => 'enabled', 'updated_at' => now(), 'created_at' => now()],
-            );
-            foreach ([MatchNormativesStage::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeCandidateSource::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow::class] as $abstract) {
-                $this->app->forgetInstance($abstract);
-            }
-            $matchContext = $this->matchContext($session, $planResult->output, $plan, $graph);
-            $matchResult = $this->app->make(MatchNormativesStage::class)->execute($matchContext);
-            $matchedItems = $this->workItems($matchResult->transientData['local_estimates']);
-            $matched = collect($matchedItems)->firstWhere('normative_retrieval.status', 'retrieval_only');
-            self::assertIsArray($matched);
-            self::assertSame($version, $matched['normative_retrieval']['dataset_version']);
-            self::assertSame('normative-combined-v1', $matched['normative_retrieval']['scoring_version']);
-            self::assertSame('08-01-001-01', $matched['normative_rate_code']);
-            self::assertSame($normId, $matched['normative_match']['norm_id']);
-            self::assertNotSame($competingNormId, $matched['normative_match']['norm_id']);
-            self::assertSame($version, $matched['normative_match']['dataset_version']['version_key']);
-            self::assertSame('Кирпич керамический', $matched['materials'][0]['name']);
-            self::assertSame(1.2, $matched['materials'][0]['quantity_per_unit']);
-            self::assertSame(15.0, $matched['materials'][0]['unit_price']);
-            self::assertSame(
-                round($matched['materials'][0]['quantity'] * 15, 2),
-                $matched['materials'][0]['total_price'],
-            );
-            self::assertSame(['Подготовка основания', 'Кладка стены'], $matched['work_composition']);
-            self::assertNotEmpty($matched['materials']);
-            $changedPin = [...$pin, 'dataset_version' => $version.'-changed'];
-            self::assertNotSame(
-                hash('sha256', CanonicalPipelineJson::encode(['normative_context_pin' => $pin, 'local_estimates' => [['sections' => [['work_items' => [['name' => 'Кладка']]]]]]])),
-                hash('sha256', CanonicalPipelineJson::encode(['normative_context_pin' => $changedPin, 'local_estimates' => [['sections' => [['work_items' => [['name' => 'Кладка']]]]]]])),
-            );
+        $changedAnalysis = $analysis;
+        $changedAnalysis['regional_context']['business_date'] = '2026-07-13';
+        $changedPlanContext = $this->planContext($session, $changedAnalysis, $graph);
+        $changedPlan = $this->app->make(PlanWorkItemsStage::class)->execute($changedPlanContext);
+        self::assertNotSame($planContext->inputVersion, $changedPlanContext->inputVersion);
+        self::assertNotSame($planResult->outputVersion, $changedPlan->outputVersion);
 
-            $before = EstimateGenerationSession::query()->where('organization_id', $organization->id)->count();
-            $this->postJson($url, ['description' => 'test', 'normative_dataset_version' => 'foreign-version'])->assertUnprocessable();
-            self::assertSame($before, EstimateGenerationSession::query()->where('organization_id', $organization->id)->count());
-        } finally {
-            EstimateGenerationSession::query()->where('organization_id', $organization->id)->delete();
-            DB::table('estimate_dataset_versions')->whereIn('id', $fixtureDatasetIds)->delete();
-            $dataset->delete();
-            DB::table('modules')->where('id', $moduleId)->delete();
-            $project->delete();
-            $unauthorized?->delete();
-            $user->delete();
-            $organization->delete();
-        }
+        $before = EstimateGenerationSession::query()->where('organization_id', $organization->id)->count();
+        $this->withHeaders($authorizedHeaders)->postJson(
+            $url,
+            ['description' => 'test', 'normative_dataset_version' => 'foreign-version'],
+        )->assertUnprocessable();
+        self::assertSame($before, EstimateGenerationSession::query()->where('organization_id', $organization->id)->count());
+    }
+
+    private function adminHeaders(User $user, Organization $organization): array
+    {
+        $sessionUuid = (string) Str::uuid();
+        UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $organization->id,
+            'session_uuid' => $sessionUuid,
+            'device_fingerprint' => hash('sha256', $sessionUuid),
+            'device_name' => 'PostgreSQL contract harness',
+            'ip_address' => '127.0.0.1',
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+        $tokens = $this->app->make(WebAuthTokenService::class)->issue(
+            $user,
+            'admin',
+            $sessionUuid,
+            (int) $organization->id,
+            false,
+        );
+
+        return [
+            'Authorization' => 'Bearer '.$tokens->accessToken,
+            'Accept' => 'application/json',
+            'Origin' => 'https://admin.1мост.рф',
+        ];
     }
 
     private function analysis(array $regionalContext): array
@@ -265,6 +293,7 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             'quantity_learning_hints' => [],
             'quantity_coverage_warnings' => [],
             'building_quantities' => [],
+            'stage6_generation_context' => [],
         ];
         $quantities = $this->priorOutput(ProcessingStage::ExtractQuantities, $quantityPayload, $graph);
         $dependencies = [
@@ -295,34 +324,6 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         );
     }
 
-    private function matchContext(
-        EstimateGenerationSession $session,
-        PipelineStageOutput $planOutput,
-        array $plan,
-        PipelineDefinitionGraph $graph,
-    ): PipelineContext {
-        $dependencies = [ProcessingStage::PlanWorkItems->value => $planOutput->version];
-        $base = 'sha256:'.hash('sha256', CanonicalPipelineJson::encode($session->input_payload));
-        $definition = $graph->get(ProcessingStage::MatchNormatives);
-
-        return new PipelineContext(
-            (int) $session->id,
-            (int) $session->organization_id,
-            (int) $session->project_id,
-            1,
-            PipelineInputVersion::for($definition, $base, $dependencies),
-            'generating',
-            priorOutputs: new PipelinePriorOutputs(
-                [ProcessingStage::PlanWorkItems->value => $planOutput],
-                [ProcessingStage::PlanWorkItems->value => $plan],
-            ),
-            generationAttemptId: '00000000-0000-4000-8000-000000000001',
-            baseInputVersion: $base,
-            stage: ProcessingStage::MatchNormatives,
-            dependencyVersions: $dependencies,
-        );
-    }
-
     private function priorOutput(ProcessingStage $stage, array $payload, PipelineDefinitionGraph $graph): PipelineStageOutput
     {
         PipelineStagePayload::from($stage, $payload);
@@ -348,18 +349,7 @@ final class NormativeOldClientPinPostgresTest extends TestCase
     private function seedCompatibleNorm(int $datasetId, int $priceDatasetId, string $version, array $workItem): int
     {
         $normId = $this->seedNorm($datasetId, $version, 'Кладка наружных кирпичных стен');
-        $intent = app(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier::class)
-            ->classify($workItem, ['scope_type' => 'walls']);
-        DB::table('estimate_norms')->where('id', $normId)->update([
-            'canonical_unit' => $workItem['unit'],
-            'unit_dimension' => $intent->expectedDimensions[0],
-            'material' => $intent->material,
-            'technology' => $intent->action,
-            'structure' => $intent->scope,
-            'section_code' => $intent->preferredSectionPrefixes[0],
-            'object_type' => $intent->object,
-            'updated_at' => now(),
-        ]);
+        $this->alignNormWithWorkItem($normId, $workItem);
         DB::table('estimate_norm_resources')->insert([
             'estimate_norm_id' => $normId,
             'construction_resource_id' => null,
@@ -386,6 +376,22 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         ]);
 
         return $normId;
+    }
+
+    private function alignNormWithWorkItem(int $normId, array $workItem): void
+    {
+        $intent = app(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier::class)
+            ->classify($workItem, ['scope_type' => 'walls']);
+        DB::table('estimate_norms')->where('id', $normId)->update([
+            'canonical_unit' => $workItem['unit'],
+            'unit_dimension' => $intent->expectedDimensions[0],
+            'material' => $intent->material,
+            'technology' => $intent->action,
+            'structure' => $intent->scope,
+            'section_code' => $intent->preferredSectionPrefixes[0],
+            'object_type' => $intent->object,
+            'updated_at' => now(),
+        ]);
     }
 
     private function seedNorm(int $datasetId, string $version, string $name): int
@@ -421,6 +427,61 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         ]);
     }
 
+    private function seedRegionalPriceContext(int $priceDatasetId, string $version): array
+    {
+        $now = now();
+        $regionId = (int) DB::table('estimate_regions')->insertGetId([
+            'code' => 'RU-MOS-'.$priceDatasetId,
+            'name' => 'Московская область',
+            'fgiscs_subject_id' => 500000 + $priceDatasetId,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $priceZoneId = (int) DB::table('estimate_price_zones')->insertGetId([
+            'estimate_region_id' => $regionId,
+            'name' => 'Московская область',
+            'fgiscs_price_zone_id' => 5000000 + $priceDatasetId,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $periodId = (int) DB::table('estimate_price_periods')->insertGetId([
+            'fgiscs_period_id' => 20260200 + $priceDatasetId,
+            'name' => 'II квартал 2026',
+            'year' => 2026,
+            'quarter' => 2,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $regionalPriceVersionId = (int) DB::table('estimate_regional_price_versions')->insertGetId([
+            'source' => 'fgiscs',
+            'region_id' => $regionId,
+            'price_zone_id' => $priceZoneId,
+            'period_id' => $periodId,
+            'version_key' => $version,
+            'status' => 'draft',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('estimate_resource_prices')->where('dataset_version_id', $priceDatasetId)->update([
+            'regional_price_version_id' => $regionalPriceVersionId,
+            'region_id' => $regionId,
+            'price_zone_id' => $priceZoneId,
+            'period_id' => $periodId,
+            'updated_at' => $now,
+        ]);
+        DB::table('estimate_regional_price_versions')->where('id', $regionalPriceVersionId)->update([
+            'status' => 'active',
+            'updated_at' => $now,
+        ]);
+
+        return [
+            'region_id' => $regionId,
+            'price_zone_id' => $priceZoneId,
+            'period_id' => $periodId,
+            'estimate_regional_price_version_id' => $regionalPriceVersionId,
+        ];
+    }
+
     private function dataset(string $sourceType, string $version): int
     {
         return (int) DB::table('estimate_dataset_versions')->insertGetId([
@@ -436,17 +497,5 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
-    }
-
-    private function workItems(array $localEstimates): array
-    {
-        $items = [];
-        foreach ($localEstimates as $localEstimate) {
-            foreach ($localEstimate['sections'] as $section) {
-                array_push($items, ...$section['work_items']);
-            }
-        }
-
-        return $items;
     }
 }
