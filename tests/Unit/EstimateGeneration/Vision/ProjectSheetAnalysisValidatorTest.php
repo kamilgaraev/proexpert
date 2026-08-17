@@ -82,6 +82,40 @@ final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function only_elevation_may_be_negative_while_zero_level_remains_explicit(): void
+    {
+        $payload = $this->payload('section', 'elevation');
+        $payload['facts'][0]['entityKey'] = 'level:below-grade';
+        $payload['facts'][0]['value']['data'] = '-0.3000';
+        $payload['facts'][0]['unit'] = 'm';
+
+        $zeroLevel = $payload['facts'][0];
+        $zeroLevel['entityKey'] = 'building:below-ground-storeys';
+        $zeroLevel['factType'] = 'level';
+        $zeroLevel['value']['data'] = '0';
+        $zeroLevel['unit'] = 'pcs';
+
+        $negativeArea = $payload['facts'][0];
+        $negativeArea['entityKey'] = 'building:invalid-area';
+        $negativeArea['factType'] = 'area';
+        $negativeArea['value']['data'] = '-72.19';
+        $negativeArea['unit'] = 'm2';
+        $payload['facts'] = [$payload['facts'][0], $zeroLevel, $negativeArea];
+
+        $analysis = ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+
+        self::assertSame(['level:below-grade', 'building:below-ground-storeys'], array_column(
+            $analysis->facts,
+            'entityKey',
+        ));
+        self::assertSame([[
+            'section' => 'facts',
+            'index' => 2,
+            'reason' => 'invalid_project_sheet_value',
+        ]], $analysis->quarantinedItems);
+    }
+
+    #[Test]
     public function it_preserves_an_unknown_professional_fact_for_arbitration_without_confirming_it(): void
     {
         $analysis = ProjectSheetAnalysisData::fromProviderArray($this->payload('facade', 'room'), ['page-1']);

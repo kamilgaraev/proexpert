@@ -106,7 +106,7 @@ final class ProjectSheetAnalysisValidator
         }
 
         self::assertSourceReference($fact['sourcePolygonOrNativeRef'] ?? null, $nativeReferences);
-        self::assertTypedValue($fact['value'], $fact['unit']);
+        self::assertTypedValue($fact['value'], $fact['unit'], $fact['factType']);
     }
 
     /** @param list<string> $nativeReferences */
@@ -140,7 +140,7 @@ final class ProjectSheetAnalysisValidator
     }
 
     /** @param array<string, mixed> $value */
-    private static function assertTypedValue(array $value, mixed $unit): void
+    private static function assertTypedValue(array $value, mixed $unit, string $factType): void
     {
         if (! self::hasExactKeys($value, ['type', 'data']) || ! is_string($value['type'] ?? null)
             || ! in_array($value['type'], ['number', 'string', 'boolean', 'enum', 'unknown'], true)) {
@@ -154,7 +154,8 @@ final class ProjectSheetAnalysisValidator
             return;
         }
         $valid = match ($value['type']) {
-            'number' => CanonicalSourceDecimal::isValid($value['data']),
+            'number' => CanonicalSourceDecimal::isValid($value['data'])
+                && ($factType === 'elevation' || CanonicalSourceDecimal::isNonNegative($value['data'])),
             'string', 'enum' => is_string($value['data']) && mb_strlen($value['data']) <= 500
                 && preg_match('~[\x00-\x08\x0B\x0C\x0E-\x1F]~u', $value['data']) !== 1,
             'boolean' => is_bool($value['data']),
