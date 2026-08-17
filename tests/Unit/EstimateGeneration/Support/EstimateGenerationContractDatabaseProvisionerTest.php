@@ -150,8 +150,13 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
         $module = array_values(array_filter($registered, static fn (string $path): bool => str_starts_with($path, 'app/BusinessModules/Addons/EstimateGeneration/migrations/')));
         $sorted = $module;
         sort($sorted, SORT_STRING);
+        $provisionedModule = (new \ReflectionClass(EstimateGenerationContractDatabaseProvisioner::class))->getConstant('MODULE');
+        self::assertIsArray($provisionedModule);
+        $sortedProvisionedModule = $provisionedModule;
+        usort($sortedProvisionedModule, static fn (string $left, string $right): int => basename($left) <=> basename($right));
 
         self::assertSame($actual, $sorted);
+        self::assertSame($sortedProvisionedModule, $provisionedModule);
         self::assertSame(count($registered), count(array_unique($registered, SORT_STRING)));
         self::assertContains(
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001200_close_truthful_settings_schema.php',

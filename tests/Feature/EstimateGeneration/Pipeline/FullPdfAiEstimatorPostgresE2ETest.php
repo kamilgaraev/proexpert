@@ -225,6 +225,7 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertSame(82, $provider->logicalCalls);
         self::assertSame(82, $provider->physicalCalls);
         self::assertSame($this->expectedCallsByPage(), $provider->callsByPage);
+        self::assertSame([2 => 0, 3 => 0, 4 => 0], $provider->rawCapturedFactCounts);
         $expectedArbitrationClaimCounts = array_fill_keys(range(3, 22), 3);
         $expectedArbitrationClaimCounts[3] = 28;
         $expectedArbitrationClaimCounts[4] = 31;
@@ -1347,6 +1348,9 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
     /** @var array<int, array<string, int>> */
     public array $arbitrationValueCounts = [];
 
+    /** @var array<int, int> */
+    public array $rawCapturedFactCounts = [];
+
     /** @var array<int, array<string, mixed>> */
     private array $pages = [];
 
@@ -1570,6 +1574,24 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
             dirname(__DIR__, 4),
             $input->pageNumber,
         )), true, flags: JSON_THROW_ON_ERROR);
+        try {
+            $raw = VisionAnalysisData::fromProviderArray(
+                $payload,
+                'recorded',
+                'openai/gpt-5.6-luna',
+                'openai/gpt-5.6-luna',
+                'recorded-session-73-v1',
+                'measured',
+                100,
+                50,
+                64,
+                64,
+                $input->nativeReferences,
+            )->assertProvenance($input, 'normalized_derivative_v1');
+            $this->rawCapturedFactCounts[$input->pageNumber] = count($raw->projectSheetAnalysis?->facts ?? []);
+        } catch (\Throwable) {
+            $this->rawCapturedFactCounts[$input->pageNumber] = 0;
+        }
         $canonical = (new RoleVisionResponseCanonicalizer)->canonicalize($payload, $input);
 
         return VisionAnalysisData::fromProviderArray(

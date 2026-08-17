@@ -83,9 +83,6 @@ class EstimateGenerationDocumentController extends Controller
                 'failure_code' => 'document_upload_failed',
                 'session_id' => $session->id,
                 'exception_class' => $exception::class,
-                'exception_message' => $exception->getMessage(),
-                'exception_file' => $exception->getFile(),
-                'exception_line' => $exception->getLine(),
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.documents_upload_error'), 500);
@@ -222,7 +219,6 @@ class EstimateGenerationDocumentController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             $failure = PipelineFailureDetails::from($e);
-            report($e);
             Log::error('[EstimateGeneration] Document retry failed', [
                 'failure_code' => 'document_retry_failed',
                 'project_id' => $project->id,

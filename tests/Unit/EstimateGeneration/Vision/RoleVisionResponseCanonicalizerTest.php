@@ -114,6 +114,75 @@ final class RoleVisionResponseCanonicalizerTest extends TestCase
     }
 
     #[Test]
+    public function associative_evidence_keys_outside_the_bounded_ascii_allowlist_fail_closed(): void
+    {
+        $invalidKeys = [
+            '../row_01',
+            'Row_01',
+            "r\u{043E}w_01",
+            ' row_01 ',
+            str_repeat('a', 81),
+        ];
+
+        foreach ($invalidKeys as $invalidKey) {
+            $payload = json_decode((string) file_get_contents(
+                dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/observer-production-v3.json',
+            ), true, flags: JSON_THROW_ON_ERROR);
+            $validEvidence = $payload['evidence'][0];
+            $validKey = $validEvidence['key'];
+            $invalidEvidence = $validEvidence;
+            unset($invalidEvidence['key']);
+            $payload['evidence'] = [
+                $validKey => $validEvidence,
+                $invalidKey => $invalidEvidence,
+            ];
+            $payload['project_sheet_analysis']['facts'][0]['sourcePolygonOrNativeRef'] = [
+                [0.1, 0.1],
+                [0.2, 0.2],
+            ];
+            $invalidFact = $payload['project_sheet_analysis']['facts'][0];
+            $invalidFact['entityKey'] = 'invalid_evidence_subject';
+            $invalidFact['evidenceRef'] = $invalidKey;
+            $payload['project_sheet_analysis']['facts'][] = $invalidFact;
+
+            $canonical = (new RoleVisionResponseCanonicalizer)->canonicalize(
+                $payload,
+                $this->input(['observer' => ['index' => 1]]),
+            );
+            self::assertCount(1, $canonical->payload['evidence'], $invalidKey);
+            self::assertCount(1, $canonical->payload['project_sheet_analysis']['facts'], $invalidKey);
+            self::assertSame(
+                $canonical->payload['evidence'][0]['key'],
+                $canonical->payload['project_sheet_analysis']['facts'][0]['evidenceRef'],
+                $invalidKey,
+            );
+            $analysis = VisionAnalysisData::fromProviderArray(
+                $canonical->payload,
+                'recorded',
+                'openai/gpt-5.6-luna',
+                'openai/gpt-5.6-luna',
+                'recording:v1',
+                'measured',
+                1,
+                1,
+                64,
+            );
+
+            self::assertCount(1, $analysis->evidence, $invalidKey);
+            self::assertCount(
+                1,
+                $analysis->projectSheetAnalysis?->facts ?? [],
+                $invalidKey.' '.json_encode($analysis->quarantinedItems, JSON_THROW_ON_ERROR),
+            );
+            self::assertNotSame(
+                'invalid_evidence_subject',
+                $analysis->projectSheetAnalysis?->facts[0]['entityKey'] ?? null,
+                $invalidKey,
+            );
+        }
+    }
+
+    #[Test]
     public function observer_preserves_only_the_explicit_evidence_classification_on_the_server_owned_locator(): void
     {
         $payload = json_decode((string) file_get_contents(

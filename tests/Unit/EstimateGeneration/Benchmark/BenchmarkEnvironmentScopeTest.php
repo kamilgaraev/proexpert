@@ -14,9 +14,14 @@ final class BenchmarkEnvironmentScopeTest extends TestCase
     {
         $provider = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/EstimateGenerationServiceProvider.php');
         self::assertIsString($provider);
+        $provider = str_replace("\r\n", "\n", $provider);
 
-        self::assertStringContainsString("environment(['local', 'testing'])", $provider);
-        self::assertStringContainsString("is_dir(base_path('tests/Fixtures/EstimateGeneration/benchmarks'))", $provider);
-        self::assertStringContainsString('if ($this->repositoryReplayEnabled())', $provider);
+        self::assertStringContainsString(implode("\n", [
+            "            base_path('tests/Fixtures/EstimateGeneration/benchmarks'),",
+            '            [],',
+        ]), $provider);
+        self::assertStringNotContainsString('ProductionReplayBenchmarkAdapter', $provider);
+        self::assertStringNotContainsString('repositoryReplayEnabled', $provider);
+        self::assertStringNotContainsString('benchmark.registered_manifests', $provider);
     }
 }

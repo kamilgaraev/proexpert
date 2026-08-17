@@ -89,7 +89,7 @@ final class VisionAnalysisRoutingTest extends TestCase
             'schema_version' => 4,
             'sheet_type' => 'detail',
             'evidence' => [
-                ['key' => 'page', 'locator' => [...$locator, 'optional_provider_field' => true]],
+                ['key' => 'page', 'locator' => $locator],
                 ['key' => 'page', 'locator' => $locator],
                 ['key' => 'broken', 'locator' => ['page_number' => 2]],
             ],

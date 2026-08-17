@@ -122,7 +122,6 @@ final class EstimateGenerationActionController extends Controller
         } catch (\InvalidArgumentException) {
             return AdminResponse::error(trans_message('estimate_generation.price_source_invalid'), 422);
         } catch (\Throwable $e) {
-            report($e);
             Log::error('[EstimateGeneration] Generate failed', [
                 'failure_code' => 'generation_request_failed',
                 'session_id' => $session->id,
@@ -232,7 +231,6 @@ final class EstimateGenerationActionController extends Controller
         } catch (InvalidEstimateGenerationTransition $e) {
             return AdminResponse::error(trans_message('estimate_generation.apply_not_ready'), 422);
         } catch (\Throwable $e) {
-            report($e);
             Log::error('[EstimateGeneration] Apply failed', [
                 'failure_code' => 'apply_failed',
                 'session_id' => $session->id,

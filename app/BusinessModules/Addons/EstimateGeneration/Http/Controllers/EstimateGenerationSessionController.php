@@ -107,9 +107,6 @@ final class EstimateGenerationSessionController extends Controller
                 'failure_code' => 'session_create_failed',
                 'project_id' => $project->id,
                 'exception_class' => $exception::class,
-                'exception_message' => $exception->getMessage(),
-                'exception_file' => $exception->getFile(),
-                'exception_line' => $exception->getLine(),
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.session_create_error'), 500);

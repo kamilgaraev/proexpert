@@ -62,9 +62,7 @@ final class RoleVisionResponseCanonicalizer
         $canonical = [
             'schema_version' => is_array($projected['analysis_routing'] ?? null) ? 4 : 3,
             'sheet_type' => is_string($projected['sheet_type'] ?? null) ? $projected['sheet_type'] : 'unknown',
-            'evidence' => is_array($projected['evidence'] ?? null) && $projected['evidence'] !== []
-                ? $projected['evidence']
-                : [['key' => 'server_page_evidence', 'locator' => $this->locator($input)]],
+            'evidence' => is_array($projected['evidence'] ?? null) ? $projected['evidence'] : [],
             'elements' => is_array($projected['elements'] ?? null) ? $projected['elements'] : [],
             'scale_candidates' => is_array($projected['scale_candidates'] ?? null) ? $projected['scale_candidates'] : [],
             'warnings' => is_array($projected['warnings'] ?? null) ? $projected['warnings'] : [],
@@ -93,13 +91,13 @@ final class RoleVisionResponseCanonicalizer
             }
             $embeddedReference = $item['key'] ?? null;
             $localReference = is_string($embeddedReference)
-                ? trim($embeddedReference)
-                : (! array_is_list($evidence) && is_string($outerKey) ? trim($outerKey) : '');
+                ? $embeddedReference
+                : (! array_is_list($evidence) && is_string($outerKey) ? $outerKey : '');
             if (! array_is_list($evidence) && is_string($embeddedReference)
                 && (! is_string($outerKey) || ! hash_equals($outerKey, $localReference))) {
                 return $payload;
             }
-            if ($localReference === '' || mb_strlen($localReference) > 200) {
+            if (preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/D', $localReference) !== 1) {
                 continue;
             }
             if (isset($references[$localReference])) {
@@ -124,6 +122,19 @@ final class RoleVisionResponseCanonicalizer
             $projectedEvidence[] = ['key' => $serverReference, 'locator' => $locator];
         }
         $payload['evidence'] = $projectedEvidence;
+        $analysis = $payload['project_sheet_analysis'] ?? null;
+        if (is_array($analysis) && is_array($analysis['facts'] ?? null) && array_is_list($analysis['facts'])) {
+            $analysis['facts'] = array_values(array_filter(
+                $analysis['facts'],
+                static function (mixed $fact) use ($references, $input): bool {
+                    $reference = is_array($fact) ? ($fact['evidenceRef'] ?? null) : null;
+
+                    return is_string($reference)
+                        && (isset($references[$reference]) || in_array($reference, $input->nativeReferences, true));
+                },
+            ));
+            $payload['project_sheet_analysis'] = $analysis;
+        }
 
         return $this->replaceEvidenceReferences($payload, $references);
     }
