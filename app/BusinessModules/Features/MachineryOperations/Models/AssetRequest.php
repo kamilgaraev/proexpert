@@ -59,4 +59,9 @@ final class AssetRequest extends Model
     {
         return $query->where('organization_id', $organizationId);
     }
+
+    public function scopeRequiresDecision(Builder $query): Builder
+    {
+        return $query->whereIn('status', ['pending', 'approved']);
+    }
 }
