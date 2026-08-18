@@ -1,0 +1,101 @@
+{
+  "source": {
+    "organization_id": 901,
+    "project_id": 902,
+    "session_id": 903,
+    "document_id": 904,
+    "page_id": 905,
+    "page_number": 5,
+    "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "role_completion": {
+    "observer_literal": true,
+    "observer_construction": true,
+    "observer_risk": true,
+    "arbiter": true
+  },
+  "analysis_outcome": "partial_review",
+  "vision_analysis": {
+    "elements": [
+      {"key": "room_terrace", "type": "room", "label": "Терраса", "confidence": 0.98, "evidence_ref": "literal:rooms"},
+      {"key": "room_kitchen_living", "type": "room", "label": "Кухня-гостиная", "confidence": 0.97, "evidence_ref": "literal:rooms"},
+      {"key": "room_bathroom", "type": "room", "label": "С/У", "confidence": 0.97, "evidence_ref": "literal:rooms"},
+      {"key": "room_bedroom_1", "type": "room", "label": "Спальня", "confidence": 0.97, "evidence_ref": "literal:rooms"},
+      {"key": "room_bedroom_2", "type": "room", "label": "Спальня", "confidence": 0.97, "evidence_ref": "literal:rooms"},
+      {"key": "wall_exterior", "type": "wall", "label": "Наружная стена", "confidence": 0.91, "evidence_ref": "construction:wall"},
+      {"key": "dimension_width_total", "type": "dimension", "label": "11 100", "confidence": 0.99, "evidence_ref": "literal:dimensions"},
+      {"key": "dimension_height_total", "type": "dimension", "label": "7 300", "confidence": 0.99, "evidence_ref": "literal:dimensions"},
+      {"key": "dimension_width_segment_1", "type": "dimension", "label": "2 500", "confidence": 0.98, "evidence_ref": "literal:dimensions"},
+      {"key": "dimension_width_segment_2", "type": "dimension", "label": "3 150", "confidence": 0.98, "evidence_ref": "literal:dimensions"},
+      {"key": "dimension_width_segment_3", "type": "dimension", "label": "2 200", "confidence": 0.98, "evidence_ref": "literal:dimensions"},
+      {"key": "dimension_width_segment_4", "type": "dimension", "label": "3 250", "confidence": 0.98, "evidence_ref": "literal:dimensions"},
+      {"key": "axis_a", "type": "axis", "label": "А", "confidence": 0.99, "evidence_ref": "literal:dimensions"},
+      {"key": "axis_b", "type": "axis", "label": "Б", "confidence": 0.99, "evidence_ref": "literal:dimensions"},
+      {"key": "axis_v", "type": "axis", "label": "В", "confidence": 0.99, "evidence_ref": "literal:dimensions"},
+      {"key": "axis_g", "type": "axis", "label": "Г", "confidence": 0.99, "evidence_ref": "literal:dimensions"},
+      {"key": "axis_d", "type": "axis", "label": "Д", "confidence": 0.99, "evidence_ref": "literal:dimensions"},
+      {"key": "text_plan_title", "type": "text", "label": "План этажа на отм. ±0,000", "confidence": 0.99, "evidence_ref": "literal:level"},
+      {"key": "text_project_title", "type": "text", "label": "Одноэтажный жилой дом", "confidence": 0.98, "evidence_ref": "literal:floor-count"}
+    ],
+    "quarantined_items": [
+      {"section": "facts", "index": 2, "reason": "duplicate_project_sheet_fact_key"},
+      {"section": "facts", "index": 12, "reason": "invalid_project_sheet_geometry"},
+      {"section": "facts", "index": 13, "reason": "invalid_project_sheet_geometry"}
+    ]
+  },
+  "independent_observations": {
+    "observer_literal": {
+      "claims": [
+        {"id": "literal:room-kitchen", "entityKey": "room.kitchen_living", "factType": "room", "value": {"type": "string", "data": "Кухня-гостиная"}, "unit": null, "confidence": 0.97, "evidenceRef": "literal:rooms"},
+        {"id": "literal:area-kitchen", "entityKey": "room.kitchen_living", "factType": "area", "value": {"type": "number", "data": "22.10"}, "unit": "м²", "confidence": 0.97, "evidenceRef": "literal:rooms"},
+        {"id": "literal:width", "entityKey": "building.overall_width", "factType": "dimension_chain", "value": {"type": "number", "data": "11100"}, "unit": "мм", "confidence": 0.99, "evidenceRef": "literal:dimensions"},
+        {"id": "literal:unknown-dimension", "entityKey": "drawing.dimension_1", "factType": "dimension_chain", "value": {"type": "number", "data": "2500"}, "unit": "мм", "confidence": 0.88, "evidenceRef": "literal:dimensions"},
+        {"id": "literal:height", "entityKey": "building.overall_height", "factType": "dimension_chain", "value": {"type": "number", "data": "7300"}, "unit": "мм", "confidence": 0.99, "evidenceRef": "literal:dimensions"},
+        {"id": "literal:level", "entityKey": "building.level_1", "factType": "level", "value": {"type": "string", "data": "±0,000"}, "unit": null, "confidence": 0.96, "evidenceRef": "literal:level"},
+        {"id": "literal:floor-count", "entityKey": "building.floor_count", "factType": "floor_count", "value": {"type": "number", "data": "1"}, "unit": null, "confidence": 0.95, "evidenceRef": "literal:floor-count"}
+      ]
+    },
+    "observer_construction": {
+      "claims": [
+        {"id": "construction:area-kitchen", "entityKey": "room_kitchen_living", "factType": "area", "value": {"type": "number", "data": "22.10"}, "unit": "м²", "confidence": 0.94, "evidenceRef": "construction:rooms"},
+        {"id": "construction:width", "entityKey": "building_overall_width", "factType": "dimension_chain", "value": {"type": "number", "data": "11100"}, "unit": "мм", "confidence": 0.98, "evidenceRef": "construction:dimensions"},
+        {"id": "construction:height", "entityKey": "building_overall_height", "factType": "dimension_chain", "value": {"type": "number", "data": "7300"}, "unit": "мм", "confidence": 0.98, "evidenceRef": "construction:dimensions"},
+        {"id": "construction:span", "entityKey": "building.grid_span_a_d", "factType": "dimension_chain", "value": {"type": "number", "data": "11100"}, "unit": "мм", "confidence": 0.93, "evidenceRef": "construction:grid"},
+        {"id": "construction:level", "entityKey": "building_level_1", "factType": "level", "value": {"type": "number", "data": "0"}, "unit": "м", "confidence": 0.96, "evidenceRef": "construction:level"},
+        {"id": "construction:wall", "entityKey": "building.external_wall", "factType": "wall", "value": {"type": "string", "data": "Наружная стена — 229 мм"}, "unit": "мм", "confidence": 0.92, "evidenceRef": "construction:wall"},
+        {"id": "construction:material", "entityKey": "building.external_wall", "factType": "material", "value": {"type": "string", "data": "Декоративная штукатурка; каменная вата 50 мм; ГСП-2 12 мм; диффузионная мембрана; деревянный каркас 42×142 мм с утеплителем 150 мм; пароизоляция; ГСП-2 12 мм; ГКЛ 12,5 мм"}, "unit": null, "confidence": 0.90, "evidenceRef": "construction:wall"},
+        {"id": "construction:technology", "entityKey": "building.technology", "factType": "technology_candidate", "value": {"type": "string", "data": "Каркасно-панельная технология"}, "unit": null, "confidence": 0.93, "evidenceRef": "construction:wall"}
+      ]
+    },
+    "observer_risk": {
+      "claims": [
+        {"id": "risk:area-kitchen", "entityKey": "room:kitchen-living", "factType": "area", "value": {"type": "number", "data": "22.10"}, "unit": "м²", "confidence": 0.88, "evidenceRef": "risk:rooms"},
+        {"id": "risk:width", "entityKey": "building:overall-width", "factType": "dimension_chain", "value": {"type": "number", "data": "11100"}, "unit": "мм", "confidence": 0.91, "evidenceRef": "risk:dimensions"}
+      ]
+    }
+  },
+  "document_arbitration": {
+    "decisions": [
+      {"claim_id": "literal:area-kitchen", "status": "accepted", "supporting_claim_ids": ["literal:area-kitchen", "construction:area-kitchen", "risk:area-kitchen"], "evidence_refs": ["literal:rooms", "construction:rooms", "risk:rooms"], "reason_code": "arbiter_area_1", "canonical_claim": {"entity_key": "room.kitchen_living", "fact_type": "area", "value": {"type": "number", "data": "22.10"}, "unit": "м²", "source_claim_id": "literal:area-kitchen"}},
+      {"claim_id": "construction:area-kitchen", "status": "accepted", "supporting_claim_ids": ["literal:area-kitchen", "construction:area-kitchen", "risk:area-kitchen"], "evidence_refs": ["literal:rooms", "construction:rooms", "risk:rooms"], "reason_code": "arbiter_area_2", "canonical_claim": {"entity_key": "room_kitchen_living", "fact_type": "area", "value": {"type": "number", "data": "22.10"}, "unit": "м²", "source_claim_id": "construction:area-kitchen"}},
+      {"claim_id": "risk:area-kitchen", "status": "accepted", "supporting_claim_ids": ["literal:area-kitchen", "construction:area-kitchen", "risk:area-kitchen"], "evidence_refs": ["literal:rooms", "construction:rooms", "risk:rooms"], "reason_code": "arbiter_area_3", "canonical_claim": {"entity_key": "room:kitchen-living", "fact_type": "area", "value": {"type": "number", "data": "22.10"}, "unit": "м²", "source_claim_id": "risk:area-kitchen"}},
+      {"claim_id": "literal:width", "status": "accepted", "supporting_claim_ids": ["literal:width", "construction:width", "risk:width"], "evidence_refs": ["literal:dimensions", "construction:dimensions", "risk:dimensions"], "reason_code": "arbiter_width", "canonical_claim": {"entity_key": "building.overall_width", "fact_type": "dimension_chain", "value": {"type": "number", "data": "11100"}, "unit": "мм", "source_claim_id": "literal:width"}},
+      {"claim_id": "literal:unknown-dimension", "status": "accepted", "supporting_claim_ids": ["literal:unknown-dimension"], "evidence_refs": ["literal:dimensions"], "reason_code": "arbiter_unknown_dimension", "canonical_claim": {"entity_key": "drawing.dimension_1", "fact_type": "dimension_chain", "value": {"type": "number", "data": "2500"}, "unit": "мм", "source_claim_id": "literal:unknown-dimension"}},
+      {"claim_id": "construction:width", "status": "accepted", "supporting_claim_ids": ["literal:width", "construction:width", "risk:width"], "evidence_refs": ["literal:dimensions", "construction:dimensions", "risk:dimensions"], "reason_code": "arbiter_width_alias", "canonical_claim": {"entity_key": "sheet.plan", "fact_type": "dimension_chain", "value": {"type": "number", "data": "11100"}, "unit": "мм", "source_claim_id": "construction:width"}},
+      {"claim_id": "construction:span", "status": "accepted", "supporting_claim_ids": ["construction:span"], "evidence_refs": ["construction:grid"], "reason_code": "arbiter_span", "canonical_claim": {"entity_key": "building.grid_span_a_d", "fact_type": "dimension_chain", "value": {"type": "number", "data": "11100"}, "unit": "мм", "source_claim_id": "construction:span"}},
+      {"claim_id": "literal:height", "status": "accepted", "supporting_claim_ids": ["literal:height", "construction:height"], "evidence_refs": ["literal:dimensions", "construction:dimensions"], "reason_code": "arbiter_height", "canonical_claim": {"entity_key": "building.overall_height", "fact_type": "dimension_chain", "value": {"type": "number", "data": "7300"}, "unit": "мм", "source_claim_id": "literal:height"}},
+      {"claim_id": "literal:level", "status": "accepted", "supporting_claim_ids": ["literal:level", "construction:level"], "evidence_refs": ["literal:level", "construction:level"], "reason_code": "arbiter_level", "canonical_claim": {"entity_key": "building.level_1", "fact_type": "level", "value": {"type": "string", "data": "±0,000"}, "unit": null, "source_claim_id": "literal:level"}},
+      {"claim_id": "literal:floor-count", "status": "accepted", "supporting_claim_ids": ["literal:floor-count"], "evidence_refs": ["literal:floor-count"], "reason_code": "arbiter_floor_count", "canonical_claim": {"entity_key": "building.floor_count", "fact_type": "floor_count", "value": {"type": "number", "data": "1"}, "unit": null, "source_claim_id": "literal:floor-count"}},
+      {"claim_id": "construction:wall", "status": "accepted", "supporting_claim_ids": ["construction:wall"], "evidence_refs": ["construction:wall"], "reason_code": "arbiter_wall", "canonical_claim": {"entity_key": "building.external_wall", "fact_type": "wall", "value": {"type": "string", "data": "Наружная стена — 229 мм"}, "unit": "мм", "source_claim_id": "construction:wall"}}
+    ]
+  },
+  "expected": {
+    "kitchen_area_label": "Кухня-гостиная — 22,10 м²",
+    "width_label": "Габарит здания по оси X — 11 100 мм",
+    "height_label": "Габарит здания по оси Y — 7 300 мм",
+    "unknown_dimension_label": "Размер на чертеже — 2 500 мм",
+    "level_label": "Высотная отметка — ±0,000",
+    "floor_count_label": "Этажность — 1 этаж",
+    "wall_label": "Наружная стена — 229 мм"
+  }
+}

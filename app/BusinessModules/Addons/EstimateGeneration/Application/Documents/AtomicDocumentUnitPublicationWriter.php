@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactConfidence;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactReducer;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
@@ -15,6 +18,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
     public function __construct(
         private Connection $database,
         private ProjectModelEvidenceWriter $evidence,
+        private AcceptedDocumentFactProjector $factProjector = new AcceptedDocumentFactProjector,
     ) {}
 
     public function transaction(int $organizationId, int $sessionId, callable $callback): mixed
@@ -38,6 +42,11 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
         if ($publication->claims === []) {
             return;
         }
+        $publication = new DocumentUnitPublication(
+            $publication->claims,
+            (new CanonicalFactReducer)->reduce($publication->claims, $publication->decisions),
+            $publication->quarantinedItems,
+        );
         $this->evidence->writeArbitration(
             $publication->claims,
             $publication->decisions,
@@ -83,24 +92,28 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
         }
         $rows = [];
         $requestedArea = null;
+        $requestedAreaConfidence = null;
+        $confidenceAggregator = new CanonicalFactConfidence;
         foreach ($publication->decisions as $decision) {
             if ($decision->status !== 'accepted') {
                 continue;
             }
             $claim = $claims[$decision->claimId] ?? throw new LogicException('document_fact_projection_claim_missing');
-            $projected = $this->documentFact($claim);
+            $projected = $this->factProjector->project($claim);
             if ($projected === null) {
                 continue;
             }
-            if ($claim->entityKey === 'building_area_total'
-                && $claim->factType === 'area'
-                && $claim->unit === 'm2'
+            if ($projected['fact_type'] === 'total_area'
+                && $projected['unit'] === 'm2'
                 && ($claim->value['type'] ?? null) === 'number'
                 && CanonicalSourceDecimal::isPositive($claim->value['data'])) {
                 $requestedArea = $claim;
+                $requestedAreaConfidence = $confidenceAggregator->forDecision($decision, $claims);
             }
+            $lineage = $this->lineage($decision, $claims);
+            $confidence = $confidenceAggregator->forDecision($decision, $claims);
             $projectionKey = 'sha256:'.hash('sha256', implode('|', [
-                $claim->id,
+                (new ClaimSemanticMatcher)->key($claim),
                 $sourceVersion,
                 (string) $documentId,
                 (string) $pageNumber,
@@ -113,24 +126,29 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
                 'session_id' => $sessionId,
                 'fact_type' => $projected['fact_type'],
                 'scope_key' => mb_substr($claim->entityKey, 0, 255),
-                'label' => $projected['label'],
+                'label' => trans_message('estimate_generation.accepted_fact_projection.labels.'.$projected['label_key']),
                 'value_text' => $projected['value_text'],
                 'value_number' => $projected['value_number'],
-                'unit' => $claim->unit,
-                'confidence' => 1.0,
+                'unit' => $projected['unit'],
+                'confidence' => $confidence,
                 'source_ref' => json_encode([
                     'document_id' => $documentId,
                     'page_id' => (int) $page->id,
                     'page_number' => $pageNumber,
                     'source_version' => $sourceVersion,
                     'evidence_ref' => $claim->evidenceRef,
+                    'evidence_refs' => $decision->evidenceRefs,
+                    'lineage' => $lineage,
                     'locator' => $claim->locator,
                 ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
                 'normalized_payload' => json_encode([
                     'projection' => 'arbiter_consensus:v1',
                     'projection_key' => $projectionKey,
                     'claim_id' => $claim->id,
-                    'observer_role' => $claim->observerRole,
+                    'claim_ids' => $decision->supportingClaimIds,
+                    'observer_roles' => array_values(array_unique(array_column($lineage, 'role'))),
+                    'source_confidences' => array_column($lineage, 'confidence', 'claim_id'),
+                    'confidence' => $confidence,
                     'fact_type' => $claim->factType,
                     'value' => $claim->value,
                     'decision_reason_code' => $decision->reasonCode,
@@ -153,6 +171,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
         }
         $this->writeRequestedAreaTakeoff(
             $requestedArea,
+            $requestedAreaConfidence,
             $organizationId,
             $projectId,
             $sessionId,
@@ -165,6 +184,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
 
     private function writeRequestedAreaTakeoff(
         ?ObservationClaim $area,
+        ?float $confidence,
         int $organizationId,
         int $projectId,
         int $sessionId,
@@ -218,7 +238,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
             'unit' => 'm2',
             'quantity' => $area->value['data'],
             'formula' => 'accepted_building_area_total',
-            'confidence' => 1.0,
+            'confidence' => $confidence ?? 0.0,
             'source_refs' => json_encode([[
                 'document_id' => $documentId,
                 'page_id' => $pageId,
@@ -237,46 +257,23 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
         ]);
     }
 
-    /** @return array{fact_type:string,label:string,value_text:?string,value_number:string|null}|null */
-    private function documentFact(ObservationClaim $claim): ?array
+    private function lineage(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision $decision, array $claims): array
     {
-        $value = $claim->value['data'];
-        if ($value === null || (is_string($value) && trim($value) === '')) {
-            return null;
-        }
-        $isNumber = ($claim->value['type'] ?? null) === 'number';
-        if ($isNumber && (! CanonicalSourceDecimal::isValid($value)
-            || ($claim->factType !== 'elevation' && ! CanonicalSourceDecimal::isNonNegative($value)))) {
-            return null;
-        }
-        $numeric = $isNumber;
-        $type = match ($claim->factType) {
-            'area' => $numeric
-                ? ($claim->entityKey === 'building_area_total'
-                    ? 'total_area'
-                    : (str_starts_with($claim->entityKey, 'room:') ? 'room_area' : 'zone_area'))
-                : 'dimension',
-            'dimension_chain' => 'dimension',
-            'elevation' => 'height',
-            'level' => 'floor_count',
-            'material', 'finish_zone' => 'material',
-            'technology_candidate', 'roof_geometry' => 'work_scope',
-            'table' => 'table_row',
-            'note' => 'note',
-            default => null,
-        };
-        if ($type === null) {
-            return null;
+        $lineage = [];
+        foreach ($decision->supportingClaimIds as $claimId) {
+            $supporting = $claims[$claimId] ?? null;
+            if (! $supporting instanceof ObservationClaim) {
+                continue;
+            }
+            $lineage[] = [
+                'claim_id' => $supporting->id,
+                'role' => $supporting->observerRole,
+                'confidence' => $supporting->confidence,
+                'evidence_ref' => $supporting->evidenceRef,
+                'locator' => $supporting->locator,
+            ];
         }
 
-        return [
-            'fact_type' => $type,
-            'label' => trans_message('estimate_generation.accepted_fact_projection.labels.'.match ($type) {
-                'room_area', 'zone_area' => 'area',
-                default => $type,
-            }),
-            'value_text' => $numeric ? null : (is_bool($value) ? ($value ? 'true' : 'false') : (string) $value),
-            'value_number' => $numeric ? $value : null,
-        ];
+        return $lineage;
     }
 }

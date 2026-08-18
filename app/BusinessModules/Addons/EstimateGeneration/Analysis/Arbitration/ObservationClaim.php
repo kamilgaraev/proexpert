@@ -23,6 +23,7 @@ final readonly class ObservationClaim
         public int $sessionId,
         public string $sourceVersion,
         public array $locator,
+        public float $confidence = 0.0,
     ) {
         if (preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/D', $id) !== 1
             || ! in_array($observerRole, ['observer_literal', 'observer_construction', 'observer_risk'], true)
@@ -34,7 +35,8 @@ final readonly class ObservationClaim
             || ($evidenceRef !== null && preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/D', $evidenceRef) !== 1)
             || $organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^sha256:[a-f0-9]{64}$/D', $sourceVersion) !== 1
-            || $locator === [] || array_is_list($locator)) {
+            || $locator === [] || array_is_list($locator)
+            || ! is_finite($confidence) || $confidence < 0 || $confidence > 1) {
             throw new InvalidArgumentException('observation_claim_invalid');
         }
     }
@@ -82,6 +84,9 @@ final readonly class ObservationClaim
             $sessionId,
             $sourceVersion,
             $locator,
+            ! array_key_exists('confidence', $claim)
+                ? 0.0
+                : (is_numeric($claim['confidence']) ? (float) $claim['confidence'] : -1.0),
         );
     }
 

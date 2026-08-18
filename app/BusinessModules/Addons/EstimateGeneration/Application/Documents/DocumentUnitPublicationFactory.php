@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactReducer;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 
@@ -91,7 +92,7 @@ final readonly class DocumentUnitPublicationFactory
             }
         }
 
-        return $decisions;
+        return (new CanonicalFactReducer)->reduce($claims, $decisions);
     }
 
     /** @param list<\App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim> $claims @return list<ArbitrationDecision> */

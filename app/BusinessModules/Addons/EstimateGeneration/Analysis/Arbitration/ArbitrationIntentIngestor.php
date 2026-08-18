@@ -41,7 +41,10 @@ final readonly class ArbitrationIntentIngestor
             }
         }
 
-        return new ArbitrationIntentIngestionResult($accepted, $quarantined);
+        return new ArbitrationIntentIngestionResult(
+            (new CanonicalFactReducer)->reduce($claims, $accepted),
+            $quarantined,
+        );
     }
 
     /** @param array<string,mixed> $intent @param list<ObservationClaim> $claims */

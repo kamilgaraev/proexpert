@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactConfidence;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactReducer;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
@@ -48,6 +51,7 @@ final readonly class ProjectModelEvidenceWriter
             $claim = $byId[$decision->claimId] ?? throw new InvalidArgumentException('Arbitration claim is absent.');
             $this->assertScope($claim, $scope);
         }
+        $decisions = (new CanonicalFactReducer)->reduce($byId, $decisions);
         $decisions = array_values(array_filter(
             $decisions,
             fn (ArbitrationDecision $decision): bool => $this->projectModelEntity($byId[$decision->claimId]) !== null,
@@ -93,7 +97,9 @@ final readonly class ProjectModelEvidenceWriter
                             'fact_key' => $this->evidenceFactKey($supportingClaim),
                             'fact_value' => $this->evidenceScalar($supportingClaim),
                         ],
-                        $decision->status === 'accepted' && $supportingClaim->explicitEvidence ? 1.0 : 0.0,
+                        $supportingClaim->explicitEvidence
+                            ? $supportingClaim->confidence
+                            : 0.0,
                         EvidenceProducer::DrawingAnalyzer->value,
                         'sha256:'.hash('sha256', 'document-arbitration:v3'),
                     ));
@@ -125,7 +131,7 @@ final readonly class ProjectModelEvidenceWriter
                     $projection['attributes'],
                 );
                 $factId = 'fact:'.hash('sha256', implode('|', [
-                    $claim->id,
+                    (new ClaimSemanticMatcher)->key($claim),
                     $decision->status,
                     $scope->sourceVersion,
                     (string) $documentId,
@@ -141,7 +147,7 @@ final readonly class ProjectModelEvidenceWriter
                     mb_substr((string) ($projection['fact_type'] ?? $claim->factType), 0, 120),
                     $this->projectModelFactValue($claim),
                     $claim->unit,
-                    $decision->status === 'accepted' ? 1.0 : 0.0,
+                    (new CanonicalFactConfidence)->forDecision($decision, $byId),
                     $decision->status === 'unresolved' ? 'unresolved' : 'document',
                     match ($decision->status) {
                         'accepted' => 'confirmed',

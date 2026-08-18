@@ -127,6 +127,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                             'source_version' => $context->sourceVersion,
                             'explicit' => true,
                         ],
+                        confidence: 0.92,
                     );
                     $area = new ObservationClaim(
                         'literal:area:page-2',
@@ -148,6 +149,39 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                             'source_version' => $context->sourceVersion,
                             'explicit' => true,
                         ],
+                        confidence: 0.96,
+                    );
+                    $constructionArea = new ObservationClaim(
+                        'construction:area:page-2',
+                        'observer_construction',
+                        'building.area-total',
+                        'area',
+                        ['type' => 'number', 'data' => '72.19'],
+                        'м²',
+                        'construction:area:page-2',
+                        true,
+                        $context->organizationId,
+                        $context->projectId,
+                        $context->sessionId,
+                        $context->sourceVersion,
+                        $area->locator,
+                        confidence: 0.91,
+                    );
+                    $riskArea = new ObservationClaim(
+                        'risk:area:page-2',
+                        'observer_risk',
+                        'building_area_total',
+                        'area',
+                        ['type' => 'number', 'data' => '72.190'],
+                        'm2',
+                        'risk:area:page-2',
+                        true,
+                        $context->organizationId,
+                        $context->projectId,
+                        $context->sessionId,
+                        $context->sourceVersion,
+                        $area->locator,
+                        confidence: 0.89,
                     );
 
                     return new DocumentUnitOutput(
@@ -159,7 +193,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                         unitIndex: $context->index,
                         sourceVersion: $context->sourceVersion,
                         publication: new DocumentUnitPublication(
-                            [$claim, $area],
+                            [$claim, $area, $constructionArea, $riskArea],
                             [
                                 new ArbitrationDecision(
                                     claimId: $claim->id,
@@ -173,6 +207,34 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                                         'value' => $claim->value,
                                         'unit' => $claim->unit,
                                         'source_claim_id' => $claim->id,
+                                    ],
+                                ),
+                                new ArbitrationDecision(
+                                    claimId: $constructionArea->id,
+                                    status: 'accepted',
+                                    supportingClaimIds: [$area->id, $constructionArea->id, $riskArea->id],
+                                    evidenceRefs: [$area->evidenceRef, $constructionArea->evidenceRef, $riskArea->evidenceRef],
+                                    reasonCode: 'arbiter_area_consensus',
+                                    canonicalClaim: [
+                                        'entity_key' => 'building_area_total',
+                                        'fact_type' => 'area',
+                                        'value' => ['type' => 'number', 'data' => '72.19'],
+                                        'unit' => 'm2',
+                                        'source_claim_id' => $constructionArea->id,
+                                    ],
+                                ),
+                                new ArbitrationDecision(
+                                    claimId: $riskArea->id,
+                                    status: 'accepted',
+                                    supportingClaimIds: [$area->id, $constructionArea->id, $riskArea->id],
+                                    evidenceRefs: [$area->evidenceRef, $constructionArea->evidenceRef, $riskArea->evidenceRef],
+                                    reasonCode: 'arbiter_area_consensus',
+                                    canonicalClaim: [
+                                        'entity_key' => 'building_area_total',
+                                        'fact_type' => 'area',
+                                        'value' => ['type' => 'number', 'data' => '72.19'],
+                                        'unit' => 'm2',
+                                        'source_claim_id' => $riskArea->id,
                                     ],
                                 ),
                                 new ArbitrationDecision(
@@ -212,7 +274,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
             $persisted = EstimateGenerationProcessingUnit::query()->findOrFail($unit->id);
             self::assertSame('completed', $persisted->status->value);
             self::assertNull($persisted->failure_code);
-            self::assertSame(2, DB::table('estimate_generation_evidence')
+            self::assertSame(4, DB::table('estimate_generation_evidence')
                 ->where('organization_id', $organization->id)
                 ->where('project_id', $project->id)
                 ->where('session_id', $session->id)
@@ -227,8 +289,20 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 'scope_key' => 'building_area_total',
                 'value_number' => 72.1900,
                 'unit' => 'm2',
-                'confidence' => 1.00,
+                'confidence' => 0.96,
             ]);
+            self::assertSame(2, EstimateGenerationDocumentFact::query()
+                ->where('document_id', $document->id)
+                ->count());
+            $areaFact = EstimateGenerationDocumentFact::query()
+                ->where('document_id', $document->id)
+                ->where('fact_type', 'total_area')
+                ->firstOrFail();
+            self::assertSame(
+                ['construction:area:page-2', 'literal:area:page-2', 'risk:area:page-2'],
+                $areaFact->normalized_payload['claim_ids'],
+            );
+            self::assertSame(0.96, (float) $areaFact->confidence);
             self::assertDatabaseHas('estimate_generation_document_facts', [
                 'document_id' => $document->id,
                 'fact_type' => 'material',
@@ -241,7 +315,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 'unit' => 'm2',
                 'quantity' => 72.1900,
                 'formula' => 'accepted_building_area_total',
-                'confidence' => 1.00,
+                'confidence' => 0.96,
             ]);
             self::assertSame(2, DB::table('estimate_generation_project_model_assertions')
                 ->where('organization_id', $organization->id)
