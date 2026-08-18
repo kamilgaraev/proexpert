@@ -9,11 +9,11 @@ use PHPUnit\Framework\TestCase;
 
 final class MarketingSeoArticleCatalogTest extends TestCase
 {
-    public function testCatalogContainsSixDistinctAudienceArticles(): void
+    public function testCatalogContainsTenDistinctAudienceArticles(): void
     {
         $articles = $this->articles();
 
-        self::assertCount(6, $articles);
+        self::assertCount(10, $articles);
         self::assertSame(
             [
                 'sistema-upravleniya-stroitelstvom',
@@ -22,21 +22,48 @@ final class MarketingSeoArticleCatalogTest extends TestCase
                 'zayavka-na-materialy-v-stroitelstve',
                 'plan-fakt-v-stroitelstve',
                 'obshchiy-zhurnal-rabot-v-stroitelstve',
+                'iskusstvennyy-intellekt-v-stroitelstve-2026',
+                'neyroset-dlya-smety-po-pdf',
+                'sryv-srokov-i-pereraskhod-byudzheta-v-stroitelstve',
+                'kompyuternoe-zrenie-na-stroyploshchadke',
             ],
             array_column($articles, 'slug')
         );
     }
 
-    public function testEveryArticleIsSubstantialAndIncludesSearchIntentSections(): void
+    public function testEveryArticleIncludesSearchIntentSections(): void
     {
         foreach ($this->articles() as $article) {
-            $plainText = trim(strip_tags($article['content']));
-            $wordCount = preg_match_all('/[\p{L}\p{N}]+/u', $plainText);
-
-            self::assertGreaterThanOrEqual(1800, $wordCount, $article['slug']);
             self::assertStringContainsString('<h2>', $article['content'], $article['slug']);
             self::assertStringContainsString('<h2>Частые вопросы', $article['content'], $article['slug']);
             self::assertStringContainsString('<figure>', $article['content'], $article['slug']);
+        }
+    }
+
+    public function testExistingArticlesRemainLongReadsAndNewSeriesStaysWithinRequestedLength(): void
+    {
+        $newArticleSlugs = [
+            'iskusstvennyy-intellekt-v-stroitelstve-2026',
+            'neyroset-dlya-smety-po-pdf',
+            'sryv-srokov-i-pereraskhod-byudzheta-v-stroitelstve',
+            'kompyuternoe-zrenie-na-stroyploshchadke',
+        ];
+
+        foreach ($this->articles() as $article) {
+            $plainText = trim(strip_tags($article['content']));
+
+            if (in_array($article['slug'], $newArticleSlugs, true)) {
+                $characterCount = mb_strlen(preg_replace('/\s+/u', ' ', $plainText) ?? '');
+
+                self::assertGreaterThanOrEqual(3000, $characterCount, $article['slug']);
+                self::assertLessThanOrEqual(4200, $characterCount, $article['slug']);
+                self::assertSame(1, substr_count($article['content'], '<img '), $article['slug']);
+
+                continue;
+            }
+
+            $wordCount = preg_match_all('/[\p{L}\p{N}]+/u', $plainText);
+            self::assertGreaterThanOrEqual(1800, $wordCount, $article['slug']);
         }
     }
 
@@ -49,6 +76,10 @@ final class MarketingSeoArticleCatalogTest extends TestCase
             'zayavka-na-materialy-v-stroitelstve' => '/site-requests',
             'plan-fakt-v-stroitelstve' => '/construction-budget-control',
             'obshchiy-zhurnal-rabot-v-stroitelstve' => '/construction-documents',
+            'iskusstvennyy-intellekt-v-stroitelstve-2026' => '/ai-estimates',
+            'neyroset-dlya-smety-po-pdf' => '/ai-estimates',
+            'sryv-srokov-i-pereraskhod-byudzheta-v-stroitelstve' => '/project-pulse',
+            'kompyuternoe-zrenie-na-stroyploshchadke' => '/construction-quality-control',
         ];
 
         foreach ($this->articles() as $article) {

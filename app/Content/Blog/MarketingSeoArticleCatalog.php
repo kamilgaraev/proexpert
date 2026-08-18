@@ -25,7 +25,8 @@ final class MarketingSeoArticleCatalog
                 self::constructionWorkSchedule(),
                 self::executiveDocumentation(),
             ],
-            MarketingSeoArticleWaveTwoCatalog::articles()
+            MarketingSeoArticleWaveTwoCatalog::articles(),
+            MarketingSeoArticleWaveThreeCatalog::articles()
         );
     }
 
