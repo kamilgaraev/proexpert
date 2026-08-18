@@ -137,6 +137,9 @@ final readonly class ProjectModelEvidenceWriter
                     (string) $documentId,
                     (string) $pageNumber,
                 ]));
+                $visualInventoryFact = in_array($claim->factType, [
+                    'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
+                ], true) || ($claim->factType === 'equipment' && $this->isPlanObservation($claim));
                 $facts[$factId] = new Fact(
                     $factId,
                     $scope->organizationId,
@@ -149,7 +152,7 @@ final readonly class ProjectModelEvidenceWriter
                     $claim->unit,
                     (new CanonicalFactConfidence)->forDecision($decision, $byId),
                     $decision->status === 'unresolved' ? 'unresolved' : 'document',
-                    match ($decision->status) {
+                    $visualInventoryFact ? 'candidate' : match ($decision->status) {
                         'accepted' => 'confirmed',
                         'candidate' => 'candidate',
                         'unresolved' => 'unresolved',
@@ -312,15 +315,41 @@ final readonly class ProjectModelEvidenceWriter
         $type = mb_strtolower($claim->factType);
         $value = $claim->value['data'];
 
+        if (in_array($type, ['sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture'], true)
+            && is_string($value) && trim($value) !== '') {
+            $name = mb_substr(trim($value), 0, 240);
+
+            return ['type' => 'equipment', 'fact_type' => $type, 'attributes' => [
+                'equipment_code' => 'observed:'.substr(hash('sha256', $name), 0, 32),
+                'name' => $name,
+                'properties' => [
+                    'visual_inventory_category' => $type,
+                    'estimate_scope' => in_array($type, ['sanitary_fixture', 'kitchen_fixture', 'unknown_fixture'], true)
+                        ? 'requires_confirmation'
+                        : 'contextual_only',
+                    'room_key' => preg_match('/\A(room[.:_-][a-z0-9_-]+)/i', $claim->entityKey, $matches) === 1
+                        ? $matches[1]
+                        : null,
+                ],
+            ]];
+        }
+
         if (in_array($type, ['material', 'equipment'], true)
             && is_string($value) && trim($value) !== '') {
             $name = mb_substr(trim($value), 0, 240);
             $codeField = $type.'_code';
+            $visualEquipment = $type === 'equipment' && $this->isPlanObservation($claim);
 
             return ['type' => $type, 'attributes' => [
                 $codeField => 'observed:'.substr(hash('sha256', $name), 0, 32),
                 'name' => $name,
-                'properties' => [],
+                'properties' => $visualEquipment ? [
+                    'visual_inventory_category' => 'equipment',
+                    'estimate_scope' => 'contextual_only',
+                    'room_key' => preg_match('/\A(room[.:_-][a-z0-9_-]+)/i', $claim->entityKey, $matches) === 1
+                        ? $matches[1]
+                        : null,
+                ] : [],
             ]];
         }
 
@@ -382,6 +411,11 @@ final readonly class ProjectModelEvidenceWriter
         }
 
         return null;
+    }
+
+    private function isPlanObservation(ObservationClaim $claim): bool
+    {
+        return in_array($claim->locator['document_role'] ?? null, ['floor_plan', 'plan'], true);
     }
 
     private function semanticEntityType(string $entityKey): ?string

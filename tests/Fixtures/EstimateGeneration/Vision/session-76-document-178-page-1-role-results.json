@@ -1,0 +1,37 @@
+{
+  "source": {
+    "organization_id": 1,
+    "project_id": 52,
+    "session_id": 76,
+    "document_id": 178,
+    "page_id": 1090,
+    "page_number": 1,
+    "processing_unit_id": 500,
+    "source_version": "sha256:536e1c2366027732cc2915bae3d552332ff4d731c19260fbbcba4896327a168e"
+  },
+  "role_results": {
+    "observer_literal": {
+      "role": "observer_literal",
+      "source": {"document_id": 178, "page_id": 1090, "page_number": 1, "source_version": "sha256:536e1c2366027732cc2915bae3d552332ff4d731c19260fbbcba4896327a168e"},
+      "claims": [{"entityKey": "building_description", "factType": "note", "value": {"type": "string", "data": "Одноэтажный жилой дом по панельнокаркасной технологии"}, "unit": null, "confidence": 0.98, "evidenceRef": "evidence:title", "sourcePolygonOrNativeRef": [[0.728, 0.902], [0.949, 0.943]]}],
+      "evidence": [{"key": "evidence:title", "locator": {"page_id": 1090, "page_number": 1, "processing_unit_id": 500, "source_version": "sha256:536e1c2366027732cc2915bae3d552332ff4d731c19260fbbcba4896327a168e", "coordinate_space": "normalized_source_v1"}}]
+    },
+    "observer_construction": {
+      "role": "observer_construction",
+      "source": {"document_id": 178, "page_id": 1090, "page_number": 1, "source_version": "sha256:536e1c2366027732cc2915bae3d552332ff4d731c19260fbbcba4896327a168e"},
+      "claims": [{"entityKey": "project.house_mone_1", "factType": "elevation", "value": {"type": "string", "data": "Одноэтажный жилой дом"}, "unit": null, "confidence": 0.98, "evidenceRef": "evidence:title", "sourcePolygonOrNativeRef": [[0.73, 0.9], [0.96, 0.93]]}],
+      "evidence": [{"key": "evidence:title", "locator": {"page_id": 1090, "page_number": 1, "processing_unit_id": 500, "source_version": "sha256:536e1c2366027732cc2915bae3d552332ff4d731c19260fbbcba4896327a168e", "coordinate_space": "normalized_source_v1"}}]
+    },
+    "observer_risk": {
+      "role": "observer_risk",
+      "source": {"document_id": 178, "page_id": 1090, "page_number": 1, "source_version": "sha256:536e1c2366027732cc2915bae3d552332ff4d731c19260fbbcba4896327a168e"},
+      "claims": [{"entityKey": "project.house_mone_1", "factType": "level", "value": {"type": "string", "data": "одноэтажный жилой дом"}, "unit": null, "confidence": 0.98, "evidenceRef": "evidence:title", "sourcePolygonOrNativeRef": [[0.727, 0.866], [0.97, 0.961]]}],
+      "evidence": [{"key": "evidence:title", "locator": {"page_id": 1090, "page_number": 1, "processing_unit_id": 500, "source_version": "sha256:536e1c2366027732cc2915bae3d552332ff4d731c19260fbbcba4896327a168e", "coordinate_space": "normalized_source_v1"}}]
+    },
+    "arbiter": {
+      "role": "arbiter",
+      "source": {"document_id": 178, "page_id": 1090, "page_number": 1, "source_version": "sha256:536e1c2366027732cc2915bae3d552332ff4d731c19260fbbcba4896327a168e"},
+      "decisions": [{"claim_id": "construction:1", "status": "accepted", "supporting_claim_ids": ["construction:1", "literal:1", "risk:1"], "evidence_refs": ["construction:evidence:title", "literal:evidence:title", "risk:evidence:title"], "reason_code": "canonical_consensus_8ec84d74a9b1ff51", "canonical_claim": {"unit": null, "value": {"type": "string", "data": "Одноэтажный жилой дом"}, "fact_type": "elevation", "entity_key": "project.house_mone_1", "source_claim_id": "construction:1"}}]
+    }
+  }
+}

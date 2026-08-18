@@ -215,6 +215,10 @@ final readonly class ProjectUnderstandingCoordinator
                 true,
             ),
         ));
+        foreach ((new VisualInventoryQuestionBuilder)->build($snapshot->entities, $snapshot->facts, $snapshot->evidence) as $question) {
+            $questions[$question['conflict_id']] = $question;
+        }
+        $questions = array_values($questions);
         $saved = $this->models->replaceUnderstanding(
             $organizationId,
             $projectId,

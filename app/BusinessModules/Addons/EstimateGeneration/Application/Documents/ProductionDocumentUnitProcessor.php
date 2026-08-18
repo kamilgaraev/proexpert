@@ -626,6 +626,9 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         \App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionSet $semanticRegionSet,
         ?DocumentUnitPublication $publication,
     ): DocumentUnitOutput {
+        if (! is_int($context->pageId) || $context->pageId < 1) {
+            throw new DocumentUnitProcessingException('document_unit_page_scope_missing');
+        }
         $observerPayloads = array_map(static fn (AiRoleRunResult $result): array => $result->payload, $observerResults);
         $literalPayload = $observerPayloads['observer_literal']['observation'] ?? null;
         if (! is_array($literalPayload)) {
@@ -679,6 +682,16 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $arbitrationResult,
             $semanticRegionSet,
         );
+        $visualInventory = (new VisualInventoryProjector)->project(
+            $observerPayloads,
+            $arbitrationResult?->payload,
+            [
+                'document_id' => $context->documentId,
+                'page_id' => $context->pageId,
+                'page_number' => $context->index,
+                'source_version' => $context->sourceVersion,
+            ],
+        );
 
         return new DocumentUnitOutput(
             version: hash('sha256', json_encode([
@@ -699,6 +712,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $arbitrationResult,
                 ),
                 'analysis_outcome' => $analysisOutcome,
+                'visual_inventory' => $visualInventory,
             ], JSON_THROW_ON_ERROR)),
             text: $nativePdfText ?? implode("\n", array_values(array_filter(array_map(
                 static fn (array $element): string => trim((string) ($element['label'] ?? '')),
@@ -729,6 +743,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     $arbitrationResult,
                 ),
                 'analysis_outcome' => $analysisOutcome,
+                'visual_inventory' => $visualInventory,
                 'preprocessing' => [
                     'version' => $preprocessed->derivativeVersion,
                     'derivative_hash' => $preprocessed->derivativeHash,
