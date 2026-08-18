@@ -159,8 +159,12 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
     }
 
     /** @return array<string, mixed> */
-    private static function semanticAnalysis(mixed $page, ?CanonicalDocumentFactPresenter $factPresenter = null): array
-    {
+    private static function semanticAnalysis(
+        mixed $page,
+        ?CanonicalDocumentFactPresenter $factPresenter = null,
+        ?\Closure $translator = null,
+    ): array {
+        $translator ??= static fn (string $key): string => trans_message($key);
         $payload = self::normalizedPayload($page);
         $vision = is_array($payload['vision_analysis'] ?? null) ? $payload['vision_analysis'] : [];
         $rawElements = is_array($vision['elements'] ?? null) ? $vision['elements'] : [];
@@ -231,6 +235,37 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
             ...(is_array($geometry['quarantined_intents'] ?? null) ? $geometry['quarantined_intents'] : []),
             ...(is_array($routing['semantic_region_quarantine'] ?? null) ? $routing['semantic_region_quarantine'] : []),
         ], 'is_array'));
+        $visualInventory = [];
+        $rawVisualInventory = is_array($payload['visual_inventory']['items'] ?? null)
+            ? $payload['visual_inventory']['items']
+            : [];
+        foreach ($rawVisualInventory as $index => $item) {
+            $category = is_array($item) ? ($item['category'] ?? null) : null;
+            $scope = is_array($item) ? ($item['scope'] ?? null) : null;
+            if (! is_array($item) || ! is_string($item['key'] ?? null) || ! is_string($item['label'] ?? null)
+                || ! is_string($category) || ! is_string($scope)
+                || ! in_array($category, ['sanitary_fixture', 'kitchen_fixture', 'equipment', 'furniture', 'unknown_fixture'], true)
+                || ! in_array($scope, ['estimate_candidate', 'contextual_only', 'requires_confirmation', 'excluded_by_document_note'], true)) {
+                $limitations[] = self::malformedObservationLimitation($page, 'visual_inventory.items', $index);
+
+                continue;
+            }
+            $visualInventory[] = [
+                'key' => $item['key'],
+                'label' => $item['label'],
+                'category' => $category,
+                'category_label' => $translator('estimate_generation.visual_inventory.category.'.$category),
+                'object_type' => is_string($item['object_type'] ?? null) ? $item['object_type'] : 'unknown',
+                'quantity' => is_int($item['quantity'] ?? null) ? $item['quantity'] : null,
+                'quantity_uncertain' => ($item['quantity_uncertain'] ?? true) === true,
+                'room_key' => is_string($item['room_key'] ?? null) ? $item['room_key'] : null,
+                'scope' => $scope,
+                'scope_label' => $translator('estimate_generation.visual_inventory.scope.'.$scope),
+                'evidence_locator' => is_array($item['evidence_locator'] ?? null) ? $item['evidence_locator'] : [],
+                'arbitration' => is_array($item['arbitration'] ?? null) ? $item['arbitration'] : [],
+                'lineage' => is_array($item['lineage'] ?? null) ? $item['lineage'] : [],
+            ];
+        }
         $plannedComplete = $plannedRoles !== [];
         foreach ($plannedRoles as $role) {
             $plannedComplete = $plannedComplete && ($completion[$role] ?? false) === true;
@@ -261,6 +296,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'region' => is_array($item['polygon'] ?? null) ? $item['polygon'] : [],
             ], $elements)),
             'facts' => $facts,
+            'visual_inventory' => $visualInventory,
             'context' => $context,
             'limitations' => $limitations,
             'quarantined_items' => $quarantined,

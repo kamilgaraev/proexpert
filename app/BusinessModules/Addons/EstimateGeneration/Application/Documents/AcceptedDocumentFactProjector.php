@@ -31,7 +31,7 @@ final class AcceptedDocumentFactProjector
                     : ($this->hasEntityPrefix($claim->entityKey, 'room') ? 'room_area' : 'zone_area'))
                 : 'dimension',
             'dimension_chain' => $numeric ? 'dimension' : null,
-            'elevation', 'level' => 'elevation',
+            'elevation', 'level' => 'height',
             'floor_count' => $this->validFloorCount($claim) ? 'floor_count' : null,
             'material', 'finish_zone' => 'material',
             'technology_candidate', 'roof_geometry' => 'work_scope',
@@ -47,11 +47,12 @@ final class AcceptedDocumentFactProjector
             'fact_type' => $type,
             'label_key' => match ($type) {
                 'room_area', 'zone_area' => 'area',
+                'height' => 'elevation',
                 default => $type,
             },
             'value_text' => $numeric ? null : (is_bool($value) ? ($value ? 'true' : 'false') : (string) $value),
             'value_number' => $numeric ? $value : null,
-            'unit' => $type === 'elevation' ? ($this->canonicalUnit($claim->unit) ?? 'm') : $this->canonicalUnit($claim->unit),
+            'unit' => $type === 'height' ? ($this->canonicalUnit($claim->unit) ?? 'm') : $this->canonicalUnit($claim->unit),
         ];
     }
 

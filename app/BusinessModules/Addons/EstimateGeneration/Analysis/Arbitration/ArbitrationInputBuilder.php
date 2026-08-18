@@ -148,6 +148,9 @@ final class ArbitrationInputBuilder
                     'organization_id' => $source->organizationId,
                     'project_id' => $source->projectId,
                     'session_id' => $source->sessionId,
+                    'document_role' => is_string($payload['observation']['sheet_type'] ?? null)
+                        ? $payload['observation']['sheet_type']
+                        : 'unknown',
                 ];
             }
             foreach ($payload['claims'] as $index => $claim) {

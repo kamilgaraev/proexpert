@@ -13,6 +13,40 @@ use ReflectionMethod;
 final class EstimateGenerationDocumentSemanticProjectionTest extends TestCase
 {
     #[Test]
+    public function visual_inventory_is_a_typed_russian_contract_and_one_malformed_item_is_isolated(): void
+    {
+        $page = (object) ['page_number' => 5, 'normalized_payload' => [
+            'visual_inventory' => ['items' => [
+                [
+                    'key' => 'room.bathroom.fixtures',
+                    'label' => 'Унитаз и умывальник',
+                    'category' => 'sanitary_fixture',
+                    'object_type' => 'unknown',
+                    'quantity' => 2,
+                    'quantity_uncertain' => false,
+                    'room_key' => 'room:bathroom',
+                    'scope' => 'requires_confirmation',
+                    'evidence_locator' => ['page_number' => 5],
+                    'arbitration' => ['status' => 'candidate'],
+                    'lineage' => ['supporting_claim_ids' => ['construction:1']],
+                ],
+                ['key' => 'broken', 'label' => 'Повреждённый объект', 'category' => 'internal_key'],
+            ]],
+        ]];
+
+        $payload = (new ReflectionMethod(EstimateGenerationDocumentDetailResource::class, 'semanticAnalysis'))
+            ->invoke(null, $page, null, static fn (string $key): string => [
+                'estimate_generation.visual_inventory.category.sanitary_fixture' => 'Санитарные приборы',
+                'estimate_generation.visual_inventory.scope.requires_confirmation' => 'Состав поставки и монтажа требует подтверждения',
+            ][$key] ?? $key);
+
+        self::assertCount(1, $payload['visual_inventory']);
+        self::assertSame('Санитарные приборы', $payload['visual_inventory'][0]['category_label']);
+        self::assertSame('Состав поставки и монтажа требует подтверждения', $payload['visual_inventory'][0]['scope_label']);
+        self::assertSame('malformed_observation', $payload['limitations'][0]['code']);
+    }
+
+    #[Test]
     public function production_page_five_becomes_deduplicated_human_readable_admin_facts(): void
     {
         $fixture = json_decode((string) file_get_contents(

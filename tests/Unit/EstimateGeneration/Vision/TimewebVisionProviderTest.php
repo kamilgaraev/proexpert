@@ -208,6 +208,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && str_contains($system, 'abs(a-b) > max(1e-9, 0.02 * min(a,b))')
                 && str_contains($system, 'Exactly 2 distinct points with nonzero length are allowed only for dimension, axis, engineering_element and text')
                 && str_contains($system, 'Opening elements additionally have exactly geometry')
+                && str_contains($system, 'Preserve every visible sanitary fixture, kitchen fixture/equipment and furniture object')
+                && str_contains($system, 'Never turn a visual object into a normative or priced item')
                 && $user['contract_version'] === TimewebVisionProvider::PROMPT_VERSION
                 && $user['contract_sha256'] === TimewebVisionProvider::promptHash(sheetRole: 'plan')
                 && $user['sheet_role'] === 'plan'

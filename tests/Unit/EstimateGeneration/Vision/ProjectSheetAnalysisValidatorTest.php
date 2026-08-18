@@ -18,6 +18,20 @@ use Tests\Support\DatabaseLessTestCase;
 final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
 {
     #[Test]
+    public function plan_preserves_typed_visual_inventory_objects_for_server_side_scope_classification(): void
+    {
+        foreach (['sanitary_fixture', 'kitchen_fixture', 'equipment', 'furniture', 'unknown_fixture'] as $index => $factType) {
+            $payload = $this->payload('plan', $factType);
+            $payload['facts'][0]['entityKey'] = 'room.plan.object-'.$index;
+            $payload['facts'][0]['value'] = ['type' => 'string', 'data' => 'Объект на плане'];
+
+            $analysis = ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+
+            self::assertSame($factType, $analysis->facts[0]['factType']);
+        }
+    }
+
+    #[Test]
     #[DataProvider('sheetExamples')]
     public function it_builds_one_typed_contract_for_every_supported_role(string $role, string $factType, string $expectedClass): void
     {

@@ -12,12 +12,13 @@ use PHPUnit\Framework\TestCase;
 final class AcceptedDocumentFactProjectionTest extends TestCase
 {
     #[Test]
-    public function signed_and_numeric_zero_levels_are_elevations_not_floor_counts(): void
+    public function signed_and_numeric_zero_levels_use_the_existing_height_storage_contract(): void
     {
         $signed = $this->project($this->claim('level', ['type' => 'string', 'data' => '±0,000']));
-        self::assertSame('elevation', $signed['fact_type']);
+        self::assertSame('height', $signed['fact_type']);
+        self::assertSame('elevation', $signed['label_key']);
         self::assertSame('m', $signed['unit']);
-        self::assertSame('elevation', $this->project($this->claim('level', ['type' => 'number', 'data' => '0'], 'm'))['fact_type']);
+        self::assertSame('height', $this->project($this->claim('level', ['type' => 'number', 'data' => '0'], 'm'))['fact_type']);
     }
 
     #[Test]

@@ -457,6 +457,49 @@ final class DocumentArbitrationTest extends TestCase
     }
 
     #[Test]
+    public function accepted_visual_fixture_is_only_a_candidate_and_contextual_furniture_never_becomes_confirmed(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        $claims = [
+            new ObservationClaim(
+                'construction:1', 'observer_construction', 'room:bathroom:toilet', 'sanitary_fixture',
+                ['type' => 'string', 'data' => 'Унитаз'], null, 'bathroom-region', true,
+                7, 9, 11, $this->version(), ['page_number' => 5],
+            ),
+            new ObservationClaim(
+                'literal:1', 'observer_literal', 'room:bedroom:beds', 'furniture',
+                ['type' => 'string', 'data' => '2 кровати'], null, 'bedroom-region', true,
+                7, 9, 11, $this->version(), ['page_number' => 5],
+            ),
+        ];
+        $decisions = [
+            $this->decision([
+                'claim_id' => 'construction:1', 'status' => 'accepted',
+                'supporting_claim_ids' => ['construction:1'], 'evidence_refs' => ['bathroom-region'],
+                'reason_code' => 'visible_fixture',
+            ], $claims),
+            $this->decision([
+                'claim_id' => 'literal:1', 'status' => 'accepted',
+                'supporting_claim_ids' => ['literal:1'], 'evidence_refs' => ['bedroom-region'],
+                'reason_code' => 'conditional_furniture',
+            ], $claims),
+        ];
+
+        $writer->writeArbitration($claims, $decisions, 177, 5);
+
+        self::assertSame(['candidate'], array_values(array_unique(array_column($models->facts, 'status'))));
+        self::assertSame(['equipment'], array_values(array_unique(array_column($models->entities, 'type'))));
+        self::assertSame(
+            ['requires_confirmation', 'contextual_only'],
+            array_values(array_map(
+                static fn ($entity): string => $entity->attributes['properties']['estimate_scope'],
+                $models->entities,
+            )),
+        );
+    }
+
+    #[Test]
     public function one_invalid_claim_is_quarantined_without_hiding_other_observer_claims_from_the_arbiter(): void
     {
         $runs = $this->observerRuns();
