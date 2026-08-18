@@ -9,7 +9,7 @@ use PHPUnit\Framework\TestCase;
 
 final class MarketingSeoArticleCatalogTest extends TestCase
 {
-    public function testCatalogContainsTenDistinctAudienceArticles(): void
+    public function test_catalog_contains_ten_distinct_audience_articles(): void
     {
         $articles = $this->articles();
 
@@ -31,7 +31,7 @@ final class MarketingSeoArticleCatalogTest extends TestCase
         );
     }
 
-    public function testEveryArticleIncludesSearchIntentSections(): void
+    public function test_every_article_includes_search_intent_sections(): void
     {
         foreach ($this->articles() as $article) {
             self::assertStringContainsString('<h2>', $article['content'], $article['slug']);
@@ -40,7 +40,7 @@ final class MarketingSeoArticleCatalogTest extends TestCase
         }
     }
 
-    public function testExistingArticlesRemainLongReadsAndNewSeriesStaysWithinRequestedLength(): void
+    public function test_existing_articles_remain_long_reads_and_new_series_stays_within_requested_length(): void
     {
         $newArticleSlugs = [
             'iskusstvennyy-intellekt-v-stroitelstve-2026',
@@ -67,7 +67,7 @@ final class MarketingSeoArticleCatalogTest extends TestCase
         }
     }
 
-    public function testEveryArticleIntroducesMostAndLinksToRelevantProductPage(): void
+    public function test_every_article_introduces_most_and_links_to_relevant_product_page(): void
     {
         $expectedProductLinks = [
             'sistema-upravleniya-stroitelstvom' => '/construction-erp',
@@ -85,14 +85,14 @@ final class MarketingSeoArticleCatalogTest extends TestCase
         foreach ($this->articles() as $article) {
             self::assertStringContainsString('МОСТ</a> — система управления строительством', $article['content'], $article['slug']);
             self::assertStringContainsString(
-                'href="' . $expectedProductLinks[$article['slug']] . '"',
+                'href="'.$expectedProductLinks[$article['slug']].'"',
                 $article['content'],
                 $article['slug']
             );
         }
     }
 
-    public function testSourcesArePresentedOnlyWhereTheySupportTheArticle(): void
+    public function test_sources_are_presented_only_where_they_support_the_article(): void
     {
         $articles = array_column($this->articles(), null, 'slug');
 
@@ -114,19 +114,26 @@ final class MarketingSeoArticleCatalogTest extends TestCase
         );
     }
 
-    public function testEveryArticleHasCompleteSeoAndVisualMetadata(): void
+    public function test_every_article_has_complete_seo_and_visual_metadata(): void
     {
         foreach ($this->articles() as $article) {
             self::assertNotEmpty($article['meta_title'], $article['slug']);
             self::assertNotEmpty($article['meta_description'], $article['slug']);
             self::assertNotEmpty($article['meta_keywords'], $article['slug']);
+            self::assertIsArray($article['meta_keywords'], $article['slug']);
+
+            foreach ($article['meta_keywords'] as $keyword) {
+                self::assertIsString($keyword, $article['slug']);
+                self::assertNotSame('', trim($keyword), $article['slug']);
+            }
+
             self::assertSame($article['featured_image'], $article['og_image'], $article['slug']);
             self::assertStringEndsWith('.jpg', $article['featured_image'], $article['slug']);
             self::assertNotEmpty($article['faq'], $article['slug']);
         }
     }
 
-    public function testLegacyTestArticlesAreExplicitlyListedForArchiving(): void
+    public function test_legacy_test_articles_are_explicitly_listed_for_archiving(): void
     {
         self::assertSame(
             [
@@ -142,7 +149,7 @@ final class MarketingSeoArticleCatalogTest extends TestCase
 
     private function articles(): array
     {
-        $catalogPath = dirname(__DIR__, 4) . '/app/Content/Blog/MarketingSeoArticleCatalog.php';
+        $catalogPath = dirname(__DIR__, 4).'/app/Content/Blog/MarketingSeoArticleCatalog.php';
 
         self::assertFileExists($catalogPath);
         require_once $catalogPath;
