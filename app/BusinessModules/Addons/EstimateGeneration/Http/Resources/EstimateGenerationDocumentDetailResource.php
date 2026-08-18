@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CanonicalDocumentFactPresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ManageEstimateGenerationDocumentPages;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -158,7 +159,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
     }
 
     /** @return array<string, mixed> */
-    private static function semanticAnalysis(mixed $page): array
+    private static function semanticAnalysis(mixed $page, ?CanonicalDocumentFactPresenter $factPresenter = null): array
     {
         $payload = self::normalizedPayload($page);
         $vision = is_array($payload['vision_analysis'] ?? null) ? $payload['vision_analysis'] : [];
@@ -183,24 +184,17 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
             : [];
         $arbitration = is_array($payload['document_arbitration'] ?? null) ? $payload['document_arbitration'] : [];
         $decisions = is_array($arbitration['decisions'] ?? null) ? $arbitration['decisions'] : [];
-        $facts = [];
         foreach ($decisions as $index => $decision) {
             if (! is_array($decision)) {
                 $limitations[] = self::malformedObservationLimitation($page, 'document_arbitration.decisions', $index);
 
                 continue;
             }
-            $canonical = is_array($decision) ? ($decision['canonical_claim'] ?? null) : null;
-            if (! is_array($canonical) || ! in_array($decision['status'] ?? null, ['accepted', 'candidate'], true)) {
-                continue;
-            }
-            $facts[] = [
-                'entityKey' => $canonical['entity_key'] ?? null,
-                'factType' => $canonical['fact_type'] ?? null,
-                'value' => $canonical['value'] ?? null,
-                'unit' => $canonical['unit'] ?? null,
-            ];
         }
+        $facts = ($factPresenter ?? new CanonicalDocumentFactPresenter)->present(
+            $payload,
+            max(1, (int) ($page->page_number ?? $payload['page_number'] ?? 1)),
+        );
         $geometry = is_array($payload['geometry_expert'] ?? null) ? $payload['geometry_expert'] : [];
         $quality = is_array($payload['semantic_quality'] ?? null) ? $payload['semantic_quality'] : [];
         $context = [];

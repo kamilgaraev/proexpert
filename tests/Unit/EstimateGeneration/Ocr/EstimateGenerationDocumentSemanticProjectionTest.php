@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Ocr;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CanonicalDocumentFactPresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -11,6 +12,61 @@ use ReflectionMethod;
 
 final class EstimateGenerationDocumentSemanticProjectionTest extends TestCase
 {
+    #[Test]
+    public function production_page_five_becomes_deduplicated_human_readable_admin_facts(): void
+    {
+        $fixture = json_decode((string) file_get_contents(
+            dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/session-75-page-5-canonicalization.json',
+        ), true, flags: JSON_THROW_ON_ERROR);
+        $presenter = new CanonicalDocumentFactPresenter(static fn (string $key): string => [
+            'estimate_generation.canonical_result.overall_width' => 'Габарит здания по оси X',
+            'estimate_generation.canonical_result.overall_height' => 'Габарит здания по оси Y',
+            'estimate_generation.canonical_result.grid_span' => 'Пролёт между осями :axes',
+            'estimate_generation.canonical_result.unknown_dimension' => 'Размер на чертеже',
+            'estimate_generation.canonical_result.elevation' => 'Высотная отметка',
+            'estimate_generation.canonical_result.floor_count' => 'Этажность',
+            'estimate_generation.canonical_result.total_area' => 'Общая площадь',
+            'estimate_generation.canonical_result.wall' => 'Конструкция стены',
+            'estimate_generation.canonical_result.material' => 'Материал',
+            'estimate_generation.canonical_result.work_scope' => 'Конструктивное решение',
+            'estimate_generation.canonical_result.fact' => 'Результат разбора',
+            'estimate_generation.canonical_result.floor_one' => 'этаж',
+            'estimate_generation.canonical_result.floor_few' => 'этажа',
+            'estimate_generation.canonical_result.floor_many' => 'этажей',
+            'estimate_generation.canonical_result.axes_unknown' => 'не указаны',
+            'estimate_generation.canonical_result.yes' => 'да',
+            'estimate_generation.canonical_result.no' => 'нет',
+        ][$key] ?? $key);
+        $page = (object) [
+            'page_number' => 5,
+            'normalized_payload' => $fixture,
+        ];
+
+        $payload = (new ReflectionMethod(EstimateGenerationDocumentDetailResource::class, 'semanticAnalysis'))
+            ->invoke(null, $page, $presenter);
+        $labels = array_column($payload['facts'], 'label');
+
+        self::assertSame(1, count(array_keys($labels, 'Кухня-гостиная — 22,10 м²', true)));
+        self::assertContains('Габарит здания по оси X — 11 100 мм', $labels);
+        self::assertContains('Пролёт между осями А–Д — 11 100 мм', $labels);
+        self::assertContains('Габарит здания по оси Y — 7 300 мм', $labels);
+        self::assertContains('Размер на чертеже — 2 500 мм', $labels);
+        self::assertContains('Высотная отметка — ±0,000 м', $labels);
+        self::assertContains('Этажность — 1 этаж', $labels);
+        self::assertContains('Наружная стена — 229 мм', $labels);
+        self::assertNotContains('Наружная стена — 229 мм мм', $labels);
+        self::assertCount(3, $payload['quarantined_items']);
+        self::assertLessThan(1.0, $payload['facts'][0]['confidence']);
+        self::assertCount(3, array_values(array_filter(
+            $payload['facts'],
+            static fn (array $fact): bool => $fact['label'] === 'Кухня-гостиная — 22,10 м²',
+        ))[0]['lineage']);
+        self::assertNotContains('level', $labels);
+        self::assertNotContains('dimension_chain', $labels);
+        self::assertNotContains('room', $labels);
+        self::assertNotContains('wall', $labels);
+    }
+
     #[Test]
     public function it_projects_bounded_document_semantics_without_questions_or_raw_provider_response(): void
     {
