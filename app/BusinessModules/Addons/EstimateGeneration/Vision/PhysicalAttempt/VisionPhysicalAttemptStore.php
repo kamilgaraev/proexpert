@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use DateTimeImmutable;
 
@@ -23,6 +24,7 @@ interface VisionPhysicalAttemptStore
         string $ownerToken,
         DateTimeImmutable $now,
         DateTimeImmutable $leaseExpiresAt,
+        AiCost $costReservation = new AiCost(null, null, 'unavailable'),
     ): void;
 
     /** @param array<string, mixed> $responsePayload @param array<string, mixed> $priceSnapshot */

@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentWireAuthorization;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use DateTimeImmutable;
@@ -113,6 +114,7 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
         string $ownerToken,
         DateTimeImmutable $now,
         DateTimeImmutable $leaseExpiresAt,
+        AiCost $costReservation = new AiCost(null, null, 'unavailable'),
     ): void {
         $denialReason = $this->database->transaction(function () use (
             $attemptId,
@@ -120,8 +122,9 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             $ownerToken,
             $now,
             $leaseExpiresAt,
+            $costReservation,
         ): ?string {
-            $denialReason = $this->wireAuthorization?->denialReason($attemptId, $now);
+            $denialReason = $this->wireAuthorization?->denialReason($attemptId, $now, $costReservation);
             if ($denialReason !== null) {
                 return $denialReason;
             }
@@ -135,6 +138,8 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
                 ->where('lease_expires_at', '>', $databaseNow)
                 ->update([
                     'state' => 'wire_started',
+                    'cost_reservation_amount' => $costReservation->amount,
+                    'cost_reservation_currency' => $costReservation->currency,
                     'wire_started_at' => $databaseNow,
                     'lease_expires_at' => $this->databaseTime($leaseExpiresAt),
                     'updated_at' => $databaseNow,

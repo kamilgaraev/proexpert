@@ -7,6 +7,7 @@ namespace Tests\Feature\EstimateGeneration\Pipeline;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ConfirmEstimateGenerationDocumentCost;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DispatchDocumentProcessingUnits;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentCostJournalReader;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentMutationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitAggregateReconciler;
@@ -17,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentWireAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StopEstimateGenerationDocumentProcessing;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentActionBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
@@ -25,6 +27,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard;
@@ -299,6 +302,10 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 'processing_stage' => 'quality_check',
                 'processing_control_status' => 'paused',
                 'processing_control_reason' => 'cost_limit_reached',
+                'meta' => [
+                    ...$fixture['document']->meta,
+                    'processing_cost_guard' => ['version' => 2],
+                ],
             ])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
             $authorization->shouldReceive('can')->times(6)->andReturnTrue();
@@ -308,6 +315,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $authorization,
                 $readiness,
                 app(DispatchDocumentProcessingUnits::class),
+                app(DocumentMutationSessionReconciler::class),
             );
 
             $first = $service->handle(
@@ -392,6 +400,181 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 1,
                 (int) data_get($fixture['session']->fresh()->analysis_payload, 'internal_cost_guard.confirmation_version'),
             );
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function production_shaped_session_74_document_176_recovery_preserves_paid_page_results(): void
+    {
+        $this->requirePostgres();
+        DB::beginTransaction();
+        try {
+            Queue::fake();
+            $fixture = $this->fixture('600.00000000');
+            $this->expandDocumentToPages($fixture, 22);
+            $unitStore = app(DocumentProcessingUnitStore::class);
+            $now = new DateTimeImmutable;
+            foreach (EstimateGenerationProcessingUnit::query()
+                ->where('document_id', $fixture['document']->id)
+                ->orderBy('unit_index')
+                ->limit(2)
+                ->get() as $unit) {
+                $claim = $unitStore->claim(
+                    (int) $unit->id,
+                    $fixture['sourceVersion'],
+                    $now,
+                    $now->modify('+180 seconds'),
+                    3,
+                );
+                self::assertTrue($claim->acquired());
+                self::assertTrue($unitStore->publish(
+                    $claim,
+                    new DocumentUnitOutput(
+                        version: 'production-document-176-page-v1',
+                        text: 'Сохранённый результат страницы '.(int) $unit->unit_index,
+                        confidence: 0.95,
+                        normalizedPayload: ['independent_observations' => []],
+                        unitType: $unit->unit_type,
+                        unitIndex: (int) $unit->unit_index,
+                        sourceVersion: $fixture['sourceVersion'],
+                    ),
+                    $now,
+                ));
+            }
+            $pageThree = EstimateGenerationDocumentPage::query()
+                ->where('document_id', $fixture['document']->id)
+                ->where('page_number', 3)
+                ->firstOrFail();
+            $pageThreeFixture = [
+                ...$fixture,
+                'page' => $pageThree,
+                'unit' => EstimateGenerationProcessingUnit::query()->findOrFail($pageThree->processing_unit_id),
+            ];
+            foreach ([
+                'literal_observer' => '5.18346000',
+                'construction_observer' => '3.61287000',
+                'risk_observer' => '2.98147500',
+            ] as $role => $cost) {
+                [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($pageThreeFixture);
+                $store->markWireStarted(
+                    $context->attemptId,
+                    $fingerprint,
+                    $owner,
+                    $now,
+                    $now->modify('+180 seconds'),
+                    new AiCost('11.05902000', 'RUB', 'available'),
+                );
+                $store->storeResponse(
+                    $context->attemptId,
+                    $fingerprint,
+                    $owner,
+                    ['parsed_envelope' => ['status' => 'ok']],
+                    'succeeded',
+                    200,
+                    10,
+                    'fixture-model',
+                    ['pricing_status' => 'available', 'currency' => 'RUB'],
+                );
+                DB::table('estimate_generation_ai_usage')->insert(
+                    $this->usageRow($pageThreeFixture, $context->attemptId, $cost),
+                );
+                $store->markUsageRecorded($context->attemptId, $fingerprint);
+                $this->attachActiveRoleRun($pageThreeFixture, $context->attemptId, $owner);
+                DB::table('estimate_generation_ai_role_runs')
+                    ->where('physical_attempt_id', $context->attemptId)
+                    ->update([
+                        'role' => $role,
+                        'status' => 'completed',
+                        'result_payload' => json_encode(['status' => 'ok'], JSON_THROW_ON_ERROR),
+                        'owner_uuid' => null,
+                        'lease_expires_at' => null,
+                        'completed_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+            }
+            [$store, $arbiterContext, $arbiterFingerprint, $arbiterOwner] = $this->physicalAttempt($pageThreeFixture);
+            $store->markWireStarted(
+                $arbiterContext->attemptId,
+                $arbiterFingerprint,
+                $arbiterOwner,
+                $now,
+                $now->modify('+180 seconds'),
+                new AiCost('11.05902000', 'RUB', 'available'),
+            );
+            $this->attachActiveRoleRun($pageThreeFixture, $arbiterContext->attemptId, $arbiterOwner);
+            DB::table('estimate_generation_ai_role_runs')
+                ->where('physical_attempt_id', $arbiterContext->attemptId)
+                ->update(['role' => 'arbiter']);
+            DB::table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $arbiterContext->attemptId)
+                ->update(['cost_reservation_amount' => null, 'cost_reservation_currency' => null]);
+            $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
+            $fixture['document']->forceFill([
+                'status' => 'needs_review',
+                'processing_stage' => 'quality_check',
+                'processing_control_status' => 'paused',
+                'processing_control_reason' => 'cost_limit_reached',
+                'processing_cost_confirmed_at' => null,
+                'processing_cost_confirmation_version' => 0,
+            ])->save();
+            $fixture['session']->forceFill([
+                'status' => 'input_review_required',
+                'processing_stage' => 'input_review_required',
+                'processing_progress' => 35,
+            ])->save();
+            DB::table('estimate_generation_ai_usage')->insert([
+                $this->usageRow($fixture, (string) Str::uuid(), '3.00685500'),
+                $this->usageRow($fixture, (string) Str::uuid(), '1.44072000'),
+                $this->usageRow($fixture, (string) Str::uuid(), '4.57096500'),
+            ]);
+            $authorization = Mockery::mock(AuthorizationService::class);
+            $authorization->shouldReceive('can')->twice()->andReturnTrue();
+            $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
+            $readiness->shouldReceive('evaluate')->once()->andReturn(['summary' => []]);
+            $service = new ConfirmEstimateGenerationDocumentCost(
+                $authorization,
+                $readiness,
+                app(DispatchDocumentProcessingUnits::class),
+                app(DocumentMutationSessionReconciler::class),
+            );
+            $actions = (new EstimateGenerationDocumentActionBuilder($authorization))->forDocument(
+                $fixture['document']->fresh()->load('session'),
+                $fixture['user'],
+            );
+            self::assertSame('confirm_document_cost', $actions[0]['action'] ?? null);
+            self::assertSame('Продолжить обработку', $actions[0]['label'] ?? null);
+            self::assertSame('input_review_required', $fixture['session']->fresh()->status->value);
+
+            $result = $service->handle(
+                $fixture['session'],
+                $fixture['document'],
+                $fixture['user'],
+                0,
+                $fixture['sourceVersion'],
+                'production-document-176-resume',
+            );
+
+            $document = $fixture['document']->fresh();
+            self::assertSame('accepted', $result->disposition);
+            self::assertSame($fixture['lineage'], data_get($document->meta, 'processing_attempt_id'));
+            self::assertSame('600.00000000', (string) $document->processing_cost_limit);
+            self::assertSame(0, (int) $document->processing_cost_confirmation_version);
+            self::assertNull($document->processing_cost_confirmed_at);
+            self::assertSame('active', $document->processing_control_status);
+            self::assertSame('processing_documents', $fixture['session']->fresh()->status->value);
+            self::assertSame('20.79634500', (string) DB::table('estimate_generation_ai_usage')
+                ->where('document_id', $document->id)->sum('cost_amount'));
+            self::assertSame(3, DB::table('estimate_generation_ai_role_runs')
+                ->where('page_id', $pageThree->id)->where('status', 'completed')->count());
+            self::assertSame('wire_started', DB::table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $arbiterContext->attemptId)->value('state'));
+            self::assertSame(2, EstimateGenerationDocumentPage::query()
+                ->where('document_id', $document->id)->where('status', 'ready')->count());
+            self::assertSame(20, EstimateGenerationDocumentPage::query()
+                ->where('document_id', $document->id)->where('status', 'queued')->count());
+            Queue::assertPushed(ProcessEstimateGenerationUnitJob::class, 16);
         } finally {
             DB::rollBack();
         }
@@ -643,6 +826,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $paidOwner,
                 $now,
                 $now->modify('+180 seconds'),
+                new AiCost('0.10000000', 'RUB', 'available'),
             );
             $store->storeResponse(
                 $paidContext->attemptId,
@@ -679,6 +863,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                     $owner,
                     $now,
                     $now->modify('+180 seconds'),
+                    new AiCost('0.10000000', 'RUB', 'available'),
                 );
                 self::fail('Cost ceiling allowed another wire.');
             } catch (DocumentUnitProcessingException $exception) {
@@ -707,6 +892,154 @@ final class DocumentProcessingControlPostgresTest extends TestCase
     }
 
     #[Test]
+    public function spent_twenty_rubles_and_legacy_wire_attempt_do_not_exhaust_six_hundred_ruble_limit(): void
+    {
+        $this->requirePostgres();
+        DB::beginTransaction();
+        try {
+            $fixture = $this->fixture('600.00000000');
+            $now = new DateTimeImmutable;
+            [$store, $legacyContext, $legacyFingerprint, $legacyOwner] = $this->physicalAttempt($fixture);
+            $store->markWireStarted(
+                $legacyContext->attemptId,
+                $legacyFingerprint,
+                $legacyOwner,
+                $now,
+                $now->modify('+180 seconds'),
+                new AiCost('11.05902000', 'RUB', 'available'),
+            );
+            DB::table('estimate_generation_ai_usage')->insert(
+                $this->usageRow($fixture, (string) Str::uuid(), '20.79634500'),
+            );
+            [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
+
+            $store->markWireStarted(
+                $context->attemptId,
+                $fingerprint,
+                $owner,
+                $now,
+                $now->modify('+180 seconds'),
+                new AiCost('11.05902000', 'RUB', 'available'),
+            );
+
+            self::assertSame('active', $fixture['document']->fresh()->processing_control_status);
+            self::assertSame('wire_started', DB::table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $context->attemptId)->value('state'));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function next_physical_call_is_allowed_at_exact_document_limit_boundary(): void
+    {
+        $this->requirePostgres();
+        DB::beginTransaction();
+        try {
+            $fixture = $this->fixture('600.00000000');
+            DB::table('estimate_generation_ai_usage')->insert(
+                $this->usageRow($fixture, (string) Str::uuid(), '588.94098000'),
+            );
+            [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
+            $now = new DateTimeImmutable;
+
+            $store->markWireStarted(
+                $context->attemptId,
+                $fingerprint,
+                $owner,
+                $now,
+                $now->modify('+180 seconds'),
+                new AiCost('11.05902000', 'RUB', 'available'),
+            );
+
+            self::assertSame('wire_started', DB::table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $context->attemptId)->value('state'));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function next_physical_call_that_can_exceed_document_limit_is_paused_before_wire(): void
+    {
+        $this->requirePostgres();
+        DB::beginTransaction();
+        try {
+            $fixture = $this->fixture('600.00000000');
+            DB::table('estimate_generation_ai_usage')->insert(
+                $this->usageRow($fixture, (string) Str::uuid(), '588.94098001'),
+            );
+            [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
+            $now = new DateTimeImmutable;
+
+            try {
+                $store->markWireStarted(
+                    $context->attemptId,
+                    $fingerprint,
+                    $owner,
+                    $now,
+                    $now->modify('+180 seconds'),
+                    new AiCost('11.05902000', 'RUB', 'available'),
+                );
+                self::fail('Wire was started above the document limit.');
+            } catch (DocumentUnitProcessingException $exception) {
+                self::assertSame('document_cost_limit_reached', $exception->safeCode);
+            }
+
+            self::assertSame('paused', $fixture['document']->fresh()->processing_control_status);
+            self::assertSame('pre_wire', DB::table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $context->attemptId)->value('state'));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function parallel_cost_reservations_cannot_oversubscribe_document_limit(): void
+    {
+        $this->requirePostgres();
+        config()->set('estimate-generation.generation.session_cost_limit_rub', '10.00000000');
+        $fixture = $this->fixture('1.00000000');
+        [, $firstContext, $firstFingerprint, $firstOwner] = $this->physicalAttempt($fixture);
+        [, $secondContext, $secondFingerprint, $secondOwner] = $this->physicalAttempt($fixture);
+        $worker = dirname(__DIR__, 3).'/Support/VisionCostReservationConcurrentWorker.php';
+        $environment = array_replace(getenv(), array_filter(
+            $_ENV,
+            static fn (mixed $value): bool => is_string($value),
+        ));
+        $definition = [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']];
+        $first = proc_open([
+            PHP_BINARY, $worker, $firstContext->attemptId, $firstFingerprint, $firstOwner, '0.60000000',
+        ], $definition, $firstPipes, dirname(__DIR__, 4), $environment);
+        $second = proc_open([
+            PHP_BINARY, $worker, $secondContext->attemptId, $secondFingerprint, $secondOwner, '0.60000000',
+        ], $definition, $secondPipes, dirname(__DIR__, 4), $environment);
+        self::assertIsResource($first);
+        self::assertIsResource($second);
+        $this->waitForProcessToken($first, $firstPipes[1], $firstPipes[2], 'READY');
+        $this->waitForProcessToken($second, $secondPipes[1], $secondPipes[2], 'READY');
+        fwrite($firstPipes[0], "GO\n");
+        fwrite($secondPipes[0], "GO\n");
+        fclose($firstPipes[0]);
+        fclose($secondPipes[0]);
+        $firstOutput = $this->waitForProcessToken($first, $firstPipes[1], $firstPipes[2], 'RESULT ');
+        $secondOutput = $this->waitForProcessToken($second, $secondPipes[1], $secondPipes[2], 'RESULT ');
+        $firstError = stream_get_contents($firstPipes[2]);
+        $secondError = stream_get_contents($secondPipes[2]);
+        self::assertSame(0, proc_close($first), $firstError);
+        self::assertSame(0, proc_close($second), $secondError);
+        $results = [
+            str_contains($firstOutput, 'RESULT started') ? 'started' : 'blocked',
+            str_contains($secondOutput, 'RESULT started') ? 'started' : 'blocked',
+        ];
+        sort($results);
+        self::assertSame(['blocked', 'started'], $results);
+        self::assertSame(1, DB::table('estimate_generation_vision_physical_attempts')
+            ->where('state', 'wire_started')->count());
+        self::assertSame('paused', $fixture['document']->fresh()->processing_control_status);
+    }
+
+    #[Test]
     public function session_cost_ceiling_aggregates_multiple_documents_before_the_next_wire(): void
     {
         $this->requirePostgres();
@@ -718,7 +1051,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $sibling = $this->siblingDocument($fixture, 'active', null);
             DB::table('estimate_generation_ai_usage')->insert([
                 $this->usageRow($fixture, (string) Str::uuid(), '0.40000000'),
-                $this->usageRow($sibling, (string) Str::uuid(), '0.70000000'),
+                $this->usageRow($sibling, (string) Str::uuid(), '0.40000000'),
             ]);
             [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
 
@@ -729,6 +1062,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                     $owner,
                     new DateTimeImmutable,
                     (new DateTimeImmutable)->modify('+180 seconds'),
+                    new AiCost('0.25000000', 'RUB', 'available'),
                 );
                 self::fail('Session cost ceiling allowed another wire.');
             } catch (DocumentUnitProcessingException $exception) {
@@ -786,6 +1120,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $orphanOwner,
                 $now,
                 $now->modify('+180 seconds'),
+                new AiCost('60.00000000', 'RUB', 'available'),
             );
             $store->storeResponse(
                 $orphanContext->attemptId,
@@ -807,6 +1142,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                     $nextOwner,
                     $now,
                     $now->modify('+180 seconds'),
+                    new AiCost('50.00000000', 'RUB', 'available'),
                 );
                 self::fail('Missing usage journal allowed another paid request.');
             } catch (DocumentUnitProcessingException $exception) {
@@ -838,7 +1174,14 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             );
             self::assertTrue($unitClaim->acquired());
             [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
-            $store->markWireStarted($context->attemptId, $fingerprint, $owner, $now, $now->modify('+180 seconds'));
+            $store->markWireStarted(
+                $context->attemptId,
+                $fingerprint,
+                $owner,
+                $now,
+                $now->modify('+180 seconds'),
+                new AiCost('1.00000000', 'RUB', 'available'),
+            );
             $this->attachActiveRoleRun($fixture, $context->attemptId, $owner);
             $store->storeResponse(
                 $context->attemptId,
@@ -923,6 +1266,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $oldOwner,
                 $now,
                 $now->modify('+180 seconds'),
+                new AiCost('1.00000000', 'RUB', 'available'),
             );
             $store->storeResponse(
                 $oldContext->attemptId,
