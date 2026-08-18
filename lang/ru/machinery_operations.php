@@ -110,6 +110,7 @@ return [
         'asset_request_required' => 'Для обычного назначения требуется заявка.',
         'asset_request_not_found' => 'Заявка на технику не найдена.',
         'asset_request_closed' => 'Заявка уже закрыта и не может быть назначена повторно.',
+        'site_request_project_scope_mismatch' => 'Выбранный проект недоступен текущей организации.',
         'direct_assign_forbidden' => 'Нет права на прямое назначение техники.',
         'direct_assign_reason_required' => 'Для прямого назначения обязательно укажите основание.',
         'assignment_not_replaceable' => 'Заменяемое назначение не найдено или уже завершено.',

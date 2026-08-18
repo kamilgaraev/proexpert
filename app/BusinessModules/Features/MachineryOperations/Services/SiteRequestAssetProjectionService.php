@@ -24,9 +24,9 @@ final class SiteRequestAssetProjectionService
 
         if (! Project::query()
             ->whereKey((int) $siteRequest->project_id)
-            ->where('organization_id', (int) $siteRequest->organization_id)
+            ->accessibleByOrganization((int) $siteRequest->organization_id)
             ->exists()) {
-            throw new DomainException('machinery_site_request_project_scope_mismatch');
+            throw new DomainException(trans_message('machinery_operations.errors.site_request_project_scope_mismatch'));
         }
 
         $start = $this->startAt($siteRequest);

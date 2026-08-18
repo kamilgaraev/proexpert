@@ -9,15 +9,24 @@ use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
 use App\BusinessModules\Features\MachineryOperations\Services\SiteRequestAssetProjectionService;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use DomainException;
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Schema\Blueprint;
-use PHPUnit\Framework\TestCase;
+use Illuminate\Foundation\Testing\TestCase as LaravelTestCase;
 
-final class SiteRequestAssetProjectionServiceTest extends TestCase
+final class SiteRequestAssetProjectionServiceTest extends LaravelTestCase
 {
     private Capsule $database;
 
     private SiteRequestAssetProjectionService $service;
+
+    public function createApplication()
+    {
+        $app = require dirname(__DIR__, 3).'/bootstrap/app.php';
+        $app->make(Kernel::class)->bootstrap();
+
+        return $app;
+    }
 
     protected function setUp(): void
     {
@@ -84,13 +93,29 @@ final class SiteRequestAssetProjectionServiceTest extends TestCase
         $siteRequest = $this->siteRequest();
 
         $this->expectException(DomainException::class);
-        $this->expectExceptionMessage('machinery_site_request_project_scope_mismatch');
+        $this->expectExceptionMessage('Выбранный проект недоступен текущей организации.');
 
         try {
             $this->service->project($siteRequest, 7);
         } finally {
             self::assertSame(0, AssetRequest::query()->count());
         }
+    }
+
+    public function test_projection_accepts_a_project_shared_with_an_active_participant_organization(): void
+    {
+        $this->database->table('projects')->where('id', 100)->update(['organization_id' => 20]);
+        $this->database->table('project_organization')->insert([
+            'project_id' => 100,
+            'organization_id' => 10,
+            'is_active' => true,
+        ]);
+
+        $assetRequest = $this->service->project($this->siteRequest(), 7);
+
+        self::assertSame(10, $assetRequest->organization_id);
+        self::assertSame(100, $assetRequest->project_id);
+        self::assertSame(1, AssetRequest::query()->count());
     }
 
     public function test_terminal_site_request_closes_projected_request_and_active_assignment(): void
@@ -162,6 +187,15 @@ final class SiteRequestAssetProjectionServiceTest extends TestCase
     private function createSchema(): void
     {
         $schema = $this->database->schema();
+        $schema->create('organizations', function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->softDeletes();
+        });
+        $this->database->table('organizations')->insert([
+            ['id' => 10, 'name' => 'Участник'],
+            ['id' => 20, 'name' => 'Владелец'],
+        ]);
         $schema->create('projects', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');
@@ -169,6 +203,11 @@ final class SiteRequestAssetProjectionServiceTest extends TestCase
             $table->softDeletes();
         });
         $this->database->table('projects')->insert(['id' => 100, 'organization_id' => 10, 'name' => 'Проект']);
+        $schema->create('project_organization', function (Blueprint $table): void {
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->boolean('is_active')->default(true);
+        });
 
         $schema->create('site_requests', function (Blueprint $table): void {
             $table->id();
