@@ -7,6 +7,7 @@ namespace Tests\Unit\EstimateGeneration\Vision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverInputBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
@@ -1050,7 +1051,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 return new VisionPhysicalAttemptSnapshot(true, 'pre_wire', ownerToken: $ownerToken, leaseExpiresAt: $leaseExpiresAt);
             }
 
-            public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): void
+            public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt, \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost $costReservation = new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost(null, null, 'unavailable')): void
             {
                 throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation('pre-wire claim lost');
             }
@@ -1669,7 +1670,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 return new VisionPhysicalAttemptSnapshot(false, 'ambiguous');
             }
 
-            public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): void
+            public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt, \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost $costReservation = new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost(null, null, 'unavailable')): void
             {
                 throw new \LogicException;
             }
@@ -1708,7 +1709,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 return new VisionPhysicalAttemptSnapshot(true, 'pre_wire', ownerToken: $ownerToken, leaseExpiresAt: $leaseExpiresAt);
             }
 
-            public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): void {}
+            public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt, \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost $costReservation = new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost(null, null, 'unavailable')): void {}
 
             public function storeResponse(string $attemptId, string $requestFingerprint, string $ownerToken, array $responsePayload, string $status, ?int $httpCode, int $durationMs, ?string $reportedModel, array $priceSnapshot): void
             {
@@ -1732,6 +1733,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         Http::fake(fn () => Http::response($this->response()));
         $this->provider()->analyze($this->input());
         self::assertTrue($this->attempts[0]->priceSnapshot?->available);
+        self::assertSame('0.09192000', $this->physicalAttempts->costReservations()[0]->amount);
 
         $this->priceResolver->available = false;
         $this->physicalAttempts = new InMemoryVisionPhysicalAttemptStore;
@@ -1890,6 +1892,15 @@ final class InMemoryVisionPhysicalAttemptStore implements VisionPhysicalAttemptS
     /** @var array<string, array{fingerprint: string, snapshot: VisionPhysicalAttemptSnapshot}> */
     private array $attempts = [];
 
+    /** @var list<AiCost> */
+    private array $costReservations = [];
+
+    /** @return list<AiCost> */
+    public function costReservations(): array
+    {
+        return $this->costReservations;
+    }
+
     public function onlySnapshot(): VisionPhysicalAttemptSnapshot
     {
         if (count($this->attempts) !== 1) {
@@ -1924,13 +1935,14 @@ final class InMemoryVisionPhysicalAttemptStore implements VisionPhysicalAttemptS
         return $snapshot;
     }
 
-    public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt): void
+    public function markWireStarted(string $attemptId, string $requestFingerprint, string $ownerToken, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt, \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost $costReservation = new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost(null, null, 'unavailable')): void
     {
         $row = $this->attempts[$attemptId] ?? null;
         if ($row === null || ! hash_equals($row['fingerprint'], $requestFingerprint)
             || $row['snapshot']->state !== 'pre_wire' || $row['snapshot']->ownerToken !== $ownerToken) {
             throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
         }
+        $this->costReservations[] = $costReservation;
         $this->attempts[$attemptId]['snapshot'] = new VisionPhysicalAttemptSnapshot(
             false, 'wire_started', usageRecorded: false, ownerToken: $ownerToken, leaseExpiresAt: $leaseExpiresAt,
         );

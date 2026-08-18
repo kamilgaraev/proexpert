@@ -42,24 +42,61 @@ final readonly class SessionAiCostGuard
                 '450.00',
             ))->multipliedBy(max(0, (int) ($guard['confirmation_version'] ?? 0))));
             $usage = $this->database->selectOne(<<<'SQL'
-SELECT COALESCE(SUM(cost_amount) FILTER (
-           WHERE pricing_status = 'available' AND currency = 'RUB'
+SELECT COALESCE(SUM(usage.cost_amount) FILTER (
+           WHERE usage.pricing_status = 'available' AND usage.currency = 'RUB'
        ), 0)::numeric(20,8) AS spent,
        COUNT(*) FILTER (
-           WHERE pricing_status <> 'available'
-              OR cost_amount IS NULL
-              OR currency IS DISTINCT FROM 'RUB'
+           WHERE (usage.pricing_status <> 'available'
+              OR usage.cost_amount IS NULL
+              OR usage.currency IS DISTINCT FROM 'RUB')
+             AND NOT EXISTS (
+                 SELECT 1 FROM estimate_generation_vision_physical_attempts attempts
+                 WHERE attempts.attempt_id = usage.attempt_id
+             )
        )::int AS unknown_count,
-       (COALESCE(SUM(cost_amount) FILTER (
-           WHERE pricing_status = 'available' AND currency = 'RUB'
-       ), 0) >= ?::numeric) AS limit_reached
-FROM estimate_generation_ai_usage
-WHERE organization_id = ?
-  AND project_id = ?
-  AND session_id = ?
-SQL, [(string) $limit, $organizationId, $projectId, $sessionId]);
+       (COALESCE(SUM(usage.cost_amount) FILTER (
+           WHERE usage.pricing_status = 'available' AND usage.currency = 'RUB'
+       ), 0) + COALESCE((
+           SELECT SUM(attempts.cost_reservation_amount)
+           FROM estimate_generation_vision_physical_attempts attempts
+           WHERE attempts.organization_id = ?
+             AND attempts.project_id = ?
+             AND attempts.session_id = ?
+             AND attempts.state IN ('wire_started', 'response_received', 'completed', 'ambiguous')
+             AND (attempts.state = 'ambiguous' OR NOT EXISTS (
+                 SELECT 1 FROM estimate_generation_ai_usage settled
+                 WHERE settled.attempt_id = attempts.attempt_id
+                   AND settled.pricing_status = 'available'
+                   AND settled.currency = 'RUB'
+                   AND settled.cost_amount IS NOT NULL
+             ))
+       ), 0) >= ?::numeric) AS limit_reached,
+       (SELECT COUNT(*)
+        FROM estimate_generation_vision_physical_attempts attempts
+        WHERE attempts.organization_id = ?
+          AND attempts.project_id = ?
+          AND attempts.session_id = ?
+          AND attempts.state IN ('wire_started', 'response_received', 'completed', 'ambiguous')
+          AND attempts.cost_reservation_amount IS NULL
+          AND (attempts.state = 'ambiguous' OR NOT EXISTS (
+              SELECT 1 FROM estimate_generation_ai_usage settled
+              WHERE settled.attempt_id = attempts.attempt_id
+                AND settled.pricing_status = 'available'
+                AND settled.currency = 'RUB'
+                AND settled.cost_amount IS NOT NULL
+          )))::int AS unknown_reservation_count
+FROM estimate_generation_ai_usage usage
+WHERE usage.organization_id = ?
+  AND usage.project_id = ?
+  AND usage.session_id = ?
+SQL, [
+                $organizationId, $projectId, $sessionId, (string) $limit,
+                $organizationId, $projectId, $sessionId,
+                $organizationId, $projectId, $sessionId,
+            ]);
 
-            if ((int) ($usage?->unknown_count ?? 0) > 0) {
+            if ((int) ($usage?->unknown_count ?? 0) > 0
+                || (int) ($usage?->unknown_reservation_count ?? 0) > 0) {
                 throw new SessionAiCostLimitReached('session_cost_accounting_unavailable');
             }
             if (filter_var($usage?->limit_reached ?? false, FILTER_VALIDATE_BOOL)) {

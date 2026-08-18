@@ -17,6 +17,7 @@ final readonly class ConfirmEstimateGenerationDocumentCost
         private AuthorizationService $authorization,
         private DocumentGenerationReadinessService $readiness,
         private DispatchDocumentProcessingUnits $dispatcher,
+        private DocumentMutationSessionReconciler $reconciler,
     ) {}
 
     public function handle(
@@ -28,7 +29,7 @@ final readonly class ConfirmEstimateGenerationDocumentCost
         string $idempotencyKey,
     ): DocumentActionResult {
         $keyHash = hash('sha256', $idempotencyKey);
-        [$lockedSession, $lockedDocument, $disposition, $attemptId] = DB::transaction(function () use (
+        [$lockedSession, $lockedDocument, $disposition, $attemptId, $limitIncreased] = DB::transaction(function () use (
             $session, $document, $actor, $expectedVersion, $expectedSourceVersion, $keyHash,
         ): array {
             $lockedSession = EstimateGenerationSession::query()->lockForUpdate()->findOrFail($session->getKey());
@@ -66,7 +67,7 @@ final readonly class ConfirmEstimateGenerationDocumentCost
                 || collect($history)->contains(
                     static fn (array $entry): bool => ($entry['idempotency_hash'] ?? null) === $keyHash,
                 )) {
-                return [$lockedSession, $lockedDocument, 'replayed', $attemptId];
+                return [$lockedSession, $lockedDocument, 'replayed', $attemptId, false];
             }
             if ((string) $lockedDocument->processing_control_status !== 'paused'
                 || ! in_array((string) $lockedDocument->processing_control_reason, [
@@ -84,6 +85,10 @@ final readonly class ConfirmEstimateGenerationDocumentCost
             $currentLimit = $lockedDocument->processing_cost_limit === null
                 ? (string) config('estimate-generation.generation.document_cost_limit_rub', '600.00')
                 : (string) $lockedDocument->processing_cost_limit;
+            $documentLimitIncrease = $documentConfirmation && (
+                (int) data_get($meta, 'processing_cost_guard.version') >= 2
+                || $this->legacyPauseNeedsLimitIncrease((int) $lockedDocument->id, $currentLimit)
+            );
             $now = now();
             $analysis = is_array($lockedSession->analysis_payload) ? $lockedSession->analysis_payload : [];
             $sessionGuard = is_array($analysis['internal_cost_guard'] ?? null)
@@ -97,7 +102,7 @@ final readonly class ConfirmEstimateGenerationDocumentCost
             $sessionConfirmationAdvances = $sessionConfirmation
                 && $currentSessionConfirmationVersion <= $pausedSessionConfirmationVersion;
             $documentConfirmationVersion = (int) $lockedDocument->processing_cost_confirmation_version
-                + ($documentConfirmation ? 1 : 0);
+                + ($documentLimitIncrease ? 1 : 0);
             $sessionConfirmationVersion = $currentSessionConfirmationVersion
                 + ($sessionConfirmationAdvances ? 1 : 0);
             $confirmation = [
@@ -106,7 +111,9 @@ final readonly class ConfirmEstimateGenerationDocumentCost
                 'attempt_id' => $attemptId,
                 'confirmed_at' => $now->toISOString(),
                 'version' => $documentConfirmation ? $documentConfirmationVersion : $sessionConfirmationVersion,
-                'guard' => $documentConfirmation ? 'document' : 'session',
+                'guard' => $documentConfirmation
+                    ? ($documentLimitIncrease ? 'document' : 'document_recovery')
+                    : 'session',
             ];
             $lockedDocument->forceFill([
                 'status' => 'processing',
@@ -115,9 +122,12 @@ final readonly class ConfirmEstimateGenerationDocumentCost
                 'processing_control_reason' => null,
                 'processing_control_at' => null,
                 'processing_cost_limit' => $documentConfirmation
+                    && $documentLimitIncrease
                     ? $this->addMoney($currentLimit, $increment)
                     : $lockedDocument->processing_cost_limit,
-                'processing_cost_confirmed_at' => $now,
+                'processing_cost_confirmed_at' => $documentLimitIncrease
+                    ? $now
+                    : $lockedDocument->processing_cost_confirmed_at,
                 'processing_cost_confirmation_version' => $documentConfirmationVersion,
                 'meta' => [
                     ...$meta,
@@ -138,7 +148,13 @@ final readonly class ConfirmEstimateGenerationDocumentCost
                 ])->save();
             }
 
-            return [$lockedSession, $lockedDocument, 'accepted', $attemptId];
+            return [
+                $this->reconciler->changed($lockedSession),
+                $lockedDocument,
+                'accepted',
+                $attemptId,
+                $documentLimitIncrease,
+            ];
         }, 3);
 
         if ($disposition === 'accepted') {
@@ -149,10 +165,24 @@ final readonly class ConfirmEstimateGenerationDocumentCost
         return new DocumentActionResult(
             $lockedDocument->fresh() ?? $lockedDocument,
             $this->readiness->evaluate($freshSession)['summary'],
-            'estimate_generation.document_cost_confirmed',
+            $limitIncreased
+                ? 'estimate_generation.document_cost_confirmed'
+                : 'estimate_generation.document_processing_continued',
             $disposition,
             $attemptId,
         );
+    }
+
+    private function legacyPauseNeedsLimitIncrease(int $documentId, string $limit): bool
+    {
+        $usage = DB::table('estimate_generation_ai_usage')
+            ->where('document_id', $documentId)
+            ->selectRaw("COALESCE(SUM(cost_amount) FILTER (WHERE pricing_status = 'available' AND currency = 'RUB'), 0)::numeric(20,8) AS spent")
+            ->selectRaw("COUNT(*) FILTER (WHERE (pricing_status <> 'available' OR cost_amount IS NULL OR currency IS DISTINCT FROM 'RUB') AND NOT EXISTS (SELECT 1 FROM estimate_generation_vision_physical_attempts attempts WHERE attempts.attempt_id = estimate_generation_ai_usage.attempt_id))::int AS unknown_count")
+            ->first();
+
+        return (int) ($usage?->unknown_count ?? 0) > 0
+            || bccomp((string) ($usage?->spent ?? '0'), $limit, 8) >= 0;
     }
 
     private function addMoney(string $left, string $right): string

@@ -8,6 +8,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\Arbitrati
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverProfile;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessingException;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCostCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPhysicalAttemptIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
@@ -59,6 +61,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         private ?DocumentRuntimeLimits $documentLimits = null,
         private TimewebProviderErrorInspector $errorInspector = new TimewebProviderErrorInspector,
         private RoleVisionResponseCanonicalizer $roleResponseCanonicalizer = new RoleVisionResponseCanonicalizer,
+        private AiCostCalculator $costCalculator = new AiCostCalculator,
     ) {}
 
     public function analyze(VisionDocumentInput $input): VisionAnalysisData
@@ -281,6 +284,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                             $ownerToken,
                             $wireNow,
                             $wireNow->modify('+'.$leaseTtl.' seconds'),
+                            $this->maximumWireCost($input, $payload, $priceSnapshot),
                         );
                     } catch (DocumentUnitProcessingException $exception) {
                         throw $exception;
@@ -1200,6 +1204,32 @@ final readonly class TimewebVisionProvider implements VisionProvider
     private function maxOutputTokens(VisionDocumentInput $input): int
     {
         return max(256, min(16_384, (int) config('estimate-generation.vision.primary_max_output_tokens', 8_192)));
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function maximumWireCost(
+        VisionDocumentInput $input,
+        array $payload,
+        AiPriceSnapshot $priceSnapshot,
+    ): AiCost {
+        $maxInputTokens = (int) config('estimate-generation.vision.max_input_tokens', 32_768);
+        if ($maxInputTokens < 1 || $maxInputTokens > 1_000_000) {
+            return new AiCost(null, null, 'unavailable');
+        }
+        $maxOutputTokens = isset($payload['max_tokens']) && is_int($payload['max_tokens'])
+            ? $payload['max_tokens']
+            : $this->maxOutputTokens($input);
+        $reasoningTokens = $priceSnapshot->reasoningMode === 'included_in_output' ? $maxOutputTokens : 0;
+
+        return $this->costCalculator->calculate(
+            $maxInputTokens,
+            0,
+            $maxOutputTokens,
+            $reasoningTokens,
+            1 + count($input->regionImages),
+            0,
+            $priceSnapshot->toArray(),
+        );
     }
 
     private static function sheetRoutingLimit(string $key, int $default, int $minimum, int $maximum): int
