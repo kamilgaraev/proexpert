@@ -40,7 +40,7 @@ final class MarketingSeoArticleCatalogTest extends TestCase
         }
     }
 
-    public function test_existing_articles_remain_long_reads_and_new_series_stays_within_requested_length(): void
+    public function test_existing_articles_remain_long_reads_and_new_series_contains_three_to_four_thousand_words(): void
     {
         $newArticleSlugs = [
             'iskusstvennyy-intellekt-v-stroitelstve-2026',
@@ -53,10 +53,10 @@ final class MarketingSeoArticleCatalogTest extends TestCase
             $plainText = trim(strip_tags($article['content']));
 
             if (in_array($article['slug'], $newArticleSlugs, true)) {
-                $characterCount = mb_strlen(preg_replace('/\s+/u', ' ', $plainText) ?? '');
+                $wordCount = preg_match_all('/[\p{L}\p{N}]+/u', $plainText);
 
-                self::assertGreaterThanOrEqual(3000, $characterCount, $article['slug']);
-                self::assertLessThanOrEqual(4200, $characterCount, $article['slug']);
+                self::assertGreaterThanOrEqual(3000, $wordCount, $article['slug']);
+                self::assertLessThanOrEqual(4000, $wordCount, $article['slug']);
                 self::assertSame(1, substr_count($article['content'], '<img '), $article['slug']);
 
                 continue;
