@@ -65,7 +65,7 @@ final class VisualInventoryProjector
                 $decision = $decisions[$claimId] ?? null;
                 $category = $claim['factType'];
                 $scopeValue = $this->estimateScope($category, $value, $conditional);
-                $objectType = $this->identity->objectType($value, $claim['entityKey']);
+                $objectType = $this->identity->objectType($value, $claim['entityKey'], $category);
                 $candidate = [
                     'source_key' => mb_substr($claim['entityKey'], 0, 120),
                     'source_label' => mb_substr(trim($value), 0, 160),
@@ -117,14 +117,71 @@ final class VisualInventoryProjector
 
     private function decisions(?array $arbitration): array
     {
-        $result = [];
+        $grouped = [];
         foreach (is_array($arbitration['decisions'] ?? null) ? $arbitration['decisions'] : [] as $decision) {
             if (is_array($decision) && is_string($decision['claim_id'] ?? null)) {
-                $result[$decision['claim_id']] = $decision;
+                $grouped[$decision['claim_id']][] = $decision;
             }
+        }
+        ksort($grouped, SORT_STRING);
+        $result = [];
+        foreach ($grouped as $claimId => $decisions) {
+            $result[$claimId] = $this->reduceDecisions($decisions);
         }
 
         return $result;
+    }
+
+    /** @param list<array<string, mixed>> $decisions @return array<string, mixed> */
+    private function reduceDecisions(array $decisions): array
+    {
+        $statusRank = [
+            'accepted' => 0,
+            'candidate' => 1,
+            'conditional' => 2,
+            'unresolved' => 3,
+            'ambiguous' => 4,
+            'rejected' => 5,
+        ];
+        usort($decisions, function (array $left, array $right) use ($statusRank): int {
+            $leftStatus = is_string($left['status'] ?? null) ? $left['status'] : 'conditional';
+            $rightStatus = is_string($right['status'] ?? null) ? $right['status'] : 'conditional';
+            $rank = ($statusRank[$rightStatus] ?? 6) <=> ($statusRank[$leftStatus] ?? 6);
+
+            return $rank !== 0 ? $rank : $this->canonicalJson($left) <=> $this->canonicalJson($right);
+        });
+        $primary = $decisions[0] ?? [];
+        $supportingClaimIds = [];
+        $evidenceRefs = [];
+        foreach ($decisions as $decision) {
+            $supportingClaimIds = [
+                ...$supportingClaimIds,
+                ...array_values(array_filter(
+                    is_array($decision['supporting_claim_ids'] ?? null) ? $decision['supporting_claim_ids'] : [],
+                    'is_string',
+                )),
+            ];
+            $evidenceRefs = [
+                ...$evidenceRefs,
+                ...array_values(array_filter(
+                    is_array($decision['evidence_refs'] ?? null) ? $decision['evidence_refs'] : [],
+                    'is_string',
+                )),
+            ];
+        }
+        $supportingClaimIds = array_values(array_unique($supportingClaimIds));
+        $evidenceRefs = array_values(array_unique($evidenceRefs));
+        sort($supportingClaimIds, SORT_STRING);
+        sort($evidenceRefs, SORT_STRING);
+
+        return [
+            'status' => is_string($primary['status'] ?? null) ? $primary['status'] : 'conditional',
+            'reason_code' => is_string($primary['reason_code'] ?? null)
+                ? $primary['reason_code']
+                : 'minority_evidence_preserved',
+            'supporting_claim_ids' => $supportingClaimIds,
+            'evidence_refs' => $evidenceRefs,
+        ];
     }
 
     private function evidence(mixed $items, array $scope): array
@@ -176,7 +233,16 @@ final class VisualInventoryProjector
 
     private function quantity(string $value): ?int
     {
-        return preg_match('/(?:^|\s)([1-9][0-9]?)(?:\s|$)/u', $value, $matches) === 1 ? (int) $matches[1] : null;
+        $countable = '(?:шт\.?|штук(?:а|и)?|ед\.?|pcs?\.?|units?|'
+            .'мойк(?:а|и|у)?|раковин(?:а|ы)?|умывальник(?:а|и|ов)?|'
+            .'унитаз(?:а|ы|ов)?|окн(?:о|а)?|окон|'
+            .'sinks?|basins?|washbasins?|toilets?|windows?|'
+            .'кроват(?:ь|и|ей)?|стол(?:а|ы|ов)?|стул(?:а|ья|ьев)?|'
+            .'beds?|tables?|chairs?|sofas?)';
+
+        return preg_match('/(?<![0-9.,])([1-9][0-9]{0,3})\s*'.$countable.'\b/iu', $value, $matches) === 1
+            ? (int) $matches[1]
+            : null;
     }
 
     /** @param list<array<string, mixed>> $candidates @return array<string, mixed> */

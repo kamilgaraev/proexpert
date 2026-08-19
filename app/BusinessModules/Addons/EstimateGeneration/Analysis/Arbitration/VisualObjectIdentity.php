@@ -8,7 +8,7 @@ final readonly class VisualObjectIdentity
 {
     public function identity(string $category, string $entityKey, string $label): string
     {
-        $objectType = $this->objectType($label, $entityKey);
+        $objectType = $this->objectType($label, $entityKey, $category);
         $roomKey = $this->roomKey($entityKey) ?? 'room:unknown';
         $family = match ($objectType) {
             'toilet', 'washbasin', 'bath', 'shower' => 'sanitary',
@@ -67,15 +67,24 @@ final readonly class VisualObjectIdentity
         return 'room:'.implode('-', $roomTokens);
     }
 
-    public function objectType(string $label, string $entityKey = ''): string
+    public function objectType(string $label, string $entityKey = '', ?string $category = null): string
     {
         $value = $label.' '.$this->normalizeEntityKey($entityKey);
+        $roomKey = $this->roomKey($entityKey);
+        $roomTokens = $roomKey === null ? [] : explode('-', mb_substr($roomKey, 5));
+        $bathroomContext = in_array('bathroom', $roomTokens, true) || $category === 'sanitary_fixture';
+        $kitchenContext = in_array('kitchen', $roomTokens, true) || $category === 'kitchen_fixture';
+        $kitchenSignal = preg_match('/(?:кухон|kitchen).*(?:мойк|раковин|sink)|(?:мойк|раковин|sink).*(?:кухон|kitchen)/iu', $value) === 1;
+        $bathroomSignal = preg_match('/(?:сануз|ванн|bathroom|wc).*(?:мойк|раковин|sink|basin)|(?:мойк|раковин|sink|basin).*(?:сануз|ванн|bathroom|wc)/iu', $value) === 1;
 
         return match (true) {
             preg_match('/унитаз|toilet/iu', $value) === 1 => 'toilet',
-            preg_match('/(?:кухон|kitchen).*(?:мойк|раковин|sink)|(?:мойк|раковин|sink).*(?:кухон|kitchen)/iu', $value) === 1 => 'kitchen_sink',
-            preg_match('/умываль|раковин|washbasin/iu', $value) === 1 => 'washbasin',
-            preg_match('/мойк|sink/iu', $value) === 1 => 'kitchen_sink',
+            $kitchenSignal && $bathroomSignal => 'unknown',
+            $kitchenSignal => 'kitchen_sink',
+            $bathroomSignal => 'washbasin',
+            preg_match('/умываль|рукомой|washbasin|\bbasin\b/iu', $value) === 1 => 'washbasin',
+            preg_match('/мойк|раковин|sink/iu', $value) === 1 && $bathroomContext && ! $kitchenContext => 'washbasin',
+            preg_match('/мойк|раковин|sink/iu', $value) === 1 && $kitchenContext && ! $bathroomContext => 'kitchen_sink',
             preg_match('/ванн|bath/iu', $value) === 1 => 'bath',
             preg_match('/душ|shower/iu', $value) === 1 => 'shower',
             preg_match('/кроват|bed/iu', $value) === 1 => 'bed',
@@ -103,6 +112,10 @@ final readonly class VisualObjectIdentity
             return '';
         }
         $instance = implode('.', array_slice($tokens, $objectIndex + 1));
+        if (preg_match('/^[0-9]+$/D', $instance) === 1) {
+            $instance = ltrim($instance, '0');
+            $instance = $instance === '' ? '0' : $instance;
+        }
 
         return ':instance:'.substr(hash('sha256', $instance), 0, 16);
     }
@@ -147,7 +160,7 @@ final readonly class VisualObjectIdentity
     {
         return in_array($token, [
             'toilet', 'унитаз', 'washbasin', 'умывальник', 'рукомойник',
-            'sink', 'раковина', 'мойка', 'bath', 'ванна', 'shower', 'душ', 'bed', 'beds',
+            'sink', 'basin', 'раковина', 'мойка', 'bath', 'ванна', 'shower', 'душ', 'bed', 'beds',
             'кровать', 'кровати', 'table', 'стол', 'chair', 'стул', 'sofa', 'диван',
             'stove', 'cooktop', 'плита', 'fixture', 'fixtures', 'equipment', 'оборудование',
         ], true);
