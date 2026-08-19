@@ -413,12 +413,12 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             ->where('session_id', $session->id)
             ->where('assertion_type', 'area')
             ->count());
-        self::assertSame(13, DB::table('estimate_generation_project_model_assertions')
+        self::assertSame(14, DB::table('estimate_generation_project_model_assertions')
             ->where('session_id', $session->id)
             ->where('assertion_type', 'area')
             ->where('fact_status', 'confirmed')
             ->count());
-        self::assertSame(13, DB::table('estimate_generation_project_model_fact_projections as projection')
+        self::assertSame(14, DB::table('estimate_generation_project_model_fact_projections as projection')
             ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
             ->where('projection.session_id', $session->id)
             ->where('projection.is_current', true)
