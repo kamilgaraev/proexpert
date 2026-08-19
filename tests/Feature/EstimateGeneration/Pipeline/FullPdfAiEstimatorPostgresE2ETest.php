@@ -25,6 +25,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationEvide
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
@@ -1505,6 +1506,7 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
             $ownerToken,
             $now,
             $now->modify('+5 minutes'),
+            new AiCost('0', 'RUB', 'available'),
         );
         $this->physicalCalls++;
 
