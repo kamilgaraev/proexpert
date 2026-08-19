@@ -462,16 +462,19 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertCount(1, $acceptedAreaFacts);
         $acceptedAreaFact = $acceptedAreaFacts[0];
         self::assertSame($recording['recorded_source_facts']['total_area_m2'], (string) $acceptedAreaFact->value);
-        self::assertSame(2, DB::table('estimate_generation_project_model_assertions as fact')
+        $pageFiveVisualCandidates = DB::table('estimate_generation_project_model_assertions as fact')
             ->join('estimate_generation_project_model_fact_evidence as binding', 'binding.fact_id', '=', 'fact.id')
             ->join('estimate_generation_evidence as evidence', 'evidence.id', '=', 'binding.evidence_id')
+            ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'fact.entity_id')
             ->where('fact.session_id', $session->id)
             ->where('fact.source_version', $sourceVersion)
             ->whereIn('fact.assertion_type', ['sanitary_fixture', 'kitchen_fixture'])
             ->where('fact.fact_status', 'candidate')
             ->where('evidence.locator->page', 5)
-            ->distinct('fact.id')
-            ->count('fact.id'));
+            ->select(['fact.id', 'fact.assertion_type', 'fact.fact_value', 'entity.stable_key', 'entity.payload'])
+            ->distinct()
+            ->get();
+        self::assertCount(2, $pageFiveVisualCandidates, $pageFiveVisualCandidates->toJson(JSON_PRETTY_PRINT));
         self::assertSame(0, DB::table('estimate_generation_project_model_assertions as fact')
             ->join('estimate_generation_project_model_fact_evidence as binding', 'binding.fact_id', '=', 'fact.id')
             ->join('estimate_generation_evidence as evidence', 'evidence.id', '=', 'binding.evidence_id')

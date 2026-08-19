@@ -76,13 +76,13 @@ final class CanonicalFactReducerTest extends TestCase
     {
         $sourceVersion = 'sha256:'.str_repeat('a', 64);
         $descriptions = [
-            ['literal:1', 'observer_literal', 'room.kitchen.sink', 'Visible kitchen counter with kitchen sink', 'literal:sink', 0.91],
-            ['construction:1', 'observer_construction', 'room_kitchen_sink', 'Кухонная мойка в рабочей зоне', 'construction:sink', 0.96],
-            ['risk:1', 'observer_risk', 'room:kitchen:sink', 'Раковина кухни', 'risk:sink', 0.88],
+            ['literal:1', 'observer_literal', 'room.kitchen.sink', 'Visible kitchen counter with kitchen sink', 'literal:sink', 0.91, 'accepted'],
+            ['construction:1', 'observer_construction', 'room_kitchen_sink', 'Кухонная мойка в рабочей зоне', 'construction:sink', 0.96, 'candidate'],
+            ['risk:1', 'observer_risk', 'room:kitchen:sink', 'Раковина кухни', 'risk:sink', 0.88, 'accepted'],
         ];
         $claims = [];
         $decisions = [];
-        foreach ($descriptions as [$id, $role, $entityKey, $value, $evidenceRef, $confidence]) {
+        foreach ($descriptions as [$id, $role, $entityKey, $value, $evidenceRef, $confidence, $status]) {
             $claim = new ObservationClaim(
                 $id,
                 $role,
@@ -102,7 +102,7 @@ final class CanonicalFactReducerTest extends TestCase
             $claims[$id] = $claim;
             $decisions[] = new ArbitrationDecision(
                 claimId: $id,
-                status: 'accepted',
+                status: $status,
                 supportingClaimIds: [$id],
                 evidenceRefs: [$evidenceRef],
                 reasonCode: 'visible_fixture',
@@ -121,7 +121,8 @@ final class CanonicalFactReducerTest extends TestCase
         self::assertCount(1, $reduced);
         self::assertSame(['construction:1', 'literal:1', 'risk:1'], $reduced[0]->supportingClaimIds);
         self::assertSame(['construction:sink', 'literal:sink', 'risk:sink'], $reduced[0]->evidenceRefs);
-        self::assertSame('construction:1', $reduced[0]->claimId);
+        self::assertSame('literal:1', $reduced[0]->claimId);
+        self::assertSame('accepted', $reduced[0]->status);
     }
 
     /** @return array{array<string,ObservationClaim>,list<ArbitrationDecision>} */

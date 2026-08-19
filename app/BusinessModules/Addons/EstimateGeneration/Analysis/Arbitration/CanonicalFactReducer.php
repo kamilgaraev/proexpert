@@ -43,7 +43,13 @@ final class CanonicalFactReducer
 
                 continue;
             }
-            usort($group, function (ArbitrationDecision $left, ArbitrationDecision $right) use ($byId): int {
+            usort($group, function (ArbitrationDecision $left, ArbitrationDecision $right) use ($byId, $key): int {
+                if (str_starts_with($key, 'visual|')) {
+                    $status = ($right->status === 'accepted') <=> ($left->status === 'accepted');
+                    if ($status !== 0) {
+                        return $status;
+                    }
+                }
                 $confidence = $byId[$right->claimId]->confidence <=> $byId[$left->claimId]->confidence;
 
                 return $confidence !== 0 ? $confidence : $left->claimId <=> $right->claimId;
@@ -94,7 +100,7 @@ final class CanonicalFactReducer
             return null;
         }
 
-        return 'visual|'.$status.'|'.(new VisualObjectIdentity)->identity(
+        return 'visual|'.(new VisualObjectIdentity)->identity(
             $claim->factType,
             $claim->entityKey,
             $value,

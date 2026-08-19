@@ -116,7 +116,10 @@ final readonly class ProjectModelEvidenceWriter
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
                 $entityIdentity = (string) ($projection['identity_key'] ?? $claim->entityKey);
-                $entityId = 'entity:'.hash('sha256', implode('|', $decision->status === 'accepted'
+                $visualInventoryFact = in_array($claim->factType, [
+                    'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
+                ], true) || ($claim->factType === 'equipment' && $this->isPlanObservation($claim));
+                $entityId = 'entity:'.hash('sha256', implode('|', $decision->status === 'accepted' || $visualInventoryFact
                     ? [$projection['type'], $entityIdentity]
                     : [
                         $projection['type'],
@@ -136,16 +139,21 @@ final readonly class ProjectModelEvidenceWriter
                     $entityId,
                     $projection['attributes'],
                 );
+                $projectedStatus = $visualInventoryFact ? 'candidate' : match ($decision->status) {
+                    'accepted' => 'confirmed',
+                    'candidate' => 'candidate',
+                    'unresolved' => 'unresolved',
+                };
+                $factIdentity = $visualInventoryFact
+                    ? 'visual|'.$projection['type'].'|'.$entityIdentity
+                    : (new ClaimSemanticMatcher)->key($claim);
                 $factId = 'fact:'.hash('sha256', implode('|', [
-                    (new ClaimSemanticMatcher)->key($claim),
-                    $decision->status,
+                    $factIdentity,
+                    $projectedStatus,
                     $scope->sourceVersion,
                     (string) $documentId,
                     (string) $pageNumber,
                 ]));
-                $visualInventoryFact = in_array($claim->factType, [
-                    'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
-                ], true) || ($claim->factType === 'equipment' && $this->isPlanObservation($claim));
                 $facts[$factId] = new Fact(
                     $factId,
                     $scope->organizationId,
@@ -158,11 +166,7 @@ final readonly class ProjectModelEvidenceWriter
                     $claim->unit,
                     (new CanonicalFactConfidence)->forDecision($decision, $byId),
                     $decision->status === 'unresolved' ? 'unresolved' : 'document',
-                    $visualInventoryFact ? 'candidate' : match ($decision->status) {
-                        'accepted' => 'confirmed',
-                        'candidate' => 'candidate',
-                        'unresolved' => 'unresolved',
-                    },
+                    $projectedStatus,
                     $evidenceIds,
                 );
                 $factsByClaimId[$claim->id] = $facts[$factId];
