@@ -462,17 +462,17 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertCount(1, $acceptedAreaFacts);
         $acceptedAreaFact = $acceptedAreaFacts[0];
         self::assertSame($recording['recorded_source_facts']['total_area_m2'], (string) $acceptedAreaFact->value);
-        $visualFixtureFacts = array_values(array_filter(
-            $currentProjectFacts,
-            static fn ($fact): bool => in_array($fact->type, ['sanitary_fixture', 'kitchen_fixture'], true)
-                && $fact->status === 'candidate'
-                && $fact->sourceVersion === $sourceVersion,
-        ));
-        self::assertCount(2, $visualFixtureFacts);
-        self::assertSame([], array_values(array_filter(
-            $currentProjectFacts,
-            static fn ($fact): bool => $fact->type === 'furniture' && $fact->sourceVersion === $sourceVersion,
-        )));
+        self::assertSame(2, DB::table('estimate_generation_project_model_assertions')
+            ->where('session_id', $session->id)
+            ->where('source_version', $sourceVersion)
+            ->whereIn('assertion_type', ['sanitary_fixture', 'kitchen_fixture'])
+            ->where('fact_status', 'candidate')
+            ->count());
+        self::assertSame(0, DB::table('estimate_generation_project_model_assertions')
+            ->where('session_id', $session->id)
+            ->where('source_version', $sourceVersion)
+            ->where('assertion_type', 'furniture')
+            ->count());
 
         $areaDocumentFact = DB::table('estimate_generation_document_facts')
             ->where('document_id', $document->id)
