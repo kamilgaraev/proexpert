@@ -392,7 +392,7 @@ SQL, [
         $factsByEntity = [];
         foreach ($facts as $fact) {
             if ($fact instanceof Fact) {
-                $factsByEntity[$fact->entityId] = $fact;
+                $factsByEntity[$fact->entityId][] = $fact;
             }
         }
         foreach (array_chunk($entities, $chunkSize) as $chunk) {
@@ -441,7 +441,7 @@ SQL, [
                             $entity->type,
                             $this->decodedJson($stored->payload),
                             $comparisonPayload,
-                            $factsByEntity[$entity->stableKey] ?? null,
+                            $factsByEntity[$entity->stableKey] ?? [],
                         ))) {
                         throw new InvalidArgumentException('project_model_entity_exact_identity_collision');
                     }
@@ -450,12 +450,16 @@ SQL, [
         }
     }
 
-    /** @param array<string, mixed> $stored @param array<string, mixed> $canonical */
+    /**
+     * @param  array<string, mixed>  $stored
+     * @param  array<string, mixed>  $canonical
+     * @param  list<Fact>  $facts
+     */
     private function isCompatibleLegacyEntityPayload(
         string $type,
         array $stored,
         array $canonical,
-        ?Fact $fact,
+        array $facts,
     ): bool {
         if (($stored['kind'] ?? null) !== $type
             || ($stored['key'] ?? null) !== ($canonical['key'] ?? null)
@@ -477,15 +481,24 @@ SQL, [
 
         if ($type === 'dimension') {
             $measurementKind = $canonical['measurement_kind'] ?? null;
-            if (! $fact instanceof Fact
-                || ! is_string($measurementKind)
-                || $fact->type !== $measurementKind
+            if (! is_string($measurementKind)
                 || ! array_key_exists('value', $stored)
-                || ! array_key_exists('unit', $stored)
-                || ! hash_equals(
-                    DerivedQuantityIdentity::canonicalJson([$stored['value'], $stored['unit']]),
-                    DerivedQuantityIdentity::canonicalJson([$fact->value, $fact->unit]),
-                )) {
+                || ! array_key_exists('unit', $stored)) {
+                return false;
+            }
+            $matchingFact = false;
+            foreach ($facts as $fact) {
+                if ($fact instanceof Fact
+                    && $fact->type === $measurementKind
+                    && hash_equals(
+                        DerivedQuantityIdentity::canonicalJson([$stored['value'], $stored['unit']]),
+                        DerivedQuantityIdentity::canonicalJson([$fact->value, $fact->unit]),
+                    )) {
+                    $matchingFact = true;
+                    break;
+                }
+            }
+            if (! $matchingFact) {
                 return false;
             }
             $legacy = $stored;
