@@ -180,7 +180,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             DB::table('estimate_generation_ai_usage')->insert(
                 $this->usageRow($fixture, (string) Str::uuid(), '17.15026500'),
             );
-            $fixture['document']->forceFill([
+            $fixture['document']->fresh()->forceFill([
                 'units_finalized_source_version' => $fixture['sourceVersion'],
                 'units_reconciled_source_version' => $fixture['sourceVersion'],
                 'units_reconcile_claim_token' => (string) Str::uuid(),
@@ -207,6 +207,14 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $fixture['sourceVersion'],
                 'document-174-stop',
             );
+            $fixture['document']->fresh()->forceFill([
+                'status' => 'processing',
+                'processing_stage' => 'quality_check',
+                'units_finalized_source_version' => $fixture['sourceVersion'],
+                'units_reconciled_source_version' => $fixture['sourceVersion'],
+                'units_reconcile_claim_token' => (string) Str::uuid(),
+                'units_reconcile_lease_expires_at' => now()->addMinutes(5),
+            ])->save();
             $second = $stop->handle(
                 $fixture['session']->fresh(),
                 $fixture['document']->fresh(),
