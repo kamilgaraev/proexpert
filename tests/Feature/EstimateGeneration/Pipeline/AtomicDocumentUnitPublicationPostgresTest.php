@@ -887,7 +887,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
     }
 
     #[Test]
-    public function replay_upgrades_a_legacy_fact_dependent_room_entity_without_identity_collision(): void
+    public function replay_reuses_a_legacy_fact_dependent_room_entity_without_identity_collision(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
         DB::beginTransaction();
@@ -927,9 +927,9 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 ->where('stable_key', $entityId)
                 ->value('payload');
             self::assertSame([
+                'area_m2' => '22.10',
                 'key' => $entityId,
                 'kind' => 'room',
-                'semantic_type' => 'room',
             ], json_decode((string) $payload, true, 512, JSON_THROW_ON_ERROR));
             self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
                 ->where('session_id', $context->sessionId)

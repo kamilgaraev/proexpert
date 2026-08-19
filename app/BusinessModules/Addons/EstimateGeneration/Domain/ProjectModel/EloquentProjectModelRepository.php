@@ -400,42 +400,16 @@ SQL, [
                         || (! hash_equals(
                             DerivedQuantityIdentity::canonicalJson($comparisonPayload),
                             DerivedQuantityIdentity::canonicalJson($this->decodedJson($stored->payload)),
-                        ) && ! $this->upgradeLegacyEntityPayload(
-                            $projectionScopeId,
-                            $entity,
-                            $stored,
+                        ) && ! $this->isCompatibleLegacyEntityPayload(
+                            $entity->type,
+                            $this->decodedJson($stored->payload),
                             $comparisonPayload,
-                            $serializedPayload,
                         ))) {
                         throw new InvalidArgumentException('project_model_entity_exact_identity_collision');
                     }
                 }
             }, 3);
         }
-    }
-
-    /** @param array<string, mixed> $comparisonPayload */
-    private function upgradeLegacyEntityPayload(
-        int $projectionScopeId,
-        Entity $entity,
-        object $stored,
-        array $comparisonPayload,
-        string $serializedPayload,
-    ): bool {
-        $storedPayload = $this->decodedJson($stored->payload);
-        if (! $this->isCompatibleLegacyEntityPayload($entity->type, $storedPayload, $comparisonPayload)) {
-            return false;
-        }
-
-        return $this->database->table('estimate_generation_project_model_entities')
-            ->where('building_model_id', $projectionScopeId)
-            ->where('organization_id', $entity->organizationId)
-            ->where('project_id', $entity->projectId)
-            ->where('session_id', $entity->sessionId)
-            ->where('source_version', $entity->sourceVersion)
-            ->where('stable_key', $entity->stableKey)
-            ->where('entity_kind', $entity->type)
-            ->update(['payload' => $serializedPayload]) === 1;
     }
 
     /** @param array<string, mixed> $stored @param array<string, mixed> $canonical */
