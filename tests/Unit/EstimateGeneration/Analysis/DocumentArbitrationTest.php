@@ -498,6 +498,30 @@ final class DocumentArbitrationTest extends TestCase
     }
 
     #[Test]
+    public function accepted_zero_quantity_is_preserved_as_a_confirmed_project_fact(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        $claims = [new ObservationClaim(
+            'literal:zero-storeys', 'observer_literal', 'below_ground_storeys', 'quantity',
+            ['type' => 'number', 'data' => '0'], 'pcs', 'title-block', true,
+            7, 9, 11, $this->version(), ['page_number' => 4], 0.98,
+        )];
+        $decision = $this->decision([
+            'claim_id' => 'literal:zero-storeys', 'status' => 'accepted',
+            'supporting_claim_ids' => ['literal:zero-storeys'], 'evidence_refs' => ['title-block'],
+            'reason_code' => 'explicit_zero_quantity',
+        ], $claims);
+
+        $writer->writeArbitration($claims, [$decision], 177, 4);
+
+        self::assertCount(1, $models->facts);
+        self::assertSame('0', (string) array_values($models->facts)[0]->value);
+        self::assertSame('confirmed', array_values($models->facts)[0]->status);
+        self::assertSame('quantity', array_values($models->entities)[0]->type);
+    }
+
+    #[Test]
     public function one_invalid_claim_is_quarantined_without_hiding_other_observer_claims_from_the_arbiter(): void
     {
         $runs = $this->observerRuns();

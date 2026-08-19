@@ -490,11 +490,11 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             ->where('fact_type', 'total_area')
             ->where('scope_key', 'building_area_total')
             ->where('unit', 'm2')
-            ->where('confidence', '1.00')
-            ->selectRaw('value_number::text as value_number')
+            ->selectRaw('value_number::text as value_number, confidence::text as confidence')
             ->first();
         self::assertNotNull($areaDocumentFact);
         self::assertSame('72.1900', $areaDocumentFact->value_number);
+        self::assertSame(0.98, (float) $areaDocumentFact->confidence);
         self::assertSame(28, DB::table('estimate_generation_document_facts')
             ->where('document_id', $document->id)
             ->where('page_id', $document->pages()->where('page_number', 4)->value('id'))
@@ -534,21 +534,21 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             }
         }
         foreach ([
-            'building_height' => ['dimension', '4.32'],
-            'building_area_total' => ['room', '72.19'],
-            'building_area_without_terrace' => ['dimension', '50.09'],
-            'above_ground_storeys' => ['dimension', '1'],
-            'below_ground_storeys' => ['dimension', '0'],
-            'external_wall_construction' => ['material', 'доска сухая обрезная 42x142, шаг 0,58 м'],
-            'internal_wall_construction' => ['material', 'доска сухая обрезная 42x92, шаг 0,58 м'],
-            'attic_floor' => ['material', 'деревянные балки'],
-            'roof_covering' => ['material', 'битумная черепица'],
-            'facade_area' => ['dimension', '77.01'],
-            'roof_area' => ['dimension', '92.58'],
-        ] as $entityKey => [$entityType, $expectedValue]) {
-            $entityId = 'entity:'.hash('sha256', implode('|', [$entityType, $entityKey]));
-            self::assertArrayHasKey($entityId, $currentFactsByEntity, $entityKey);
-            self::assertSame($expectedValue, $currentFactsByEntity[$entityId], $entityKey);
+            'building_height' => ['dimension', 'building.height', '4.32'],
+            'building_area_total' => ['room', 'building.area.total', '72.19'],
+            'building_area_without_terrace' => ['dimension', 'building.area.without.terrace', '50.09'],
+            'above_ground_storeys' => ['quantity', 'above.ground.storeys', '1'],
+            'below_ground_storeys' => ['quantity', 'below.ground.storeys', '0'],
+            'external_wall_construction' => ['material', 'external_wall_construction', 'доска сухая обрезная 42x142, шаг 0,58 м'],
+            'internal_wall_construction' => ['material', 'internal_wall_construction', 'доска сухая обрезная 42x92, шаг 0,58 м'],
+            'attic_floor' => ['material', 'attic_floor', 'деревянные балки'],
+            'roof_covering' => ['material', 'roof_covering', 'битумная черепица'],
+            'facade_area' => ['dimension', 'facade.area', '77.01'],
+            'roof_area' => ['dimension', 'roof.area', '92.58'],
+        ] as $semanticKey => [$entityType, $identityKey, $expectedValue]) {
+            $entityId = 'entity:'.hash('sha256', implode('|', [$entityType, $identityKey]));
+            self::assertArrayHasKey($entityId, $currentFactsByEntity, $semanticKey);
+            self::assertSame($expectedValue, $currentFactsByEntity[$entityId], $semanticKey);
         }
 
         app(ProjectUnderstandingCoordinator::class)->refresh(
