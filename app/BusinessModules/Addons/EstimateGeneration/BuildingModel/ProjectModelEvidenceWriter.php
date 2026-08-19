@@ -353,7 +353,7 @@ final readonly class ProjectModelEvidenceWriter
         if (in_array($type, ['sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture'], true)
             && is_string($value) && trim($value) !== '') {
             $identity = new VisualObjectIdentity;
-            $objectType = $identity->objectType($value, $claim->entityKey);
+            $objectType = $identity->objectType($value, $claim->entityKey, $type);
             $identityKey = $identity->identity($type, $claim->entityKey, $value);
             $name = $identity->canonicalLabel($objectType, $value);
 

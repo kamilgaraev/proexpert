@@ -475,6 +475,25 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             ->distinct()
             ->get();
         self::assertCount(2, $pageFiveVisualCandidates, $pageFiveVisualCandidates->toJson(JSON_PRETTY_PRINT));
+        $pageFivePayload = $document->pages->firstWhere('page_number', 5)?->normalized_payload;
+        $pageFiveInventory = is_array($pageFivePayload)
+            && is_array($pageFivePayload['visual_inventory']['items'] ?? null)
+                ? $pageFivePayload['visual_inventory']['items']
+                : [];
+        $pageFiveInventoryByType = [];
+        foreach ($pageFiveInventory as $item) {
+            if (is_array($item) && is_string($item['object_type'] ?? null)) {
+                $pageFiveInventoryByType[$item['object_type']] = $item;
+            }
+        }
+        self::assertSame(1, $pageFiveInventoryByType['toilet']['quantity'] ?? null);
+        self::assertFalse($pageFiveInventoryByType['toilet']['quantity_uncertain'] ?? true);
+        self::assertNull($pageFiveInventoryByType['kitchen_sink']['quantity'] ?? null);
+        self::assertTrue($pageFiveInventoryByType['kitchen_sink']['quantity_uncertain'] ?? false);
+        self::assertSame('Унитаз', $pageFiveInventoryByType['toilet']['label'] ?? null);
+        self::assertSame('Кухонная мойка', $pageFiveInventoryByType['kitchen_sink']['label'] ?? null);
+        self::assertSame('requires_confirmation', $pageFiveInventoryByType['toilet']['scope'] ?? null);
+        self::assertSame('requires_confirmation', $pageFiveInventoryByType['kitchen_sink']['scope'] ?? null);
         self::assertSame(0, DB::table('estimate_generation_project_model_assertions as fact')
             ->join('estimate_generation_project_model_fact_evidence as binding', 'binding.fact_id', '=', 'fact.id')
             ->join('estimate_generation_evidence as evidence', 'evidence.id', '=', 'binding.evidence_id')
@@ -1685,9 +1704,9 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
         ]];
         if ($input->pageNumber === 5) {
             $descriptions = match ($profile) {
-                'literal' => ['Унитаз', 'Кухонная мойка', 'Кровать условно'],
-                'construction' => ['Напольный унитаз', 'Мойка на кухне', 'Условное изображение кровати'],
-                default => ['Санитарный прибор: унитаз', 'Раковина кухни', 'Кровать показана условно'],
+                'literal' => ['Унитаз — 1 шт.', 'Кухонная мойка 60 см', 'Кровать условно'],
+                'construction' => ['Напольный унитаз — 1 шт.', 'Мойка на кухне 600 мм', 'Условное изображение кровати'],
+                default => ['Санитарный прибор: унитаз — 1 шт.', 'Раковина кухни, модель 60', 'Кровать показана условно'],
             };
             foreach ([
                 ['room.bathroom.toilet', 'sanitary_fixture', $descriptions[0]],
