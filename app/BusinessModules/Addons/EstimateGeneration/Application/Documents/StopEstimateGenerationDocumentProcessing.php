@@ -64,10 +64,14 @@ final readonly class StopEstimateGenerationDocumentProcessing
             $current = is_array($meta['processing_stop'] ?? null) ? $meta['processing_stop'] : [];
             $attemptId = is_string($meta['processing_attempt_id'] ?? null) ? $meta['processing_attempt_id'] : null;
             if (($current['idempotency_hash'] ?? null) === $keyHash) {
+                $this->invalidateCancelledAggregateIfStale($lockedDocument, $expectedSourceVersion);
+
                 return [$lockedSession, $lockedDocument, 'replayed', $attemptId];
             }
             if ((string) $lockedDocument->processing_control_status === 'cancelled'
                 && hash_equals((string) $lockedDocument->processing_control_source_version, $expectedSourceVersion)) {
+                $this->invalidateCancelledAggregateIfStale($lockedDocument, $expectedSourceVersion);
+
                 return [$lockedSession, $lockedDocument, 'already_stopped', $attemptId];
             }
 
@@ -191,6 +195,24 @@ final readonly class StopEstimateGenerationDocumentProcessing
             $disposition,
             $attemptId,
         );
+    }
+
+    private function invalidateCancelledAggregateIfStale(
+        EstimateGenerationDocument $document,
+        string $sourceVersion,
+    ): void {
+        if ((string) $document->processing_control_status !== 'cancelled'
+            || ! hash_equals((string) $document->processing_control_source_version, $sourceVersion)
+            || ((string) $document->status !== 'processing'
+                && (string) $document->processing_stage === 'completed')) {
+            return;
+        }
+        $document->forceFill([
+            'units_finalized_source_version' => null,
+            'units_reconciled_source_version' => null,
+            'units_reconcile_claim_token' => null,
+            'units_reconcile_lease_expires_at' => null,
+        ])->save();
     }
 
     private function wireStarted(int $unitId, ?string $attemptId): bool

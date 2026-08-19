@@ -190,7 +190,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $authorization = Mockery::mock(AuthorizationService::class);
             $authorization->shouldReceive('can')->twice()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
-            $readiness->shouldReceive('evaluate')->times(3)->andReturn($this->reviewRequiredReadiness());
+            $readiness->shouldReceive('evaluate')->times(4)->andReturn($this->reviewRequiredReadiness());
             $this->app->instance(DocumentGenerationReadinessService::class, $readiness);
             $this->app->forgetInstance(DocumentUnitAggregateReconciler::class);
 
