@@ -58,8 +58,9 @@ final class VisualInventoryProjectorTest extends TestCase
         self::assertNull($result['items'][0]['quantity']);
         self::assertTrue($result['items'][0]['quantity_uncertain']);
         self::assertSame('requires_confirmation', $result['items'][0]['scope']);
-        self::assertSame('candidate', $result['items'][0]['arbitration']['status']);
-        self::assertSame('fixture_requires_specification', $result['items'][0]['arbitration']['reason_code']);
+        self::assertSame('conditional', $result['items'][0]['arbitration']['status']);
+        self::assertSame('minority_evidence_preserved', $result['items'][0]['arbitration']['reason_code']);
+        self::assertSame('arbitration_evidence_conflict', $result['items'][0]['arbitration']['limitation_code']);
         self::assertSame(
             ['construction:1', 'construction:2', 'literal:1', 'literal:2', 'risk:1', 'risk:2'],
             $result['items'][0]['lineage']['supporting_claim_ids'],
@@ -251,6 +252,65 @@ final class VisualInventoryProjectorTest extends TestCase
     }
 
     #[Test]
+    public function quantity_grammar_distinguishes_counts_identifiers_measurements_and_mixed_semantics(): void
+    {
+        $projector = new VisualInventoryProjector;
+        $validCounts = [
+            ['room.hall.door', 'unknown_fixture', '2 двери', 2],
+            ['room.hall.door', 'unknown_fixture', '2 doors', 2],
+            ['room.kitchen.sink', 'kitchen_fixture', '2 — мойки', 2],
+            ['room.kitchen.sink', 'kitchen_fixture', 'мойки: 2 шт.', 2],
+            ['room.bathroom.toilet', 'sanitary_fixture', '1 шт. (унитаз)', 1],
+            ['room.kitchen.sink', 'kitchen_fixture', 'sinks (2 pcs)', 2],
+            ['room.kitchen.sink', 'kitchen_fixture', '2 units: sinks', 2],
+        ];
+        foreach ($validCounts as [$entityKey, $factType, $value, $expected]) {
+            $result = $projector->project([
+                'observer_literal' => $this->observer('observer_literal', [
+                    $this->claim($entityKey, $factType, $value, 'evidence:count'),
+                ]),
+            ], null, $this->scope());
+
+            self::assertSame($expected, $result['items'][0]['quantity'], $value);
+            self::assertFalse($result['items'][0]['quantity_uncertain'], $value);
+            self::assertSame('explicit_count', $result['items'][0]['quantity_provenance'], $value);
+        }
+
+        foreach ([
+            'Артикул 123 мойка',
+            'Article 123 sink',
+            'Ось 11 мойка',
+            'Axis 11 sink',
+            'Высота 2 мойки',
+            'Height 2 sinks',
+            'Этаж 2 — мойка',
+            '2025 год, мойка',
+            'Модель 2 мойки',
+            'Марка 2, мойка',
+            'Уклон 2%, мойка',
+            '-2 doors',
+            '+2 двери',
+            '−2 мойки',
+            '2 мойки, высота 60 см',
+            '2 мойки и 3 умывальника',
+        ] as $value) {
+            $result = $projector->project([
+                'observer_literal' => $this->observer('observer_literal', [
+                    $this->claim('room.kitchen.sink', 'kitchen_fixture', $value, 'evidence:not-count'),
+                ]),
+            ], null, $this->scope());
+
+            self::assertNull($result['items'][0]['quantity'], $value);
+            self::assertTrue($result['items'][0]['quantity_uncertain'], $value);
+            self::assertContains(
+                $result['items'][0]['quantity_provenance'],
+                ['not_count', 'ambiguous'],
+                $value,
+            );
+        }
+    }
+
+    #[Test]
     public function every_duplicate_decision_permutation_reduces_to_the_same_conservative_payload(): void
     {
         $observer = $this->observer('observer_literal', [
@@ -333,7 +393,7 @@ final class VisualInventoryProjectorTest extends TestCase
     }
 
     #[Test]
-    public function accepted_support_is_primary_and_minority_cannot_represent_the_group(): void
+    public function minority_conflict_prevents_accepted_from_representing_the_physical_group(): void
     {
         $result = (new VisualInventoryProjector)->project([
             'observer_literal' => $this->observer('observer_literal', [
@@ -347,9 +407,111 @@ final class VisualInventoryProjectorTest extends TestCase
             ['claim_id' => 'construction:1', 'status' => 'conditional', 'reason_code' => 'minority_evidence_preserved'],
         ]], $this->scope());
 
-        self::assertSame('accepted', $result['items'][0]['arbitration']['status']);
-        self::assertSame('accepted_fixture', $result['items'][0]['arbitration']['reason_code']);
-        self::assertSame('literal:1', $result['items'][0]['lineage']['claim_id']);
+        self::assertSame('conditional', $result['items'][0]['arbitration']['status']);
+        self::assertSame('minority_evidence_preserved', $result['items'][0]['arbitration']['reason_code']);
+        self::assertSame('arbitration_evidence_conflict', $result['items'][0]['arbitration']['limitation_code']);
+        self::assertSame('construction:1', $result['items'][0]['lineage']['claim_id']);
+    }
+
+    #[Test]
+    public function every_group_status_permutation_is_conservative_for_same_and_different_claim_ids(): void
+    {
+        $statuses = [
+            ['accepted', 'accepted_fixture'],
+            ['conditional', 'needs_confirmation'],
+            ['unresolved', 'manual_review_required'],
+            ['ambiguous', 'conflicting_observation'],
+            ['rejected', 'unsafe_conflict'],
+            ['future_status', 'future_reason'],
+        ];
+        $projector = new VisualInventoryProjector;
+
+        foreach ([false, true] as $differentClaims) {
+            $claims = [];
+            $decisions = [];
+            foreach ($statuses as $index => [$status, $reason]) {
+                if ($differentClaims || $index === 0) {
+                    $claims[] = $this->claim(
+                        $index % 2 === 0 ? 'room.kitchen.sink' : 'room.кухня.мойка',
+                        'kitchen_fixture',
+                        'Кухонная мойка',
+                        'evidence:'.($index + 1),
+                    );
+                }
+                $decisions[] = [
+                    'claim_id' => 'literal:'.($differentClaims ? $index + 1 : 1),
+                    'status' => $status,
+                    'reason_code' => $reason,
+                    'supporting_claim_ids' => ['literal:'.($differentClaims ? $index + 1 : 1)],
+                    'evidence_refs' => ['literal:evidence:'.($differentClaims ? $index + 1 : 1)],
+                ];
+            }
+            $encoded = [];
+            foreach ($this->permutations($decisions) as $permutation) {
+                $result = $projector->project(
+                    ['observer_literal' => $this->observer('observer_literal', $claims)],
+                    ['decisions' => $permutation],
+                    $this->scope(),
+                );
+                $encoded[] = json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            }
+
+            self::assertCount(1, array_unique($encoded), $differentClaims ? 'different claim_id' : 'same claim_id');
+            $result = json_decode($encoded[0], true, flags: JSON_THROW_ON_ERROR);
+            self::assertSame('rejected', $result['items'][0]['arbitration']['status']);
+            self::assertSame('unsafe_conflict', $result['items'][0]['arbitration']['reason_code']);
+            self::assertSame('arbitration_evidence_conflict', $result['items'][0]['arbitration']['limitation_code']);
+        }
+    }
+
+    #[Test]
+    public function historical_unknown_status_and_reason_degrade_without_leaking_technical_values(): void
+    {
+        $observer = $this->observer('observer_literal', [
+            $this->claim('room.kitchen.sink', 'kitchen_fixture', 'Кухонная мойка', 'evidence:kitchen'),
+        ]);
+        $projector = new VisualInventoryProjector;
+        $unknownStatus = $projector->project(['observer_literal' => $observer], ['decisions' => [[
+            'claim_id' => 'literal:1',
+            'status' => 'future_status',
+            'reason_code' => 'future_reason',
+        ]]], $this->scope());
+        $unknownReason = $projector->project(['observer_literal' => $observer], ['decisions' => [[
+            'claim_id' => 'literal:1',
+            'status' => 'accepted',
+            'reason_code' => 'future_reason',
+        ]]], $this->scope());
+
+        self::assertSame('unresolved', $unknownStatus['items'][0]['arbitration']['status']);
+        self::assertSame('arbitration_status_unknown', $unknownStatus['items'][0]['arbitration']['reason_code']);
+        self::assertSame('arbitration_status_unknown', $unknownStatus['items'][0]['arbitration']['limitation_code']);
+        self::assertSame('conditional', $unknownReason['items'][0]['arbitration']['status']);
+        self::assertSame('arbitration_reason_unknown', $unknownReason['items'][0]['arbitration']['reason_code']);
+        self::assertSame('arbitration_reason_unknown', $unknownReason['items'][0]['arbitration']['limitation_code']);
+        self::assertStringNotContainsString('future_', json_encode(
+            [$unknownStatus, $unknownReason],
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES,
+        ));
+    }
+
+    #[Test]
+    public function conflicting_sink_signals_are_neutral_and_require_confirmation(): void
+    {
+        $result = (new VisualInventoryProjector)->project([
+            'observer_literal' => $this->observer('observer_literal', [
+                $this->claim('room.kitchen.basin', 'kitchen_fixture', 'Basin', 'evidence:basin'),
+                $this->claim('room.kitchen.washbasin.2', 'kitchen_fixture', 'Washbasin', 'evidence:washbasin'),
+            ]),
+        ], null, $this->scope());
+
+        self::assertCount(2, $result['items']);
+        foreach ($result['items'] as $item) {
+            self::assertSame('unknown', $item['object_type']);
+            self::assertSame('unknown_fixture', $item['category']);
+            self::assertSame('Объект на плане', $item['label']);
+            self::assertSame('requires_confirmation', $item['scope']);
+            self::assertSame('object_type_conflicted', $item['classification_limitation']);
+        }
     }
 
     #[Test]
