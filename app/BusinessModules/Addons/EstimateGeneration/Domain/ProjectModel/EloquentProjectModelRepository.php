@@ -453,7 +453,10 @@ SQL, [
             $expected = $canonical;
             unset($expected['semantic_type']);
 
-            return $legacy === $expected && ($canonical['semantic_type'] ?? null) === 'room';
+            return hash_equals(
+                DerivedQuantityIdentity::canonicalJson($legacy),
+                DerivedQuantityIdentity::canonicalJson($expected),
+            ) && ($canonical['semantic_type'] ?? null) === 'room';
         }
 
         if ($type === 'dimension') {
@@ -462,7 +465,10 @@ SQL, [
             $expected = $canonical;
             unset($expected['measurement_kind']);
 
-            return $legacy === $expected
+            return hash_equals(
+                DerivedQuantityIdentity::canonicalJson($legacy),
+                DerivedQuantityIdentity::canonicalJson($expected),
+            )
                 && is_string($canonical['measurement_kind'] ?? null)
                 && array_key_exists('value', $stored)
                 && array_key_exists('unit', $stored);
