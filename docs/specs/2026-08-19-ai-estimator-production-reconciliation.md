@@ -56,13 +56,16 @@ durable physical response
 - rooms и dimensions идентифицируются entity + fact type + typed value + unit;
 - visual inventory идентифицируется room/location + object family + object type, а не полным текстом observer;
 - три описания одной мойки/санитарного объекта объединяются, lineage всех observers сохраняется;
-- разные комнаты и разные физические объекты не объединяются только из-за одинаковой подписи.
+- разные комнаты и разные физические объекты не объединяются только из-за одинаковой подписи;
+- ordinal/instance из source entity key является частью identity физического объекта: три observer-варианта `toilet_1` объединяются, но `toilet_1` и `toilet_2` остаются разными объектами.
 
 ### Entity persistence
 
 - accepted canonical entity имеет fact‑independent immutable attributes;
 - измерение, площадь, подпись и другие observation values хранятся в Fact/DocumentFact, а не меняют immutable entity payload;
 - несколько facts одной room/entity объединяются до `saveSourceModel` и не могут породить exact identity collision;
+- канонический identity проверяет legacy-варианты разделителей только в точном organization/project/session/source-version scope и переиспользует единственный существующий ключ; несколько совпавших aliases завершаются fail-closed;
+- legacy fact-dependent dimension совместим только при точном совпадении measurement kind (если он сохранён), fact value и unit; это отдельно проверяется для elevation, level и dimension chain;
 - публикация одной unit атомарна: evidence, entities, facts, document facts и page output либо сохраняются вместе, либо не изменяются.
 
 ### Scope policy
@@ -88,7 +91,7 @@ durable physical response
 1. запрещает новые pre‑wire dispatch;
 2. supersede‑ит pending и pre‑wire running units с cancellation metadata;
 3. уже начатый wire может сохранить bounded durable response и usage ровно один раз, но не запускает следующую роль/unit;
-4. после исчезновения последнего pending/running unit снимает stale reconciliation marker и повторно вычисляет outcome;
+4. stop и поздняя публикация последнего post-wire unit атомарно снимают `units_finalized_source_version`, `units_reconciled_source_version` и reconcile lease/token, после чего outcome вычисляется повторно;
 5. сохраняет completed outputs и считает `ready`, `cancelled`, `needs_user_action`, `system_failed` раздельно;
 6. `document_processing_stopped` и operator‑superseded units считаются cancelled, а не AI/system failures;
 7. документ получает terminal `needs_review`, `processing_stage=completed`, progress 100 и state `partial` при наличии полезных страниц;
