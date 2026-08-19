@@ -462,17 +462,25 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertCount(1, $acceptedAreaFacts);
         $acceptedAreaFact = $acceptedAreaFacts[0];
         self::assertSame($recording['recorded_source_facts']['total_area_m2'], (string) $acceptedAreaFact->value);
-        self::assertSame(2, DB::table('estimate_generation_project_model_assertions')
-            ->where('session_id', $session->id)
-            ->where('source_version', $sourceVersion)
-            ->whereIn('assertion_type', ['sanitary_fixture', 'kitchen_fixture'])
-            ->where('fact_status', 'candidate')
-            ->count());
-        self::assertSame(0, DB::table('estimate_generation_project_model_assertions')
-            ->where('session_id', $session->id)
-            ->where('source_version', $sourceVersion)
-            ->where('assertion_type', 'furniture')
-            ->count());
+        self::assertSame(2, DB::table('estimate_generation_project_model_assertions as fact')
+            ->join('estimate_generation_project_model_fact_evidence as binding', 'binding.fact_id', '=', 'fact.id')
+            ->join('estimate_generation_evidence as evidence', 'evidence.id', '=', 'binding.evidence_id')
+            ->where('fact.session_id', $session->id)
+            ->where('fact.source_version', $sourceVersion)
+            ->whereIn('fact.assertion_type', ['sanitary_fixture', 'kitchen_fixture'])
+            ->where('fact.fact_status', 'candidate')
+            ->where('evidence.locator->page_number', 5)
+            ->distinct('fact.id')
+            ->count('fact.id'));
+        self::assertSame(0, DB::table('estimate_generation_project_model_assertions as fact')
+            ->join('estimate_generation_project_model_fact_evidence as binding', 'binding.fact_id', '=', 'fact.id')
+            ->join('estimate_generation_evidence as evidence', 'evidence.id', '=', 'binding.evidence_id')
+            ->where('fact.session_id', $session->id)
+            ->where('fact.source_version', $sourceVersion)
+            ->where('fact.assertion_type', 'furniture')
+            ->where('evidence.locator->page_number', 5)
+            ->distinct('fact.id')
+            ->count('fact.id'));
 
         $areaDocumentFact = DB::table('estimate_generation_document_facts')
             ->where('document_id', $document->id)

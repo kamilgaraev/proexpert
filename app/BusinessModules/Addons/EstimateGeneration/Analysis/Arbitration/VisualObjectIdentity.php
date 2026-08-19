@@ -61,7 +61,7 @@ final readonly class VisualObjectIdentity
 
         return match (true) {
             preg_match('/унитаз|toilet/iu', $value) === 1 => 'toilet',
-            preg_match('/(?:кухон|kitchen).*(?:мойк|раковин|sink)|(?:мойк|sink).*(?:кухон|kitchen)/iu', $value) === 1 => 'kitchen_sink',
+            preg_match('/(?:кухон|kitchen).*(?:мойк|раковин|sink)|(?:мойк|раковин|sink).*(?:кухон|kitchen)/iu', $value) === 1 => 'kitchen_sink',
             preg_match('/умываль|раковин|washbasin/iu', $value) === 1 => 'washbasin',
             preg_match('/мойк|sink/iu', $value) === 1 => 'kitchen_sink',
             preg_match('/ванн|bath/iu', $value) === 1 => 'bath',

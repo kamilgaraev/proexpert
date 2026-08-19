@@ -78,7 +78,7 @@ final class CanonicalFactReducerTest extends TestCase
         $descriptions = [
             ['literal:1', 'observer_literal', 'room.kitchen.sink', 'Visible kitchen counter with kitchen sink', 'literal:sink', 0.91],
             ['construction:1', 'observer_construction', 'room_kitchen_sink', 'Кухонная мойка в рабочей зоне', 'construction:sink', 0.96],
-            ['risk:1', 'observer_risk', 'room:kitchen:sink', 'Кухонное оборудование и мойка', 'risk:sink', 0.88],
+            ['risk:1', 'observer_risk', 'room:kitchen:sink', 'Раковина кухни', 'risk:sink', 0.88],
         ];
         $claims = [];
         $decisions = [];
