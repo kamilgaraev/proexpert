@@ -67,6 +67,37 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
 
     private array $projection = [];
 
+    public function resolveEntityStableKey(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $entityType,
+        string $canonicalStableKey,
+        array $legacyStableKeys,
+    ): string {
+        $candidates = array_values(array_unique([$canonicalStableKey, ...$legacyStableKeys]));
+        $matches = array_values(array_filter(
+            $this->entities,
+            static fn (Entity $entity): bool => $entity->organizationId === $organizationId
+                && $entity->projectId === $projectId
+                && $entity->sessionId === $sessionId
+                && $entity->sourceVersion === $sourceVersion
+                && in_array($entity->stableKey, $candidates, true),
+        ));
+        if (count($matches) > 1) {
+            throw new InvalidArgumentException('project_model_entity_identity_alias_collision');
+        }
+        if ($matches === []) {
+            return $canonicalStableKey;
+        }
+        if ($matches[0]->type !== $entityType) {
+            throw new InvalidArgumentException('project_model_entity_exact_identity_collision');
+        }
+
+        return $matches[0]->stableKey;
+    }
+
     public function saveSourceModel(array $entities, array $facts, array $evidence, array $conflicts = []): void
     {
         $modelRecords = [...$entities, ...$facts, ...$conflicts];

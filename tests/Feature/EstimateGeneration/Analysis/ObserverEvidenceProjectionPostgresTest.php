@@ -157,4 +157,55 @@ final class ObserverEvidenceProjectionPostgresTest extends TestCase
             ->where('organization_id', $scope[0])->where('project_id', $scope[1])
             ->where('session_id', $scope[2])->count());
     }
+
+    #[Test]
+    public function visual_confirmation_candidate_is_current_while_an_ordinary_candidate_remains_non_current(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
+
+        DB::beginTransaction();
+        try {
+            $organization = Organization::factory()->create();
+            $project = Project::factory()->for($organization)->create();
+            $session = EstimateGenerationSession::query()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'user_id' => User::factory()->create()->id,
+                'status' => 'draft',
+                'processing_stage' => 'draft',
+                'processing_progress' => 20,
+                'input_payload' => [],
+            ]);
+            $sourceVersion = 'sha256:'.str_repeat('7', 64);
+            $scope = [(int) $organization->id, (int) $project->id, (int) $session->id, $sourceVersion];
+            $locator = ['page' => 5, 'unit_type' => 'pdf_page', 'unit_index' => 5, 'source_version' => $sourceVersion, 'explicit' => true];
+            $models = new EloquentProjectModelRepository(app('db'));
+            $writer = new ProjectModelEvidenceWriter($models, new EloquentEvidenceRepository(DB::connection()));
+            $writer->writeIndependentObservations([new ObservationClaim(
+                'construction:toilet', 'observer_construction', 'room.bathroom.toilet', 'sanitary_fixture',
+                ['type' => 'string', 'data' => 'Унитаз'], null, 'construction:toilet', true,
+                $scope[0], $scope[1], $scope[2], $scope[3], $locator,
+            )], 173, 5);
+            $writer->writeIndependentObservations([new ObservationClaim(
+                'construction:material', 'observer_construction', 'material.wall', 'material',
+                ['type' => 'string', 'data' => 'Не подтверждённый материал'], null, 'construction:material', true,
+                $scope[0], $scope[1], $scope[2], $scope[3], $locator,
+            )], 173, 5);
+
+            $facts = $models->currentFacts($scope[0], $scope[1], $scope[2]);
+
+            self::assertCount(1, $facts);
+            self::assertSame('sanitary_fixture', $facts[0]->type);
+            self::assertSame('candidate', $facts[0]->status);
+            self::assertSame(1, DB::table('estimate_generation_project_model_fact_projections')
+                ->where('organization_id', $scope[0])
+                ->where('project_id', $scope[1])
+                ->where('session_id', $scope[2])
+                ->where('is_current', true)
+                ->count());
+        } finally {
+            DB::rollBack();
+        }
+    }
 }

@@ -16,6 +16,37 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
 {
     public function __construct(private DatabaseManager $database) {}
 
+    public function resolveEntityStableKey(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $entityType,
+        string $canonicalStableKey,
+        array $legacyStableKeys,
+    ): string {
+        $candidates = array_values(array_unique([$canonicalStableKey, ...$legacyStableKeys]));
+        $matches = $this->database->table('estimate_generation_project_model_entities')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('source_version', $sourceVersion)
+            ->whereIn('stable_key', $candidates)
+            ->get(['stable_key', 'entity_kind']);
+        if ($matches->count() > 1) {
+            throw new InvalidArgumentException('project_model_entity_identity_alias_collision');
+        }
+        $match = $matches->first();
+        if ($match === null) {
+            return $canonicalStableKey;
+        }
+        if ((string) $match->entity_kind !== $entityType) {
+            throw new InvalidArgumentException('project_model_entity_exact_identity_collision');
+        }
+
+        return (string) $match->stable_key;
+    }
+
     public function saveSourceModel(array $entities, array $facts, array $evidence, array $conflicts = []): void
     {
         $modelRecords = [...$entities, ...$facts, ...$conflicts];
@@ -58,7 +89,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             if ($scope !== null) {
                 $this->lockUnderstandingScope($scope->organizationId, $scope->projectId, $scope->sessionId);
             }
-            $this->appendEntities($entities);
+            $this->appendEntities($entities, $facts);
             $this->appendFacts($facts);
             $this->appendConflicts($conflicts);
         }, 3);
@@ -355,11 +386,17 @@ SQL, [
         ];
     }
 
-    private function appendEntities(array $entities, int $chunkSize = 500): void
+    private function appendEntities(array $entities, array $facts = [], int $chunkSize = 500): void
     {
         $this->assertChunkSize($chunkSize);
+        $factsByEntity = [];
+        foreach ($facts as $fact) {
+            if ($fact instanceof Fact) {
+                $factsByEntity[$fact->entityId][] = $fact;
+            }
+        }
         foreach (array_chunk($entities, $chunkSize) as $chunk) {
-            $this->database->connection()->transaction(function () use ($chunk): void {
+            $this->database->connection()->transaction(function () use ($chunk, $factsByEntity): void {
                 foreach ($chunk as $entity) {
                     if (! $entity instanceof Entity) {
                         throw new InvalidArgumentException('Project model entity batch is invalid.');
@@ -397,15 +434,89 @@ SQL, [
                         $comparisonPayload['properties'] = [];
                     }
                     if ($stored === null || (string) $stored->entity_kind !== $entity->type
-                        || ! hash_equals(
+                        || (! hash_equals(
                             DerivedQuantityIdentity::canonicalJson($comparisonPayload),
                             DerivedQuantityIdentity::canonicalJson($this->decodedJson($stored->payload)),
-                        )) {
+                        ) && ! $this->isCompatibleLegacyEntityPayload(
+                            $entity->type,
+                            $this->decodedJson($stored->payload),
+                            $comparisonPayload,
+                            $factsByEntity[$entity->stableKey] ?? [],
+                        ))) {
                         throw new InvalidArgumentException('project_model_entity_exact_identity_collision');
                     }
                 }
             }, 3);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $stored
+     * @param  array<string, mixed>  $canonical
+     * @param  list<Fact>  $facts
+     */
+    private function isCompatibleLegacyEntityPayload(
+        string $type,
+        array $stored,
+        array $canonical,
+        array $facts,
+    ): bool {
+        if (($stored['kind'] ?? null) !== $type
+            || ($stored['key'] ?? null) !== ($canonical['key'] ?? null)
+            || ($canonical['kind'] ?? null) !== $type) {
+            return false;
+        }
+
+        if ($type === 'room') {
+            $legacy = $stored;
+            unset($legacy['area_m2']);
+            $expected = $canonical;
+            unset($expected['semantic_type']);
+
+            return hash_equals(
+                DerivedQuantityIdentity::canonicalJson($legacy),
+                DerivedQuantityIdentity::canonicalJson($expected),
+            ) && ($canonical['semantic_type'] ?? null) === 'room';
+        }
+
+        if ($type === 'dimension') {
+            $measurementKind = $canonical['measurement_kind'] ?? null;
+            if (! is_string($measurementKind)
+                || ! array_key_exists('value', $stored)
+                || ! array_key_exists('unit', $stored)) {
+                return false;
+            }
+            $matchingFact = false;
+            foreach ($facts as $fact) {
+                if ($fact instanceof Fact
+                    && $fact->type === $measurementKind
+                    && hash_equals(
+                        DerivedQuantityIdentity::canonicalJson([$stored['value'], $stored['unit']]),
+                        DerivedQuantityIdentity::canonicalJson([$fact->value, $fact->unit]),
+                    )) {
+                    $matchingFact = true;
+                    break;
+                }
+            }
+            if (! $matchingFact) {
+                return false;
+            }
+            $legacy = $stored;
+            unset($legacy['value'], $legacy['unit']);
+            $expected = $canonical;
+            if (! array_key_exists('measurement_kind', $legacy)) {
+                unset($expected['measurement_kind']);
+            } elseif (($legacy['measurement_kind'] ?? null) !== $measurementKind) {
+                return false;
+            }
+
+            return hash_equals(
+                DerivedQuantityIdentity::canonicalJson($legacy),
+                DerivedQuantityIdentity::canonicalJson($expected),
+            );
+        }
+
+        return false;
     }
 
     private function appendFacts(array $facts, int $chunkSize = 500): void
@@ -460,12 +571,27 @@ SQL, [
                             'created_at' => now(),
                         ]);
                     }
-                    if (in_array($fact->status, ['confirmed', 'conflicted', 'unresolved'], true)) {
+                    if (in_array($fact->status, ['confirmed', 'conflicted', 'unresolved'], true)
+                        || $this->isConfirmationCandidate($fact, $entity)) {
                         $this->projectCurrentFact($fact, $projectionScopeId, (int) $entity->id);
                     }
                 }
             }, 3);
         }
+    }
+
+    private function isConfirmationCandidate(Fact $fact, object $entity): bool
+    {
+        if ($fact->status !== 'candidate' || (string) $entity->entity_kind !== 'equipment') {
+            return false;
+        }
+        $payload = $this->decodedJson($entity->payload);
+        $properties = is_array($payload['properties'] ?? null) ? $payload['properties'] : [];
+
+        return ($properties['estimate_scope'] ?? null) === 'requires_confirmation'
+            && in_array($properties['visual_inventory_category'] ?? null, [
+                'sanitary_fixture', 'kitchen_fixture', 'unknown_fixture',
+            ], true);
     }
 
     private function appendConflicts(array $conflicts, int $chunkSize = 200): void
@@ -2482,7 +2608,7 @@ SQL, [
         $row = $this->database->table('estimate_generation_project_model_entities')
             ->where('organization_id', $fact->organizationId)->where('project_id', $fact->projectId)
             ->where('session_id', $fact->sessionId)->where('source_version', $fact->sourceVersion)
-            ->where('stable_key', $fact->entityId)->first(['id']);
+            ->where('stable_key', $fact->entityId)->first(['id', 'entity_kind', 'payload']);
         if ($row === null) {
             throw new InvalidArgumentException('Project model fact entity is outside the requested scope.');
         }

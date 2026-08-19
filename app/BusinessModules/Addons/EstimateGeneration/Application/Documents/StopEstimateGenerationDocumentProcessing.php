@@ -150,6 +150,10 @@ final readonly class StopEstimateGenerationDocumentProcessing
                 'processing_control_attempt_id' => $attemptId,
                 'processing_control_reason' => 'operator_stop',
                 'processing_control_at' => $now,
+                'units_finalized_source_version' => null,
+                'units_reconciled_source_version' => null,
+                'units_reconcile_claim_token' => null,
+                'units_reconcile_lease_expires_at' => null,
                 'meta' => [
                     ...$meta,
                     'explicit_document_retry' => $explicitRetry,

@@ -202,6 +202,15 @@ final readonly class VisionAnalysisData
         if ($scales === [] && ! in_array('scale_missing', $warnings, true)) {
             $warnings[] = 'scale_missing';
         }
+        if ($scales !== [] && in_array('scale_missing', $warnings, true)) {
+            $warningIndex = array_search('scale_missing', $data['warnings'], true);
+            $warnings = array_values(array_diff($warnings, ['scale_missing']));
+            $warningQuarantine[] = [
+                'section' => 'warnings',
+                'index' => is_int($warningIndex) ? $warningIndex : 0,
+                'reason' => 'scale_missing_warning_mismatch',
+            ];
+        }
         if (self::hasMaterialScaleConflict($scales) && ! in_array('scale_conflict', $warnings, true)) {
             $warnings[] = 'scale_conflict';
         }

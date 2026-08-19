@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Eloquent
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
@@ -849,6 +850,165 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
         }
     }
 
+    #[Test]
+    public function repeated_room_facts_keep_one_fact_independent_entity_without_identity_collision(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, $writer, $store] = $this->publicationFixture('d', 9);
+            $now = now()->toDateTimeImmutable();
+            $claimed = $store->claim(
+                (int) $unit->id,
+                $sourceVersion,
+                $now,
+                $now->modify('+120 seconds'),
+                ProcessDocumentUnit::MAX_ATTEMPTS,
+            );
+            $context = $store->executionContext($claimed);
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $context);
+            $area = $this->numericObservation($context, 'room.kitchen', '22.10');
+            $length = $this->numericObservation($context, 'room.kitchen', '5.50', 'length', 'm');
+
+            $writer->writeArbitration([$area], [$this->acceptedDecision($area)], $context->documentId, 9);
+            $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 9);
+
+            self::assertSame(1, DB::table('estimate_generation_project_model_entities')
+                ->where('session_id', $context->sessionId)
+                ->where('source_version', $sourceVersion)
+                ->count());
+            self::assertSame(2, DB::table('estimate_generation_project_model_assertions')
+                ->where('session_id', $context->sessionId)
+                ->where('source_version', $sourceVersion)
+                ->count());
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function replay_reuses_a_legacy_fact_dependent_room_entity_without_identity_collision(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, $writer, $store] = $this->publicationFixture('e', 9);
+            $now = now()->toDateTimeImmutable();
+            $claimed = $store->claim(
+                (int) $unit->id,
+                $sourceVersion,
+                $now,
+                $now->modify('+120 seconds'),
+                ProcessDocumentUnit::MAX_ATTEMPTS,
+            );
+            $context = $store->executionContext($claimed);
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $context);
+
+            $entityId = 'entity:'.hash('sha256', implode('|', ['room', 'room.kitchen']));
+            (new EloquentProjectModelRepository(app('db')))->saveSourceModel([
+                new Entity(
+                    $entityId,
+                    $context->organizationId,
+                    $context->projectId,
+                    $context->sessionId,
+                    $sourceVersion,
+                    'room',
+                    $entityId,
+                    ['area_m2' => '22.10'],
+                ),
+            ], [], []);
+
+            $length = $this->numericObservation($context, 'room.kitchen', '5.50', 'length', 'm');
+            $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 9);
+
+            $payload = DB::table('estimate_generation_project_model_entities')
+                ->where('session_id', $context->sessionId)
+                ->where('source_version', $sourceVersion)
+                ->where('stable_key', $entityId)
+                ->value('payload');
+            self::assertSame([
+                'key' => $entityId,
+                'kind' => 'room',
+                'area_m2' => '22.10',
+            ], json_decode((string) $payload, true, 512, JSON_THROW_ON_ERROR));
+            self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
+                ->where('session_id', $context->sessionId)
+                ->where('source_version', $sourceVersion)
+                ->count());
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function separator_variants_reuse_the_exact_scoped_legacy_entity_identity(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, $writer, $store] = $this->publicationFixture('f', 11);
+            $now = now()->toDateTimeImmutable();
+            $claimed = $store->claim((int) $unit->id, $sourceVersion, $now, $now->modify('+120 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
+            $context = $store->executionContext($claimed);
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $context);
+            $legacyIdentity = 'room:kitchen';
+            $legacyEntityId = 'entity:'.hash('sha256', implode('|', ['room', $legacyIdentity]));
+            (new EloquentProjectModelRepository(app('db')))->saveSourceModel([
+                new Entity($legacyEntityId, $context->organizationId, $context->projectId, $context->sessionId, $sourceVersion, 'room', $legacyEntityId, ['area_m2' => '22.10']),
+            ], [], []);
+
+            foreach (['room:kitchen', 'room.kitchen', 'room_kitchen', 'room-kitchen'] as $separatorVariant) {
+                $length = $this->numericObservation($context, $separatorVariant, '5.50', 'length', 'm');
+                $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 11);
+            }
+
+            self::assertSame(1, DB::table('estimate_generation_project_model_entities')
+                ->where('session_id', $context->sessionId)->where('source_version', $sourceVersion)->count());
+            self::assertSame($legacyEntityId, DB::table('estimate_generation_project_model_entities')
+                ->where('session_id', $context->sessionId)->where('source_version', $sourceVersion)->value('stable_key'));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function legacy_dimensions_replay_only_with_matching_kind_value_and_unit(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, $writer, $store] = $this->publicationFixture('1', 11);
+            $now = now()->toDateTimeImmutable();
+            $claimed = $store->claim((int) $unit->id, $sourceVersion, $now, $now->modify('+120 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
+            $context = $store->executionContext($claimed);
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $context);
+
+            foreach ([
+                ['building.elevation.zero', 'elevation', '-0.150', 'm', true],
+                ['building.level.one', 'level', '3.000', 'm', true],
+                ['building.dimension.chain', 'dimension_chain', '11100', 'm', false],
+            ] as [$entityKey, $factType, $value, $unitName, $storesKind]) {
+                $entityId = 'entity:'.hash('sha256', implode('|', ['dimension', $entityKey]));
+                $attributes = ['value' => $value, 'unit' => $unitName];
+                if ($storesKind) {
+                    $attributes['measurement_kind'] = $factType;
+                }
+                (new EloquentProjectModelRepository(app('db')))->saveSourceModel([
+                    new Entity($entityId, $context->organizationId, $context->projectId, $context->sessionId, $sourceVersion, 'dimension', $entityId, $attributes),
+                ], [], []);
+                $observation = $this->numericObservation($context, $entityKey, $value, $factType, $unitName);
+                $writer->writeArbitration([$observation], [$this->acceptedDecision($observation)], $context->documentId, 11);
+            }
+
+            self::assertSame(3, DB::table('estimate_generation_project_model_entities')
+                ->where('session_id', $context->sessionId)->where('source_version', $sourceVersion)->count());
+            self::assertSame(3, DB::table('estimate_generation_project_model_assertions')
+                ->where('session_id', $context->sessionId)->where('source_version', $sourceVersion)->count());
+        } finally {
+            DB::rollBack();
+        }
+    }
+
     /** @return array{EstimateGenerationProcessingUnit, string, ProjectModelEvidenceWriter, EloquentDocumentProcessingUnitStore} */
     private function publicationFixture(string $hashCharacter, int $pageNumber): array
     {
@@ -948,7 +1108,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
         string $factType = 'area',
         string $unit = 'm2',
     ): ObservationClaim {
-        $id = 'literal:area:'.$entityKey;
+        $id = 'literal:'.$factType.':'.$entityKey;
 
         return new ObservationClaim(
             $id,
