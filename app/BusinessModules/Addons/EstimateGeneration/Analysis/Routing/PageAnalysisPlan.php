@@ -21,8 +21,10 @@ final readonly class PageAnalysisPlan
     public static function fromDecision(
         PageAnalysisRoutingDecision $decision,
         bool $semanticDisagreement = false,
+        ?PageAnalysisServerSignals $serverSignals = null,
     ): self {
-        $route = $decision->effectiveRoute;
+        $serverSignals ??= PageAnalysisServerSignals::none();
+        $route = (new PageAnalysisConsistencyPolicy)->route($decision, $serverSignals);
         $observers = match ($route) {
             PageAnalysisRoute::SimpleContext => [ObserverProfile::Literal],
             PageAnalysisRoute::StructuredTextual, PageAnalysisRoute::DenseAmbiguous => ObserverProfile::cases(),
@@ -34,6 +36,12 @@ final readonly class PageAnalysisPlan
         }
         if ($decision->failOpenEscalated) {
             $reasons[] = 'fail_open_unknown_or_low_confidence';
+        }
+        if ($route !== $decision->effectiveRoute) {
+            $reasons[] = 'server_consistency_hard_floor';
+        }
+        if ($serverSignals->meaningfulGeometryOrEngineering) {
+            $reasons[] = 'server_meaningful_geometry_or_engineering';
         }
 
         return new self(

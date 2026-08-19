@@ -113,3 +113,41 @@ Document DTO для visual inventory содержит bounded поля: canonica
 ## Release и canary
 
 После targeted, модульных, PostgreSQL, offline PDF, php-l, Pint и Larastan проверок backend выпускается штатным PR/deploy. Admin выпускается только если меняется его контракт/код. Canary read-only: exact release SHA, `/ready`, protected endpoint `401`, логи/GlitchTip и отсутствие новых ошибок. Production AI smoke, retry/resume, миграции, cache clear и ручные записи запрещены.
+
+## Адверсариальные инварианты маршрутизации
+
+- Самоклассификация literal observer является входным сигналом, но не может понизить серверный минимум анализа.
+- `material_risk=high`, `information_density=high`, противоречие между типом страницы и риском/плотностью, содержательные geometry elements (`room`, `wall`, `opening`, `dimension`, `axis`, `engineering_element`) либо факты геометрии/инженерии повышают маршрут до `dense_ambiguous`.
+- Повышенный маршрут означает три независимых observer и arbiter. Уже выполненный literal observer переиспользуется; лимиты provider calls и backpressure не расширяются сверх существующего dense route.
+- Только согласованная `title`/`divider`/`empty`/`cover` страница с low risk, low density и без содержательных geometry/engineering фактов остаётся `simple_context` с одним literal observer.
+- Причина server-owned повышения публикуется в routing reasons и воспроизводится одинаково при durable replay.
+
+## Адверсариальные инварианты visual identity и merge
+
+- Известные RU/EN room aliases канонизируются bounded-словарём до identity: `kitchen`/`кухня`, `bathroom`/`санузел`/`ванная`/`туалет` и распространённые сокращения чертежей.
+- Известные object aliases канонизируются до одного object type. Неизвестные room/object токены не угадываются: они детерминированно нормализуются с сохранением room scope.
+- Разделители `.`, `_`, `-`, `:` эквивалентны. Room, object type и bounded suffix ordinal/instance, включая числовые с ведущим нулём и буквенные `left`/`right`, входят в identity; разные комнаты, типы и instances не схлопываются.
+- Projector сначала собирает валидированные candidates по canonical identity, затем сворачивает каждую группу. Ни key, ни label, ни quantity, ни primary claim/evidence не наследуются от первого элемента.
+- Reduce коммутативен, ассоциативен и детерминирован: все перестановки observers, claims, arbitration decisions и evidence дают canonical-equivalent byte payload.
+- Canonical key выводится из identity, label — из bounded русской таблицы object types. Для unknown используется детерминированная безопасная подпись без технического entity key.
+- Quantity точна только при согласованности всех наблюдений группы: разные явные числа либо смесь явного числа и наблюдения без количества дают `quantity=null`, `quantity_uncertain=true` и требуют подтверждения.
+- Scope сворачивается по самому ограничительному значению. Для presentation primary arbitration выбирается в порядке `accepted` → `candidate` → `conditional` → `unresolved`, поэтому minority не представляет принятую группу. Supporting claim IDs, evidence refs и locators объединяются, дедуплицируются и сортируются; primary claim выбирается детерминированно внутри лучшего статуса, primary evidence — минимальным canonical locator независимо от входного порядка.
+- Furniture с conditional note остаётся excluded downstream. Санитарные приборы и кухонная мойка остаются `requires_confirmation` и доступны только в «Вопросах AI».
+
+## Политика безопасных top-level extensions
+
+- Обязательные поля, schema version, типы, evidence/provenance, model/usage и tenant/project/session/document/page/source boundaries остаются fail-closed.
+- Неизвестные top-level поля допускаются только под bounded диагностическими именами `diagnostic_*` и `extension_*`; их значения локально игнорируются и фиксируются как audit quarantine без включения в расчётные данные.
+- Любое неизвестное поле, содержащее зарезервированные security/scope/source/model/usage семантические токены, включая snake_case и camelCase (`diagnostic_project_id`, `organizationId`, `sourceVersion`, `authorization`), а также вложенная попытка передать такой ключ завершается fail-closed.
+- Extension policy ограничивает количество полей, длину имени, суммарные JSON bytes и глубину. Превышение любого лимита fail-closed и не уничтожает ранее сохранённый canonical response.
+- Malformed известное поле проходит существующую typed quarantine либо fail-closed политику по его риску; extension policy не маскирует ошибки известных полей.
+- Provider response с безопасным extension сохраняет полезные evidence/elements/facts. Durable replay использует сохранённый ответ, не вызывает provider и не меняет usage/cost/quota/draft hash.
+
+## Новые доказательные RED/GREEN контрпримеры
+
+- contradictory title: `simple_context + high density + high risk` обязан дать dense route, 3 observers и arbiter; genuine title без содержательных geometry/engineering facts остаётся 1-call route;
+- RU/EN room aliases объединяются, но two rooms и numeric/zero-padded/alphabetic instances остаются отдельными identities;
+- все перестановки трёх observers, их claims/evidence и arbitration decisions дают одинаковый canonical inventory; quantity conflict/omission не становится точным числом;
+- minority evidence сохраняется в lineage, не повышает scope и не становится primary при наличии accepted/candidate support;
+- `diagnostic_note` локально quarantined без потери sections/facts/elements; reserved/malicious extension fail-closed;
+- PostgreSQL replay подтверждает 0 provider calls и неизменность usage/cost/quota; full PDF gate подтверждает 22/22 terminal outputs и предметные инварианты страниц 5 и 11.

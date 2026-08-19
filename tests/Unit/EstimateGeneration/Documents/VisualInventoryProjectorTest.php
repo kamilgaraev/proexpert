@@ -11,6 +11,62 @@ use PHPUnit\Framework\TestCase;
 final class VisualInventoryProjectorTest extends TestCase
 {
     #[Test]
+    public function every_observer_claim_evidence_and_decision_permutation_has_identical_canonical_bytes(): void
+    {
+        $observers = [
+            'observer_literal' => $this->observer('observer_literal', [
+                $this->claim('room.kitchen.sink', 'kitchen_fixture', 'Kitchen sink 2', 'evidence:kitchen'),
+                $this->claim('room-kitchen-sink', 'kitchen_fixture', 'Visible sink', 'evidence:kitchen'),
+            ]),
+            'observer_construction' => $this->observer('observer_construction', [
+                $this->claim('room_кухня_мойка', 'kitchen_fixture', 'Кухонная мойка', 'evidence:kitchen'),
+                $this->claim('room.кухня.мойка', 'kitchen_fixture', 'Мойка в рабочей зоне', 'evidence:kitchen'),
+            ]),
+            'observer_risk' => $this->observer('observer_risk', [
+                $this->claim('room-kitchen-sink', 'kitchen_fixture', 'Sink without specification', 'evidence:kitchen'),
+                $this->claim('room:kitchen:sink', 'kitchen_fixture', 'Kitchen fixture', 'evidence:kitchen'),
+            ]),
+        ];
+        $decisions = [
+            ['claim_id' => 'literal:1', 'status' => 'conditional', 'reason_code' => 'minority_evidence_preserved', 'supporting_claim_ids' => ['risk:1', 'literal:1'], 'evidence_refs' => ['risk:evidence:kitchen', 'literal:evidence:kitchen']],
+            ['claim_id' => 'construction:1', 'status' => 'candidate', 'reason_code' => 'fixture_requires_specification', 'supporting_claim_ids' => ['construction:1', 'literal:1'], 'evidence_refs' => ['construction:evidence:kitchen', 'literal:evidence:kitchen']],
+        ];
+
+        $encoded = [];
+        foreach ($this->permutations(array_keys($observers)) as $permutationIndex => $roles) {
+            $ordered = [];
+            foreach ($roles as $role) {
+                $observer = $observers[$role];
+                if ($permutationIndex % 2 === 1) {
+                    $observer['claims'] = array_reverse($observer['claims']);
+                    $observer['evidence'] = array_reverse($observer['evidence']);
+                }
+                $ordered[$role] = $observer;
+            }
+            $result = (new VisualInventoryProjector)->project(
+                $ordered,
+                ['decisions' => $permutationIndex % 2 === 1 ? array_reverse($decisions) : $decisions],
+                $this->scope(),
+            );
+            $encoded[] = json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+
+        self::assertCount(1, array_unique($encoded));
+        $result = json_decode($encoded[0], true, flags: JSON_THROW_ON_ERROR);
+        self::assertCount(1, $result['items']);
+        self::assertSame(['Кухонная мойка'], array_column($result['items'], 'label'));
+        self::assertNull($result['items'][0]['quantity']);
+        self::assertTrue($result['items'][0]['quantity_uncertain']);
+        self::assertSame('requires_confirmation', $result['items'][0]['scope']);
+        self::assertSame('candidate', $result['items'][0]['arbitration']['status']);
+        self::assertSame('fixture_requires_specification', $result['items'][0]['arbitration']['reason_code']);
+        self::assertSame(
+            ['construction:1', 'construction:2', 'literal:1', 'literal:2', 'risk:1', 'risk:2'],
+            $result['items'][0]['lineage']['supporting_claim_ids'],
+        );
+    }
+
+    #[Test]
     public function fixtures_and_conditional_furniture_are_kept_separate_without_losing_minority_evidence(): void
     {
         $result = (new VisualInventoryProjector)->project([
@@ -35,13 +91,21 @@ final class VisualInventoryProjectorTest extends TestCase
         ], $this->scope());
 
         self::assertCount(5, $result['items']);
-        self::assertSame(
-            ['requires_confirmation', 'excluded_by_document_note', 'requires_confirmation', 'requires_confirmation', 'excluded_by_document_note'],
-            array_column($result['items'], 'scope'),
-        );
-        self::assertSame(2, $result['items'][1]['quantity']);
-        self::assertContains('literal:1', $result['items'][2]['lineage']['supporting_claim_ids']);
-        self::assertSame('minority_evidence_preserved', $result['items'][0]['arbitration']['reason_code']);
+        self::assertSame(3, count(array_filter(
+            $result['items'],
+            static fn (array $item): bool => $item['scope'] === 'requires_confirmation',
+        )));
+        self::assertSame(2, count(array_filter(
+            $result['items'],
+            static fn (array $item): bool => $item['scope'] === 'excluded_by_document_note',
+        )));
+        $byType = [];
+        foreach ($result['items'] as $item) {
+            $byType[$item['object_type']] = $item;
+        }
+        self::assertSame(2, $byType['bed']['quantity']);
+        self::assertContains('literal:1', $byType['washbasin']['lineage']['supporting_claim_ids']);
+        self::assertSame('minority_evidence_preserved', $byType['toilet']['arbitration']['reason_code']);
         self::assertSame([], $result['quarantined_items']);
     }
 
@@ -97,6 +161,96 @@ final class VisualInventoryProjectorTest extends TestCase
         self::assertSame([], $result['quarantined_items']);
     }
 
+    #[Test]
+    public function conflicting_or_partially_observed_quantity_requires_confirmation(): void
+    {
+        $projector = new VisualInventoryProjector;
+        $conflicting = $projector->project([
+            'observer_literal' => $this->observer('observer_literal', [
+                $this->claim('room.kitchen.sink', 'kitchen_fixture', '2 kitchen sinks', 'evidence:kitchen'),
+            ]),
+            'observer_construction' => $this->observer('observer_construction', [
+                $this->claim('room.кухня.мойка', 'kitchen_fixture', '3 кухонные мойки', 'evidence:kitchen'),
+            ]),
+        ], null, $this->scope());
+        $partial = $projector->project([
+            'observer_literal' => $this->observer('observer_literal', [
+                $this->claim('room.kitchen.sink', 'kitchen_fixture', '2 kitchen sinks', 'evidence:kitchen'),
+            ]),
+            'observer_construction' => $this->observer('observer_construction', [
+                $this->claim('room.кухня.мойка', 'kitchen_fixture', 'Кухонная мойка', 'evidence:kitchen'),
+            ]),
+        ], null, $this->scope());
+
+        foreach ([$conflicting, $partial] as $result) {
+            self::assertNull($result['items'][0]['quantity']);
+            self::assertTrue($result['items'][0]['quantity_uncertain']);
+            self::assertSame('requires_confirmation', $result['items'][0]['scope']);
+        }
+    }
+
+    #[Test]
+    public function reversing_same_identity_claims_with_distinct_evidence_keeps_primary_and_canonical_bytes(): void
+    {
+        $claims = [
+            $this->claim('room.kitchen.sink', 'kitchen_fixture', 'Кухонная мойка', 'evidence:first'),
+            $this->claim('room.кухня.мойка', 'kitchen_fixture', 'Kitchen sink', 'evidence:second'),
+        ];
+        $forward = $this->observer('observer_literal', $claims);
+        $reverse = $this->observer('observer_literal', array_reverse($claims));
+        foreach ([&$forward, &$reverse] as &$observer) {
+            foreach ($observer['evidence'] as &$item) {
+                $item['locator']['processing_unit_id'] = $item['key'] === 'evidence:first' ? 10 : 20;
+            }
+        }
+
+        $projector = new VisualInventoryProjector;
+        $forwardResult = $projector->project(['observer_literal' => $forward], null, $this->scope());
+        $reverseResult = $projector->project(['observer_literal' => $reverse], null, $this->scope());
+
+        self::assertSame(
+            json_encode($forwardResult, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            json_encode($reverseResult, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        );
+        self::assertSame(10, $forwardResult['items'][0]['evidence_locator']['processing_unit_id']);
+    }
+
+    #[Test]
+    public function accepted_support_is_primary_and_minority_cannot_represent_the_group(): void
+    {
+        $result = (new VisualInventoryProjector)->project([
+            'observer_literal' => $this->observer('observer_literal', [
+                $this->claim('room.kitchen.sink', 'kitchen_fixture', 'Кухонная мойка', 'evidence:kitchen'),
+            ]),
+            'observer_construction' => $this->observer('observer_construction', [
+                $this->claim('room.кухня.мойка', 'kitchen_fixture', 'Kitchen sink', 'evidence:kitchen'),
+            ]),
+        ], ['decisions' => [
+            ['claim_id' => 'literal:1', 'status' => 'accepted', 'reason_code' => 'accepted_fixture'],
+            ['claim_id' => 'construction:1', 'status' => 'conditional', 'reason_code' => 'minority_evidence_preserved'],
+        ]], $this->scope());
+
+        self::assertSame('accepted', $result['items'][0]['arbitration']['status']);
+        self::assertSame('accepted_fixture', $result['items'][0]['arbitration']['reason_code']);
+        self::assertSame('literal:1', $result['items'][0]['lineage']['claim_id']);
+    }
+
+    #[Test]
+    public function same_object_type_in_two_rooms_or_two_instances_stays_separate(): void
+    {
+        $result = (new VisualInventoryProjector)->project([
+            'observer_literal' => $this->observer('observer_literal', [
+                $this->claim('room.bathroom.toilet.1', 'sanitary_fixture', 'Унитаз', 'evidence:bathroom'),
+                $this->claim('room.bathroom.toilet.2', 'sanitary_fixture', 'Унитаз', 'evidence:bathroom'),
+                $this->claim('room.guest_bathroom.toilet.1', 'sanitary_fixture', 'Унитаз', 'evidence:bathroom'),
+            ]),
+        ], null, $this->scope());
+
+        self::assertCount(3, $result['items']);
+        self::assertCount(3, array_unique(array_column($result['items'], 'key')));
+        self::assertSame(['Унитаз', 'Унитаз', 'Унитаз'], array_column($result['items'], 'label'));
+    }
+
     private function observer(string $role, array $claims): array
     {
         $evidence = [];
@@ -132,5 +286,23 @@ final class VisualInventoryProjectorTest extends TestCase
     private function scope(): array
     {
         return ['document_id' => 904, 'page_id' => 905, 'page_number' => 5, 'source_version' => 'sha256:'.str_repeat('a', 64)];
+    }
+
+    /** @param list<string> $items @return list<list<string>> */
+    private function permutations(array $items): array
+    {
+        if (count($items) <= 1) {
+            return [$items];
+        }
+        $result = [];
+        foreach ($items as $index => $item) {
+            $remaining = $items;
+            array_splice($remaining, $index, 1);
+            foreach ($this->permutations(array_values($remaining)) as $permutation) {
+                $result[] = [$item, ...$permutation];
+            }
+        }
+
+        return $result;
     }
 }

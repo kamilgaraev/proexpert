@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverPro
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\ObserverDisagreementDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisPlan;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoutingDecision;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisServerSignals;
 use App\BusinessModules\Addons\EstimateGeneration\Documents\Cad\CadStructureExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
@@ -377,7 +378,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         );
         $context->renewLeaseOrFail();
         $observerResults = $this->independentObservers->run($input, [ObserverProfile::Literal]);
-        $literalRouting = $observerResults['observer_literal']->payload['observation']['analysis_routing'] ?? null;
+        $literalObservation = $observerResults['observer_literal']->payload['observation'] ?? null;
+        $literalRouting = is_array($literalObservation) ? ($literalObservation['analysis_routing'] ?? null) : null;
         try {
             $routing = is_array($literalRouting)
                 ? PageAnalysisRoutingDecision::fromProviderArray($literalRouting)
@@ -385,7 +387,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         } catch (InvalidArgumentException) {
             $routing = PageAnalysisRoutingDecision::failOpen('literal_routing_invalid');
         }
-        $plan = PageAnalysisPlan::fromDecision($routing);
+        $serverSignals = PageAnalysisServerSignals::fromLiteralObservation(
+            is_array($literalObservation) ? $literalObservation : [],
+        );
+        $plan = PageAnalysisPlan::fromDecision($routing, serverSignals: $serverSignals);
         if (($context->locator['analysis_escalation_reason'] ?? null) === 'cross_document_reference') {
             $plan = $plan->escalateForCrossDocumentReference();
         }
@@ -430,6 +435,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $plan = PageAnalysisPlan::fromDecision(
                 $routing,
                 $this->observerDisagreement->hasMaterialDisagreement($observerResults),
+                $serverSignals,
             );
             $this->assertAnalysisPlanBudget($plan);
         }
