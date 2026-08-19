@@ -166,6 +166,9 @@ final readonly class VisionAnalysisData
             self::CURRENT_SCHEMA_VERSION => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'visual_attributes'],
             default => ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings'],
         };
+        $extensionResult = (new VisionTopLevelExtensionPolicy)->sanitize($data, $expectedKeys);
+        $data = $extensionResult['data'];
+        $extensionQuarantine = $extensionResult['quarantine'];
         if (! self::hasExactKeys($data, $expectedKeys)
             || ! in_array($schemaVersion, [self::SCHEMA_VERSION, self::CURRENT_SCHEMA_VERSION, self::PROJECT_SHEET_SCHEMA_VERSION, self::ADAPTIVE_ROUTING_SCHEMA_VERSION], true)
             || ! is_string($data['sheet_type'])
@@ -263,6 +266,7 @@ final readonly class VisionAnalysisData
                 ...$visualQuarantine,
                 ...$semanticQuarantine,
                 ...$routingQuarantine,
+                ...$extensionQuarantine,
             ],
             self::boundedRawObserverFacts($data['project_sheet_analysis']['facts'] ?? []),
             $routing,

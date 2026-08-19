@@ -32,7 +32,7 @@ final class VisualInventoryProjector
     {
         $decisions = $this->decisions($arbitration);
         $conditional = $this->hasConditionalNote($observers, $scope);
-        $items = [];
+        $groups = [];
         $quarantined = [];
 
         foreach ($observers as $role => $observer) {
@@ -65,13 +65,13 @@ final class VisualInventoryProjector
                 $decision = $decisions[$claimId] ?? null;
                 $category = $claim['factType'];
                 $scopeValue = $this->estimateScope($category, $value, $conditional);
-                $item = [
-                    'key' => mb_substr($claim['entityKey'], 0, 120),
-                    'label' => mb_substr(trim($value), 0, 160),
+                $objectType = $this->identity->objectType($value, $claim['entityKey']);
+                $candidate = [
+                    'source_key' => mb_substr($claim['entityKey'], 0, 120),
+                    'source_label' => mb_substr(trim($value), 0, 160),
                     'category' => $category,
-                    'object_type' => $this->identity->objectType($value, $claim['entityKey']),
+                    'object_type' => $objectType,
                     'quantity' => $this->quantity($value),
-                    'quantity_uncertain' => $this->quantity($value) === null,
                     'room_key' => $this->identity->roomKey($claim['entityKey']),
                     'scope' => $scopeValue,
                     'evidence_locator' => $evidence[$evidenceRef],
@@ -81,25 +81,38 @@ final class VisualInventoryProjector
                             ? $decision['reason_code']
                             : 'minority_evidence_preserved',
                     ],
-                    'lineage' => [
-                        'claim_id' => $claimId,
-                        'supporting_claim_ids' => array_values(array_filter(
-                            is_array($decision['supporting_claim_ids'] ?? null) ? $decision['supporting_claim_ids'] : [$claimId],
+                    'claim_id' => $claimId,
+                    'supporting_claim_ids' => [
+                        $claimId,
+                        ...array_values(array_filter(
+                            is_array($decision['supporting_claim_ids'] ?? null) ? $decision['supporting_claim_ids'] : [],
                             'is_string',
                         )),
-                        'evidence_refs' => array_values(array_filter(
-                            is_array($decision['evidence_refs'] ?? null) ? $decision['evidence_refs'] : [$shortRole.':'.$evidenceRef],
+                    ],
+                    'evidence_refs' => [
+                        $shortRole.':'.$evidenceRef,
+                        ...array_values(array_filter(
+                            is_array($decision['evidence_refs'] ?? null) ? $decision['evidence_refs'] : [],
                             'is_string',
                         )),
                     ],
                 ];
-                $items[$this->identity($item)] = isset($items[$this->identity($item)])
-                    ? $this->merge($items[$this->identity($item)], $item)
-                    : $item;
+                $identity = $this->identity->identity($category, $claim['entityKey'], $value);
+                $groups[$identity][] = $candidate;
             }
         }
 
-        return ['items' => array_values($items), 'quarantined_items' => $quarantined];
+        ksort($groups, SORT_STRING);
+        $items = [];
+        foreach ($groups as $identity => $candidates) {
+            $items[] = $this->reduce($identity, $candidates);
+        }
+        usort(
+            $quarantined,
+            fn (array $left, array $right): int => $this->canonicalJson($left) <=> $this->canonicalJson($right),
+        );
+
+        return ['items' => $items, 'quarantined_items' => $quarantined];
     }
 
     private function decisions(?array $arbitration): array
@@ -166,22 +179,120 @@ final class VisualInventoryProjector
         return preg_match('/(?:^|\s)([1-9][0-9]?)(?:\s|$)/u', $value, $matches) === 1 ? (int) $matches[1] : null;
     }
 
-    private function identity(array $item): string
+    /** @param list<array<string, mixed>> $candidates @return array<string, mixed> */
+    private function reduce(string $identity, array $candidates): array
     {
-        return $this->identity->identity($item['category'], $item['key'], $item['label']);
+        $objectTypes = array_values(array_unique(array_column($candidates, 'object_type')));
+        sort($objectTypes, SORT_STRING);
+        $objectType = $objectTypes[0];
+        $categories = array_values(array_unique(array_column($candidates, 'category')));
+        sort($categories, SORT_STRING);
+        $category = $this->identity->canonicalCategory($objectType, $categories[0]);
+        $quantities = array_column($candidates, 'quantity');
+        $quantity = $this->consensusQuantity($quantities);
+        $supportingClaimIds = [];
+        $evidenceRefs = [];
+        $evidenceLocators = [];
+        foreach ($candidates as $candidate) {
+            $supportingClaimIds = [...$supportingClaimIds, ...$candidate['supporting_claim_ids']];
+            $evidenceRefs = [...$evidenceRefs, ...$candidate['evidence_refs']];
+            $evidenceLocators[$this->canonicalJson($candidate['evidence_locator'])] = $candidate['evidence_locator'];
+        }
+        $supportingClaimIds = array_values(array_unique($supportingClaimIds));
+        $evidenceRefs = array_values(array_unique($evidenceRefs));
+        sort($supportingClaimIds, SORT_STRING);
+        sort($evidenceRefs, SORT_STRING);
+        ksort($evidenceLocators, SORT_STRING);
+        $arbitration = $this->primaryArbitration($candidates);
+        $primaryClaimIds = [];
+        foreach ($candidates as $candidate) {
+            if ($candidate['arbitration'] === $arbitration) {
+                $primaryClaimIds[] = $candidate['claim_id'];
+            }
+        }
+        sort($primaryClaimIds, SORT_STRING);
+        $roomKeys = array_values(array_unique(array_column($candidates, 'room_key')));
+        sort($roomKeys, SORT_STRING);
+
+        return [
+            'key' => $identity,
+            'label' => $this->identity->canonicalLabel($objectType, ''),
+            'category' => $category,
+            'object_type' => $objectType,
+            'quantity' => $quantity,
+            'quantity_uncertain' => $quantity === null,
+            'room_key' => $roomKeys[0] ?? null,
+            'scope' => $this->conservativeScope(array_column($candidates, 'scope')),
+            'evidence_locator' => reset($evidenceLocators),
+            'arbitration' => $arbitration,
+            'lineage' => [
+                'claim_id' => $primaryClaimIds[0] ?? $supportingClaimIds[0],
+                'supporting_claim_ids' => $supportingClaimIds,
+                'evidence_refs' => $evidenceRefs,
+                'evidence_locators' => array_values($evidenceLocators),
+            ],
+        ];
     }
 
-    private function merge(array $left, array $right): array
+    /** @param list<?int> $quantities */
+    private function consensusQuantity(array $quantities): ?int
     {
-        $left['lineage']['supporting_claim_ids'] = array_values(array_unique([
-            ...$left['lineage']['supporting_claim_ids'],
-            ...$right['lineage']['supporting_claim_ids'],
-        ]));
-        $left['lineage']['evidence_refs'] = array_values(array_unique([
-            ...$left['lineage']['evidence_refs'],
-            ...$right['lineage']['evidence_refs'],
-        ]));
+        if ($quantities === [] || in_array(null, $quantities, true)) {
+            return null;
+        }
+        $unique = array_values(array_unique($quantities, SORT_REGULAR));
 
-        return $left;
+        return count($unique) === 1 ? $unique[0] : null;
+    }
+
+    /** @param list<string> $scopes */
+    private function conservativeScope(array $scopes): string
+    {
+        $rank = [
+            'excluded_by_document_note' => 0,
+            'contextual_only' => 1,
+            'requires_confirmation' => 2,
+            'estimate_candidate' => 3,
+        ];
+        usort($scopes, static fn (string $left, string $right): int => ($rank[$left] ?? 0) <=> ($rank[$right] ?? 0));
+
+        return $scopes[0] ?? 'requires_confirmation';
+    }
+
+    /** @param list<array<string, mixed>> $candidates @return array{status:string,reason_code:string} */
+    private function primaryArbitration(array $candidates): array
+    {
+        $arbitrations = array_column($candidates, 'arbitration');
+        $statusRank = ['accepted' => 0, 'candidate' => 1, 'conditional' => 2, 'unresolved' => 3];
+        usort($arbitrations, function (array $left, array $right) use ($statusRank): int {
+            $rank = ($statusRank[$left['status']] ?? 4) <=> ($statusRank[$right['status']] ?? 4);
+
+            return $rank !== 0 ? $rank : $this->canonicalJson($left) <=> $this->canonicalJson($right);
+        });
+
+        return $arbitrations[0] ?? [
+            'status' => 'conditional',
+            'reason_code' => 'minority_evidence_preserved',
+        ];
+    }
+
+    private function canonicalJson(mixed $value): string
+    {
+        return json_encode($this->canonicalize($value), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    private function canonicalize(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+        if (! array_is_list($value)) {
+            ksort($value, SORT_STRING);
+        }
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->canonicalize($item);
+        }
+
+        return $value;
     }
 }

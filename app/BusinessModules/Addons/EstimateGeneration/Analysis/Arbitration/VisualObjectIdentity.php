@@ -10,14 +10,21 @@ final readonly class VisualObjectIdentity
     {
         $objectType = $this->objectType($label, $entityKey);
         $roomKey = $this->roomKey($entityKey) ?? 'room:unknown';
-        $family = match ($category) {
-            'sanitary_fixture' => 'sanitary',
-            'kitchen_fixture' => 'kitchen',
-            'furniture' => 'furniture',
-            'equipment' => 'equipment',
-            default => 'fixture',
+        $family = match ($objectType) {
+            'toilet', 'washbasin', 'bath', 'shower' => 'sanitary',
+            'kitchen_sink', 'stove' => 'kitchen',
+            'bed', 'table', 'chair', 'sofa' => 'furniture',
+            default => match ($category) {
+                'sanitary_fixture' => 'sanitary',
+                'kitchen_fixture' => 'kitchen',
+                'furniture' => 'furniture',
+                'equipment' => 'equipment',
+                default => 'fixture',
+            },
         };
-        $fallback = $objectType === 'unknown' ? ':'.$this->normalizeEntityKey($entityKey) : '';
+        $fallback = $objectType === 'unknown'
+            ? ':unknown:'.substr(hash('sha256', $this->normalizeEntityKey($entityKey)), 0, 16)
+            : '';
         $instance = $this->instanceKey($entityKey, $objectType);
 
         return 'visual:'.$roomKey.':'.$family.':'.$objectType.$fallback.$instance;
@@ -37,17 +44,21 @@ final readonly class VisualObjectIdentity
             return null;
         }
 
-        $objectTokens = [
-            'toilet', 'унитаз', 'washbasin', 'sink', 'раковина', 'мойка', 'bath', 'ванна',
-            'shower', 'душ', 'bed', 'beds', 'кровать', 'table', 'стол', 'chair', 'стул',
-            'sofa', 'диван', 'stove', 'cooktop', 'плита', 'fixture', 'fixtures', 'equipment',
-        ];
         $roomTokens = [];
-        foreach (array_slice($tokens, 1) as $token) {
-            if (in_array($token, $objectTokens, true)) {
+        $roomParts = array_slice($tokens, 1);
+        for ($index = 0; $index < count($roomParts); $index++) {
+            $token = $roomParts[$index];
+            if ($this->isObjectToken($token)) {
                 break;
             }
-            $roomTokens[] = $token;
+            if (($token === 'с' && ($roomParts[$index + 1] ?? null) === 'у')
+                || ($token === 'сан' && ($roomParts[$index + 1] ?? null) === 'узел')) {
+                $roomTokens[] = 'bathroom';
+                $index++;
+
+                continue;
+            }
+            $roomTokens[] = $this->canonicalRoomToken($token);
         }
         if ($roomTokens === []) {
             $roomTokens[] = $tokens[1];
@@ -82,12 +93,18 @@ final readonly class VisualObjectIdentity
             return '';
         }
         $tokens = array_values(array_filter(explode('.', $this->normalizeEntityKey($entityKey))));
-        $last = end($tokens);
-        if (! is_string($last) || preg_match('/^(?:instance)?[1-9][0-9]*$/D', $last) !== 1) {
+        $objectIndex = null;
+        foreach ($tokens as $index => $token) {
+            if ($this->isObjectToken($token)) {
+                $objectIndex = $index;
+            }
+        }
+        if ($objectIndex === null || $objectIndex === array_key_last($tokens)) {
             return '';
         }
+        $instance = implode('.', array_slice($tokens, $objectIndex + 1));
 
-        return ':instance:'.$last;
+        return ':instance:'.substr(hash('sha256', $instance), 0, 16);
     }
 
     public function canonicalLabel(string $objectType, string $fallback): string
@@ -103,7 +120,36 @@ final readonly class VisualObjectIdentity
             'chair' => 'Стул',
             'sofa' => 'Диван',
             'stove' => 'Плита',
-            default => mb_substr(trim($fallback), 0, 240),
+            default => 'Объект на плане',
         };
+    }
+
+    public function canonicalCategory(string $objectType, string $fallback): string
+    {
+        return match ($objectType) {
+            'toilet', 'washbasin', 'bath', 'shower' => 'sanitary_fixture',
+            'kitchen_sink', 'stove' => 'kitchen_fixture',
+            'bed', 'table', 'chair', 'sofa' => 'furniture',
+            default => $fallback,
+        };
+    }
+
+    private function canonicalRoomToken(string $token): string
+    {
+        return match ($token) {
+            'kitchen', 'кухня', 'кух', 'кухонная' => 'kitchen',
+            'bathroom', 'санузел', 'санитарный', 'ванная', 'туалет', 'wc' => 'bathroom',
+            default => $token,
+        };
+    }
+
+    private function isObjectToken(string $token): bool
+    {
+        return in_array($token, [
+            'toilet', 'унитаз', 'washbasin', 'умывальник', 'рукомойник',
+            'sink', 'раковина', 'мойка', 'bath', 'ванна', 'shower', 'душ', 'bed', 'beds',
+            'кровать', 'кровати', 'table', 'стол', 'chair', 'стул', 'sofa', 'диван',
+            'stove', 'cooktop', 'плита', 'fixture', 'fixtures', 'equipment', 'оборудование',
+        ], true);
     }
 }

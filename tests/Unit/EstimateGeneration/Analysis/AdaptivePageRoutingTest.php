@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers\ObserverPro
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisPlan;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoute;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoutingDecision;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisServerSignals;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -54,6 +55,52 @@ final class AdaptivePageRoutingTest extends TestCase
         self::assertFalse($plan->requiresArbitration);
         self::assertSame(1, $plan->providerCallCount());
         self::assertSame('ready_context', $plan->successfulOutcome());
+    }
+
+    #[Test]
+    public function contradictory_high_risk_dense_title_cannot_choose_the_one_observer_route(): void
+    {
+        $decision = PageAnalysisRoutingDecision::fromProviderArray([
+            'page_kind' => 'title',
+            'requested_depth' => 'simple_context',
+            'information_density' => 'high',
+            'readability' => 'high',
+            'confidence' => 0.99,
+            'ambiguous' => false,
+            'material_risk' => 'high',
+            'reasons' => ['Observer назвал сложный лист титульным.'],
+            'semantic_regions' => [],
+        ]);
+
+        $plan = PageAnalysisPlan::fromDecision($decision);
+
+        self::assertSame(PageAnalysisRoute::DenseAmbiguous, $plan->route);
+        self::assertSame(ObserverProfile::cases(), $plan->observers);
+        self::assertTrue($plan->requiresArbitration);
+        self::assertSame(4, $plan->providerCallCount());
+        self::assertContains('server_consistency_hard_floor', $plan->routingReasons);
+    }
+
+    #[Test]
+    public function meaningful_geometry_or_engineering_content_cannot_remain_simple_context(): void
+    {
+        $decision = $this->decision('title', 'simple_context');
+        $signals = PageAnalysisServerSignals::fromLiteralObservation([
+            'elements' => [
+                ['type' => 'dimension'],
+                ['type' => 'engineering_element'],
+            ],
+            'project_sheet_analysis' => [
+                'role' => 'plan',
+                'facts' => [['factType' => 'dimension_chain']],
+            ],
+        ]);
+
+        $plan = PageAnalysisPlan::fromDecision($decision, serverSignals: $signals);
+
+        self::assertSame(PageAnalysisRoute::DenseAmbiguous, $plan->route);
+        self::assertSame(4, $plan->providerCallCount());
+        self::assertContains('server_meaningful_geometry_or_engineering', $plan->routingReasons);
     }
 
     #[Test]
@@ -154,7 +201,11 @@ final class AdaptivePageRoutingTest extends TestCase
         return PageAnalysisRoutingDecision::fromProviderArray([
             'page_kind' => $kind,
             'requested_depth' => $depth,
-            'information_density' => $depth === 'dense_ambiguous' ? 'high' : 'medium',
+            'information_density' => match ($depth) {
+                'simple_context' => 'low',
+                'dense_ambiguous' => 'high',
+                default => 'medium',
+            },
             'readability' => 'high',
             'confidence' => 0.96,
             'ambiguous' => $depth === 'dense_ambiguous',
