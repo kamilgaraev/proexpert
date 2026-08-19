@@ -420,8 +420,7 @@ final readonly class ProjectModelEvidenceWriter
                 'measurement_kind' => 'level',
             ], 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey)];
         }
-        $validKindValue = $kind === 'quantity' ? $nonNegativeNumeric : $positiveNumeric;
-        if ($kind !== null && $validKindValue && is_string($unit) && in_array($unit, $allowedUnits, true)) {
+        if ($kind !== null && $positiveNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
             return [
                 'type' => $kind,
                 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
