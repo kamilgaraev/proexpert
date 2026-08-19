@@ -6,6 +6,17 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel;
 
 interface ProjectModelRepository
 {
+    /** @param list<string> $legacyStableKeys */
+    public function resolveEntityStableKey(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        string $entityType,
+        string $canonicalStableKey,
+        array $legacyStableKeys,
+    ): string;
+
     public function saveSourceModel(array $entities, array $facts, array $evidence, array $conflicts = []): void;
 
     public function applyDecision(Decision $decision, Fact $selectedFact): void;

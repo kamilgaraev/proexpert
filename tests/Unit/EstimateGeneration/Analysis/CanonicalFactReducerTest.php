@@ -125,6 +125,67 @@ final class CanonicalFactReducerTest extends TestCase
         self::assertSame('accepted', $reduced[0]->status);
     }
 
+    #[Test]
+    public function two_physical_toilets_remain_distinct_while_each_observer_lineage_is_merged(): void
+    {
+        $sourceVersion = 'sha256:'.str_repeat('b', 64);
+        $claims = [];
+        $decisions = [];
+        foreach ([1, 2] as $ordinal) {
+            foreach ([
+                ['literal', '.', 0.91],
+                ['construction', '_', 0.96],
+                ['risk', ':', 0.88],
+            ] as [$role, $separator, $confidence]) {
+                $id = $role.':toilet-'.$ordinal;
+                $entityKey = implode($separator, ['room', 'bathroom', 'toilet', (string) $ordinal]);
+                $claim = new ObservationClaim(
+                    $id,
+                    'observer_'.$role,
+                    $entityKey,
+                    'sanitary_fixture',
+                    ['type' => 'string', 'data' => 'Унитаз'],
+                    null,
+                    $id.':evidence',
+                    true,
+                    901,
+                    902,
+                    903,
+                    $sourceVersion,
+                    ['page_id' => 1120, 'page_number' => 5, 'source_version' => $sourceVersion],
+                    $confidence,
+                );
+                $claims[$id] = $claim;
+                $decisions[] = new ArbitrationDecision(
+                    $id,
+                    'accepted',
+                    [$id],
+                    [$id.':evidence'],
+                    'visible_fixture',
+                    [
+                        'entity_key' => $entityKey,
+                        'fact_type' => 'sanitary_fixture',
+                        'value' => $claim->value,
+                        'unit' => null,
+                        'source_claim_id' => $id,
+                    ],
+                );
+            }
+        }
+
+        $reduced = (new CanonicalFactReducer)->reduce($claims, $decisions);
+
+        self::assertCount(2, $reduced);
+        self::assertSame([3, 3], array_map(
+            static fn (ArbitrationDecision $decision): int => count($decision->supportingClaimIds),
+            $reduced,
+        ));
+        self::assertNotSame(
+            $reduced[0]->canonicalClaim['entity_key'],
+            $reduced[1]->canonicalClaim['entity_key'],
+        );
+    }
+
     /** @return array{array<string,ObservationClaim>,list<ArbitrationDecision>} */
     private function fixture(): array
     {

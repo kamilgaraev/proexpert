@@ -150,7 +150,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             foreach (EstimateGenerationProcessingUnit::query()
                 ->where('document_id', $fixture['document']->id)
                 ->orderBy('unit_index')
-                ->limit(2)
+                ->limit(10)
                 ->get() as $unit) {
                 $claim = $store->claim(
                     (int) $unit->id,
@@ -180,20 +180,35 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             DB::table('estimate_generation_ai_usage')->insert(
                 $this->usageRow($fixture, (string) Str::uuid(), '17.15026500'),
             );
+            $fixture['document']->forceFill([
+                'units_finalized_source_version' => $fixture['sourceVersion'],
+                'units_reconciled_source_version' => $fixture['sourceVersion'],
+                'units_reconcile_claim_token' => (string) Str::uuid(),
+                'units_reconcile_lease_expires_at' => now()->addMinutes(5),
+            ])->save();
             $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
-            $authorization->shouldReceive('can')->once()->andReturnTrue();
+            $authorization->shouldReceive('can')->twice()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
-            $readiness->shouldReceive('evaluate')->twice()->andReturn($this->reviewRequiredReadiness());
+            $readiness->shouldReceive('evaluate')->times(3)->andReturn($this->reviewRequiredReadiness());
             $this->app->instance(DocumentGenerationReadinessService::class, $readiness);
             $this->app->forgetInstance(DocumentUnitAggregateReconciler::class);
 
-            (new StopEstimateGenerationDocumentProcessing(
+            $stop = new StopEstimateGenerationDocumentProcessing(
                 $authorization,
                 $readiness,
                 app(DocumentUnitAggregateReconciler::class),
-            ))->handle(
+            );
+            $first = $stop->handle(
                 $fixture['session'],
+                $fixture['document']->fresh(),
+                $fixture['user'],
+                (int) $fixture['session']->fresh()->state_version,
+                $fixture['sourceVersion'],
+                'document-174-stop',
+            );
+            $second = $stop->handle(
+                $fixture['session']->fresh(),
                 $fixture['document']->fresh(),
                 $fixture['user'],
                 (int) $fixture['session']->fresh()->state_version,
@@ -216,9 +231,15 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             self::assertSame('needs_review', $document->status);
             self::assertSame('completed', $document->processing_stage);
             self::assertSame(100, $document->progress_percent);
-            self::assertSame(2, $document->processed_page_count);
+            self::assertSame('accepted', $first->disposition);
+            self::assertSame('replayed', $second->disposition);
+            self::assertSame(10, $document->processed_page_count);
             self::assertSame('cancelled', $document->processing_control_status);
-            self::assertSame(2, $list['processing_outcome']['usefulness']['usable_pages']);
+            self::assertSame($fixture['sourceVersion'], $document->units_finalized_source_version);
+            self::assertSame($fixture['sourceVersion'], $document->units_reconciled_source_version);
+            self::assertNull($document->units_reconcile_claim_token);
+            self::assertNull($document->units_reconcile_lease_expires_at);
+            self::assertSame(10, $list['processing_outcome']['usefulness']['usable_pages']);
             self::assertSame(22, $list['processing_outcome']['execution']['completed_pages']);
             self::assertSame(100, $list['processing_outcome']['execution']['progress_percent']);
             self::assertArrayNotHasKey('cost_journal', $list);
@@ -1220,6 +1241,12 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             self::assertSame('accepted', $result->disposition);
             self::assertSame('processing', $fixture['document']->fresh()->status);
             self::assertSame('running', $fixture['unit']->fresh()->status->value);
+            $fixture['document']->forceFill([
+                'units_finalized_source_version' => $fixture['sourceVersion'],
+                'units_reconciled_source_version' => $fixture['sourceVersion'],
+                'units_reconcile_claim_token' => (string) Str::uuid(),
+                'units_reconcile_lease_expires_at' => now()->addMinutes(5),
+            ])->save();
 
             self::assertSame('completed', DB::table('estimate_generation_vision_physical_attempts')
                 ->where('attempt_id', $context->attemptId)->value('state'));
@@ -1238,6 +1265,10 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             ));
             self::assertSame('completed', $fixture['unit']->fresh()->status->value);
             self::assertSame('ready', $fixture['page']->fresh()->status);
+            self::assertNull($fixture['document']->fresh()->units_finalized_source_version);
+            self::assertNull($fixture['document']->fresh()->units_reconciled_source_version);
+            self::assertNull($fixture['document']->fresh()->units_reconcile_claim_token);
+            self::assertNull($fixture['document']->fresh()->units_reconcile_lease_expires_at);
         } finally {
             DB::rollBack();
         }

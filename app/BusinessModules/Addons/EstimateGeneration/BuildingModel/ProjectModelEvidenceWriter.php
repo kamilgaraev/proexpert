@@ -65,7 +65,7 @@ final readonly class ProjectModelEvidenceWriter
         if ($decisions === []) {
             return;
         }
-        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $conditionalVisualInventory): void {
+        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope): void {
             $entities = [];
             $facts = [];
             $factsByClaimId = [];
@@ -79,7 +79,6 @@ final readonly class ProjectModelEvidenceWriter
                         ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
                     $this->assertScope($supportingClaim, $scope);
                     if ($supportingClaim->evidenceRef === null
-                        || ! $this->shouldProjectClaim($supportingClaim, $conditionalVisualInventory)
                         || ! in_array($supportingClaim->evidenceRef, $decision->evidenceRefs, true)) {
                         continue;
                     }
@@ -129,6 +128,32 @@ final readonly class ProjectModelEvidenceWriter
                         (string) $documentId,
                         (string) $pageNumber,
                     ]));
+                if ($decision->status === 'accepted' || $visualInventoryFact) {
+                    $legacyIdentities = [$claim->entityKey];
+                    if (! $visualInventoryFact) {
+                        $normalizedIdentity = (new VisualObjectIdentity)->normalizeEntityKey($entityIdentity);
+                        $tokens = array_values(array_filter(explode('.', $normalizedIdentity)));
+                        foreach (['.', '_', '-', ':'] as $separator) {
+                            $legacyIdentities[] = implode($separator, $tokens);
+                        }
+                    }
+                    $legacyEntityIds = array_map(
+                        static fn (string $identity): string => 'entity:'.hash('sha256', implode('|', [
+                            $projection['type'],
+                            $identity,
+                        ])),
+                        array_values(array_unique($legacyIdentities)),
+                    );
+                    $entityId = $this->models->resolveEntityStableKey(
+                        $scope->organizationId,
+                        $scope->projectId,
+                        $scope->sessionId,
+                        $scope->sourceVersion,
+                        $projection['type'],
+                        $entityId,
+                        $legacyEntityIds,
+                    );
+                }
                 $entities[$entityId] = new Entity(
                     $entityId,
                     $scope->organizationId,

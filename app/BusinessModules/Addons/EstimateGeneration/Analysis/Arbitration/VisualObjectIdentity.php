@@ -18,8 +18,9 @@ final readonly class VisualObjectIdentity
             default => 'fixture',
         };
         $fallback = $objectType === 'unknown' ? ':'.$this->normalizeEntityKey($entityKey) : '';
+        $instance = $this->instanceKey($entityKey, $objectType);
 
-        return 'visual:'.$roomKey.':'.$family.':'.$objectType.$fallback;
+        return 'visual:'.$roomKey.':'.$family.':'.$objectType.$fallback.$instance;
     }
 
     public function normalizeEntityKey(string $entityKey): string
@@ -73,6 +74,20 @@ final readonly class VisualObjectIdentity
             preg_match('/плит|cooktop|stove/iu', $value) === 1 => 'stove',
             default => 'unknown',
         };
+    }
+
+    private function instanceKey(string $entityKey, string $objectType): string
+    {
+        if ($objectType === 'unknown') {
+            return '';
+        }
+        $tokens = array_values(array_filter(explode('.', $this->normalizeEntityKey($entityKey))));
+        $last = end($tokens);
+        if (! is_string($last) || preg_match('/^(?:instance)?[1-9][0-9]*$/D', $last) !== 1) {
+            return '';
+        }
+
+        return ':instance:'.$last;
     }
 
     public function canonicalLabel(string $objectType, string $fallback): string

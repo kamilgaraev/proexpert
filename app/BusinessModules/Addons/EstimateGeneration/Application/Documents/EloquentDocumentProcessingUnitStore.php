@@ -261,6 +261,21 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
     public function publish(DocumentProcessingUnitClaim $claim, DocumentUnitOutput $output, DateTimeImmutable $now): bool
     {
         return $this->database->transaction(function () use ($claim, $output, $now): bool {
+            $scope = $this->claimQuery($claim)->first(['document_id']);
+            if (! $scope instanceof EstimateGenerationProcessingUnit) {
+                return false;
+            }
+            $document = $this->documentQuery()
+                ->whereKey($scope->document_id)
+                ->where('organization_id', $claim->organizationId)
+                ->where('project_id', $claim->projectId)
+                ->where('session_id', $claim->sessionId)
+                ->where('source_version', $claim->sourceVersion)
+                ->lockForUpdate()
+                ->first();
+            if (! $document instanceof EstimateGenerationDocument) {
+                return false;
+            }
             $unit = $this->claimQuery($claim)->with('document')->lockForUpdate()->first();
 
             if (! $unit instanceof EstimateGenerationProcessingUnit
@@ -352,6 +367,15 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             ]) === 1;
         if (! $published) {
             throw new DocumentUnitProcessingException('document_unit_atomic_publication_failed');
+        }
+        $document = $unit->document;
+        if ($document instanceof EstimateGenerationDocument) {
+            $document->forceFill([
+                'units_finalized_source_version' => null,
+                'units_reconciled_source_version' => null,
+                'units_reconcile_claim_token' => null,
+                'units_reconcile_lease_expires_at' => null,
+            ])->save();
         }
 
         return true;
