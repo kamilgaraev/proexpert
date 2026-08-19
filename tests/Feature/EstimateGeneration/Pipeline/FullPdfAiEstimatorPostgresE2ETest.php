@@ -583,14 +583,19 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             [['type' => 'choice_quarantined', 'count' => 1]],
             $materialQuestion['source_locator']['limitations'],
         );
-        $fixtureQuestion = array_values(array_filter(
+        $fixtureQuestions = array_values(array_filter(
             $questions,
             static fn (array $question): bool => str_contains((string) ($question['subject'] ?? ''), 'Унитаз')
                 || str_contains((string) ($question['subject'] ?? ''), 'Кухонная мойка'),
-        ))[0] ?? null;
-        self::assertIsArray($fixtureQuestion, json_encode($questions, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
-        self::assertSame([5], $fixtureQuestion['source_locator']['page_numbers']);
-        self::assertStringNotContainsString('Кровать', (string) $fixtureQuestion['subject']);
+        ));
+        self::assertCount(2, $fixtureQuestions, json_encode($questions, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        $fixtureSubjects = implode(' ', array_column($fixtureQuestions, 'subject'));
+        self::assertStringContainsString('Унитаз', $fixtureSubjects);
+        self::assertStringContainsString('Кухонная мойка', $fixtureSubjects);
+        self::assertStringNotContainsString('Кровать', $fixtureSubjects);
+        foreach ($fixtureQuestions as $fixtureQuestion) {
+            self::assertSame([5], $fixtureQuestion['source_locator']['page_numbers']);
+        }
         self::assertNotContains(str_repeat('Повреждённый вариант ', 9), array_column($materialQuestion['choices'], 'label'));
         self::assertContains('other', array_column($materialQuestion['choices'], 'value'));
         self::assertContains('leave_unresolved', array_column($materialQuestion['choices'], 'value'));
@@ -627,6 +632,47 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         );
         self::assertSame('answered', $answer->status);
         self::assertInstanceOf(ProjectPlanningResult::class, $reanalysis->result);
+        self::assertFalse($reanalysis->result->isReadyForCompleteness());
+        self::assertContains('insufficient_evidence', $reanalysis->result->limitations);
+        $answeredFixtureQuestions = 0;
+        do {
+            $refreshedFixtureQuestions = array_values(array_filter(
+                app(ListEstimateClarifications::class)->handle(
+                    (int) $organization->id,
+                    (int) $project->id,
+                    (int) $session->id,
+                ),
+                static fn (array $question): bool => str_contains((string) ($question['subject'] ?? ''), 'Унитаз')
+                    || str_contains((string) ($question['subject'] ?? ''), 'Кухонная мойка'),
+            ));
+            $refreshedFixtureQuestion = $refreshedFixtureQuestions[0] ?? null;
+            if (! is_array($refreshedFixtureQuestion)) {
+                break;
+            }
+            $fixtureChoice = $refreshedFixtureQuestion['choices'][0] ?? null;
+            self::assertIsArray($fixtureChoice);
+            $fixtureResponse = (string) ($fixtureChoice['value'] ?? '');
+            self::assertNotSame('', $fixtureResponse);
+            $answeredFixtureQuestions++;
+            self::assertLessThanOrEqual(2, $answeredFixtureQuestions);
+            $fixtureAnswer = app(AnswerEstimateClarification::class)->handle(
+                $user,
+                $session,
+                new ActorContext(
+                    (int) $organization->id,
+                    (int) $project->id,
+                    (int) $user->id,
+                    'full-pdf-question-answer-000'.($answeredFixtureQuestions + 1),
+                    (string) $refreshedFixtureQuestion['source_version'],
+                    (string) $refreshedFixtureQuestion['answer_fingerprint'],
+                ),
+                (string) $refreshedFixtureQuestion['code'],
+                $fixtureResponse,
+            );
+            self::assertSame('answered', $fixtureAnswer->status);
+            self::assertInstanceOf(ProjectPlanningResult::class, $reanalysis->result);
+        } while (true);
+        self::assertSame(2, $answeredFixtureQuestions);
         self::assertTrue($reanalysis->result->isReadyForCompleteness(), json_encode([
             'status' => $reanalysis->result->status,
             'limitations' => $reanalysis->result->limitations,
@@ -645,7 +691,7 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                 ->all(),
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         self::assertSame(1, $synthesis->physicalCalls);
-        self::assertSame(13, DB::table('estimate_generation_project_model_fact_projections as projection')
+        self::assertSame(14, DB::table('estimate_generation_project_model_fact_projections as projection')
             ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
             ->where('projection.session_id', $session->id)
             ->where('projection.is_current', true)
@@ -742,7 +788,18 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                         'code',
                     ),
                 ], JSON_THROW_ON_ERROR));
-                self::assertContains('floor_area', array_column($quantities, 'key'));
+                $directFloorAreas = array_values(array_filter(
+                    $quantities,
+                    static fn (array $quantity): bool => ($quantity['formula_key'] ?? null) === 'direct_floor_area',
+                ));
+                self::assertCount(2, $directFloorAreas, json_encode($quantities, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+                self::assertContains('72.19', array_column($directFloorAreas, 'amount'));
+                self::assertContains('22.1', array_column($directFloorAreas, 'amount'));
+                self::assertSame(['m2'], array_values(array_unique(array_column($directFloorAreas, 'unit'))));
+                foreach ($directFloorAreas as $directFloorArea) {
+                    self::assertNotEmpty($directFloorArea['evidence_ids'] ?? []);
+                    self::assertSame([], $directFloorArea['assumptions'] ?? null);
+                }
             }
             if (in_array($expectedStage, [
                 ProcessingStage::PlanWorkItems,
