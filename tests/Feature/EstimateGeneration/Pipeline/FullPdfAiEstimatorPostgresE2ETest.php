@@ -585,12 +585,12 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         );
         $fixtureQuestion = array_values(array_filter(
             $questions,
-            static fn (array $question): bool => str_contains((string) ($question['text'] ?? ''), 'Унитаз')
-                || str_contains((string) ($question['text'] ?? ''), 'Кухонная мойка'),
+            static fn (array $question): bool => str_contains((string) ($question['subject'] ?? ''), 'Унитаз')
+                || str_contains((string) ($question['subject'] ?? ''), 'Кухонная мойка'),
         ))[0] ?? null;
-        self::assertIsArray($fixtureQuestion);
+        self::assertIsArray($fixtureQuestion, json_encode($questions, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         self::assertSame([5], $fixtureQuestion['source_locator']['page_numbers']);
-        self::assertStringNotContainsString('Кровать', (string) $fixtureQuestion['text']);
+        self::assertStringNotContainsString('Кровать', (string) $fixtureQuestion['subject']);
         self::assertNotContains(str_repeat('Повреждённый вариант ', 9), array_column($materialQuestion['choices'], 'label'));
         self::assertContains('other', array_column($materialQuestion['choices'], 'value'));
         self::assertContains('leave_unresolved', array_column($materialQuestion['choices'], 'value'));

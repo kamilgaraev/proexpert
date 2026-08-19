@@ -503,12 +503,27 @@ SQL, [
                             'created_at' => now(),
                         ]);
                     }
-                    if (in_array($fact->status, ['confirmed', 'conflicted', 'unresolved'], true)) {
+                    if (in_array($fact->status, ['confirmed', 'conflicted', 'unresolved'], true)
+                        || $this->isConfirmationCandidate($fact, $entity)) {
                         $this->projectCurrentFact($fact, $projectionScopeId, (int) $entity->id);
                     }
                 }
             }, 3);
         }
+    }
+
+    private function isConfirmationCandidate(Fact $fact, object $entity): bool
+    {
+        if ($fact->status !== 'candidate' || (string) $entity->entity_kind !== 'equipment') {
+            return false;
+        }
+        $payload = $this->decodedJson($entity->payload);
+        $properties = is_array($payload['properties'] ?? null) ? $payload['properties'] : [];
+
+        return ($properties['estimate_scope'] ?? null) === 'requires_confirmation'
+            && in_array($properties['visual_inventory_category'] ?? null, [
+                'sanitary_fixture', 'kitchen_fixture', 'unknown_fixture',
+            ], true);
     }
 
     private function appendConflicts(array $conflicts, int $chunkSize = 200): void
@@ -2525,7 +2540,7 @@ SQL, [
         $row = $this->database->table('estimate_generation_project_model_entities')
             ->where('organization_id', $fact->organizationId)->where('project_id', $fact->projectId)
             ->where('session_id', $fact->sessionId)->where('source_version', $fact->sourceVersion)
-            ->where('stable_key', $fact->entityId)->first(['id']);
+            ->where('stable_key', $fact->entityId)->first(['id', 'entity_kind', 'payload']);
         if ($row === null) {
             throw new InvalidArgumentException('Project model fact entity is outside the requested scope.');
         }
