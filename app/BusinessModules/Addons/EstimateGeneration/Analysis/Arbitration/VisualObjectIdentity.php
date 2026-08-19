@@ -6,9 +6,13 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
 final readonly class VisualObjectIdentity
 {
+    public function __construct(
+        private VisualObjectInstanceParser $instances = new VisualObjectInstanceParser,
+    ) {}
+
     public function identity(string $category, string $entityKey, string $label): string
     {
-        $objectType = $this->objectType($label, $entityKey, $category);
+        $objectType = $this->classification($label, $entityKey, $category)->objectType;
         $roomKey = $this->roomKey($entityKey) ?? 'room:unknown';
         $family = match ($objectType) {
             'toilet', 'washbasin', 'bath', 'shower' => 'sanitary',
@@ -23,9 +27,11 @@ final readonly class VisualObjectIdentity
             },
         };
         $fallback = $objectType === 'unknown'
-            ? ':unknown:'.substr(hash('sha256', $this->normalizeEntityKey($entityKey)), 0, 16)
+            ? ':unknown:'.substr(hash('sha256', strlen($entityKey).'|'.mb_strtolower(
+                mb_strcut($entityKey, 0, 512, 'UTF-8'),
+            )), 0, 16)
             : '';
-        $instance = $this->instanceKey($entityKey, $objectType);
+        $instance = $this->instances->parse($entityKey)->identitySuffix();
 
         return 'visual:'.$roomKey.':'.$family.':'.$objectType.$fallback.$instance;
     }
@@ -39,7 +45,10 @@ final readonly class VisualObjectIdentity
 
     public function roomKey(string $entityKey): ?string
     {
-        $tokens = array_values(array_filter(explode('.', $this->normalizeEntityKey($entityKey))));
+        $tokens = array_values(array_filter(
+            explode('.', $this->normalizeEntityKey($entityKey)),
+            static fn (string $token): bool => $token !== '',
+        ));
         if (($tokens[0] ?? null) !== 'room' || count($tokens) < 2) {
             return null;
         }
@@ -69,55 +78,58 @@ final readonly class VisualObjectIdentity
 
     public function objectType(string $label, string $entityKey = '', ?string $category = null): string
     {
-        $value = $label.' '.$this->normalizeEntityKey($entityKey);
+        return $this->classification($label, $entityKey, $category)->objectType;
+    }
+
+    public function classification(string $label, string $entityKey = '', ?string $category = null): VisualObjectClassification
+    {
+        $normalizedEntityKey = $this->normalizeEntityKey($entityKey);
+        $value = $label.' '.$normalizedEntityKey;
         $roomKey = $this->roomKey($entityKey);
         $roomTokens = $roomKey === null ? [] : explode('-', mb_substr($roomKey, 5));
-        $bathroomContext = in_array('bathroom', $roomTokens, true) || $category === 'sanitary_fixture';
-        $kitchenContext = in_array('kitchen', $roomTokens, true) || $category === 'kitchen_fixture';
-        $kitchenSignal = preg_match('/(?:кухон|kitchen).*(?:мойк|раковин|sink)|(?:мойк|раковин|sink).*(?:кухон|kitchen)/iu', $value) === 1;
-        $bathroomSignal = preg_match('/(?:сануз|ванн|bathroom|wc).*(?:мойк|раковин|sink|basin)|(?:мойк|раковин|sink|basin).*(?:сануз|ванн|bathroom|wc)/iu', $value) === 1;
+        $hasSinkTerm = preg_match('/мойк|раковин|умываль|рукомой|washbasin|\bbasin\b|\bsinks?\b/iu', $value) === 1;
+        if ($hasSinkTerm) {
+            $kitchenSignals = [
+                in_array('kitchen', $roomTokens, true),
+                $category === 'kitchen_fixture',
+                preg_match('/кухон|\bkitchen\b/iu', $normalizedEntityKey) === 1,
+                preg_match('/кухон|\bkitchen\b/iu', $label) === 1,
+            ];
+            $bathroomSignals = [
+                in_array('bathroom', $roomTokens, true),
+                $category === 'sanitary_fixture',
+                preg_match('/умываль|рукомой|washbasin|\bbasin\b/iu', $normalizedEntityKey) === 1,
+                preg_match('/умываль|рукомой|washbasin|\bbasin\b/iu', $label) === 1,
+                preg_match('/сануз|ванн|bathroom|\bwc\b/iu', $label) === 1,
+            ];
+            $kitchen = in_array(true, $kitchenSignals, true);
+            $bathroom = in_array(true, $bathroomSignals, true);
+            if ($kitchen && $bathroom) {
+                return new VisualObjectClassification('unknown', 'object_type_conflicted');
+            }
+            if ($kitchen) {
+                return new VisualObjectClassification('kitchen_sink');
+            }
+            if ($bathroom) {
+                return new VisualObjectClassification('washbasin');
+            }
 
-        return match (true) {
+            return new VisualObjectClassification('unknown', 'object_type_requires_confirmation');
+        }
+
+        $objectType = match (true) {
             preg_match('/унитаз|toilet/iu', $value) === 1 => 'toilet',
-            $kitchenSignal && $bathroomSignal => 'unknown',
-            $kitchenSignal => 'kitchen_sink',
-            $bathroomSignal => 'washbasin',
-            preg_match('/умываль|рукомой|washbasin|\bbasin\b/iu', $value) === 1 => 'washbasin',
-            preg_match('/мойк|раковин|sink/iu', $value) === 1 && $bathroomContext && ! $kitchenContext => 'washbasin',
-            preg_match('/мойк|раковин|sink/iu', $value) === 1 && $kitchenContext && ! $bathroomContext => 'kitchen_sink',
-            preg_match('/ванн|bath/iu', $value) === 1 => 'bath',
+            preg_match('/ванн|\bbath\b/iu', $value) === 1 => 'bath',
             preg_match('/душ|shower/iu', $value) === 1 => 'shower',
-            preg_match('/кроват|bed/iu', $value) === 1 => 'bed',
-            preg_match('/стол|table/iu', $value) === 1 => 'table',
-            preg_match('/стул|chair/iu', $value) === 1 => 'chair',
-            preg_match('/диван|sofa/iu', $value) === 1 => 'sofa',
+            preg_match('/кроват|\bbeds?\b/iu', $value) === 1 => 'bed',
+            preg_match('/стол|\btables?\b/iu', $value) === 1 => 'table',
+            preg_match('/стул|\bchairs?\b/iu', $value) === 1 => 'chair',
+            preg_match('/диван|\bsofas?\b/iu', $value) === 1 => 'sofa',
             preg_match('/плит|cooktop|stove/iu', $value) === 1 => 'stove',
             default => 'unknown',
         };
-    }
 
-    private function instanceKey(string $entityKey, string $objectType): string
-    {
-        if ($objectType === 'unknown') {
-            return '';
-        }
-        $tokens = array_values(array_filter(explode('.', $this->normalizeEntityKey($entityKey))));
-        $objectIndex = null;
-        foreach ($tokens as $index => $token) {
-            if ($this->isObjectToken($token)) {
-                $objectIndex = $index;
-            }
-        }
-        if ($objectIndex === null || $objectIndex === array_key_last($tokens)) {
-            return '';
-        }
-        $instance = implode('.', array_slice($tokens, $objectIndex + 1));
-        if (preg_match('/^[0-9]+$/D', $instance) === 1) {
-            $instance = ltrim($instance, '0');
-            $instance = $instance === '' ? '0' : $instance;
-        }
-
-        return ':instance:'.substr(hash('sha256', $instance), 0, 16);
+        return new VisualObjectClassification($objectType);
     }
 
     public function canonicalLabel(string $objectType, string $fallback): string

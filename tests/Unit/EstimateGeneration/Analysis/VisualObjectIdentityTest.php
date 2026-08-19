@@ -92,6 +92,43 @@ final class VisualObjectIdentityTest extends TestCase
     }
 
     #[Test]
+    public function zero_signed_unicode_mixed_and_oversized_instances_have_bounded_distinct_identity(): void
+    {
+        $identity = new VisualObjectIdentity;
+        $absent = $identity->identity('kitchen_fixture', 'room.kitchen.sink', 'Кухонная мойка');
+        $zero = $identity->identity('kitchen_fixture', 'room.kitchen.sink.0', 'Кухонная мойка');
+        $one = $identity->identity('kitchen_fixture', 'room.kitchen.sink.1', 'Кухонная мойка');
+
+        foreach (['00', '000'] as $equivalentZero) {
+            self::assertSame(
+                $zero,
+                $identity->identity('kitchen_fixture', 'room.kitchen.sink.'.$equivalentZero, 'Кухонная мойка'),
+                $equivalentZero,
+            );
+        }
+        self::assertNotSame($absent, $zero);
+        foreach (['-1', '+1', '１', ' 1', '1 ', '1a', str_repeat('9', 129)] as $unsupported) {
+            $actual = $identity->identity(
+                'kitchen_fixture',
+                'room.kitchen.sink.'.$unsupported,
+                'Кухонная мойка',
+            );
+
+            self::assertNotSame($one, $actual, $unsupported);
+            self::assertSame(
+                $actual,
+                $identity->identity('kitchen_fixture', 'room.kitchen.sink.'.$unsupported, 'Кухонная мойка'),
+                $unsupported,
+            );
+            self::assertLessThanOrEqual(180, strlen($actual), $unsupported);
+        }
+        self::assertNotSame(
+            $identity->identity('kitchen_fixture', 'room.kitchen.sink.-1', 'Кухонная мойка'),
+            $identity->identity('kitchen_fixture', 'room.kitchen.sink.1', 'Кухонная мойка'),
+        );
+    }
+
+    #[Test]
     public function generic_sink_uses_bounded_room_context_and_unknown_context_stays_neutral(): void
     {
         $identity = new VisualObjectIdentity;
@@ -134,5 +171,29 @@ final class VisualObjectIdentityTest extends TestCase
             $identity->identity('sanitary_fixture', 'room.bathroom.sink', 'Bathroom sink'),
             $identity->identity('kitchen_fixture', 'room.kitchen.sink', 'Kitchen sink'),
         );
+    }
+
+    #[Test]
+    public function strong_sink_context_conflicts_stay_unknown_instead_of_becoming_a_confident_type(): void
+    {
+        $identity = new VisualObjectIdentity;
+
+        foreach ([
+            ['Basin', 'room.kitchen.basin', 'kitchen_fixture'],
+            ['Washbasin', 'room.kitchen.sink', 'kitchen_fixture'],
+            ['Кухонная мойка', 'room.bathroom.sink', 'sanitary_fixture'],
+            ['Умывальник', 'room.kitchen.washbasin', 'kitchen_fixture'],
+            ['Sink', 'room.kitchen.sink', 'sanitary_fixture'],
+        ] as [$label, $entityKey, $category]) {
+            self::assertSame(
+                'unknown',
+                $identity->objectType($label, $entityKey, $category),
+                $label.' | '.$entityKey.' | '.$category,
+            );
+        }
+
+        self::assertSame('washbasin', $identity->objectType('Washbasin', 'room.bathroom.washbasin', 'sanitary_fixture'));
+        self::assertSame('kitchen_sink', $identity->objectType('Kitchen sink', 'room.kitchen.sink', 'kitchen_fixture'));
+        self::assertSame('Объект на плане', $identity->canonicalLabel('unknown', 'Washbasin'));
     }
 }
