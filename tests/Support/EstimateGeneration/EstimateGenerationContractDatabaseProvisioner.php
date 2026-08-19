@@ -229,6 +229,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_18_000100_accept_signed_elevation_source_facts.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_18_000200_add_vision_physical_cost_reservations.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_19_000100_align_failure_database_diagnostics_contract.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_19_000200_allow_fact_independent_project_model_entities.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void
