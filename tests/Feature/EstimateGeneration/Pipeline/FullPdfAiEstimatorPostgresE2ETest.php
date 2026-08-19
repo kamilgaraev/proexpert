@@ -108,6 +108,7 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         config()->set('estimate-generation.ocr.geometry.python_binary', 'python');
         config()->set('estimate-generation.ocr.geometry.timeout_seconds', 180);
         config()->set('estimate-generation.generation.document_cost_limit_rub', '100000.00');
+        config()->set('estimate-generation.generation.session_cost_limit_rub', '100000.00');
         $this->seedGlobalSettings();
         $normativeContext = $this->seedNormativePricingFixture();
 
