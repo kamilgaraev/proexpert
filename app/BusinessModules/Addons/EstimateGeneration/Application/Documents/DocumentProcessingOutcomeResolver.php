@@ -10,7 +10,7 @@ final readonly class DocumentProcessingOutcomeResolver
      * @param  list<array<string, mixed>>  $pages
      * @param  list<array<string, mixed>>  $units
      */
-    public function resolve(array $pages, array $units): DocumentProcessingOutcome
+    public function resolve(array $pages, array $units, ?string $processingControlStatus = null): DocumentProcessingOutcome
     {
         $unitsById = [];
         foreach ($units as $unit) {
@@ -49,7 +49,8 @@ final readonly class DocumentProcessingOutcomeResolver
             $hasPartialReview = $hasPartialReview || in_array('ai_partial_result', $qualityFlags, true);
 
             if ($unitStatus === 'superseded'
-                && ($metadata['processing_control_status'] ?? null) === 'cancelled') {
+                && ($processingControlStatus === 'cancelled'
+                    || ($metadata['processing_control_status'] ?? null) === 'cancelled')) {
                 $counts['cancelled']++;
             } elseif (in_array($pageStatus, ['queued', 'processing'], true)
                 || in_array($unitStatus, ['pending', 'running'], true)) {

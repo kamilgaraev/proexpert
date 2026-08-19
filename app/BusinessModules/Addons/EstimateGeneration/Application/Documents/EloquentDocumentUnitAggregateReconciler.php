@@ -84,6 +84,9 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                         'failure_code' => $unit->failure_code,
                         'metadata' => is_array($unit->metadata) ? $unit->metadata : [],
                     ])->all(),
+                    is_string($document->processing_control_status)
+                        ? $document->processing_control_status
+                        : null,
                 );
                 $status = $outcome->documentStatus;
                 $qualitySignals = $this->qualitySignals($includedPages->pluck('normalized_payload')->all());

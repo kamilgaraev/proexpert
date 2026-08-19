@@ -397,15 +397,78 @@ SQL, [
                         $comparisonPayload['properties'] = [];
                     }
                     if ($stored === null || (string) $stored->entity_kind !== $entity->type
-                        || ! hash_equals(
+                        || (! hash_equals(
                             DerivedQuantityIdentity::canonicalJson($comparisonPayload),
                             DerivedQuantityIdentity::canonicalJson($this->decodedJson($stored->payload)),
-                        )) {
+                        ) && ! $this->upgradeLegacyEntityPayload(
+                            $projectionScopeId,
+                            $entity,
+                            $stored,
+                            $comparisonPayload,
+                            $serializedPayload,
+                        ))) {
                         throw new InvalidArgumentException('project_model_entity_exact_identity_collision');
                     }
                 }
             }, 3);
         }
+    }
+
+    /** @param array<string, mixed> $comparisonPayload */
+    private function upgradeLegacyEntityPayload(
+        int $projectionScopeId,
+        Entity $entity,
+        object $stored,
+        array $comparisonPayload,
+        string $serializedPayload,
+    ): bool {
+        $storedPayload = $this->decodedJson($stored->payload);
+        if (! $this->isCompatibleLegacyEntityPayload($entity->type, $storedPayload, $comparisonPayload)) {
+            return false;
+        }
+
+        return $this->database->table('estimate_generation_project_model_entities')
+            ->where('building_model_id', $projectionScopeId)
+            ->where('organization_id', $entity->organizationId)
+            ->where('project_id', $entity->projectId)
+            ->where('session_id', $entity->sessionId)
+            ->where('source_version', $entity->sourceVersion)
+            ->where('stable_key', $entity->stableKey)
+            ->where('entity_kind', $entity->type)
+            ->update(['payload' => $serializedPayload]) === 1;
+    }
+
+    /** @param array<string, mixed> $stored @param array<string, mixed> $canonical */
+    private function isCompatibleLegacyEntityPayload(string $type, array $stored, array $canonical): bool
+    {
+        if (($stored['kind'] ?? null) !== $type
+            || ($stored['key'] ?? null) !== ($canonical['key'] ?? null)
+            || ($canonical['kind'] ?? null) !== $type) {
+            return false;
+        }
+
+        if ($type === 'room') {
+            $legacy = $stored;
+            unset($legacy['area_m2']);
+            $expected = $canonical;
+            unset($expected['semantic_type']);
+
+            return $legacy === $expected && ($canonical['semantic_type'] ?? null) === 'room';
+        }
+
+        if ($type === 'dimension') {
+            $legacy = $stored;
+            unset($legacy['value'], $legacy['unit']);
+            $expected = $canonical;
+            unset($expected['measurement_kind']);
+
+            return $legacy === $expected
+                && is_string($canonical['measurement_kind'] ?? null)
+                && array_key_exists('value', $stored)
+                && array_key_exists('unit', $stored);
+        }
+
+        return false;
     }
 
     private function appendFacts(array $facts, int $chunkSize = 500): void

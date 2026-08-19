@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectIdentity;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectScopePolicy;
+
 final class VisualInventoryProjector
 {
     private const FACT_TYPES = [
@@ -13,6 +16,11 @@ final class VisualInventoryProjector
         'furniture',
         'unknown_fixture',
     ];
+
+    public function __construct(
+        private readonly VisualObjectIdentity $identity = new VisualObjectIdentity,
+        private readonly VisualObjectScopePolicy $scopePolicy = new VisualObjectScopePolicy,
+    ) {}
 
     /**
      * @param  array<string, array<string, mixed>>  $observers
@@ -61,10 +69,10 @@ final class VisualInventoryProjector
                     'key' => mb_substr($claim['entityKey'], 0, 120),
                     'label' => mb_substr(trim($value), 0, 160),
                     'category' => $category,
-                    'object_type' => $this->objectType($value),
+                    'object_type' => $this->identity->objectType($value, $claim['entityKey']),
                     'quantity' => $this->quantity($value),
                     'quantity_uncertain' => $this->quantity($value) === null,
-                    'room_key' => $this->roomKey($claim['entityKey']),
+                    'room_key' => $this->identity->roomKey($claim['entityKey']),
                     'scope' => $scopeValue,
                     'evidence_locator' => $evidence[$evidenceRef],
                     'arbitration' => [
@@ -139,8 +147,7 @@ final class VisualInventoryProjector
             }
             foreach (is_array($observer['claims'] ?? null) ? $observer['claims'] : [] as $claim) {
                 $value = is_array($claim) ? ($claim['value']['data'] ?? null) : null;
-                if (($claim['factType'] ?? null) === 'note' && is_string($value)
-                    && preg_match('/условн|for reference|indicative/iu', $value) === 1) {
+                if ($this->scopePolicy->isConditionalNote((string) ($claim['factType'] ?? ''), $value)) {
                     return true;
                 }
             }
@@ -151,31 +158,7 @@ final class VisualInventoryProjector
 
     private function estimateScope(string $category, string $value, bool $conditional): string
     {
-        if (in_array($category, ['furniture', 'equipment'], true)) {
-            return $conditional ? 'excluded_by_document_note' : 'contextual_only';
-        }
-        if ($category === 'kitchen_fixture' && preg_match('/шкаф|мебел|холодиль|посудомо|духов|cabin|fridge/iu', $value) === 1) {
-            return $conditional ? 'excluded_by_document_note' : 'contextual_only';
-        }
-
-        return 'requires_confirmation';
-    }
-
-    private function objectType(string $value): string
-    {
-        return match (true) {
-            preg_match('/унитаз|toilet/iu', $value) === 1 => 'toilet',
-            preg_match('/умываль|раковин|washbasin/iu', $value) === 1 => 'washbasin',
-            preg_match('/мойк|kitchen sink/iu', $value) === 1 => 'kitchen_sink',
-            preg_match('/ванн|bath/iu', $value) === 1 => 'bath',
-            preg_match('/душ|shower/iu', $value) === 1 => 'shower',
-            preg_match('/кроват|bed/iu', $value) === 1 => 'bed',
-            preg_match('/стол|table/iu', $value) === 1 => 'table',
-            preg_match('/стул|chair/iu', $value) === 1 => 'chair',
-            preg_match('/диван|sofa/iu', $value) === 1 => 'sofa',
-            preg_match('/плит|cooktop|stove/iu', $value) === 1 => 'stove',
-            default => 'unknown',
-        };
+        return $this->scopePolicy->scope($category, $value, $conditional);
     }
 
     private function quantity(string $value): ?int
@@ -183,14 +166,9 @@ final class VisualInventoryProjector
         return preg_match('/(?:^|\s)([1-9][0-9]?)(?:\s|$)/u', $value, $matches) === 1 ? (int) $matches[1] : null;
     }
 
-    private function roomKey(string $entityKey): ?string
-    {
-        return preg_match('/\A(room[.:_-][a-z0-9_-]+)/i', $entityKey, $matches) === 1 ? $matches[1] : null;
-    }
-
     private function identity(array $item): string
     {
-        return hash('sha256', implode('|', [$item['category'], $item['object_type'], $item['room_key'] ?? '', mb_strtolower($item['label'])]));
+        return $this->identity->identity($item['category'], $item['key'], $item['label']);
     }
 
     private function merge(array $left, array $right): array

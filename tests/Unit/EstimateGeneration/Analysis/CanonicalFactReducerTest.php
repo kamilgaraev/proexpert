@@ -71,6 +71,59 @@ final class CanonicalFactReducerTest extends TestCase
         self::assertLessThan(1.0, $confidence);
     }
 
+    #[Test]
+    public function visual_descriptions_of_one_kitchen_sink_reduce_to_one_object_with_evidence_union(): void
+    {
+        $sourceVersion = 'sha256:'.str_repeat('a', 64);
+        $descriptions = [
+            ['literal:1', 'observer_literal', 'room.kitchen.sink', 'Visible kitchen counter with kitchen sink', 'literal:sink', 0.91],
+            ['construction:1', 'observer_construction', 'room_kitchen_sink', 'Кухонная мойка в рабочей зоне', 'construction:sink', 0.96],
+            ['risk:1', 'observer_risk', 'room:kitchen:sink', 'Кухонное оборудование и мойка', 'risk:sink', 0.88],
+        ];
+        $claims = [];
+        $decisions = [];
+        foreach ($descriptions as [$id, $role, $entityKey, $value, $evidenceRef, $confidence]) {
+            $claim = new ObservationClaim(
+                $id,
+                $role,
+                $entityKey,
+                'kitchen_fixture',
+                ['type' => 'string', 'data' => $value],
+                null,
+                $evidenceRef,
+                true,
+                901,
+                902,
+                903,
+                $sourceVersion,
+                ['page_id' => 1120, 'page_number' => 5, 'source_version' => $sourceVersion],
+                $confidence,
+            );
+            $claims[$id] = $claim;
+            $decisions[] = new ArbitrationDecision(
+                claimId: $id,
+                status: 'accepted',
+                supportingClaimIds: [$id],
+                evidenceRefs: [$evidenceRef],
+                reasonCode: 'visible_fixture',
+                canonicalClaim: [
+                    'entity_key' => $entityKey,
+                    'fact_type' => 'kitchen_fixture',
+                    'value' => $claim->value,
+                    'unit' => null,
+                    'source_claim_id' => $id,
+                ],
+            );
+        }
+
+        $reduced = (new CanonicalFactReducer)->reduce($claims, $decisions);
+
+        self::assertCount(1, $reduced);
+        self::assertSame(['construction:1', 'literal:1', 'risk:1'], $reduced[0]->supportingClaimIds);
+        self::assertSame(['construction:sink', 'literal:sink', 'risk:sink'], $reduced[0]->evidenceRefs);
+        self::assertSame('construction:1', $reduced[0]->claimId);
+    }
+
     /** @return array{array<string,ObservationClaim>,list<ArbitrationDecision>} */
     private function fixture(): array
     {

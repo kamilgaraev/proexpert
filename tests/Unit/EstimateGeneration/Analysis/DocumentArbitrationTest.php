@@ -457,7 +457,7 @@ final class DocumentArbitrationTest extends TestCase
     }
 
     #[Test]
-    public function accepted_visual_fixture_is_only_a_candidate_and_contextual_furniture_never_becomes_confirmed(): void
+    public function accepted_visual_fixture_is_a_candidate_and_contextual_furniture_is_not_projected(): void
     {
         $models = new InMemoryProjectModelRepository;
         $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
@@ -488,15 +488,13 @@ final class DocumentArbitrationTest extends TestCase
 
         $writer->writeArbitration($claims, $decisions, 177, 5);
 
-        self::assertSame(['candidate'], array_values(array_unique(array_column($models->facts, 'status'))));
-        self::assertSame(['equipment'], array_values(array_unique(array_column($models->entities, 'type'))));
-        self::assertSame(
-            ['requires_confirmation', 'contextual_only'],
-            array_values(array_map(
-                static fn ($entity): string => $entity->attributes['properties']['estimate_scope'],
-                $models->entities,
-            )),
-        );
+        self::assertCount(1, $models->facts);
+        self::assertSame(['candidate'], array_column($models->facts, 'status'));
+        self::assertCount(1, $models->entities);
+        $entity = array_values($models->entities)[0];
+        self::assertSame('equipment', $entity->type);
+        self::assertSame('requires_confirmation', $entity->attributes['properties']['estimate_scope']);
+        self::assertSame('Унитаз', $entity->attributes['name']);
     }
 
     #[Test]

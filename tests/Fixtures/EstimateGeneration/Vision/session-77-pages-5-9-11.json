@@ -1,0 +1,52 @@
+{
+  "source": {
+    "organization_id": 901,
+    "project_id": 902,
+    "session_id": 903,
+    "document_id": 904,
+    "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "page_11": {
+    "page_id": 1126,
+    "page_number": 11,
+    "processing_unit_id": 532,
+    "provider_response": {
+      "schema_version": 1,
+      "sheet_type": "elevation",
+      "evidence": [
+        {"key": "page11-e1", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}},
+        {"key": "page11-e2", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}},
+        {"key": "page11-e3", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}},
+        {"key": "page11-e4", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}},
+        {"key": "page11-e5", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}},
+        {"key": "page11-e6", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}},
+        {"key": "page11-e7", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}},
+        {"key": "page11-e8", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}},
+        {"key": "page11-e9", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}},
+        {"key": "page11-e10", "locator": {"page_id": 1126, "page_number": 11, "processing_unit_id": 532, "source_version": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "coordinate_space": "normalized_source_v1"}}
+      ],
+      "elements": [
+        {"key": "wall-1", "type": "wall", "label": "Фасадная стена", "polygon": [[0.05, 0.2], [0.95, 0.2]], "confidence": 0.98, "evidence_ref": "page11-e1"},
+        {"key": "engineering-1", "type": "engineering_element", "label": "Инженерный элемент", "polygon": [[0.45, 0.25], [0.55, 0.25]], "confidence": 0.88, "evidence_ref": "page11-e2"},
+        {"key": "opening-1", "type": "opening", "label": "Окно 1", "polygon": [[0.10, 0.3], [0.20, 0.3]], "confidence": 0.97, "evidence_ref": "page11-e3", "geometry": {"wall_key": "wall-1", "opening_type": "window", "offset": 0.1, "width": 1.2, "height": 1.4}},
+        {"key": "opening-2", "type": "opening", "label": "Окно 2", "polygon": [[0.30, 0.3], [0.40, 0.3]], "confidence": 0.97, "evidence_ref": "page11-e3", "geometry": {"wall_key": "wall-1", "opening_type": "window", "offset": 0.3, "width": 1.2, "height": 1.4}},
+        {"key": "opening-3", "type": "opening", "label": "Окно 3", "polygon": [[0.60, 0.3], [0.70, 0.3]], "confidence": 0.97, "evidence_ref": "page11-e4", "geometry": {"wall_key": "wall-1", "opening_type": "window", "offset": 0.6, "width": 1.2, "height": 1.4}},
+        {"key": "opening-4", "type": "opening", "label": "Дверь", "polygon": [[0.80, 0.3], [0.90, 0.3]], "confidence": 0.96, "evidence_ref": "page11-e4", "geometry": {"wall_key": "wall-1", "opening_type": "door", "offset": 0.8, "width": 0.9, "height": 2.1}},
+        {"key": "axis-a", "type": "axis", "label": "А", "polygon": [[0.1, 0.1], [0.1, 0.9]], "confidence": 0.99, "evidence_ref": "page11-e5"},
+        {"key": "axis-b", "type": "axis", "label": "Б", "polygon": [[0.3, 0.1], [0.3, 0.9]], "confidence": 0.99, "evidence_ref": "page11-e5"},
+        {"key": "axis-v", "type": "axis", "label": "В", "polygon": [[0.6, 0.1], [0.6, 0.9]], "confidence": 0.99, "evidence_ref": "page11-e6"},
+        {"key": "axis-g", "type": "axis", "label": "Г", "polygon": [[0.9, 0.1], [0.9, 0.9]], "confidence": 0.99, "evidence_ref": "page11-e6"},
+        {"key": "dimension-1", "type": "dimension", "label": "6000", "polygon": [[0.1, 0.82], [0.9, 0.82]], "confidence": 0.99, "evidence_ref": "page11-e7"},
+        {"key": "dimension-2", "type": "dimension", "label": "3000", "polygon": [[0.1, 0.86], [0.5, 0.86]], "confidence": 0.98, "evidence_ref": "page11-e7"},
+        {"key": "dimension-3", "type": "dimension", "label": "3000", "polygon": [[0.5, 0.86], [0.9, 0.86]], "confidence": 0.98, "evidence_ref": "page11-e8"},
+        {"key": "dimension-4", "type": "dimension", "label": "3200", "polygon": [[0.94, 0.2], [0.94, 0.75]], "confidence": 0.98, "evidence_ref": "page11-e8"},
+        {"key": "text-1", "type": "text", "label": "Фасад", "polygon": [[0.4, 0.05], [0.6, 0.05]], "confidence": 0.99, "evidence_ref": "page11-e9"},
+        {"key": "text-2", "type": "text", "label": "М 1:50", "polygon": [[0.75, 0.95], [0.9, 0.95]], "confidence": 0.99, "evidence_ref": "page11-e10"}
+      ],
+      "scale_candidates": [
+        {"source": "scale_notation", "meters_per_unit": 0.02, "confidence": 0.99, "evidence_ref": "page11-e10", "detail": "drawing_scale"}
+      ],
+      "warnings": ["scale_missing", "geometry_incomplete"]
+    }
+  }
+}

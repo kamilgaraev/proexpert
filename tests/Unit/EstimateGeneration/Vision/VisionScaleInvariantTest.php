@@ -36,6 +36,36 @@ final class VisionScaleInvariantTest extends TestCase
         $this->assertInvalid([$this->scale(1.0), $this->scale(1.021)], []);
     }
 
+    #[Test]
+    public function provider_response_preserves_useful_page_when_scale_missing_warning_contradicts_valid_scale(): void
+    {
+        $fixture = json_decode((string) file_get_contents(
+            dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/session-77-pages-5-9-11.json',
+        ), true, flags: JSON_THROW_ON_ERROR);
+
+        $analysis = VisionAnalysisData::fromProviderArray(
+            $fixture['page_11']['provider_response'],
+            'timeweb',
+            'vision/model-v1',
+            'vision/model-v1',
+            '2026-07-11',
+            'measured',
+            100,
+            50,
+            64,
+        );
+
+        self::assertCount(10, $analysis->evidence);
+        self::assertCount(16, $analysis->elements);
+        self::assertCount(1, $analysis->scaleCandidates);
+        self::assertNotContains('scale_missing', $analysis->warnings);
+        self::assertContains('geometry_incomplete', $analysis->warnings);
+        self::assertContains(
+            ['section' => 'warnings', 'index' => 0, 'reason' => 'scale_missing_warning_mismatch'],
+            $analysis->quarantinedItems,
+        );
+    }
+
     /** @param list<VisionScaleCandidateData> $scales @param list<string> $warnings */
     private function analysis(array $scales, array $warnings): VisionAnalysisData
     {

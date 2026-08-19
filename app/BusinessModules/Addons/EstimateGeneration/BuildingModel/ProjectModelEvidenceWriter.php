@@ -9,6 +9,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\Canonical
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactReducer;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectIdentity;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectScopePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
@@ -51,15 +53,19 @@ final readonly class ProjectModelEvidenceWriter
             $claim = $byId[$decision->claimId] ?? throw new InvalidArgumentException('Arbitration claim is absent.');
             $this->assertScope($claim, $scope);
         }
+        $conditionalVisualInventory = $this->hasConditionalVisualInventoryNote($claims);
         $decisions = (new CanonicalFactReducer)->reduce($byId, $decisions);
         $decisions = array_values(array_filter(
             $decisions,
-            fn (ArbitrationDecision $decision): bool => $this->projectModelEntity($byId[$decision->claimId]) !== null,
+            fn (ArbitrationDecision $decision): bool => $this->shouldProjectClaim(
+                $byId[$decision->claimId],
+                $conditionalVisualInventory,
+            ),
         ));
         if ($decisions === []) {
             return;
         }
-        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope): void {
+        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $conditionalVisualInventory): void {
             $entities = [];
             $facts = [];
             $factsByClaimId = [];
@@ -73,7 +79,7 @@ final readonly class ProjectModelEvidenceWriter
                         ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
                     $this->assertScope($supportingClaim, $scope);
                     if ($supportingClaim->evidenceRef === null
-                        || $this->projectModelEntity($supportingClaim) === null
+                        || ! $this->shouldProjectClaim($supportingClaim, $conditionalVisualInventory)
                         || ! in_array($supportingClaim->evidenceRef, $decision->evidenceRefs, true)) {
                         continue;
                     }
@@ -317,19 +323,19 @@ final readonly class ProjectModelEvidenceWriter
 
         if (in_array($type, ['sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture'], true)
             && is_string($value) && trim($value) !== '') {
-            $name = mb_substr(trim($value), 0, 240);
+            $identity = new VisualObjectIdentity;
+            $objectType = $identity->objectType($value, $claim->entityKey);
+            $identityKey = $identity->identity($type, $claim->entityKey, $value);
+            $name = $identity->canonicalLabel($objectType, $value);
 
-            return ['type' => 'equipment', 'fact_type' => $type, 'attributes' => [
-                'equipment_code' => 'observed:'.substr(hash('sha256', $name), 0, 32),
+            return ['type' => 'equipment', 'identity_key' => $identityKey, 'fact_type' => $type, 'attributes' => [
+                'equipment_code' => 'observed:'.substr(hash('sha256', $identityKey), 0, 32),
                 'name' => $name,
                 'properties' => [
                     'visual_inventory_category' => $type,
-                    'estimate_scope' => in_array($type, ['sanitary_fixture', 'kitchen_fixture', 'unknown_fixture'], true)
-                        ? 'requires_confirmation'
-                        : 'contextual_only',
-                    'room_key' => preg_match('/\A(room[.:_-][a-z0-9_-]+)/i', $claim->entityKey, $matches) === 1
-                        ? $matches[1]
-                        : null,
+                    'estimate_scope' => 'requires_confirmation',
+                    'room_key' => $identity->roomKey($claim->entityKey),
+                    'object_type' => $objectType,
                 ],
             ]];
         }
@@ -363,15 +369,20 @@ final readonly class ProjectModelEvidenceWriter
             && $claim->entityKey === 'building_area_total') {
             return [
                 'type' => 'room',
+                'identity_key' => 'building.area.total',
                 'attributes' => [
-                    'area_m2' => $value,
+                    'semantic_type' => 'room',
                     'document_role' => 'building_floor',
                 ],
             ];
         }
         if ($type === 'area' && $positiveNumeric && $unit === 'm2'
             && preg_match('/^room[:._-]/D', mb_strtolower($claim->entityKey)) === 1) {
-            return ['type' => 'room', 'attributes' => ['area_m2' => $value]];
+            return [
+                'type' => 'room',
+                'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
+                'attributes' => ['semantic_type' => 'room'],
+            ];
         }
         $semanticType = $this->semanticEntityType($claim->entityKey);
         $semanticFactTypes = [
@@ -386,31 +397,63 @@ final readonly class ProjectModelEvidenceWriter
         if ($semanticType !== null
             && in_array($type, $semanticFactTypes[$semanticType], true)
             && $positiveNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
-            return ['type' => $semanticType, 'attributes' => ['semantic_type' => $semanticType]];
+            return [
+                'type' => $semanticType,
+                'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
+                'attributes' => ['semantic_type' => $semanticType],
+            ];
         }
         $kind = $type === 'quantity'
             ? 'quantity'
             : (in_array($type, ['area', 'dimension_chain', 'elevation', 'level'], true) ? 'dimension' : null);
         if ($type === 'elevation' && $canonicalNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
             return ['type' => 'dimension', 'attributes' => [
-                'value' => $value,
-                'unit' => $unit,
                 'measurement_kind' => 'elevation',
-            ]];
+            ], 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey)];
         }
         if ($type === 'level' && $nonNegativeNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
             return ['type' => 'dimension', 'attributes' => [
-                'value' => $value,
-                'unit' => $unit,
                 'measurement_kind' => 'level',
-            ]];
+            ], 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey)];
         }
         if ($kind !== null && $positiveNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
-
-            return ['type' => $kind, 'attributes' => ['value' => $value, 'unit' => $unit]];
+            return [
+                'type' => $kind,
+                'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
+                'attributes' => ['measurement_kind' => $type],
+            ];
         }
 
         return null;
+    }
+
+    /** @param list<ObservationClaim> $claims */
+    private function hasConditionalVisualInventoryNote(array $claims): bool
+    {
+        $policy = new VisualObjectScopePolicy;
+        foreach ($claims as $claim) {
+            if ($policy->isConditionalNote($claim->factType, $claim->value['data'] ?? null)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function shouldProjectClaim(ObservationClaim $claim, bool $conditional): bool
+    {
+        $value = $claim->value['data'] ?? null;
+        if (is_string($value) && in_array($claim->factType, [
+            'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
+        ], true)) {
+            return (new VisualObjectScopePolicy)->scope($claim->factType, $value, $conditional)
+                === 'requires_confirmation';
+        }
+        if ($claim->factType === 'equipment' && $this->isPlanObservation($claim) && is_string($value)) {
+            return false;
+        }
+
+        return $this->projectModelEntity($claim) !== null;
     }
 
     private function isPlanObservation(ObservationClaim $claim): bool

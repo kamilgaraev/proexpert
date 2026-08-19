@@ -225,6 +225,43 @@ final class DocumentProcessingOutcomeResolverTest extends TestCase
         self::assertSame('document_processing_temporarily_unavailable', $outcome->errorCode);
     }
 
+    #[Test]
+    public function operator_stopped_document_classifies_all_terminal_superseded_units_as_cancelled(): void
+    {
+        $pages = [];
+        $units = [];
+        foreach (range(1, 22) as $index) {
+            $completed = $index <= 10;
+            $pages[] = $this->page($index, $completed ? 'ready' : 'failed');
+            $units[] = [
+                'id' => $index,
+                'status' => $completed ? 'completed' : 'superseded',
+                'output_count' => $completed ? 1 : 0,
+                'failure_code' => match ($index) {
+                    11 => 'document_unit_output_persistence_failed',
+                    12 => 'vision_provider_response_invalid',
+                    13 => 'document_processing_stopped',
+                    default => null,
+                },
+                'metadata' => $index >= 14 ? [
+                    'processing_control_status' => 'cancelled',
+                    'processing_control_reason' => 'operator_stop',
+                ] : [],
+            ];
+        }
+
+        $outcome = (new DocumentProcessingOutcomeResolver)->resolve($pages, $units, 'cancelled');
+
+        self::assertSame('cancelled', $outcome->type);
+        self::assertSame('needs_review', $outcome->documentStatus);
+        self::assertSame('partial', $outcome->toArray()['state']);
+        self::assertSame(10, $outcome->processedPages);
+        self::assertSame(10, $outcome->counts['ready']);
+        self::assertSame(12, $outcome->counts['cancelled']);
+        self::assertSame(0, $outcome->counts['system_failed']);
+        self::assertSame(0, $outcome->counts['processing']);
+    }
+
     /** @param list<string> $qualityFlags @return array{processing_unit_id: int, status: string, quality_flags:list<string>} */
     private function page(int $unitId, string $status, array $qualityFlags = []): array
     {

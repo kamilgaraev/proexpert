@@ -229,7 +229,9 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         $expectedArbitrationClaimCounts = array_fill_keys(range(3, 22), 3);
         $expectedArbitrationClaimCounts[3] = 28;
         $expectedArbitrationClaimCounts[4] = 31;
+        $expectedArbitrationClaimCounts[5] = 15;
         $expectedArbitrationClaimCounts[9] = 2;
+        $expectedArbitrationClaimCounts[11] = 2;
         self::assertSame($expectedArbitrationClaimCounts, $provider->arbitrationClaimCounts);
         self::assertSame([2, 1], array_values($provider->arbitrationValueCounts[6]));
 
@@ -301,11 +303,14 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                     $isMalformedObservation => 0,
                     $isCapturedLiteral && (int) $page->page_number === 3 => 26,
                     $isCapturedLiteral && (int) $page->page_number === 4 => 29,
+                    (int) $page->page_number === 5 => 5,
+                    $isCapturedLiteral && (int) $page->page_number === 11 => 0,
                     default => 1,
                 };
                 $expectedEvidence = match (true) {
                     $isCapturedLiteral && (int) $page->page_number === 3 => 25,
                     $isCapturedLiteral && (int) $page->page_number === 4 => 5,
+                    $isCapturedLiteral && (int) $page->page_number === 11 => 10,
                     default => 1,
                 };
                 self::assertCount($expectedClaims, $claims);
@@ -323,6 +328,14 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                         self::assertSame($expectedValue, $claimsByEntity[$entityKey]['value']['data'] ?? null);
                         self::assertSame($expectedUnit, $claimsByEntity[$entityKey]['unit'] ?? null);
                     }
+                }
+                if ($isCapturedLiteral && (int) $page->page_number === 11) {
+                    self::assertCount(16, $observation['observation']['elements'] ?? []);
+                    self::assertNotContains('scale_missing', $observation['observation']['warnings'] ?? []);
+                    self::assertSame(
+                        'scale_missing_warning_mismatch',
+                        $observation['observation']['quarantined_items'][0]['reason'] ?? null,
+                    );
                 }
                 if ($isMalformedObservation) {
                     self::assertSame('project_sheet_analysis',
@@ -356,7 +369,9 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
                 $expectedDecisionCoverage = match ((int) $page->page_number) {
                     3 => 28,
                     4 => 31,
+                    5 => 15,
                     9 => 2,
+                    11 => 2,
                     default => 3,
                 };
                 self::assertSame($expectedDecisionCoverage, array_sum(array_map(
@@ -445,6 +460,17 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertCount(1, $acceptedAreaFacts);
         $acceptedAreaFact = $acceptedAreaFacts[0];
         self::assertSame($recording['recorded_source_facts']['total_area_m2'], (string) $acceptedAreaFact->value);
+        $visualFixtureFacts = array_values(array_filter(
+            $currentProjectFacts,
+            static fn ($fact): bool => in_array($fact->type, ['sanitary_fixture', 'kitchen_fixture'], true)
+                && $fact->status === 'candidate'
+                && $fact->sourceVersion === $sourceVersion,
+        ));
+        self::assertCount(2, $visualFixtureFacts);
+        self::assertSame([], array_values(array_filter(
+            $currentProjectFacts,
+            static fn ($fact): bool => $fact->type === 'furniture' && $fact->sourceVersion === $sourceVersion,
+        )));
 
         $areaDocumentFact = DB::table('estimate_generation_document_facts')
             ->where('document_id', $document->id)
@@ -528,13 +554,8 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertNotEmpty($questions);
         $materialQuestion = array_values(array_filter(
             $questions,
-            static fn (array $question): bool => in_array(
-                5,
-                is_array($question['source_locator']['page_numbers'] ?? null)
-                    ? $question['source_locator']['page_numbers']
-                    : [],
-                true,
-            ),
+            static fn (array $question): bool => ($question['subject'] ?? null)
+                === 'В документах указаны разные значения для «материал». Какое значение использовать?',
         ))[0] ?? null;
         self::assertIsArray($materialQuestion);
         self::assertMatchesRegularExpression('/^project_question_[a-f0-9]{32}$/D', (string) $materialQuestion['code']);
@@ -549,6 +570,14 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             [['type' => 'choice_quarantined', 'count' => 1]],
             $materialQuestion['source_locator']['limitations'],
         );
+        $fixtureQuestion = array_values(array_filter(
+            $questions,
+            static fn (array $question): bool => str_contains((string) ($question['text'] ?? ''), 'Унитаз')
+                || str_contains((string) ($question['text'] ?? ''), 'Кухонная мойка'),
+        ))[0] ?? null;
+        self::assertIsArray($fixtureQuestion);
+        self::assertSame([5], $fixtureQuestion['source_locator']['page_numbers']);
+        self::assertStringNotContainsString('Кровать', (string) $fixtureQuestion['text']);
         self::assertNotContains(str_repeat('Повреждённый вариант ', 9), array_column($materialQuestion['choices'], 'label'));
         self::assertContains('other', array_column($materialQuestion['choices'], 'value'));
         self::assertContains('leave_unresolved', array_column($materialQuestion['choices'], 'value'));
@@ -1529,6 +1558,9 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
         if ($role === 'observer_literal' && in_array($input->pageNumber, [2, 3, 4], true)) {
             return $this->capturedProductionObservation($input);
         }
+        if ($role === 'observer_literal' && $input->pageNumber === 11) {
+            return $this->capturedSession77Observation($input);
+        }
         $page = $this->pages[$input->pageNumber];
         $profile = str_replace('observer_', '', $role);
         $evidenceKey = sprintf('page-%d-%s', $input->pageNumber, $profile);
@@ -1539,6 +1571,8 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
             $input->pageNumber === 5 && $profile === 'risk' => str_repeat('Повреждённый вариант ', 9),
             $input->pageNumber === 6 && in_array($profile, ['literal', 'risk'], true) => $this->recordedSourceFacts['majority_wall_material'],
             $input->pageNumber === 6 && $profile === 'construction' => $this->recordedSourceFacts['minority_wall_material'],
+            $input->pageNumber === 9 && $profile === 'literal' => '22.10',
+            $input->pageNumber === 9 && $profile === 'construction' => '5.50',
             $profile === 'literal' => (string) $page['title'],
             $profile === 'construction' => 'Кладка и отделка учитываются раздельно',
             $profile === 'risk' => 'Требуется проверка размерных границ',
@@ -1547,6 +1581,8 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
         $factType = match (true) {
             $input->pageNumber === 4 && $profile === 'literal' => 'area',
             in_array($input->pageNumber, [5, 6], true) => 'material',
+            $input->pageNumber === 9 && $profile === 'literal' => 'area',
+            $input->pageNumber === 9 && $profile === 'construction' => 'length',
             $profile === 'literal' => 'note',
             $profile === 'construction' => 'material',
             default => 'risk',
@@ -1555,16 +1591,48 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
             'entityKey' => match (true) {
                 $input->pageNumber === 4 && $profile === 'literal' => 'room:main',
                 in_array($input->pageNumber, [5, 6], true) => 'building-1',
+                $input->pageNumber === 9 && in_array($profile, ['literal', 'construction'], true) => 'room.kitchen',
                 default => sprintf('sheet:page-%d:%s', $input->pageNumber, $profile),
             },
             'factType' => $factType,
-            'value' => ['type' => is_float($factValue) ? 'number' : 'string', 'data' => $factValue],
-            'unit' => is_float($factValue) ? 'm2' : null,
+            'value' => [
+                'type' => is_float($factValue) || ($input->pageNumber === 9 && in_array($profile, ['literal', 'construction'], true))
+                    ? 'number'
+                    : 'string',
+                'data' => $factValue,
+            ],
+            'unit' => match (true) {
+                is_float($factValue) => 'm2',
+                $input->pageNumber === 9 && $profile === 'literal' => 'm2',
+                $input->pageNumber === 9 && $profile === 'construction' => 'm',
+                default => null,
+            },
             'evidenceRef' => $evidenceKey,
             'sourcePolygonOrNativeRef' => [[0.1, 0.1], [0.9, 0.9]],
             'confidence' => 0.91,
             'contractVersion' => 'sheet-analysis:v3',
         ]];
+        if ($input->pageNumber === 5) {
+            $descriptions = match ($profile) {
+                'literal' => ['Унитаз', 'Кухонная мойка', 'Кровать условно'],
+                'construction' => ['Напольный унитаз', 'Мойка на кухне', 'Условное изображение кровати'],
+                default => ['Санитарный прибор: унитаз', 'Раковина кухни', 'Кровать показана условно'],
+            };
+            foreach ([
+                ['room.bathroom.toilet', 'sanitary_fixture', $descriptions[0]],
+                ['room.kitchen.sink', 'kitchen_fixture', $descriptions[1]],
+                ['room.bedroom.bed', 'furniture', $descriptions[2]],
+                ['sheet.page-5.conditional-note', 'note', 'Мебель на плане показана условно и не входит в объём поставки'],
+            ] as [$entityKey, $visualFactType, $description]) {
+                $facts[] = [
+                    ...$facts[0],
+                    'entityKey' => $entityKey,
+                    'factType' => $visualFactType,
+                    'value' => ['type' => 'string', 'data' => $description],
+                    'unit' => null,
+                ];
+            }
+        }
         if ($input->pageNumber === 7 && $profile === 'literal') {
             $facts[] = [
                 ...$facts[0],
@@ -1686,6 +1754,39 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
             64,
             $input->nativeReferences,
         );
+    }
+
+    private function capturedSession77Observation(VisionDocumentInput $input): VisionAnalysisData
+    {
+        $fixture = json_decode((string) file_get_contents(
+            dirname(__DIR__, 4).'/tests/Fixtures/EstimateGeneration/Vision/session-77-pages-5-9-11.json',
+        ), true, flags: JSON_THROW_ON_ERROR);
+        $payload = $fixture['page_11']['provider_response'];
+        foreach ($payload['evidence'] as &$evidence) {
+            $evidence['locator'] = [
+                'page_id' => $input->pageId,
+                'page_number' => $input->pageNumber,
+                'processing_unit_id' => $input->processingUnitId,
+                'source_version' => $input->sourceVersion,
+                'coordinate_space' => 'normalized_derivative_v1',
+                'explicit' => true,
+            ];
+        }
+        unset($evidence);
+
+        return VisionAnalysisData::fromProviderArray(
+            $payload,
+            'recorded',
+            'openai/gpt-5.6-luna',
+            'openai/gpt-5.6-luna',
+            'recorded-session-77-v1',
+            'measured',
+            100,
+            50,
+            64,
+            64,
+            $input->nativeReferences,
+        )->assertProvenance($input, 'normalized_derivative_v1');
     }
 
     private function arbitration(VisionDocumentInput $input): VisionAnalysisData

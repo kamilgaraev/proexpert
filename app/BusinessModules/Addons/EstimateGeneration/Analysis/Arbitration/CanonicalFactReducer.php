@@ -26,16 +26,17 @@ final class CanonicalFactReducer
                 throw new InvalidArgumentException('canonical_fact_decision_invalid');
             }
             $canonical = $decision->canonicalClaim;
-            $key = $decision->status === 'accepted' && is_array($canonical)
+            $visualKey = $this->visualGroupKey($byId[$decision->claimId], $decision->status);
+            $key = $visualKey ?? ($decision->status === 'accepted' && is_array($canonical)
                 ? 'accepted|'.$this->matcher->keyForCanonical($canonical)
-                : 'claim|'.$decision->claimId.'|'.$decision->status;
+                : 'claim|'.$decision->claimId.'|'.$decision->status);
             $groups[$key][] = $decision;
         }
         $groups = $this->coalesceAcceptedGroups($groups);
 
         $reduced = [];
         foreach ($groups as $key => $group) {
-            if (! str_starts_with($key, 'accepted|') || count($group) === 1) {
+            if (! $this->isMergeableGroup($key) || count($group) === 1) {
                 foreach ($group as $decision) {
                     $reduced[] = $this->normalized($decision, $byId);
                 }
@@ -70,7 +71,7 @@ final class CanonicalFactReducer
             sort($evidenceRefs, SORT_STRING);
             $reduced[] = new ArbitrationDecision(
                 claimId: $primary->claimId,
-                status: 'accepted',
+                status: $primary->status,
                 supportingClaimIds: $supportingClaimIds,
                 evidenceRefs: $evidenceRefs,
                 reasonCode: 'canonical_consensus_'.substr(hash('sha256', $key), 0, 16),
@@ -80,6 +81,29 @@ final class CanonicalFactReducer
         }
 
         return $reduced;
+    }
+
+    private function visualGroupKey(ObservationClaim $claim, string $status): ?string
+    {
+        $value = $claim->value['data'] ?? null;
+        if (! in_array($status, ['accepted', 'candidate'], true)
+            || ! in_array($claim->factType, [
+                'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
+            ], true)
+            || ! is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        return 'visual|'.$status.'|'.(new VisualObjectIdentity)->identity(
+            $claim->factType,
+            $claim->entityKey,
+            $value,
+        );
+    }
+
+    private function isMergeableGroup(string $key): bool
+    {
+        return str_starts_with($key, 'accepted|') || str_starts_with($key, 'visual|');
     }
 
     private function coalesceAcceptedGroups(array $groups): array
