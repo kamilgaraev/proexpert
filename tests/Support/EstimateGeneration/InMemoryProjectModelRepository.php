@@ -83,7 +83,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 && $entity->projectId === $projectId
                 && $entity->sessionId === $sessionId
                 && $entity->sourceVersion === $sourceVersion
-                && in_array($entity->id, $candidates, true),
+                && in_array($entity->stableKey, $candidates, true),
         ));
         if (count($matches) > 1) {
             throw new InvalidArgumentException('project_model_entity_identity_alias_collision');
@@ -95,7 +95,7 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
             throw new InvalidArgumentException('project_model_entity_exact_identity_collision');
         }
 
-        return $matches[0]->id;
+        return $matches[0]->stableKey;
     }
 
     public function saveSourceModel(array $entities, array $facts, array $evidence, array $conflicts = []): void
