@@ -1585,7 +1585,7 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
             $input->pageNumber === 4 && $profile === 'literal' => 'area',
             in_array($input->pageNumber, [5, 6], true) => 'material',
             $input->pageNumber === 9 && $profile === 'literal' => 'area',
-            $input->pageNumber === 9 && $profile === 'construction' => 'length',
+            $input->pageNumber === 9 && $profile === 'construction' => 'dimension_chain',
             $profile === 'literal' => 'note',
             $profile === 'construction' => 'material',
             default => 'risk',
