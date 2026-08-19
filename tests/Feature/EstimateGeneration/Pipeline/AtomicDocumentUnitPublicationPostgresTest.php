@@ -927,9 +927,9 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 ->where('stable_key', $entityId)
                 ->value('payload');
             self::assertSame([
-                'area_m2' => '22.10',
                 'key' => $entityId,
                 'kind' => 'room',
+                'area_m2' => '22.10',
             ], json_decode((string) $payload, true, 512, JSON_THROW_ON_ERROR));
             self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
                 ->where('session_id', $context->sessionId)
