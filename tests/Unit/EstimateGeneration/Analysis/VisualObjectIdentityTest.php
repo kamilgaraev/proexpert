@@ -196,4 +196,78 @@ final class VisualObjectIdentityTest extends TestCase
         self::assertSame('kitchen_sink', $identity->objectType('Kitchen sink', 'room.kitchen.sink', 'kitchen_fixture'));
         self::assertSame('Объект на плане', $identity->canonicalLabel('unknown', 'Washbasin'));
     }
+
+    #[Test]
+    public function hierarchical_scope_keeps_building_section_floor_room_object_and_instance(): void
+    {
+        $identity = new VisualObjectIdentity;
+        $firstFloor = $identity->identity(
+            'kitchen_fixture',
+            'building.A.section.2.floor.1.room.kitchen.sink.01',
+            'Kitchen sink',
+        );
+        $secondFloor = $identity->identity(
+            'kitchen_fixture',
+            'building.A.section.2.floor.2.room.kitchen.sink.1',
+            'Kitchen sink',
+        );
+        $russianAlias = $identity->identity(
+            'kitchen_fixture',
+            'здание-А-секция-2-этаж-1-помещение-кухня-мойка-1',
+            'Кухонная мойка',
+        );
+
+        self::assertSame($firstFloor, $russianAlias);
+        self::assertNotSame($firstFloor, $secondFloor);
+        self::assertStringContainsString('building:a', $firstFloor);
+        self::assertStringContainsString('section:2', $firstFloor);
+        self::assertStringContainsString('floor:1', $firstFloor);
+        self::assertStringContainsString('room:kitchen', $firstFloor);
+    }
+
+    #[Test]
+    public function unknown_prefix_is_bounded_deterministic_and_does_not_erase_known_scope(): void
+    {
+        $identity = new VisualObjectIdentity;
+        $first = $identity->identity('sanitary_fixture', 'zone.alpha.floor.1.room.bathroom.toilet', 'Унитаз');
+        $replay = $identity->identity('sanitary_fixture', 'zone_alpha_floor_1_room_bathroom_toilet', 'Toilet');
+        $other = $identity->identity('sanitary_fixture', 'zone.beta.floor.1.room.bathroom.toilet', 'Унитаз');
+
+        self::assertSame($first, $replay);
+        self::assertNotSame($first, $other);
+        self::assertStringContainsString('floor:1', $first);
+        self::assertStringContainsString('room:bathroom', $first);
+        self::assertLessThanOrEqual(240, strlen($first));
+    }
+
+    #[Test]
+    public function object_aliases_match_only_bounded_tokens_and_consistent_context(): void
+    {
+        $identity = new VisualObjectIdentity;
+
+        foreach ([
+            ['Плита', 'room.kitchen.stove'],
+            ['Cooktop', 'room.kitchen.cooktop'],
+            ['Stove', 'room.kitchen.stove'],
+        ] as [$label, $entityKey]) {
+            self::assertSame('stove', $identity->objectType($label, $entityKey, 'kitchen_fixture'), $label);
+        }
+        foreach ([
+            ['Плитка', 'room.kitchen.tile'],
+            ['Плиточный фартук', 'room.kitchen.tile'],
+            ['Плита перекрытия', 'floor.1.slab'],
+            ['Плиты перекрытия', 'floor.1.slabs'],
+            ['Столешница', 'room.kitchen.worktop'],
+            ['Столовая зона', 'room.dining.zone'],
+            ['Ванная комната', 'room.bathroom.zone'],
+            ['Toiletry cabinet', 'room.bathroom.cabinet'],
+            ['Stovepipe', 'building.chimney'],
+            ['Условное обозначение плиты перекрытия', 'floor.1.symbol'],
+        ] as [$label, $entityKey]) {
+            self::assertSame('unknown', $identity->objectType($label, $entityKey, 'unknown_fixture'), $label);
+        }
+        $conflict = $identity->classification('Плита', 'room.bathroom.toilet', 'sanitary_fixture');
+        self::assertSame('unknown', $conflict->objectType);
+        self::assertSame('object_type_conflicted', $conflict->limitationCode);
+    }
 }

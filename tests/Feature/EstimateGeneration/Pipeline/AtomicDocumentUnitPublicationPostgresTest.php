@@ -18,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessD
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelFactIdentityCollision;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
@@ -1009,6 +1010,127 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
         }
     }
 
+    #[Test]
+    public function visual_physical_group_permutations_are_identical_immediately_after_persistence(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, $writer, $store] = $this->publicationFixture('2', 12);
+            $now = now()->toDateTimeImmutable();
+            $context = $store->executionContext($store->claim(
+                (int) $unit->id,
+                $sourceVersion,
+                $now,
+                $now->modify('+120 seconds'),
+                ProcessDocumentUnit::MAX_ATTEMPTS,
+            ));
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $context);
+            $acceptedClaim = $this->visualObservation($context, 'literal:sink', 'floor.1.room.kitchen.sink', 'Кухонная мойка');
+            $unresolvedClaim = $this->visualObservation($context, 'risk:sink', 'этаж-1-помещение-кухня-мойка', 'Kitchen sink');
+            $accepted = $this->acceptedDecision($acceptedClaim);
+            $unresolved = new ArbitrationDecision(
+                $unresolvedClaim->id,
+                'unresolved',
+                [$unresolvedClaim->id],
+                [$unresolvedClaim->evidenceRef],
+                'manual_review_required',
+                [
+                    'entity_key' => $unresolvedClaim->entityKey,
+                    'fact_type' => $unresolvedClaim->factType,
+                    'value' => $unresolvedClaim->value,
+                    'unit' => null,
+                    'source_claim_id' => $unresolvedClaim->id,
+                ],
+            );
+            $atomic = new AtomicDocumentUnitPublicationWriter(DB::connection(), $writer);
+            $snapshots = [];
+            foreach ([[$accepted, $unresolved], [$unresolved, $accepted]] as $decisions) {
+                $publication = new DocumentUnitPublication([$acceptedClaim, $unresolvedClaim], $decisions);
+                $atomic->transaction($context->organizationId, $context->sessionId, function () use (
+                    $atomic,
+                    $publication,
+                    $context,
+                    $sourceVersion,
+                ): void {
+                    $atomic->write(
+                        $publication,
+                        $context->organizationId,
+                        $context->projectId,
+                        $context->sessionId,
+                        $context->documentId,
+                        $context->index,
+                        $sourceVersion,
+                    );
+                });
+                $snapshots[] = json_encode([
+                    'facts' => DB::table('estimate_generation_project_model_assertions')
+                        ->where('session_id', $context->sessionId)
+                        ->orderBy('stable_key')
+                        ->get(['stable_key', 'assertion_type', 'fact_value', 'fact_origin', 'fact_status'])
+                        ->map(static fn (object $row): array => (array) $row)->all(),
+                    'lineage' => DB::table('estimate_generation_project_model_fact_evidence')
+                        ->where('session_id', $context->sessionId)
+                        ->orderBy('fact_id')->orderBy('evidence_id')
+                        ->get(['fact_id', 'evidence_id'])->map(static fn (object $row): array => (array) $row)->all(),
+                    'document_facts' => DB::table('estimate_generation_document_facts')
+                        ->where('session_id', $context->sessionId)->count(),
+                ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            }
+
+            self::assertCount(1, array_unique($snapshots));
+            self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
+                ->where('session_id', $context->sessionId)->count());
+            self::assertSame('unresolved', DB::table('estimate_generation_project_model_assertions')
+                ->where('session_id', $context->sessionId)->value('fact_status'));
+            self::assertSame(2, DB::table('estimate_generation_project_model_fact_evidence')
+                ->where('session_id', $context->sessionId)->count());
+            self::assertSame(0, DB::table('estimate_generation_document_facts')
+                ->where('session_id', $context->sessionId)->count());
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function same_fact_identity_with_different_canonical_payload_fails_closed(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, $writer, $store] = $this->publicationFixture('3', 13);
+            $now = now()->toDateTimeImmutable();
+            $context = $store->executionContext($store->claim(
+                (int) $unit->id,
+                $sourceVersion,
+                $now,
+                $now->modify('+120 seconds'),
+                ProcessDocumentUnit::MAX_ATTEMPTS,
+            ));
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $context);
+            $first = $this->visualObservation($context, 'literal:sink', 'floor.1.room.kitchen.sink', 'Кухонная мойка');
+            $collision = $this->visualObservation($context, 'risk:sink', 'этаж-1-помещение-кухня-мойка', 'Kitchen sink');
+
+            $writer->writeArbitration([$first], [$this->acceptedDecision($first)], $context->documentId, $context->index);
+            try {
+                $writer->writeArbitration([$collision], [$this->acceptedDecision($collision)], $context->documentId, $context->index);
+                self::fail('Одинаковый factId с другим каноническим содержимым был молча принят.');
+            } catch (ProjectModelFactIdentityCollision $exception) {
+                self::assertSame('project_model_fact_exact_identity_collision', $exception->getMessage());
+            }
+
+            self::assertSame(1, DB::table('estimate_generation_project_model_assertions')
+                ->where('session_id', $context->sessionId)->count());
+            self::assertSame(
+                ['value' => 'Кухонная мойка'],
+                json_decode((string) DB::table('estimate_generation_project_model_assertions')
+                    ->where('session_id', $context->sessionId)->value('fact_value'), true, 512, JSON_THROW_ON_ERROR),
+            );
+        } finally {
+            DB::rollBack();
+        }
+    }
+
     /** @return array{EstimateGenerationProcessingUnit, string, ProjectModelEvidenceWriter, EloquentDocumentProcessingUnitStore} */
     private function publicationFixture(string $hashCharacter, int $pageNumber): array
     {
@@ -1130,6 +1252,37 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 'source_version' => $context->sourceVersion,
                 'explicit' => true,
             ],
+        );
+    }
+
+    private function visualObservation(
+        DocumentUnitExecutionContext $context,
+        string $id,
+        string $entityKey,
+        string $value,
+    ): ObservationClaim {
+        return new ObservationClaim(
+            $id,
+            'observer_'.strstr($id, ':', true),
+            $entityKey,
+            'kitchen_fixture',
+            ['type' => 'string', 'data' => $value],
+            null,
+            $id,
+            true,
+            $context->organizationId,
+            $context->projectId,
+            $context->sessionId,
+            $context->sourceVersion,
+            [
+                'page' => $context->index,
+                'document_role' => 'floor_plan',
+                'unit_type' => $context->type->value,
+                'unit_index' => $context->index,
+                'source_version' => $context->sourceVersion,
+                'explicit' => true,
+            ],
+            confidence: 0.9,
         );
     }
 

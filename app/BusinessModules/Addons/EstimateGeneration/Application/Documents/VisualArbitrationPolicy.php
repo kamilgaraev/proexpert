@@ -26,18 +26,18 @@ final readonly class VisualArbitrationPolicy
         $rawStatus = is_string($decision['status'] ?? null) ? $decision['status'] : null;
         $status = $rawStatus === null ? null : VisualArbitrationStatus::tryFrom($rawStatus);
         if ($status === null) {
-            return [
+            return $this->ordered([
                 'status' => VisualArbitrationStatus::Unresolved->value,
                 'reason_code' => 'arbitration_status_unknown',
                 'limitation_code' => 'arbitration_status_unknown',
                 'supporting_claim_ids' => $this->strings($decision['supporting_claim_ids'] ?? null),
                 'evidence_refs' => $this->strings($decision['evidence_refs'] ?? null),
-            ];
+            ]);
         }
 
         $reason = is_string($decision['reason_code'] ?? null) ? $decision['reason_code'] : null;
         if (! $this->isKnownReason($reason)) {
-            return [
+            return $this->ordered([
                 'status' => $status === VisualArbitrationStatus::Accepted
                     ? VisualArbitrationStatus::Conditional->value
                     : $status->value,
@@ -45,7 +45,7 @@ final readonly class VisualArbitrationPolicy
                 'limitation_code' => 'arbitration_reason_unknown',
                 'supporting_claim_ids' => $this->strings($decision['supporting_claim_ids'] ?? null),
                 'evidence_refs' => $this->strings($decision['evidence_refs'] ?? null),
-            ];
+            ]);
         }
 
         $status = $this->statusRequiredByReason($status, $reason);
@@ -64,7 +64,7 @@ final readonly class VisualArbitrationPolicy
             $normalized['limitation_code'] = $decision['limitation_code'];
         }
 
-        return $normalized;
+        return $this->ordered($normalized);
     }
 
     /** @param list<array<string, mixed>> $decisions @return array{status:string,reason_code:string,limitation_code?:string,supporting_claim_ids:list<string>,evidence_refs:list<string>} */
@@ -78,28 +78,25 @@ final readonly class VisualArbitrationPolicy
             ]);
         }
 
-        usort($normalized, function (array $left, array $right): int {
-            $leftStatus = VisualArbitrationStatus::from($left['status']);
-            $rightStatus = VisualArbitrationStatus::from($right['status']);
-            $rank = $rightStatus->precedence() <=> $leftStatus->precedence();
-
-            return $rank !== 0 ? $rank : $this->canonicalJson($left) <=> $this->canonicalJson($right);
-        });
+        usort($normalized, fn (array $left, array $right): int => $this->compare($left, $right));
         $primary = $normalized[0];
         $statuses = array_values(array_unique(array_column($normalized, 'status')));
+        $hadEvidenceConflict = false;
         $supportingClaimIds = [];
         $evidenceRefs = [];
         foreach ($normalized as $decision) {
             $supportingClaimIds = [...$supportingClaimIds, ...$decision['supporting_claim_ids']];
             $evidenceRefs = [...$evidenceRefs, ...$decision['evidence_refs']];
+            $hadEvidenceConflict = $hadEvidenceConflict
+                || ($decision['limitation_code'] ?? null) === 'arbitration_evidence_conflict';
         }
         $primary['supporting_claim_ids'] = $this->uniqueSorted($supportingClaimIds);
         $primary['evidence_refs'] = $this->uniqueSorted($evidenceRefs);
-        if (count($statuses) > 1) {
+        if ($hadEvidenceConflict || count($statuses) > 1) {
             $primary['limitation_code'] = 'arbitration_evidence_conflict';
         }
 
-        return $primary;
+        return $this->ordered($primary);
     }
 
     private function isKnownReason(?string $reason): bool
@@ -142,10 +139,44 @@ final readonly class VisualArbitrationPolicy
         return $values;
     }
 
-    private function canonicalJson(array $value): string
+    private function compare(array $left, array $right): int
     {
-        ksort($value, SORT_STRING);
+        $leftStatus = VisualArbitrationStatus::from($left['status']);
+        $rightStatus = VisualArbitrationStatus::from($right['status']);
+        $status = $rightStatus->precedence() <=> $leftStatus->precedence();
+        if ($status !== 0) {
+            return $status;
+        }
+        $reason = $this->reasonPrecedence($right['reason_code']) <=> $this->reasonPrecedence($left['reason_code']);
+        if ($reason !== 0) {
+            return $reason;
+        }
 
-        return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return $left['reason_code'] <=> $right['reason_code'];
+    }
+
+    private function reasonPrecedence(string $reason): int
+    {
+        return match ($reason) {
+            'arbitration_status_unknown' => 3,
+            'arbitration_reason_unknown' => 2,
+            default => 1,
+        };
+    }
+
+    /** @return array{status:string,reason_code:string,limitation_code?:string,supporting_claim_ids:list<string>,evidence_refs:list<string>} */
+    private function ordered(array $decision): array
+    {
+        $ordered = [
+            'status' => (string) $decision['status'],
+            'reason_code' => (string) $decision['reason_code'],
+        ];
+        if (is_string($decision['limitation_code'] ?? null)) {
+            $ordered['limitation_code'] = $decision['limitation_code'];
+        }
+        $ordered['supporting_claim_ids'] = $this->strings($decision['supporting_claim_ids'] ?? null);
+        $ordered['evidence_refs'] = $this->strings($decision['evidence_refs'] ?? null);
+
+        return $ordered;
     }
 }

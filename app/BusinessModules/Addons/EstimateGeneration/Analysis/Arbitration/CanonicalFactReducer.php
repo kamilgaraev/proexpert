@@ -8,6 +8,15 @@ use InvalidArgumentException;
 
 final class CanonicalFactReducer
 {
+    private const STATUS_PRECEDENCE = [
+        'candidate' => 0,
+        'accepted' => 1,
+        'conditional' => 2,
+        'unresolved' => 3,
+        'ambiguous' => 4,
+        'rejected' => 5,
+    ];
+
     public function __construct(private readonly ClaimSemanticMatcher $matcher = new ClaimSemanticMatcher) {}
 
     public function reduce(array $claims, array $decisions): array
@@ -26,34 +35,26 @@ final class CanonicalFactReducer
                 throw new InvalidArgumentException('canonical_fact_decision_invalid');
             }
             $canonical = $decision->canonicalClaim;
-            $visualKey = $this->visualGroupKey($byId[$decision->claimId], $decision->status);
-            $key = $visualKey ?? ($decision->status === 'accepted' && is_array($canonical)
-                ? 'accepted|'.$this->matcher->keyForCanonical($canonical)
-                : 'claim|'.$decision->claimId.'|'.$decision->status);
+            $visualKey = $this->visualGroupKey($byId[$decision->claimId]);
+            $key = $visualKey ?? (is_array($canonical)
+                ? 'canonical|'.$this->matcher->keyForCanonical($canonical)
+                : 'claim|'.$decision->claimId);
             $groups[$key][] = $decision;
         }
-        $groups = $this->coalesceAcceptedGroups($groups);
+        $groups = $this->coalesceCanonicalGroups($groups);
+        ksort($groups, SORT_STRING);
 
         $reduced = [];
         foreach ($groups as $key => $group) {
-            if (! $this->isMergeableGroup($key) || count($group) === 1) {
-                foreach ($group as $decision) {
-                    $reduced[] = $this->normalized($decision, $byId);
-                }
-
-                continue;
-            }
-            usort($group, function (ArbitrationDecision $left, ArbitrationDecision $right) use ($byId, $key): int {
-                if (str_starts_with($key, 'visual|')) {
-                    $status = ($right->status === 'accepted') <=> ($left->status === 'accepted');
-                    if ($status !== 0) {
-                        return $status;
-                    }
-                }
-                $confidence = $byId[$right->claimId]->confidence <=> $byId[$left->claimId]->confidence;
-
-                return $confidence !== 0 ? $confidence : $left->claimId <=> $right->claimId;
-            });
+            $group = array_map(fn (ArbitrationDecision $decision): ArbitrationDecision => $this->normalized(
+                $decision,
+                $byId,
+            ), $group);
+            usort($group, fn (ArbitrationDecision $left, ArbitrationDecision $right): int => $this->compare(
+                $left,
+                $right,
+                $byId,
+            ));
             $primary = $group[0];
             $support = [];
             $evidence = [];
@@ -80,7 +81,9 @@ final class CanonicalFactReducer
                 status: $primary->status,
                 supportingClaimIds: $supportingClaimIds,
                 evidenceRefs: $evidenceRefs,
-                reasonCode: 'canonical_consensus_'.substr(hash('sha256', $key), 0, 16),
+                reasonCode: count($group) === 1
+                    ? $primary->reasonCode
+                    : 'canonical_consensus_'.substr(hash('sha256', $key), 0, 16),
                 canonicalClaim: $primary->canonicalClaim,
                 reason: $primary->reason,
             );
@@ -89,13 +92,22 @@ final class CanonicalFactReducer
         return $reduced;
     }
 
-    private function visualGroupKey(ObservationClaim $claim, string $status): ?string
+    public function assertReduced(array $claims, array $decisions): void
+    {
+        if (! hash_equals(
+            json_encode($this->reduce($claims, $decisions), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            json_encode($decisions, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        )) {
+            throw new InvalidArgumentException('canonical_fact_reduction_required');
+        }
+    }
+
+    private function visualGroupKey(ObservationClaim $claim): ?string
     {
         $value = $claim->value['data'] ?? null;
-        if (! in_array($status, ['accepted', 'candidate'], true)
-            || ! in_array($claim->factType, [
-                'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
-            ], true)
+        if (! in_array($claim->factType, [
+            'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
+        ], true)
             || ! is_string($value) || trim($value) === '') {
             return null;
         }
@@ -107,17 +119,12 @@ final class CanonicalFactReducer
         );
     }
 
-    private function isMergeableGroup(string $key): bool
-    {
-        return str_starts_with($key, 'accepted|') || str_starts_with($key, 'visual|');
-    }
-
-    private function coalesceAcceptedGroups(array $groups): array
+    private function coalesceCanonicalGroups(array $groups): array
     {
         $coalesced = [];
         $metadata = [];
         foreach ($groups as $key => $group) {
-            if (! str_starts_with($key, 'accepted|')) {
+            if (! str_starts_with($key, 'canonical|')) {
                 $coalesced[$key] = $group;
 
                 continue;
@@ -184,14 +191,55 @@ final class CanonicalFactReducer
         sort($supportingClaimIds, SORT_STRING);
         sort($evidenceRefs, SORT_STRING);
 
+        $status = array_key_exists($decision->status, self::STATUS_PRECEDENCE)
+            ? $decision->status
+            : 'unresolved';
+        $reasonCode = $status === $decision->status
+            ? $decision->reasonCode
+            : 'canonical_arbitration_status_unknown';
+        $reason = $status === $decision->status ? $decision->reason : '';
+
         return new ArbitrationDecision(
             claimId: $decision->claimId,
-            status: $decision->status,
+            status: $status,
             supportingClaimIds: $supportingClaimIds,
             evidenceRefs: $evidenceRefs,
-            reasonCode: $decision->reasonCode,
+            reasonCode: $reasonCode,
             canonicalClaim: $decision->canonicalClaim,
-            reason: $decision->reason,
+            reason: $reason,
         );
+    }
+
+    /** @param array<string, ObservationClaim> $claims */
+    private function compare(ArbitrationDecision $left, ArbitrationDecision $right, array $claims): int
+    {
+        $status = self::STATUS_PRECEDENCE[$right->status] <=> self::STATUS_PRECEDENCE[$left->status];
+        if ($status !== 0) {
+            return $status;
+        }
+        $confidence = $claims[$right->claimId]->confidence <=> $claims[$left->claimId]->confidence;
+        if ($confidence !== 0) {
+            return $confidence;
+        }
+        $claim = $left->claimId <=> $right->claimId;
+        if ($claim !== 0) {
+            return $claim;
+        }
+        $reason = $left->reasonCode <=> $right->reasonCode;
+        if ($reason !== 0) {
+            return $reason;
+        }
+
+        return $this->canonicalJson($left->canonicalClaim) <=> $this->canonicalJson($right->canonicalClaim);
+    }
+
+    private function canonicalJson(?array $value): string
+    {
+        if ($value === null) {
+            return 'null';
+        }
+        ksort($value, SORT_STRING);
+
+        return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 }

@@ -556,7 +556,9 @@ SQL, [
                         'fact_unit' => $fact->unit,
                         'created_at' => now(),
                     ]);
-                    $factDatabaseId = $this->factDatabaseId($fact, $fact->id);
+                    $storedFact = $this->factRow($fact, $fact->id);
+                    $this->assertExactFactReplay($fact, $storedFact, (int) $entity->id, $payload);
+                    $factDatabaseId = (int) $storedFact->id;
                     foreach ($fact->evidenceIds as $evidenceId) {
                         $evidence = $evidenceRows[$this->evidenceMapKey($fact, $evidenceId)];
                         $this->database->table('estimate_generation_project_model_fact_evidence')->insertOrIgnore([
@@ -2619,6 +2621,45 @@ SQL, [
     private function factDatabaseId(object $scope, string $stableKey): int
     {
         return (int) $this->factRow($scope, $stableKey)->id;
+    }
+
+    private function assertExactFactReplay(Fact $fact, object $stored, int $entityId, array $payload): void
+    {
+        $expectedSupersedes = $fact->supersedesFactId === null
+            ? null
+            : $this->factDatabaseId($fact, $fact->supersedesFactId);
+        $expected = [
+            'entity_id' => $entityId,
+            'assertion_type' => $fact->type,
+            'payload' => $payload,
+            'confidence' => $fact->confidence,
+            'fact_origin' => $fact->origin,
+            'fact_status' => $fact->status,
+            'fact_version' => $fact->version,
+            'supersedes_assertion_id' => $expectedSupersedes,
+            'fact_value' => ['value' => $fact->value],
+            'fact_unit' => $fact->unit,
+        ];
+        $actual = [
+            'entity_id' => (int) $stored->entity_id,
+            'assertion_type' => (string) $stored->assertion_type,
+            'payload' => $this->decode($stored->payload),
+            'confidence' => (float) $stored->confidence,
+            'fact_origin' => (string) $stored->fact_origin,
+            'fact_status' => (string) $stored->fact_status,
+            'fact_version' => (int) $stored->fact_version,
+            'supersedes_assertion_id' => $stored->supersedes_assertion_id === null
+                ? null
+                : (int) $stored->supersedes_assertion_id,
+            'fact_value' => $this->decode($stored->fact_value),
+            'fact_unit' => $stored->fact_unit === null ? null : (string) $stored->fact_unit,
+        ];
+        if (! hash_equals(
+            DerivedQuantityIdentity::canonicalJson($expected),
+            DerivedQuantityIdentity::canonicalJson($actual),
+        )) {
+            throw new ProjectModelFactIdentityCollision('project_model_fact_exact_identity_collision');
+        }
     }
 
     private function factStableKey(int $id): ?string

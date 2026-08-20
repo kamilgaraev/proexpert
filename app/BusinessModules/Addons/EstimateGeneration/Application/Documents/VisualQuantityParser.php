@@ -20,6 +20,20 @@ final readonly class VisualQuantityParser
         'площадь', 'area', 'объем', 'объём', 'volume', 'диаметр', 'diameter',
         'отметка', 'elevation', 'уклон', 'slope', 'этаж', 'floor', 'уровень', 'level',
         'год', 'года', 'year', 'марка', 'brand', 'модель', 'model', 'типоразмер', 'size',
+        'помещение', 'комната', 'room', 'rooms', 'координата', 'coordinate', 'coordinates',
+        'гост', 'норма', 'норматив', 'standard', 'standards', 'номер', 'number', 'numbers', 'no',
+    ];
+
+    private const BLOCKED_WORD_PATTERNS = [
+        '/^(?:артикул|артикулом|артикула|артикулу|арт)$/u',
+        '/^(?:ос[ьи]|осям|осях|осью)$/u',
+        '/^(?:высот|ширин|длин|глубин|площад|объ[её]м|диаметр|отметк|уклон)[\p{L}]*$/u',
+        '/^(?:этаж|уровн|год|марк|модел|типоразмер)[\p{L}]*$/u',
+        '/^(?:помещен|комнат|координат|норматив|норм)[\p{L}]*$/u',
+        '/^(?:гост|снип)[\p{L}\p{N}]*$/u',
+        '/^(?:height|width|length|depth|area|volume|diameter|elevation|slope)s?$/u',
+        '/^(?:floor|level|year|brand|model|room|coordinate|standard|number)s?$/u',
+        '/^(?:article|sku|axis|axes|size|no)$/u',
     ];
 
     private const MEASUREMENT_UNITS = [
@@ -67,19 +81,25 @@ final readonly class VisualQuantityParser
         }
 
         $words = $this->words($normalized);
+        $hasCountMarker = $this->containsAny($words, self::COUNT_MARKERS);
         if ($this->containsAny($words, self::BLOCKED_SEMANTICS)
+            || $this->hasBlockedWord($words)
             || $this->containsAny($words, self::MEASUREMENT_UNITS)
             || str_contains($normalized, '%')
             || str_contains($normalized, 'ø')
-            || str_contains($normalized, '⌀')) {
-            return new VisualQuantityParseResult('not_count', null, 'not_count');
+            || str_contains($normalized, '⌀')
+            || str_contains($normalized, '№')) {
+            return new VisualQuantityParseResult(
+                $hasCountMarker ? 'ambiguous' : 'not_count',
+                null,
+                $hasCountMarker ? 'ambiguous' : 'not_count',
+            );
         }
 
         $families = $this->families($words);
         if (count($families) > 1) {
             return new VisualQuantityParseResult('ambiguous', null, 'ambiguous');
         }
-        $hasCountMarker = $this->containsAny($words, self::COUNT_MARKERS);
         $expectedFamily = $this->expectedFamily($entityKey, $objectType);
         $observedFamily = $families[0] ?? null;
         if ($observedFamily === null && (! $hasCountMarker || $expectedFamily === null)) {
@@ -109,6 +129,20 @@ final readonly class VisualQuantityParser
     private function containsAny(array $words, array $needles): bool
     {
         return array_intersect($words, $needles) !== [];
+    }
+
+    /** @param list<string> $words */
+    private function hasBlockedWord(array $words): bool
+    {
+        foreach ($words as $word) {
+            foreach (self::BLOCKED_WORD_PATTERNS as $pattern) {
+                if (preg_match($pattern, $word) === 1) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /** @param list<string> $words @return list<string> */
