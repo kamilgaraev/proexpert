@@ -311,6 +311,42 @@ final class VisualInventoryProjectorTest extends TestCase
     }
 
     #[Test]
+    public function quantity_grammar_rejects_inflected_characteristics_norms_rooms_and_coordinates(): void
+    {
+        $projector = new VisualInventoryProjector;
+        foreach ([
+            'Мойка высотой 2',
+            'Высотой 2 мойка',
+            'Мойка модели 2',
+            'Моделью 2 обозначена мойка',
+            'Помещение 2, мойка',
+            'Мойка в помещении 2',
+            'ГОСТ 2, мойка',
+            'Мойка по ГОСТу 2',
+            'Мойка марки 2',
+            'Маркой 2 обозначена мойка',
+            'Координата X 2, мойка',
+            'Мойка с координатой X 2',
+            'Sink height 2',
+            'Model 2 sink',
+            'Room 2, sink',
+            'Standard 2 sink',
+            'Sink brand 2',
+            'Coordinate X 2, sink',
+        ] as $value) {
+            $result = $projector->project([
+                'observer_literal' => $this->observer('observer_literal', [
+                    $this->claim('room.kitchen.sink', 'kitchen_fixture', $value, 'evidence:not-count'),
+                ]),
+            ], null, $this->scope());
+
+            self::assertNull($result['items'][0]['quantity'], $value);
+            self::assertTrue($result['items'][0]['quantity_uncertain'], $value);
+            self::assertContains($result['items'][0]['quantity_provenance'], ['not_count', 'ambiguous'], $value);
+        }
+    }
+
+    #[Test]
     public function every_duplicate_decision_permutation_reduces_to_the_same_conservative_payload(): void
     {
         $observer = $this->observer('observer_literal', [

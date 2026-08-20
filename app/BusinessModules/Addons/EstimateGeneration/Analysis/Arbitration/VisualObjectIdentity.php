@@ -6,14 +6,42 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
 final readonly class VisualObjectIdentity
 {
+    private const TYPE_ALIASES = [
+        'toilet' => [['унитаз'], ['унитазы'], ['toilet'], ['toilets']],
+        'bath' => [['ванна'], ['ванны'], ['bath'], ['bathtub'], ['bathtubs']],
+        'shower' => [['душ'], ['душевая', 'кабина'], ['shower'], ['showers']],
+        'bed' => [['кровать'], ['кровати'], ['bed'], ['beds']],
+        'table' => [['стол'], ['столы'], ['table'], ['tables']],
+        'chair' => [['стул'], ['стулья'], ['chair'], ['chairs']],
+        'sofa' => [['диван'], ['диваны'], ['sofa'], ['sofas']],
+        'stove' => [
+            ['плита'], ['кухонная', 'плита'], ['газовая', 'плита'], ['электрическая', 'плита'],
+            ['cooktop'], ['cooktops'], ['stove'], ['stoves'],
+        ],
+    ];
+
+    private const BLOCKED_PHRASES = [
+        ['плитка'], ['плиточный'], ['плиточная'], ['плита', 'перекрытия'], ['плиты', 'перекрытия'],
+        ['floor', 'slab'], ['concrete', 'slab'], ['столешница'], ['столовая'], ['ванная', 'комната'],
+        ['toiletry'], ['stovepipe'], ['условное', 'обозначение'], ['conventional', 'symbol'],
+        ['строительный', 'материал'], ['building', 'material'],
+    ];
+
     public function __construct(
         private VisualObjectInstanceParser $instances = new VisualObjectInstanceParser,
+        private VisualObjectScopeParser $scopeParser = new VisualObjectScopeParser,
     ) {}
 
     public function identity(string $category, string $entityKey, string $label): string
     {
         $objectType = $this->classification($label, $entityKey, $category)->objectType;
-        $roomKey = $this->roomKey($entityKey) ?? 'room:unknown';
+        if ($objectType === 'unknown') {
+            $entityObjectType = $this->classification('', $entityKey, $category)->objectType;
+            if ($entityObjectType !== 'unknown') {
+                $objectType = $entityObjectType;
+            }
+        }
+        $scope = $this->scopeParser->parse($entityKey);
         $family = match ($objectType) {
             'toilet', 'washbasin', 'bath', 'shower' => 'sanitary',
             'kitchen_sink', 'stove' => 'kitchen',
@@ -31,49 +59,21 @@ final readonly class VisualObjectIdentity
                 mb_strcut($entityKey, 0, 512, 'UTF-8'),
             )), 0, 16)
             : '';
-        $instance = $this->instances->parse($entityKey)->identitySuffix();
 
-        return 'visual:'.$roomKey.':'.$family.':'.$objectType.$fallback.$instance;
+        return 'visual:'.$scope->identityPrefix().':'.$family.':'.$objectType.$fallback
+            .$this->instances->parse($entityKey)->identitySuffix();
     }
 
     public function normalizeEntityKey(string $entityKey): string
     {
-        $normalized = preg_replace('/[.:_-]+/u', '.', mb_strtolower(trim($entityKey)));
+        $normalized = preg_replace('/[.:_\-]+/u', '.', mb_strtolower(trim($entityKey)));
 
         return trim(is_string($normalized) ? $normalized : mb_strtolower(trim($entityKey)), '.');
     }
 
     public function roomKey(string $entityKey): ?string
     {
-        $tokens = array_values(array_filter(
-            explode('.', $this->normalizeEntityKey($entityKey)),
-            static fn (string $token): bool => $token !== '',
-        ));
-        if (($tokens[0] ?? null) !== 'room' || count($tokens) < 2) {
-            return null;
-        }
-
-        $roomTokens = [];
-        $roomParts = array_slice($tokens, 1);
-        for ($index = 0; $index < count($roomParts); $index++) {
-            $token = $roomParts[$index];
-            if ($this->isObjectToken($token)) {
-                break;
-            }
-            if (($token === 'с' && ($roomParts[$index + 1] ?? null) === 'у')
-                || ($token === 'сан' && ($roomParts[$index + 1] ?? null) === 'узел')) {
-                $roomTokens[] = 'bathroom';
-                $index++;
-
-                continue;
-            }
-            $roomTokens[] = $this->canonicalRoomToken($token);
-        }
-        if ($roomTokens === []) {
-            $roomTokens[] = $tokens[1];
-        }
-
-        return 'room:'.implode('-', $roomTokens);
+        return $this->scopeParser->parse($entityKey)->roomKey();
     }
 
     public function objectType(string $label, string $entityKey = '', ?string $category = null): string
@@ -83,51 +83,31 @@ final readonly class VisualObjectIdentity
 
     public function classification(string $label, string $entityKey = '', ?string $category = null): VisualObjectClassification
     {
-        $normalizedEntityKey = $this->normalizeEntityKey($entityKey);
-        $value = $label.' '.$normalizedEntityKey;
-        $roomKey = $this->roomKey($entityKey);
-        $roomTokens = $roomKey === null ? [] : explode('-', mb_substr($roomKey, 5));
-        $hasSinkTerm = preg_match('/мойк|раковин|умываль|рукомой|washbasin|\bbasin\b|\bsinks?\b/iu', $value) === 1;
-        if ($hasSinkTerm) {
-            $kitchenSignals = [
-                in_array('kitchen', $roomTokens, true),
-                $category === 'kitchen_fixture',
-                preg_match('/кухон|\bkitchen\b/iu', $normalizedEntityKey) === 1,
-                preg_match('/кухон|\bkitchen\b/iu', $label) === 1,
-            ];
-            $bathroomSignals = [
-                in_array('bathroom', $roomTokens, true),
-                $category === 'sanitary_fixture',
-                preg_match('/умываль|рукомой|washbasin|\bbasin\b/iu', $normalizedEntityKey) === 1,
-                preg_match('/умываль|рукомой|washbasin|\bbasin\b/iu', $label) === 1,
-                preg_match('/сануз|ванн|bathroom|\bwc\b/iu', $label) === 1,
-            ];
-            $kitchen = in_array(true, $kitchenSignals, true);
-            $bathroom = in_array(true, $bathroomSignals, true);
-            if ($kitchen && $bathroom) {
-                return new VisualObjectClassification('unknown', 'object_type_conflicted');
-            }
-            if ($kitchen) {
-                return new VisualObjectClassification('kitchen_sink');
-            }
-            if ($bathroom) {
-                return new VisualObjectClassification('washbasin');
-            }
-
-            return new VisualObjectClassification('unknown', 'object_type_requires_confirmation');
+        $labelTokens = $this->tokens($label);
+        $entityTokens = $this->tokens($this->normalizeEntityKey($entityKey));
+        $blocked = $this->containsPhrase($labelTokens, self::BLOCKED_PHRASES);
+        $sink = $this->sinkClassification($labelTokens, $entityTokens, $entityKey, $category);
+        if ($sink !== null) {
+            return $blocked
+                ? new VisualObjectClassification('unknown', 'object_type_conflicted')
+                : $sink;
         }
 
-        $objectType = match (true) {
-            preg_match('/унитаз|toilet/iu', $value) === 1 => 'toilet',
-            preg_match('/ванн|\bbath\b/iu', $value) === 1 => 'bath',
-            preg_match('/душ|shower/iu', $value) === 1 => 'shower',
-            preg_match('/кроват|\bbeds?\b/iu', $value) === 1 => 'bed',
-            preg_match('/стол|\btables?\b/iu', $value) === 1 => 'table',
-            preg_match('/стул|\bchairs?\b/iu', $value) === 1 => 'chair',
-            preg_match('/диван|\bsofas?\b/iu', $value) === 1 => 'sofa',
-            preg_match('/плит|cooktop|stove/iu', $value) === 1 => 'stove',
-            default => 'unknown',
-        };
+        $labelTypes = $this->types($labelTokens);
+        $entityTypes = $this->types($entityTokens);
+        $allTypes = array_values(array_unique([...$labelTypes, ...$entityTypes]));
+        if ($blocked) {
+            return new VisualObjectClassification('unknown', $allTypes === []
+                ? 'object_type_requires_confirmation'
+                : 'object_type_conflicted');
+        }
+        if (count($allTypes) !== 1) {
+            return new VisualObjectClassification('unknown', count($allTypes) > 1 ? 'object_type_conflicted' : null);
+        }
+        $objectType = $allTypes[0];
+        if (! $this->categoryAllows($category, $objectType) || ! $this->roomAllows($entityKey, $objectType)) {
+            return new VisualObjectClassification('unknown', 'object_type_conflicted');
+        }
 
         return new VisualObjectClassification($objectType);
     }
@@ -159,22 +139,92 @@ final readonly class VisualObjectIdentity
         };
     }
 
-    private function canonicalRoomToken(string $token): string
+    /** @param list<string> $labelTokens @param list<string> $entityTokens */
+    private function sinkClassification(array $labelTokens, array $entityTokens, string $entityKey, ?string $category): ?VisualObjectClassification
     {
-        return match ($token) {
-            'kitchen', 'кухня', 'кух', 'кухонная' => 'kitchen',
-            'bathroom', 'санузел', 'санитарный', 'ванная', 'туалет', 'wc' => 'bathroom',
-            default => $token,
+        $tokens = [...$labelTokens, ...$entityTokens];
+        if (! $this->containsPhrase($tokens, [
+            ['мойка'], ['мойки'], ['раковина'], ['раковины'], ['sink'], ['sinks'], ['basin'], ['basins'],
+            ['умывальник'], ['умывальники'], ['рукомойник'], ['washbasin'], ['washbasins'],
+        ])) {
+            return null;
+        }
+        $room = $this->roomKey($entityKey);
+        $kitchen = $room === 'room:kitchen'
+            || $category === 'kitchen_fixture'
+            || $this->containsPhrase($tokens, [['кухонная'], ['кухонный'], ['kitchen']]);
+        $bathroom = $room === 'room:bathroom'
+            || $category === 'sanitary_fixture'
+            || $this->containsPhrase($tokens, [
+                ['умывальник'], ['умывальники'], ['рукомойник'], ['washbasin'], ['washbasins'],
+                ['basin'], ['basins'], ['санузел'], ['ванная'], ['bathroom'], ['wc'],
+            ]);
+        if ($kitchen && $bathroom) {
+            return new VisualObjectClassification('unknown', 'object_type_conflicted');
+        }
+        if ($kitchen) {
+            return new VisualObjectClassification('kitchen_sink');
+        }
+        if ($bathroom) {
+            return new VisualObjectClassification('washbasin');
+        }
+
+        return new VisualObjectClassification('unknown', 'object_type_requires_confirmation');
+    }
+
+    /** @param list<string> $tokens @return list<string> */
+    private function types(array $tokens): array
+    {
+        $types = [];
+        foreach (self::TYPE_ALIASES as $type => $phrases) {
+            if ($this->containsPhrase($tokens, $phrases)) {
+                $types[] = $type;
+            }
+        }
+
+        return $types;
+    }
+
+    private function categoryAllows(?string $category, string $objectType): bool
+    {
+        return match ($category) {
+            null, 'unknown_fixture', 'equipment' => true,
+            'sanitary_fixture' => in_array($objectType, ['toilet', 'washbasin', 'bath', 'shower'], true),
+            'kitchen_fixture' => in_array($objectType, ['kitchen_sink', 'stove'], true),
+            'furniture' => in_array($objectType, ['bed', 'table', 'chair', 'sofa'], true),
+            default => false,
         };
     }
 
-    private function isObjectToken(string $token): bool
+    private function roomAllows(string $entityKey, string $objectType): bool
     {
-        return in_array($token, [
-            'toilet', 'унитаз', 'washbasin', 'умывальник', 'рукомойник',
-            'sink', 'basin', 'раковина', 'мойка', 'bath', 'ванна', 'shower', 'душ', 'bed', 'beds',
-            'кровать', 'кровати', 'table', 'стол', 'chair', 'стул', 'sofa', 'диван',
-            'stove', 'cooktop', 'плита', 'fixture', 'fixtures', 'equipment', 'оборудование',
-        ], true);
+        return match ($this->roomKey($entityKey)) {
+            'room:kitchen' => in_array($objectType, ['kitchen_sink', 'stove', 'table', 'chair'], true),
+            'room:bathroom' => in_array($objectType, ['toilet', 'washbasin', 'bath', 'shower'], true),
+            default => true,
+        };
+    }
+
+    /** @return list<string> */
+    private function tokens(string $value): array
+    {
+        preg_match_all('/[\p{L}\p{N}]+/u', mb_strtolower(mb_strcut($value, 0, 512, 'UTF-8')), $matches);
+
+        return array_slice(array_values(array_filter($matches[0] ?? [], 'is_string')), 0, 64);
+    }
+
+    /** @param list<string> $tokens @param list<list<string>> $phrases */
+    private function containsPhrase(array $tokens, array $phrases): bool
+    {
+        foreach ($phrases as $phrase) {
+            $length = count($phrase);
+            for ($index = 0; $index <= count($tokens) - $length; $index++) {
+                if (array_slice($tokens, $index, $length) === $phrase) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

@@ -42,11 +42,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
         if ($publication->claims === []) {
             return;
         }
-        $publication = new DocumentUnitPublication(
-            $publication->claims,
-            (new CanonicalFactReducer)->reduce($publication->claims, $publication->decisions),
-            $publication->quarantinedItems,
-        );
+        (new CanonicalFactReducer)->assertReduced($publication->claims, $publication->decisions);
         $this->evidence->writeArbitration(
             $publication->claims,
             $publication->decisions,

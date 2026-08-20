@@ -12,9 +12,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\Observati
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectScopePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelFactIdentityCollision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceAttribute;
@@ -54,7 +56,7 @@ final readonly class ProjectModelEvidenceWriter
             $this->assertScope($claim, $scope);
         }
         $conditionalVisualInventory = $this->hasConditionalVisualInventoryNote($claims);
-        $decisions = (new CanonicalFactReducer)->reduce($byId, $decisions);
+        (new CanonicalFactReducer)->assertReduced($byId, $decisions);
         $decisions = array_values(array_filter(
             $decisions,
             fn (ArbitrationDecision $decision): bool => $this->shouldProjectClaim(
@@ -164,11 +166,13 @@ final readonly class ProjectModelEvidenceWriter
                     $entityId,
                     $projection['attributes'],
                 );
-                $projectedStatus = $visualInventoryFact ? 'candidate' : match ($decision->status) {
-                    'accepted' => 'confirmed',
-                    'candidate' => 'candidate',
-                    'unresolved' => 'unresolved',
-                };
+                $projectedStatus = $visualInventoryFact
+                    ? (in_array($decision->status, ['accepted', 'candidate'], true) ? 'candidate' : 'unresolved')
+                    : match ($decision->status) {
+                        'accepted' => 'confirmed',
+                        'candidate' => 'candidate',
+                        default => 'unresolved',
+                    };
                 $factIdentity = $visualInventoryFact
                     ? 'visual|'.$projection['type'].'|'.$entityIdentity
                     : (new ClaimSemanticMatcher)->key($claim);
@@ -179,7 +183,7 @@ final readonly class ProjectModelEvidenceWriter
                     (string) $documentId,
                     (string) $pageNumber,
                 ]));
-                $facts[$factId] = new Fact(
+                $fact = new Fact(
                     $factId,
                     $scope->organizationId,
                     $scope->projectId,
@@ -190,11 +194,18 @@ final readonly class ProjectModelEvidenceWriter
                     $this->projectModelFactValue($claim),
                     $claim->unit,
                     (new CanonicalFactConfidence)->forDecision($decision, $byId),
-                    $decision->status === 'unresolved' ? 'unresolved' : 'document',
+                    $projectedStatus === 'unresolved' ? 'unresolved' : 'document',
                     $projectedStatus,
                     $evidenceIds,
                 );
-                $factsByClaimId[$claim->id] = $facts[$factId];
+                if (isset($facts[$factId])) {
+                    if (! hash_equals($this->canonicalFactPayload($facts[$factId]), $this->canonicalFactPayload($fact))) {
+                        throw new ProjectModelFactIdentityCollision('project_model_fact_exact_identity_collision');
+                    }
+                    $fact = $this->withEvidenceUnion($fact, $facts[$factId]);
+                }
+                $facts[$factId] = $fact;
+                $factsByClaimId[$claim->id] = $fact;
             }
             $conflicts = $this->unresolvedConflicts($byId, $decisions, $factsByClaimId);
             $this->models->saveSourceModel(
@@ -270,7 +281,12 @@ final readonly class ProjectModelEvidenceWriter
             canonicalClaim: null,
         ), $claims);
 
-        $this->writeArbitration($claims, $decisions, $documentId, $pageNumber);
+        $this->writeArbitration(
+            $claims,
+            (new CanonicalFactReducer)->reduce($claims, $decisions),
+            $documentId,
+            $pageNumber,
+        );
     }
 
     private function evidenceScalar(ObservationClaim $claim): string|int|float|bool
@@ -297,6 +313,45 @@ final readonly class ProjectModelEvidenceWriter
         }
 
         return $value;
+    }
+
+    private function canonicalFactPayload(Fact $fact): string
+    {
+        return DerivedQuantityIdentity::canonicalJson([
+            'entity_id' => $fact->entityId,
+            'type' => $fact->type,
+            'value' => $fact->value,
+            'unit' => $fact->unit,
+            'confidence' => $fact->confidence,
+            'origin' => $fact->origin,
+            'status' => $fact->status,
+            'version' => $fact->version,
+            'supersedes_fact_id' => $fact->supersedesFactId,
+        ]);
+    }
+
+    private function withEvidenceUnion(Fact $left, Fact $right): Fact
+    {
+        $evidenceIds = array_values(array_unique([...$left->evidenceIds, ...$right->evidenceIds]));
+        sort($evidenceIds, SORT_STRING);
+
+        return new Fact(
+            $left->id,
+            $left->organizationId,
+            $left->projectId,
+            $left->sessionId,
+            $left->sourceVersion,
+            $left->entityId,
+            $left->type,
+            $left->value,
+            $left->unit,
+            $left->confidence,
+            $left->origin,
+            $left->status,
+            $evidenceIds,
+            $left->version,
+            $left->supersedesFactId,
+        );
     }
 
     /** @return array<string,mixed> */
@@ -363,6 +418,7 @@ final readonly class ProjectModelEvidenceWriter
                 'properties' => [
                     'visual_inventory_category' => $type,
                     'estimate_scope' => 'requires_confirmation',
+                    'canonical_identity' => $identityKey,
                     'room_key' => $identity->roomKey($claim->entityKey),
                     'object_type' => $objectType,
                 ],

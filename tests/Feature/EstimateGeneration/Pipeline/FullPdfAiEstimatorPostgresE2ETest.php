@@ -494,6 +494,15 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
         self::assertSame('Кухонная мойка', $pageFiveInventoryByType['kitchen_sink']['label'] ?? null);
         self::assertSame('requires_confirmation', $pageFiveInventoryByType['toilet']['scope'] ?? null);
         self::assertSame('requires_confirmation', $pageFiveInventoryByType['kitchen_sink']['scope'] ?? null);
+        $pageFiveCanonicalIdentities = $pageFiveVisualCandidates->map(static function (object $candidate): ?string {
+            $payload = json_decode((string) $candidate->payload, true, flags: JSON_THROW_ON_ERROR);
+
+            return $payload['properties']['canonical_identity'] ?? null;
+        })->sort()->values()->all();
+        self::assertSame([
+            'visual:building:1:floor:1:room:bathroom:sanitary:toilet',
+            'visual:building:1:floor:1:room:kitchen:kitchen:kitchen_sink',
+        ], $pageFiveCanonicalIdentities);
         self::assertSame(0, DB::table('estimate_generation_project_model_assertions as fact')
             ->join('estimate_generation_project_model_fact_evidence as binding', 'binding.fact_id', '=', 'fact.id')
             ->join('estimate_generation_evidence as evidence', 'evidence.id', '=', 'binding.evidence_id')
@@ -944,6 +953,12 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             'role_runs' => DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->count(),
             'checkpoints' => DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)->count(),
             'project_facts' => DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count(),
+            'quota_hash' => hash('sha256', json_encode(DB::table('estimate_generation_ai_estimate_quota_reservations')
+                ->where('session_id', $session->id)
+                ->orderBy('id')
+                ->get()
+                ->map(static fn (object $reservation): array => (array) $reservation)
+                ->all(), JSON_THROW_ON_ERROR)),
             'draft_hash' => hash('sha256', json_encode($session->draft_payload, JSON_THROW_ON_ERROR)),
         ];
 
@@ -970,6 +985,12 @@ final class FullPdfAiEstimatorPostgresE2ETest extends TestCase
             'role_runs' => DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->count(),
             'checkpoints' => DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)->count(),
             'project_facts' => DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count(),
+            'quota_hash' => hash('sha256', json_encode(DB::table('estimate_generation_ai_estimate_quota_reservations')
+                ->where('session_id', $session->id)
+                ->orderBy('id')
+                ->get()
+                ->map(static fn (object $reservation): array => (array) $reservation)
+                ->all(), JSON_THROW_ON_ERROR)),
             'draft_hash' => hash('sha256', json_encode($session->draft_payload, JSON_THROW_ON_ERROR)),
         ]);
     }
@@ -1709,9 +1730,9 @@ final class RecordedFullPdfVisionProvider implements VisionProvider
                 default => ['Санитарный прибор: унитаз — 1 шт.', 'Раковина кухни, модель 60', 'Кровать показана условно'],
             };
             foreach ([
-                ['room.bathroom.toilet', 'sanitary_fixture', $descriptions[0]],
-                ['room.kitchen.sink', 'kitchen_fixture', $descriptions[1]],
-                ['room.bedroom.bed', 'furniture', $descriptions[2]],
+                ['building.1.floor.1.room.bathroom.toilet', 'sanitary_fixture', $descriptions[0]],
+                ['building.1.floor.1.room.kitchen.sink', 'kitchen_fixture', $descriptions[1]],
+                ['building.1.floor.1.room.bedroom.bed', 'furniture', $descriptions[2]],
                 ['sheet.page-5.conditional-note', 'note', 'Мебель на плане показана условно и не входит в объём поставки'],
             ] as [$entityKey, $visualFactType, $description]) {
                 $facts[] = [

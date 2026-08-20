@@ -186,6 +186,81 @@ final class CanonicalFactReducerTest extends TestCase
         );
     }
 
+    #[Test]
+    public function physical_group_reduction_is_commutative_associative_and_idempotent_for_unsafe_statuses(): void
+    {
+        $sourceVersion = 'sha256:'.str_repeat('c', 64);
+        $claims = [
+            'literal:1' => $this->visualClaim('literal:1', 'room.kitchen.sink', 'Кухонная мойка', 'literal:sink', $sourceVersion, 0.95),
+            'construction:1' => $this->visualClaim('construction:1', 'room.кухня.мойка', 'Kitchen sink', 'construction:sink', $sourceVersion, 0.90),
+            'risk:1' => $this->visualClaim('risk:1', 'room-kitchen-sink', 'Кухонная мойка', 'risk:sink', $sourceVersion, 0.85),
+        ];
+        $reducer = new CanonicalFactReducer;
+
+        foreach ([
+            ['conditional', 'needs_confirmation', 'conditional'],
+            ['unresolved', 'manual_review_required', 'unresolved'],
+            ['ambiguous', 'conflicting_observation', 'ambiguous'],
+            ['rejected', 'unsafe_conflict', 'rejected'],
+            ['future_status', 'future_reason', 'unresolved'],
+        ] as [$unsafeStatus, $unsafeReason, $expectedStatus]) {
+            $accepted = $this->visualDecision($claims['literal:1'], 'accepted', 'accepted_fixture');
+            $unsafe = $this->visualDecision($claims['construction:1'], $unsafeStatus, $unsafeReason);
+            $candidate = $this->visualDecision($claims['risk:1'], 'candidate', 'visual_candidate');
+            $flat = $reducer->reduce($claims, [$accepted, $unsafe, $candidate]);
+            $left = $reducer->reduce($claims, [
+                ...$reducer->reduce($claims, [$accepted, $unsafe]),
+                $candidate,
+            ]);
+            $right = $reducer->reduce($claims, [
+                $accepted,
+                ...$reducer->reduce($claims, [$unsafe, $candidate]),
+            ]);
+            $idempotent = $reducer->reduce($claims, [...$flat, ...$flat]);
+            $encoded = [
+                ...array_map(
+                    static fn (array $permutation): string => json_encode(
+                        $reducer->reduce($claims, $permutation),
+                        JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES,
+                    ),
+                    $this->permutations([$accepted, $unsafe, $candidate]),
+                ),
+                ...array_map(
+                    static fn (array $value): string => json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    [$flat, $left, $right, $idempotent],
+                ),
+            ];
+
+            self::assertCount(1, array_unique($encoded), $unsafeStatus);
+            self::assertCount(1, $flat, $unsafeStatus);
+            self::assertSame($expectedStatus, $flat[0]->status, $unsafeStatus);
+            self::assertNotSame('accepted', $flat[0]->status, $unsafeStatus);
+            self::assertSame(['construction:1', 'literal:1', 'risk:1'], $flat[0]->supportingClaimIds, $unsafeStatus);
+            self::assertSame(['construction:sink', 'literal:sink', 'risk:sink'], $flat[0]->evidenceRefs, $unsafeStatus);
+        }
+    }
+
+    #[Test]
+    public function duplicate_decisions_for_one_claim_cannot_restore_accepted_by_order(): void
+    {
+        $sourceVersion = 'sha256:'.str_repeat('d', 64);
+        $claim = $this->visualClaim('literal:1', 'floor.1.room.kitchen.sink', 'Кухонная мойка', 'literal:sink', $sourceVersion, 0.95);
+        $claims = [$claim->id => $claim];
+        $accepted = $this->visualDecision($claim, 'accepted', 'accepted_fixture');
+        $unresolved = $this->visualDecision($claim, 'unresolved', 'manual_review_required');
+        $reducer = new CanonicalFactReducer;
+
+        $forward = $reducer->reduce($claims, [$accepted, $unresolved]);
+        $reverse = $reducer->reduce($claims, [$unresolved, $accepted]);
+
+        self::assertSame(
+            json_encode($forward, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            json_encode($reverse, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        );
+        self::assertCount(1, $forward);
+        self::assertSame('unresolved', $forward[0]->status);
+    }
+
     /** @return array{array<string,ObservationClaim>,list<ArbitrationDecision>} */
     private function fixture(): array
     {
@@ -228,5 +303,68 @@ final class CanonicalFactReducerTest extends TestCase
         ), $payload['document_arbitration']['decisions']);
 
         return [$claims, $decisions];
+    }
+
+    private function visualClaim(
+        string $id,
+        string $entityKey,
+        string $value,
+        string $evidenceRef,
+        string $sourceVersion,
+        float $confidence,
+    ): ObservationClaim {
+        return new ObservationClaim(
+            $id,
+            'observer_'.strstr($id, ':', true),
+            $entityKey,
+            'kitchen_fixture',
+            ['type' => 'string', 'data' => $value],
+            null,
+            $evidenceRef,
+            true,
+            901,
+            902,
+            903,
+            $sourceVersion,
+            ['page_id' => 1120, 'page_number' => 5, 'source_version' => $sourceVersion],
+            $confidence,
+        );
+    }
+
+    private function visualDecision(ObservationClaim $claim, string $status, string $reasonCode): ArbitrationDecision
+    {
+        return new ArbitrationDecision(
+            $claim->id,
+            $status,
+            [$claim->id],
+            $claim->evidenceRef === null ? [] : [$claim->evidenceRef],
+            $reasonCode,
+            [
+                'entity_key' => $claim->entityKey,
+                'fact_type' => $claim->factType,
+                'value' => $claim->value,
+                'unit' => $claim->unit,
+                'source_claim_id' => $claim->id,
+            ],
+            $reasonCode,
+        );
+    }
+
+    /** @template T @param list<T> $items @return list<list<T>> */
+    private function permutations(array $items): array
+    {
+        if (count($items) < 2) {
+            return [$items];
+        }
+        $result = [];
+        foreach ($items as $index => $item) {
+            $remaining = $items;
+            array_splice($remaining, $index, 1);
+            foreach ($this->permutations($remaining) as $tail) {
+                $result[] = [$item, ...$tail];
+            }
+        }
+
+        return $result;
     }
 }
