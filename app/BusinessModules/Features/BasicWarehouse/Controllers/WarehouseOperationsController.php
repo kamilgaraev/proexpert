@@ -4,26 +4,28 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReceiptRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReserveRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferToContractorRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UnreserveRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WriteOffRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseStorageCellResolver;
-use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
 use App\Services\Project\ProjectService;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use Throwable;
+
 use function trans_message;
 
 /**
@@ -70,7 +72,7 @@ class WarehouseOperationsController extends Controller
     public function exportM4(int $id, Request $request): JsonResponse
     {
         $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
-        
+
         if ($movement->organization_id !== $request->user()->current_organization_id) {
             return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
@@ -86,7 +88,7 @@ class WarehouseOperationsController extends Controller
 
             $path = $this->exportManager->export('m4', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
-            
+
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (Throwable $exception) {
             return $this->warehouseError('m4_export', $exception, $request, 'warehouse_basic.m4_export_error', 500, [
@@ -101,7 +103,7 @@ class WarehouseOperationsController extends Controller
     public function exportM11(int $id, Request $request): JsonResponse
     {
         $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
-        
+
         if ($movement->organization_id !== $request->user()->current_organization_id) {
             return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
@@ -117,7 +119,7 @@ class WarehouseOperationsController extends Controller
 
             $path = $this->exportManager->export('m11', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
-            
+
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (Throwable $exception) {
             return $this->warehouseError('m11_export', $exception, $request, 'warehouse_basic.m11_export_error', 500, [
@@ -132,7 +134,7 @@ class WarehouseOperationsController extends Controller
     public function exportM15(int $id, Request $request): JsonResponse
     {
         $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
-        
+
         if ($movement->organization_id !== $request->user()->current_organization_id) {
             return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
@@ -148,7 +150,7 @@ class WarehouseOperationsController extends Controller
 
             $path = $this->exportManager->export('m15', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
-            
+
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (Throwable $exception) {
             return $this->warehouseError('m15_export', $exception, $request, 'warehouse_basic.m15_export_error', 500, [
@@ -163,7 +165,7 @@ class WarehouseOperationsController extends Controller
     public function exportM7(int $id, Request $request): JsonResponse
     {
         $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
-        
+
         if ($movement->organization_id !== $request->user()->current_organization_id) {
             return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
@@ -179,7 +181,7 @@ class WarehouseOperationsController extends Controller
 
             $path = $this->exportManager->export('m7', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
-            
+
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (Throwable $exception) {
             return $this->warehouseError('m7_export', $exception, $request, 'warehouse_basic.m7_export_error', 500, [
@@ -222,10 +224,10 @@ class WarehouseOperationsController extends Controller
                 'material' => $material,
                 'warehouse' => $warehouse,
                 'warehouse_id' => $warehouseId,
-                'movements' => $movements
+                'movements' => $movements,
             ]);
             $url = $this->exportManager->getTemporaryUrl($path);
-            
+
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (Throwable $exception) {
             return $this->warehouseError('m17_export', $exception, $request, 'warehouse_basic.m17_export_error', 500, [
@@ -241,7 +243,7 @@ class WarehouseOperationsController extends Controller
     public function exportM8(int $reservationId, Request $request): JsonResponse
     {
         $reservation = \App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation::findOrFail($reservationId);
-        
+
         if ($reservation->organization_id !== $request->user()->current_organization_id) {
             return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
         }
@@ -256,10 +258,10 @@ class WarehouseOperationsController extends Controller
 
             $path = $this->exportManager->export('m8', [
                 'reservation' => $reservation,
-                'movements' => $movements
+                'movements' => $movements,
             ]);
             $url = $this->exportManager->getTemporaryUrl($path);
-            
+
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
         } catch (Throwable $exception) {
             return $this->warehouseError('m8_export', $exception, $request, 'warehouse_basic.m8_export_error', 500, [
@@ -276,29 +278,29 @@ class WarehouseOperationsController extends Controller
     {
         $validated = $request->validated();
         $organizationId = (int) $request->user()->current_organization_id;
-        
+
         $materialId = $validated['material_id'] ?? null;
 
-        if (!$materialId && isset($validated['material'])) {
+        if (! $materialId && isset($validated['material'])) {
             $materialData = $validated['material'];
             $asset = $this->assetService->createAsset($organizationId, [
-                'name'                => $materialData['name'],
-                'code'                => $materialData['code'] ?? null,
+                'name' => $materialData['name'],
+                'code' => $materialData['code'] ?? null,
                 'measurement_unit_id' => (int) $materialData['measurement_unit_id'],
-                'category'            => $materialData['category'] ?? null,
-                'default_price'       => (float) ($materialData['default_price'] ?? $validated['price']),
-                'description'         => $materialData['description'] ?? null,
-                'asset_type'          => $materialData['asset_type'] ?? 'material',
-                'is_active'           => true,
+                'category' => $materialData['category'] ?? null,
+                'default_price' => (float) ($materialData['default_price'] ?? $validated['price']),
+                'description' => $materialData['description'] ?? null,
+                'asset_type' => $materialData['asset_type'] ?? 'material',
+                'is_active' => true,
             ]);
 
             $materialId = $asset->id;
         }
-        
-        if (!$materialId) {
+
+        if (! $materialId) {
             return AdminResponse::error(trans_message('warehouse_basic.material_required'), 422);
         }
-        
+
         $warehouseId = (int) $validated['warehouse_id'];
         $materialId = (int) $materialId;
         $quantity = (float) $validated['quantity'];
@@ -319,11 +321,12 @@ class WarehouseOperationsController extends Controller
                 $price,
                 array_merge(
                     [
-                    'project_id' => $validated['project_id'] ?? null,
-                    'user_id' => (int) $request->user()->id,
-                    'document_number' => $validated['document_number'] ?? null,
-                    'reason' => $validated['reason'] ?? null,
-                    'metadata' => $validated['metadata'] ?? [],
+                        'project_id' => $validated['project_id'] ?? null,
+                        'user_id' => (int) $request->user()->id,
+                        'document_number' => $validated['document_number'] ?? null,
+                        'reason' => $validated['reason'] ?? null,
+                        'metadata' => $validated['metadata'] ?? [],
+                        'idempotency_key' => $validated['idempotency_key'],
                     ],
                     $this->storageCellResolver->metadata($cell)
                 )
@@ -341,7 +344,7 @@ class WarehouseOperationsController extends Controller
             }
 
             return AdminResponse::success(
-                new WarehouseMovementResource($result['movement']), 
+                new WarehouseMovementResource($result['movement']),
                 trans_message('warehouse_basic.receipt_success'),
                 201
             );
@@ -357,7 +360,7 @@ class WarehouseOperationsController extends Controller
     {
         $validated = $request->validated();
         $organizationId = $request->user()->current_organization_id;
-        
+
         try {
             $cell = $this->storageCellResolver->resolveForWarehouse(
                 (int) $organizationId,
@@ -372,12 +375,13 @@ class WarehouseOperationsController extends Controller
                 $validated['quantity'],
                 array_merge(
                     [
-                    'project_id' => $validated['project_id'] ?? null,
-                    'user_id' => $request->user()->id,
-                    'document_number' => $validated['document_number'] ?? null,
-                    'reason' => $validated['reason'],
-                    'operation_category' => $validated['operation_category'],
-                    'metadata' => $validated['metadata'] ?? [],
+                        'project_id' => $validated['project_id'] ?? null,
+                        'user_id' => $request->user()->id,
+                        'document_number' => $validated['document_number'] ?? null,
+                        'reason' => $validated['reason'],
+                        'operation_category' => $validated['operation_category'],
+                        'metadata' => $validated['metadata'] ?? [],
+                        'idempotency_key' => $validated['idempotency_key'],
                     ],
                     $this->storageCellResolver->metadata($cell)
                 )
@@ -403,7 +407,7 @@ class WarehouseOperationsController extends Controller
     {
         $validated = $request->validated();
         $organizationId = $request->user()->current_organization_id;
-        
+
         try {
             $sourceCell = $this->storageCellResolver->resolveForWarehouse(
                 (int) $organizationId,
@@ -424,10 +428,11 @@ class WarehouseOperationsController extends Controller
                 $validated['quantity'],
                 array_merge(
                     [
-                    'user_id' => $request->user()->id,
-                    'document_number' => $validated['document_number'] ?? null,
-                    'reason' => $validated['reason'] ?? null,
-                    'metadata' => $validated['metadata'] ?? [],
+                        'user_id' => $request->user()->id,
+                        'document_number' => $validated['document_number'] ?? null,
+                        'reason' => $validated['reason'] ?? null,
+                        'metadata' => $validated['metadata'] ?? [],
+                        'idempotency_key' => $validated['idempotency_key'],
                     ],
                     $this->storageCellResolver->metadata($targetCell),
                     $sourceCell === null ? [] : [
@@ -443,7 +448,7 @@ class WarehouseOperationsController extends Controller
                 'movement_in' => new WarehouseMovementResource($result['movement_in']),
                 'avg_price' => $result['avg_price'],
             ], trans_message('warehouse_basic.transfer_success'));
-            
+
         } catch (InvalidArgumentException $exception) {
             return $this->warehouseError('transfer_validation', $exception, $request, 'warehouse_basic.operation_validation_error', 422);
         } catch (Throwable $exception) {
@@ -458,7 +463,7 @@ class WarehouseOperationsController extends Controller
     {
         $validated = $request->validated();
         $organizationId = $request->user()->current_organization_id;
-        
+
         try {
             $this->warehouseService->reserveAssets(
                 $organizationId,
@@ -470,11 +475,12 @@ class WarehouseOperationsController extends Controller
                     'user_id' => $request->user()->id,
                     'reason' => $validated['reason'] ?? trans_message('warehouse_basic.reserve_default_reason'),
                     'metadata' => $validated['metadata'] ?? [],
+                    'idempotency_key' => $validated['idempotency_key'],
                 ]
             );
 
             return AdminResponse::success(null, trans_message('warehouse_basic.reserve_success'));
-            
+
         } catch (InvalidArgumentException $exception) {
             return $this->warehouseError('reserve_validation', $exception, $request, 'warehouse_basic.operation_validation_error', 422);
         } catch (Throwable $exception) {
@@ -489,7 +495,7 @@ class WarehouseOperationsController extends Controller
     {
         $validated = $request->validated();
         $organizationId = $request->user()->current_organization_id;
-        
+
         try {
             $result = $this->warehouseService->releaseReservedAssets(
                 $organizationId,
@@ -501,11 +507,12 @@ class WarehouseOperationsController extends Controller
                     'user_id' => $request->user()->id,
                     'reason' => $validated['reason'] ?? trans_message('warehouse_basic.unreserve_default_reason'),
                     'metadata' => $validated['metadata'] ?? [],
+                    'idempotency_key' => $validated['idempotency_key'],
                 ]
             );
 
             return AdminResponse::success($result, trans_message('warehouse_basic.unreserve_success'));
-            
+
         } catch (InvalidArgumentException $exception) {
             return $this->warehouseError('unreserve_validation', $exception, $request, 'warehouse_basic.operation_validation_error', 422);
         } catch (Throwable $exception) {
@@ -519,11 +526,10 @@ class WarehouseOperationsController extends Controller
     public function transferToContractor(
         TransferToContractorRequest $request,
         \App\BusinessModules\Features\BasicWarehouse\Services\ContractorTransferService $contractorTransferService
-    ): JsonResponse
-    {
+    ): JsonResponse {
         $validated = $request->validated();
         $organizationId = $request->user()->current_organization_id;
-        
+
         try {
             $result = $contractorTransferService->transferToContractor(
                 $organizationId,
@@ -552,6 +558,10 @@ class WarehouseOperationsController extends Controller
         int $status = 500,
         array $context = []
     ): JsonResponse {
+        if ($exception instanceof WarehouseOperationIdempotencyConflictException) {
+            $status = 409;
+        }
+
         Log::error('Warehouse operation failed', array_merge($context, [
             'operation' => $operation,
             'user_id' => $request->user()?->id,
@@ -559,9 +569,11 @@ class WarehouseOperationsController extends Controller
             'exception' => $exception,
         ]));
 
-        $message = $status === 422 && $exception instanceof InvalidArgumentException && $exception->getMessage() !== ''
+        $message = $exception instanceof WarehouseOperationIdempotencyConflictException
             ? $exception->getMessage()
-            : trans_message($messageKey);
+            : ($status === 422 && $exception instanceof InvalidArgumentException && $exception->getMessage() !== ''
+                ? $exception->getMessage()
+                : trans_message($messageKey));
 
         return AdminResponse::error($message, $status);
     }

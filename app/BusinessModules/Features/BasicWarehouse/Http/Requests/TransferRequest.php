@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+
 use function trans_message;
 
 class TransferRequest extends FormRequest
@@ -19,6 +20,7 @@ class TransferRequest extends FormRequest
         $organizationId = $this->user()?->current_organization_id;
 
         return [
+            'idempotency_key' => 'required|uuid',
             'from_warehouse_id' => [
                 'required',
                 Rule::exists('organization_warehouses', 'id')

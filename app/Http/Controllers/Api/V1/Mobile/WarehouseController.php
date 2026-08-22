@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Mobile;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReceiptRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehousePhotoUploadRequest;
@@ -26,8 +27,7 @@ class WarehouseController extends Controller
         private readonly WarehouseService $basicWarehouseService,
         private readonly AssetService $assetService,
         private readonly WarehousePhotoService $warehousePhotoService
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -35,7 +35,7 @@ class WarehouseController extends Controller
             /** @var \App\Models\User|null $user */
             $user = $request->user();
 
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_warehouse.errors.unauthorized'), 401);
             }
 
@@ -90,8 +90,8 @@ class WarehouseController extends Controller
                 ->where('is_active', true)
                 ->with('measurementUnit:id,name,short_name')
                 ->where(function ($builder) use ($query): void {
-                    $builder->where('name', 'like', '%' . $query . '%')
-                        ->orWhere('code', 'like', '%' . $query . '%');
+                    $builder->where('name', 'like', '%'.$query.'%')
+                        ->orWhere('code', 'like', '%'.$query.'%');
                 })
                 ->orderBy('name')
                 ->limit($limit)
@@ -130,7 +130,7 @@ class WarehouseController extends Controller
 
             $materialId = $validated['material_id'] ?? null;
 
-            if (!$materialId && isset($validated['material'])) {
+            if (! $materialId && isset($validated['material'])) {
                 $asset = $this->assetService->createAsset($organizationId, [
                     'name' => $validated['material']['name'],
                     'code' => $validated['material']['code'] ?? null,
@@ -145,7 +145,7 @@ class WarehouseController extends Controller
                 $materialId = $asset->id;
             }
 
-            if (!$materialId) {
+            if (! $materialId) {
                 return MobileResponse::error(trans_message('mobile_warehouse.errors.load_failed'), 422);
             }
 
@@ -161,6 +161,7 @@ class WarehouseController extends Controller
                     'document_number' => $validated['document_number'] ?? null,
                     'reason' => $validated['reason'] ?? null,
                     'metadata' => $validated['metadata'] ?? [],
+                    'idempotency_key' => $validated['idempotency_key'],
                 ]
             );
 
@@ -179,6 +180,8 @@ class WarehouseController extends Controller
                 'movement_id' => $result['movement']->id,
                 'photo_gallery' => $result['movement']->photo_gallery,
             ], trans_message('warehouse_basic.receipt_success'));
+        } catch (WarehouseOperationIdempotencyConflictException $exception) {
+            return MobileResponse::error($exception->getMessage(), 409);
         } catch (\Throwable $exception) {
             Log::error('mobile.warehouse.receipt.error', [
                 'user_id' => $request->user()?->id,
@@ -206,6 +209,7 @@ class WarehouseController extends Controller
                     'document_number' => $validated['document_number'] ?? null,
                     'reason' => $validated['reason'] ?? null,
                     'metadata' => $validated['metadata'] ?? [],
+                    'idempotency_key' => $validated['idempotency_key'],
                 ]
             );
 
@@ -222,6 +226,8 @@ class WarehouseController extends Controller
                 ],
                 'avg_price' => $result['avg_price'],
             ]);
+        } catch (WarehouseOperationIdempotencyConflictException $exception) {
+            return MobileResponse::error($exception->getMessage(), 409);
         } catch (\Throwable $exception) {
             Log::error('mobile.warehouse.transfer.error', [
                 'user_id' => $request->user()?->id,

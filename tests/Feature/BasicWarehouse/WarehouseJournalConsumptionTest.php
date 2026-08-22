@@ -94,13 +94,16 @@ final class WarehouseJournalConsumptionTest extends TestCase
         $setup = $this->createAcceptedDeliveryWithCustodyBalance($context, 10);
 
         $response = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/write-off', [
-                'warehouse_id' => $setup['custodyWarehouse']->id,
-                'material_id' => $setup['material']->id,
-                'quantity' => 1,
-                'reason' => 'Расход на работы',
-                'operation_category' => WarehouseMovement::CATEGORY_PRODUCTION_USAGE,
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/write-off',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $setup['custodyWarehouse']->id,
+                    'material_id' => $setup['material']->id,
+                    'quantity' => 1,
+                    'reason' => 'Расход на работы',
+                    'operation_category' => WarehouseMovement::CATEGORY_PRODUCTION_USAGE,
+                ]);
 
         $response->assertStatus(422);
         $this->assertDatabaseHas('warehouse_balances', [
@@ -245,7 +248,7 @@ final class WarehouseJournalConsumptionTest extends TestCase
         $measurementUnit = MeasurementUnit::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Штука',
-            'short_name' => 'шт-' . $project->id,
+            'short_name' => 'шт-'.$project->id,
             'type' => 'material',
             'is_default' => false,
             'is_system' => false,
@@ -253,7 +256,7 @@ final class WarehouseJournalConsumptionTest extends TestCase
         $material = Material::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Гвозди',
-            'code' => 'NAILS-' . $project->id,
+            'code' => 'NAILS-'.$project->id,
             'measurement_unit_id' => $measurementUnit->id,
             'default_price' => 12,
             'is_active' => true,
@@ -262,7 +265,7 @@ final class WarehouseJournalConsumptionTest extends TestCase
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'name' => 'Журнал работ',
-            'journal_number' => 'J-' . $project->id,
+            'journal_number' => 'J-'.$project->id,
             'start_date' => '2026-06-01',
             'status' => 'active',
             'created_by_user_id' => $context->user->id,
@@ -271,7 +274,7 @@ final class WarehouseJournalConsumptionTest extends TestCase
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'name' => 'Склад объекта',
-            'code' => 'PRJ-' . $project->id,
+            'code' => 'PRJ-'.$project->id,
             'warehouse_type' => OrganizationWarehouse::TYPE_PROJECT,
             'is_main' => false,
             'is_active' => true,
@@ -281,7 +284,7 @@ final class WarehouseJournalConsumptionTest extends TestCase
             'project_id' => $project->id,
             'responsible_user_id' => $context->user->id,
             'name' => 'Ответственное хранение',
-            'code' => 'CUST-' . $project->id . '-' . $context->user->id,
+            'code' => 'CUST-'.$project->id.'-'.$context->user->id,
             'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
             'is_main' => false,
             'is_active' => true,

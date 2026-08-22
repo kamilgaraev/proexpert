@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseCustodyIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
@@ -156,17 +157,31 @@ final class WarehouseCustodyService
             $materialId = (int) $data['material_id'];
             $responsibleUserId = (int) $data['responsible_user_id'];
             $quantity = (float) $data['quantity'];
+            $idempotencyKey = (string) $data['idempotency_key'];
+            $fingerprint = WarehouseCustodyIdempotency::fingerprint(
+                WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE,
+                $data,
+            );
 
             $project = $this->findProject($organizationId, $projectId);
             $this->findMaterial($organizationId, $materialId);
             $responsibleUser = $this->findResponsibleUser($organizationId, $responsibleUserId);
             $projectWarehouse = $this->findProjectWarehouse($organizationId, $projectId, $projectWarehouseId);
+            $this->lockWarehouse($organizationId, (int) $projectWarehouse->id);
             $custodyWarehouse = $this->getOrCreateCustodyWarehouse(
                 $organizationId,
                 $project,
                 $responsibleUser,
                 $actor
             );
+
+            $replayed = $this->replayTransfer($organizationId, $idempotencyKey, $fingerprint);
+            if ($replayed !== null) {
+                return array_merge($replayed, [
+                    'project_warehouse' => $projectWarehouse,
+                    'custody_warehouse' => $custodyWarehouse,
+                ]);
+            }
 
             $result = $this->warehouseService->transferAsset(
                 $organizationId,
@@ -179,6 +194,10 @@ final class WarehouseCustodyService
                     'user_id' => $actor->id,
                     'related_user_id' => $responsibleUserId,
                     'operation_category' => WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE,
+                    'idempotency_key' => $idempotencyKey,
+                    'idempotency_fingerprint' => $fingerprint,
+                    'transfer_pair_key' => $idempotencyKey,
+                    'batch_number' => WarehouseCustodyLineage::batchNumber($idempotencyKey),
                     'document_number' => $data['document_number'] ?? null,
                     'reason' => $data['reason'] ?? trans_message('basic_warehouse.custody.issued'),
                 ]
@@ -214,6 +233,12 @@ final class WarehouseCustodyService
             $quantity = (float) $data['quantity'];
             $projectId = (int) $custodyWarehouse->project_id;
             $responsibleUserId = (int) $custodyWarehouse->responsible_user_id;
+            $this->lockWarehouse($organizationId, (int) $custodyWarehouse->id);
+            $idempotencyKey = (string) $data['idempotency_key'];
+            $fingerprint = WarehouseCustodyIdempotency::fingerprint(
+                WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN,
+                $data,
+            );
 
             $this->findMaterial($organizationId, $materialId);
             $projectWarehouse = $this->projectWarehouseService->getOrCreateProjectWarehouse(
@@ -221,6 +246,14 @@ final class WarehouseCustodyService
                 $projectId,
                 $actor
             );
+
+            $replayed = $this->replayTransfer($organizationId, $idempotencyKey, $fingerprint);
+            if ($replayed !== null) {
+                return array_merge($replayed, [
+                    'project_warehouse' => $projectWarehouse,
+                    'custody_warehouse' => $custodyWarehouse,
+                ]);
+            }
 
             $result = $this->warehouseService->transferAsset(
                 $organizationId,
@@ -233,6 +266,9 @@ final class WarehouseCustodyService
                     'user_id' => $actor->id,
                     'related_user_id' => $responsibleUserId,
                     'operation_category' => WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN,
+                    'idempotency_key' => $idempotencyKey,
+                    'idempotency_fingerprint' => $fingerprint,
+                    'transfer_pair_key' => $idempotencyKey,
                     'document_number' => $data['document_number'] ?? null,
                     'reason' => $data['reason'] ?? trans_message('basic_warehouse.custody.returned'),
                 ]
@@ -241,7 +277,8 @@ final class WarehouseCustodyService
             $this->markTransferMovements(
                 $result,
                 WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN,
-                $responsibleUserId
+                $responsibleUserId,
+                $this->sourceIssueAllocations($organizationId, $result['source_details'] ?? []),
             );
 
             return array_merge($result, [
@@ -295,16 +332,87 @@ final class WarehouseCustodyService
         ]);
     }
 
-    private function markTransferMovements(array $result, string $category, int $responsibleUserId): void
+    private function replayTransfer(int $organizationId, string $idempotencyKey, string $fingerprint): ?array
     {
+        $movementOut = WarehouseMovement::query()
+            ->where('organization_id', $organizationId)
+            ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_OUT)
+            ->where('metadata->idempotency_key', $idempotencyKey)
+            ->first();
+
+        if (! $movementOut instanceof WarehouseMovement) {
+            return null;
+        }
+
+        if (($movementOut->metadata['idempotency_fingerprint'] ?? null) !== $fingerprint) {
+            throw new WarehouseCustodyIdempotencyConflictException(
+                trans_message('basic_warehouse.custody.errors.idempotency_conflict'),
+            );
+        }
+
+        $movementIn = WarehouseMovement::query()
+            ->where('organization_id', $organizationId)
+            ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_IN)
+            ->where('metadata->transfer_pair_key', $idempotencyKey)
+            ->firstOrFail();
+
+        return [
+            'movement_out' => $movementOut,
+            'movement_in' => $movementIn,
+            'avg_price' => (float) $movementOut->price,
+            'source_details' => $movementOut->metadata['source_batches'] ?? [],
+        ];
+    }
+
+    private function lockWarehouse(int $organizationId, int $warehouseId): void
+    {
+        OrganizationWarehouse::query()
+            ->where('organization_id', $organizationId)
+            ->whereKey($warehouseId)
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    private function sourceIssueAllocations(int $organizationId, array $sourceDetails): array
+    {
+        $allocations = WarehouseCustodyLineage::allocations($sourceDetails);
+        $keys = array_values(array_unique(array_column($allocations, 'idempotency_key')));
+        $movementIds = WarehouseMovement::query()
+            ->where('organization_id', $organizationId)
+            ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_IN)
+            ->where('operation_category', WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE)
+            ->whereIn('metadata->idempotency_key', $keys)
+            ->get(['id', 'metadata'])
+            ->mapWithKeys(static fn (WarehouseMovement $movement): array => [
+                (string) ($movement->metadata['idempotency_key'] ?? '') => (int) $movement->id,
+            ]);
+
+        return array_map(static fn (array $allocation): array => [
+            ...$allocation,
+            'movement_id' => $movementIds->get($allocation['idempotency_key']),
+        ], $allocations);
+    }
+
+    private function markTransferMovements(
+        array $result,
+        string $category,
+        int $responsibleUserId,
+        array $sourceIssueAllocations = [],
+    ): void {
         foreach (['movement_out', 'movement_in'] as $key) {
             if (! isset($result[$key]) || ! $result[$key] instanceof WarehouseMovement) {
                 continue;
             }
 
+            $metadata = $result[$key]->metadata ?? [];
+            if ($sourceIssueAllocations !== []) {
+                $metadata['source_issue_allocations'] = $sourceIssueAllocations;
+            }
+
             $result[$key]->forceFill([
                 'operation_category' => $category,
                 'related_user_id' => $responsibleUserId,
+                'metadata' => $metadata,
             ])->save();
             $result[$key]->refresh();
         }

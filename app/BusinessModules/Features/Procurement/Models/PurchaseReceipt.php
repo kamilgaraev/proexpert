@@ -24,6 +24,7 @@ class PurchaseReceipt extends Model
         'received_by_user_id',
         'receipt_number',
         'receipt_date',
+        'idempotency_key',
         'status',
         'notes',
         'metadata',

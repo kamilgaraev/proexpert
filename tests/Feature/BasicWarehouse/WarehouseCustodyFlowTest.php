@@ -14,12 +14,46 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
+use Illuminate\Support\Str;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 final class WarehouseCustodyFlowTest extends TestCase
 {
+    public function test_issue_replays_same_idempotency_key_without_second_transfer(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createProjectWarehouseContext($context);
+        $key = (string) Str::uuid();
+        $payload = [
+            'idempotency_key' => $key,
+            'project_id' => $setup['project']->id,
+            'project_warehouse_id' => $setup['projectWarehouse']->id,
+            'material_id' => $setup['material']->id,
+            'responsible_user_id' => $setup['responsibleUser']->id,
+            'quantity' => 20,
+        ];
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/custody/issue', $payload)
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/custody/issue', $payload)
+            ->assertOk();
+
+        self::assertSame(2, WarehouseMovement::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('metadata->idempotency_key', $key)
+            ->count());
+        $this->assertDatabaseHas('warehouse_balances', [
+            'warehouse_id' => $setup['projectWarehouse']->id,
+            'material_id' => $setup['material']->id,
+            'available_quantity' => 30,
+        ]);
+    }
+
     public function test_admin_can_issue_material_to_responsible_user(): void
     {
         $context = AdminApiTestContext::create();
@@ -28,6 +62,7 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'idempotency_key' => (string) Str::uuid(),
                 'project_id' => $setup['project']->id,
                 'project_warehouse_id' => $setup['projectWarehouse']->id,
                 'material_id' => $setup['material']->id,
@@ -87,9 +122,11 @@ final class WarehouseCustodyFlowTest extends TestCase
         $context = AdminApiTestContext::create();
         $this->allowAdminAccess();
         $setup = $this->createProjectWarehouseContext($context);
+        $issueKey = (string) Str::uuid();
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'idempotency_key' => $issueKey,
                 'project_id' => $setup['project']->id,
                 'project_warehouse_id' => $setup['projectWarehouse']->id,
                 'material_id' => $setup['material']->id,
@@ -106,6 +143,7 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/custody/return', [
+                'idempotency_key' => (string) Str::uuid(),
                 'custody_warehouse_id' => $custodyWarehouse->id,
                 'material_id' => $setup['material']->id,
                 'quantity' => 7,
@@ -135,6 +173,19 @@ final class WarehouseCustodyFlowTest extends TestCase
             'related_user_id' => $setup['responsibleUser']->id,
             'quantity' => 7,
         ]);
+        $returnMovement = WarehouseMovement::query()
+            ->where('operation_category', WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN)
+            ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_OUT)
+            ->latest('id')
+            ->firstOrFail();
+        $sourceIssue = WarehouseMovement::query()
+            ->where('operation_category', WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE)
+            ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_IN)
+            ->where('metadata->idempotency_key', $issueKey)
+            ->firstOrFail();
+
+        self::assertSame($sourceIssue->id, $returnMovement->metadata['source_issue_allocations'][0]['movement_id']);
+        self::assertSame(7.0, $returnMovement->metadata['source_issue_allocations'][0]['quantity']);
     }
 
     public function test_admin_can_list_responsible_custody_balances(): void
@@ -145,6 +196,7 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'idempotency_key' => (string) Str::uuid(),
                 'project_id' => $setup['project']->id,
                 'project_warehouse_id' => $setup['projectWarehouse']->id,
                 'material_id' => $setup['material']->id,
@@ -173,6 +225,7 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'idempotency_key' => (string) Str::uuid(),
                 'project_id' => $setup['project']->id,
                 'project_warehouse_id' => $setup['projectWarehouse']->id,
                 'material_id' => $setup['material']->id,
@@ -183,6 +236,7 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'idempotency_key' => (string) Str::uuid(),
                 'project_id' => $setup['project']->id,
                 'project_warehouse_id' => $setup['projectWarehouse']->id,
                 'material_id' => $setup['material']->id,
@@ -239,6 +293,7 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'idempotency_key' => (string) Str::uuid(),
                 'project_id' => $setup['project']->id,
                 'project_warehouse_id' => $setup['projectWarehouse']->id,
                 'material_id' => $setup['material']->id,
@@ -291,6 +346,7 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'idempotency_key' => (string) Str::uuid(),
                 'project_id' => $setup['project']->id,
                 'project_warehouse_id' => $setup['projectWarehouse']->id,
                 'material_id' => $setup['material']->id,
@@ -314,6 +370,7 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/mobile/warehouse/custody/issue', [
+                'idempotency_key' => (string) Str::uuid(),
                 'project_id' => $setup['project']->id,
                 'project_warehouse_id' => $setup['projectWarehouse']->id,
                 'material_id' => $setup['material']->id,

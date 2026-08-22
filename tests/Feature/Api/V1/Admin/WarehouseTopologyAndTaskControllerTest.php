@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
-use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
@@ -559,13 +559,16 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         $this->allowAdminAccess();
 
         $receipt = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $warehouse->id,
-                'cell_id' => $cell->id,
-                'material_id' => $material->id,
-                'quantity' => 10,
-                'price' => 100,
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'cell_id' => $cell->id,
+                    'material_id' => $material->id,
+                    'quantity' => 10,
+                    'price' => 100,
+                ]);
 
         $receipt->assertCreated()
             ->assertJsonPath('data.cell_id', $cell->id)
@@ -578,26 +581,32 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         ]);
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/write-off', [
-                'warehouse_id' => $warehouse->id,
-                'cell_id' => $cell->id,
-                'material_id' => $material->id,
-                'quantity' => 2,
-                'reason' => 'Damage',
-                'operation_category' => 'damage',
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/write-off',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'cell_id' => $cell->id,
+                    'material_id' => $material->id,
+                    'quantity' => 2,
+                    'reason' => 'Damage',
+                    'operation_category' => 'damage',
+                ])
             ->assertOk()
             ->assertJsonPath('data.movement.cell_id', $cell->id);
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/transfer', [
-                'from_warehouse_id' => $warehouse->id,
-                'from_cell_id' => $cell->id,
-                'to_warehouse_id' => $targetWarehouse->id,
-                'to_cell_id' => $targetCell->id,
-                'material_id' => $material->id,
-                'quantity' => 3,
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/transfer',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'from_warehouse_id' => $warehouse->id,
+                    'from_cell_id' => $cell->id,
+                    'to_warehouse_id' => $targetWarehouse->id,
+                    'to_cell_id' => $targetCell->id,
+                    'material_id' => $material->id,
+                    'quantity' => 3,
+                ])
             ->assertOk()
             ->assertJsonPath('data.movement_out.cell_id', $cell->id)
             ->assertJsonPath('data.movement_in.cell_id', $targetCell->id);
@@ -629,13 +638,16 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         $foreignCell = $this->createCell($foreignContext->organization->id, $foreignWarehouse->id, $foreignZone->id, 'Foreign cell', 'FOREIGN-CELL');
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $warehouse->id,
-                'cell_id' => $foreignCell->id,
-                'material_id' => $material->id,
-                'quantity' => 1,
-                'price' => 100,
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'cell_id' => $foreignCell->id,
+                    'material_id' => $material->id,
+                    'quantity' => 1,
+                    'price' => 100,
+                ])
             ->assertUnprocessable();
 
         $this->assertSame(5.0, (float) WarehouseBalance::query()

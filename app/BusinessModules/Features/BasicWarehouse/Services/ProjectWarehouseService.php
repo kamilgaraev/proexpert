@@ -81,6 +81,7 @@ final class ProjectWarehouseService
             (int) $delivery->material_id,
             $quantity,
             [
+                'batch_number' => 'project-delivery:'.$delivery->id,
                 'project_id' => (int) $delivery->project_id,
                 'user_id' => $actor->id,
                 'related_user_id' => $responsibleUserId,
@@ -108,7 +109,9 @@ final class ProjectWarehouseService
         ProjectMaterialDelivery $delivery,
         User $actor,
         float $quantity,
-        ?string $notes
+        ?string $notes,
+        string $idempotencyKey,
+        string $idempotencyFingerprint,
     ): WarehouseMovement {
         $projectWarehouse = $delivery->project_warehouse_id
             ? OrganizationWarehouse::query()
@@ -129,11 +132,48 @@ final class ProjectWarehouseService
             (int) $delivery->material_id,
             $quantity,
             [
+                'batch_number' => 'project-delivery:'.$delivery->id,
+                'from_batch_number' => 'project-delivery:'.$delivery->id,
                 'project_id' => (int) $delivery->project_id,
                 'user_id' => $actor->id,
                 'project_material_delivery_id' => $delivery->id,
                 'operation_category' => WarehouseMovement::CATEGORY_PROJECT_DELIVERY,
                 'reason' => $notes ?? trans_message('basic_warehouse.project_material_deliveries.received'),
+                'idempotency_key' => $idempotencyKey,
+                'delivery_idempotency_fingerprint' => $idempotencyFingerprint,
+            ],
+        );
+
+        return $result['movement_in'];
+    }
+
+    public function returnCancelledDelivery(
+        ProjectMaterialDelivery $delivery,
+        User $actor,
+        float $quantity,
+        ?string $notes,
+    ): WarehouseMovement {
+        $transitWarehouse = $this->getOrCreateTransitWarehouse(
+            (int) $delivery->organization_id,
+            (int) $delivery->project_id,
+            $actor,
+        );
+        $result = $this->warehouseService->transferAsset(
+            (int) $delivery->organization_id,
+            (int) $transitWarehouse->id,
+            (int) $delivery->warehouse_id,
+            (int) $delivery->material_id,
+            $quantity,
+            [
+                'batch_number' => 'project-delivery:'.$delivery->id,
+                'from_batch_number' => 'project-delivery:'.$delivery->id,
+                'project_id' => (int) $delivery->project_id,
+                'user_id' => $actor->id,
+                'project_material_delivery_id' => $delivery->id,
+                'operation_category' => WarehouseMovement::CATEGORY_PROJECT_DELIVERY,
+                'reason' => $notes ?? trans_message('basic_warehouse.project_material_deliveries.cancelled'),
+                'idempotency_key' => 'project-delivery-cancel-'.$delivery->id,
+                'delivery_reversal' => true,
             ],
         );
 

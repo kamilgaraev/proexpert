@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
@@ -266,13 +268,40 @@ class ProjectMaterialDeliveryService
         ProjectMaterialDelivery $delivery,
         User $user,
         float $quantity,
-        ?string $notes = null
+        ?string $notes,
+        string $idempotencyKey,
     ): ProjectMaterialDelivery {
-        return DB::transaction(function () use ($delivery, $user, $quantity, $notes): ProjectMaterialDelivery {
+        return DB::transaction(function () use (
+            $delivery,
+            $user,
+            $quantity,
+            $notes,
+            $idempotencyKey,
+        ): ProjectMaterialDelivery {
             $delivery = ProjectMaterialDelivery::query()
                 ->where('organization_id', $delivery->organization_id)
                 ->lockForUpdate()
                 ->findOrFail($delivery->id);
+            $fingerprint = WarehouseOperationIdempotency::fingerprint('project_delivery_receive', [
+                'delivery_id' => $delivery->id,
+                'quantity' => $quantity,
+                'notes' => $notes,
+            ]);
+            $existingMovement = WarehouseMovement::query()
+                ->where('organization_id', $delivery->organization_id)
+                ->where('project_material_delivery_id', $delivery->id)
+                ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_IN)
+                ->where('metadata->idempotency_key', $idempotencyKey)
+                ->first();
+            if ($existingMovement !== null) {
+                if (($existingMovement->metadata['delivery_idempotency_fingerprint'] ?? null) !== $fingerprint) {
+                    throw new WarehouseOperationIdempotencyConflictException(
+                        trans_message('warehouse_basic.idempotency_conflict')
+                    );
+                }
+
+                return $delivery;
+            }
             if (! $delivery->canReceive()) {
                 throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.cannot_receive'));
             }
@@ -284,7 +313,14 @@ class ProjectMaterialDeliveryService
             }
 
             $fromStatus = $delivery->status;
-            $movement = $this->projectWarehouseService->receiveOnProject($delivery, $user, $quantity, $notes);
+            $movement = $this->projectWarehouseService->receiveOnProject(
+                $delivery,
+                $user,
+                $quantity,
+                $notes,
+                $idempotencyKey,
+                $fingerprint,
+            );
 
             $delivery->forceFill([
                 'accepted_quantity' => $newAcceptedQuantity,
@@ -308,11 +344,30 @@ class ProjectMaterialDeliveryService
     public function cancel(ProjectMaterialDelivery $delivery, User $user, ?string $notes = null): ProjectMaterialDelivery
     {
         return DB::transaction(function () use ($delivery, $user, $notes): ProjectMaterialDelivery {
+            $delivery = ProjectMaterialDelivery::query()
+                ->where('organization_id', $delivery->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($delivery->id);
+            if ($delivery->status === ProjectMaterialDeliveryStatusEnum::CANCELLED) {
+                return $delivery;
+            }
             if ($delivery->status?->isFinal()) {
                 throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.final_status'));
             }
 
             $fromStatus = $delivery->status;
+            $quantityToReturn = max(
+                (float) $delivery->shipped_quantity - (float) $delivery->accepted_quantity,
+                0.0,
+            );
+            if ($quantityToReturn > 0) {
+                $this->projectWarehouseService->returnCancelledDelivery(
+                    $delivery,
+                    $user,
+                    $quantityToReturn,
+                    $notes,
+                );
+            }
             $delivery->status = ProjectMaterialDeliveryStatusEnum::CANCELLED;
             $delivery->notes = $notes ?? $delivery->notes;
             $delivery->save();

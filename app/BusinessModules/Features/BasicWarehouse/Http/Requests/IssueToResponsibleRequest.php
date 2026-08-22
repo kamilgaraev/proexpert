@@ -20,6 +20,7 @@ final class IssueToResponsibleRequest extends FormRequest
         $organizationId = $this->user()?->current_organization_id;
 
         return [
+            'idempotency_key' => ['required', 'uuid'],
             'project_id' => [
                 'required',
                 Rule::exists('projects', 'id')

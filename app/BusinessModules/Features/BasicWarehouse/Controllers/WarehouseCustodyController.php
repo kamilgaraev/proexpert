@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseCustodyIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\IssueToResponsibleRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReturnFromResponsibleRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseCustodyBalanceResource;
@@ -124,6 +125,8 @@ final class WarehouseCustodyController extends Controller
                 $this->movementPayload($result),
                 trans_message('basic_warehouse.custody.issued')
             );
+        } catch (WarehouseCustodyIdempotencyConflictException $exception) {
+            return $this->error($request, 'custody_issue_conflict', $exception, $exception->getMessage(), 409);
         } catch (InvalidArgumentException $exception) {
             return $this->error($request, 'custody_issue_validation', $exception, $exception->getMessage(), 422);
         } catch (Throwable $exception) {
@@ -145,6 +148,8 @@ final class WarehouseCustodyController extends Controller
                 $this->movementPayload($result),
                 trans_message('basic_warehouse.custody.returned')
             );
+        } catch (WarehouseCustodyIdempotencyConflictException $exception) {
+            return $this->error($request, 'custody_return_conflict', $exception, $exception->getMessage(), 409);
         } catch (InvalidArgumentException $exception) {
             return $this->error($request, 'custody_return_validation', $exception, $exception->getMessage(), 422);
         } catch (Throwable $exception) {

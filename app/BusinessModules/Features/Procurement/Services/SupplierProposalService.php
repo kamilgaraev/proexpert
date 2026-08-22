@@ -192,7 +192,7 @@ class SupplierProposalService
                 'quantity' => $quantity,
                 'unit' => $item['unit'],
                 'unit_price' => $unitPrice,
-                'total_amount' => $item['total_amount'] ?? round($quantity * $unitPrice, 2),
+                'total_amount' => SupplierProposalAmountCalculator::lineTotal($quantity, $unitPrice),
                 'comment' => $item['comment'] ?? null,
                 'metadata' => $item['metadata'] ?? null,
             ]);
@@ -667,52 +667,7 @@ class SupplierProposalService
      */
     private function commercialAmounts(array $data): array
     {
-        $deliveryAmount = round((float) ($data['delivery_amount'] ?? 0), 2);
-        $lineSubtotal = $this->itemsSubtotal($data['items'] ?? []);
-        $totalAmount = round((float) $data['total_amount'], 2);
-        $subtotalAmount = array_key_exists('subtotal_amount', $data)
-            ? round((float) $data['subtotal_amount'], 2)
-            : ($lineSubtotal > 0.0 ? $lineSubtotal : max(0.0, round($totalAmount - $deliveryAmount, 2)));
-        $vatAmount = $this->vatAmount($data, $subtotalAmount, $deliveryAmount, $totalAmount);
-
-        return [
-            'subtotal_amount' => $subtotalAmount,
-            'delivery_amount' => $deliveryAmount,
-            'vat_amount' => $vatAmount,
-            'total_amount' => $totalAmount,
-        ];
-    }
-
-    private function itemsSubtotal(array $items): float
-    {
-        $sum = 0.0;
-
-        foreach ($items as $item) {
-            $quantity = (float) ($item['quantity'] ?? 0);
-            $unitPrice = (float) ($item['unit_price'] ?? $item['price'] ?? 0);
-            $sum += (float) ($item['total_amount'] ?? round($quantity * $unitPrice, 2));
-        }
-
-        return round($sum, 2);
-    }
-
-    private function vatAmount(array $data, float $subtotalAmount, float $deliveryAmount, float $totalAmount): float
-    {
-        if (($data['vat_mode'] ?? null) === SupplierProposalVatModeEnum::NOT_APPLICABLE->value) {
-            return 0.0;
-        }
-
-        $vatRate = (float) ($data['vat_rate'] ?? 0);
-
-        if ($vatRate <= 0.0) {
-            return 0.0;
-        }
-
-        if (($data['vat_mode'] ?? null) === SupplierProposalVatModeEnum::EXCLUDED->value) {
-            return round(($subtotalAmount + $deliveryAmount) * $vatRate / 100, 2);
-        }
-
-        return round($totalAmount * $vatRate / (100 + $vatRate), 2);
+        return SupplierProposalAmountCalculator::calculate($data);
     }
 
     private function snapshotFloat(array $snapshot, string $key, float $fallback): float

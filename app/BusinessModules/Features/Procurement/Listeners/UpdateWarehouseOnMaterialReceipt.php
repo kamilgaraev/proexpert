@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptInventoryLot;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
+use App\BusinessModules\Features\Procurement\Services\ProcurementUnitCompatibility;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
@@ -115,7 +116,13 @@ class UpdateWarehouseOnMaterialReceipt
     private function resolveMaterialId(PurchaseOrderItem $orderItem, int $organizationId, float $defaultPrice): int
     {
         if ($orderItem->material_id !== null) {
-            return (int) $orderItem->material_id;
+            $asset = Asset::query()
+                ->with('measurementUnit')
+                ->where('organization_id', $organizationId)
+                ->findOrFail((int) $orderItem->material_id);
+            $this->assertCompatibleUnit($orderItem, $asset);
+
+            return (int) $asset->id;
         }
 
         $materialName = trim((string) $orderItem->material_name);
@@ -125,6 +132,7 @@ class UpdateWarehouseOnMaterialReceipt
         }
 
         $asset = Asset::query()
+            ->with('measurementUnit')
             ->where('organization_id', $organizationId)
             ->where('name', $materialName)
             ->first();
@@ -138,11 +146,27 @@ class UpdateWarehouseOnMaterialReceipt
                 'asset_type' => Asset::TYPE_MATERIAL,
                 'is_active' => true,
             ]);
+            $asset->load('measurementUnit');
+        } else {
+            $this->assertCompatibleUnit($orderItem, $asset);
         }
 
         $orderItem->forceFill(['material_id' => $asset->id])->save();
 
         return (int) $asset->id;
+    }
+
+    private function assertCompatibleUnit(PurchaseOrderItem $orderItem, Asset $asset): void
+    {
+        if (ProcurementUnitCompatibility::matches(
+            (string) $orderItem->unit,
+            $asset->measurementUnit?->name,
+            $asset->measurementUnit?->short_name,
+        )) {
+            return;
+        }
+
+        throw new DomainException(trans_message('procurement.purchase_orders.unit_mismatch'));
     }
 
     private function resolveMeasurementUnitId(int $organizationId, ?string $unitName): int

@@ -108,18 +108,21 @@ class WarehouseAssetCatalogTest extends TestCase
         $this->allowAdminAccess();
 
         $receiptResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $warehouse->id,
-                'material' => [
-                    'name' => 'Pilot cement',
-                    'code' => 'PILOT-CEM',
-                    'measurement_unit_id' => $unit->id,
-                    'asset_type' => Asset::TYPE_MATERIAL,
-                ],
-                'quantity' => 15,
-                'price' => 250,
-                'reason' => 'Initial stock',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'material' => [
+                        'name' => 'Pilot cement',
+                        'code' => 'PILOT-CEM',
+                        'measurement_unit_id' => $unit->id,
+                        'asset_type' => Asset::TYPE_MATERIAL,
+                    ],
+                    'quantity' => 15,
+                    'price' => 250,
+                    'reason' => 'Initial stock',
+                ]);
 
         $receiptResponse->assertCreated();
 
@@ -159,18 +162,21 @@ class WarehouseAssetCatalogTest extends TestCase
         $this->allowAdminAccess();
 
         $response = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $warehouse->id,
-                'material' => [
-                    'name' => 'Foreign unit receipt',
-                    'code' => 'FOREIGN-UNIT',
-                    'measurement_unit_id' => $foreignUnit->id,
-                    'asset_type' => Asset::TYPE_MATERIAL,
-                ],
-                'quantity' => 15,
-                'price' => 250,
-                'reason' => 'Initial stock',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'material' => [
+                        'name' => 'Foreign unit receipt',
+                        'code' => 'FOREIGN-UNIT',
+                        'measurement_unit_id' => $foreignUnit->id,
+                        'asset_type' => Asset::TYPE_MATERIAL,
+                    ],
+                    'quantity' => 15,
+                    'price' => 250,
+                    'reason' => 'Initial stock',
+                ]);
 
         $response->assertStatus(422);
         $this->assertDatabaseMissing('materials', [
