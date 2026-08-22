@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Contracts\WarehouseReportDataProvider;
 use App\BusinessModules\Features\BasicWarehouse\DTOs\WarehouseBalanceAggregateDTO;
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
 use App\BusinessModules\Features\BasicWarehouse\Models\AutoReorderRule;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
@@ -120,6 +121,40 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         DB::beginTransaction();
         try {
+            $this->lockWarehouses($organizationId, [$warehouseId]);
+            $operation = ($metadata['is_transfer'] ?? false) === true ? 'transfer_in' : 'receipt';
+            $metadata = $this->prepareIdempotencyMetadata($operation, [
+                'warehouse_id' => $warehouseId,
+                'material_id' => $materialId,
+                'quantity' => $quantity,
+                'price' => $price,
+                'metadata' => $metadata,
+            ], $metadata);
+            $existingMovement = $this->findIdempotentMovement(
+                $organizationId,
+                $operation,
+                (string) ($metadata['idempotency_key'] ?? ''),
+                (string) ($metadata['idempotency_fingerprint'] ?? ''),
+            );
+            if ($existingMovement !== null) {
+                $balance = WarehouseBalance::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('warehouse_id', $warehouseId)
+                    ->where('material_id', $materialId)
+                    ->first();
+
+                DB::commit();
+
+                return [
+                    'balance' => $balance,
+                    'movement' => $existingMovement,
+                    'new_quantity' => (float) WarehouseBalance::query()
+                        ->where('organization_id', $organizationId)
+                        ->where('warehouse_id', $warehouseId)
+                        ->where('material_id', $materialId)
+                        ->sum('available_quantity'),
+                ];
+            }
             $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, $metadata);
             if (
                 ($metadata['is_transfer'] ?? false) === true
@@ -157,7 +192,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 $query->where('cell_id', $metadata['cell_id']);
             }
 
-            $balance = $query->first();
+            $balance = $query->lockForUpdate()->first();
 
             if ($balance) {
                 // Если партия найдена - увеличиваем количество
@@ -255,6 +290,32 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         DB::beginTransaction();
         try {
+            $this->lockWarehouses($organizationId, [$warehouseId]);
+            $metadata = $this->prepareIdempotencyMetadata('write_off', [
+                'warehouse_id' => $warehouseId,
+                'material_id' => $materialId,
+                'quantity' => $quantity,
+                'metadata' => $metadata,
+            ], $metadata);
+            $existingMovement = $this->findIdempotentMovement(
+                $organizationId,
+                'write_off',
+                (string) ($metadata['idempotency_key'] ?? ''),
+                (string) ($metadata['idempotency_fingerprint'] ?? ''),
+            );
+            if ($existingMovement !== null) {
+                DB::commit();
+
+                return [
+                    'movement' => $existingMovement,
+                    'write_off_details' => $existingMovement->metadata['batches_source'] ?? [],
+                    'remaining_total_quantity' => (float) WarehouseBalance::query()
+                        ->where('organization_id', $organizationId)
+                        ->where('warehouse_id', $warehouseId)
+                        ->where('material_id', $materialId)
+                        ->sum('available_quantity'),
+                ];
+            }
             $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, $metadata);
             // Получаем все партии с доступным количеством, сортируем по дате создания (FIFO)
             // (или по сроку годности FEFO, если есть)
@@ -379,7 +440,37 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         DB::beginTransaction();
         try {
-            $transferPairKey = (string) \Illuminate\Support\Str::ulid();
+            $this->lockWarehouses($organizationId, [$fromWarehouseId, $toWarehouseId]);
+            $metadata = $this->prepareIdempotencyMetadata('transfer_out', [
+                'from_warehouse_id' => $fromWarehouseId,
+                'to_warehouse_id' => $toWarehouseId,
+                'material_id' => $materialId,
+                'quantity' => $quantity,
+                'metadata' => $metadata,
+            ], $metadata);
+            $existingMovementOut = $this->findIdempotentMovement(
+                $organizationId,
+                'transfer_out',
+                (string) ($metadata['idempotency_key'] ?? ''),
+                (string) ($metadata['idempotency_fingerprint'] ?? ''),
+            );
+            if ($existingMovementOut !== null) {
+                $existingMovementIn = WarehouseMovement::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('movement_type', 'transfer_in')
+                    ->where('metadata->idempotency_key', $metadata['idempotency_key'])
+                    ->firstOrFail();
+
+                DB::commit();
+
+                return [
+                    'movement_out' => $existingMovementOut,
+                    'movement_in' => $existingMovementIn,
+                    'avg_price' => (float) $existingMovementOut->price,
+                    'source_details' => $existingMovementOut->metadata['source_batches'] ?? [],
+                ];
+            }
+            $transferPairKey = (string) ($metadata['transfer_pair_key'] ?? \Illuminate\Support\Str::ulid());
             $sourceMetadata = $this->reportingMetadata(
                 $organizationId,
                 $fromWarehouseId,
@@ -394,6 +485,10 @@ class WarehouseService implements WarehouseReportDataProvider
 
             if (isset($metadata['from_cell_id'])) {
                 $sourceBatchesQuery->where('cell_id', $metadata['from_cell_id']);
+            }
+
+            if (isset($metadata['from_batch_number'])) {
+                $sourceBatchesQuery->where('batch_number', $metadata['from_batch_number']);
             }
 
             $sourceBatches = $sourceBatchesQuery
@@ -432,6 +527,7 @@ class WarehouseService implements WarehouseReportDataProvider
                     'source_batch_id' => $batch->id,
                     'quantity' => $takeFromBatch,
                     'unit_price' => $batch->unit_price,
+                    'batch_number' => $batch->batch_number,
                     'cell_id' => $batch->cell_id,
                     'location_code' => $batch->location_code,
                 ];
@@ -449,7 +545,9 @@ class WarehouseService implements WarehouseReportDataProvider
                 $quantity,
                 $transferPrice,
                 array_merge($metadata, [
-                    'reason' => 'Перемещение со склада '.$fromWarehouseId,
+                    'reason' => trans_message('warehouse_basic.transfer_from_warehouse_reason', [
+                        'warehouse' => $fromWarehouseId,
+                    ]),
                     'is_transfer' => true,
                     'transfer_pair_key' => $transferPairKey,
                     'from_warehouse_id' => $fromWarehouseId,
@@ -548,6 +646,57 @@ class WarehouseService implements WarehouseReportDataProvider
             'currency_source' => 'warehouse_movement.price',
             'reporting_opening_basis' => $openingBasis,
         ], $metadata);
+    }
+
+    private function lockWarehouses(int $organizationId, array $warehouseIds): void
+    {
+        OrganizationWarehouse::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('id', array_values(array_unique($warehouseIds)))
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+    }
+
+    private function prepareIdempotencyMetadata(string $operation, array $payload, array $metadata): array
+    {
+        $key = trim((string) ($metadata['idempotency_key'] ?? ''));
+        if ($key === '') {
+            return $metadata;
+        }
+
+        $metadata['idempotency_key'] = $key;
+        $metadata['idempotency_fingerprint'] = WarehouseOperationIdempotency::fingerprint($operation, $payload);
+
+        return $metadata;
+    }
+
+    private function findIdempotentMovement(
+        int $organizationId,
+        string $movementType,
+        string $key,
+        string $fingerprint,
+    ): ?WarehouseMovement {
+        if ($key === '') {
+            return null;
+        }
+
+        $movement = WarehouseMovement::query()
+            ->where('organization_id', $organizationId)
+            ->where('movement_type', $movementType)
+            ->where('metadata->idempotency_key', $key)
+            ->first();
+        if ($movement === null) {
+            return null;
+        }
+
+        if (($movement->metadata['idempotency_fingerprint'] ?? null) !== $fingerprint) {
+            throw new WarehouseOperationIdempotencyConflictException(
+                trans_message('warehouse_basic.idempotency_conflict')
+            );
+        }
+
+        return $movement;
     }
 
     /**
@@ -1523,8 +1672,13 @@ class WarehouseService implements WarehouseReportDataProvider
      * Зарезервировать количество актива на складе (FIFO)
      * Обновляет балансы партий, перенося из available в reserved
      */
-    public function reserveQuantity(int $organizationId, int $warehouseId, int $materialId, float $quantity): void
-    {
+    public function reserveQuantity(
+        int $organizationId,
+        int $warehouseId,
+        int $materialId,
+        float $quantity,
+        array $metadata = [],
+    ): WarehouseMovement {
         $batches = WarehouseBalance::where('organization_id', $organizationId)
             ->where('warehouse_id', $warehouseId)
             ->where('material_id', $materialId)
@@ -1557,24 +1711,34 @@ class WarehouseService implements WarehouseReportDataProvider
 
             $remainingToReserve -= $takeFromBatch;
         }
-        $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, []);
+        $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, $metadata);
         $movement = WarehouseMovement::create([
             'organization_id' => $organizationId,
             'warehouse_id' => $warehouseId,
             'material_id' => $materialId,
             'movement_type' => 'reservation',
             'quantity' => $quantity,
+            'project_id' => $metadata['project_id'] ?? null,
+            'user_id' => $metadata['user_id'] ?? null,
+            'reason' => $metadata['reason'] ?? null,
             'metadata' => $metadata,
             'movement_date' => now(),
         ]);
         $this->inventoryEventRecorder->record($movement, 'reservation', null);
+
+        return $movement;
     }
 
     /**
      * Снять резервирование количества (освободить FIFO/LIFO или просто наличие)
      */
-    public function unreserveQuantity(int $organizationId, int $warehouseId, int $materialId, float $quantity): void
-    {
+    public function unreserveQuantity(
+        int $organizationId,
+        int $warehouseId,
+        int $materialId,
+        float $quantity,
+        array $metadata = [],
+    ): WarehouseMovement {
         // Ищем партии где есть резерв
         // Снимаем резерв с тех партий, где он есть. Порядок не так важен, но логично снимать с тех,
         // которые скорее всего были зарезервированы последними (LIFO) или первыми (FIFO).
@@ -1612,17 +1776,22 @@ class WarehouseService implements WarehouseReportDataProvider
 
             $remainingToUnreserve -= $takeFromBatch;
         }
-        $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, []);
+        $metadata = $this->reportingMetadata($organizationId, $warehouseId, $materialId, $metadata);
         $movement = WarehouseMovement::create([
             'organization_id' => $organizationId,
             'warehouse_id' => $warehouseId,
             'material_id' => $materialId,
             'movement_type' => 'unreservation',
             'quantity' => $quantity,
+            'project_id' => $metadata['project_id'] ?? null,
+            'user_id' => $metadata['user_id'] ?? null,
+            'reason' => $metadata['reason'] ?? null,
             'metadata' => $metadata,
             'movement_date' => now(),
         ]);
         $this->inventoryEventRecorder->record($movement, 'unreservation', null);
+
+        return $movement;
     }
 
     public function writeOffReservedAsset(
@@ -1706,8 +1875,39 @@ class WarehouseService implements WarehouseReportDataProvider
         DB::beginTransaction();
 
         try {
-            // Проверяем доступность (через getWarehouseStock или напрямую)
-            // Но reserveQuantity сама проверит и выбросит исключение
+            $this->lockWarehouses($organizationId, [$warehouseId]);
+            $metadata = $this->prepareIdempotencyMetadata('reservation', [
+                'warehouse_id' => $warehouseId,
+                'material_id' => $materialId,
+                'quantity' => $quantity,
+                'metadata' => $metadata,
+            ], $metadata);
+            $key = (string) ($metadata['idempotency_key'] ?? '');
+            if ($key !== '') {
+                $existingReservation = AssetReservation::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('metadata->idempotency_key', $key)
+                    ->first();
+                if ($existingReservation !== null) {
+                    if (($existingReservation->metadata['idempotency_fingerprint'] ?? null)
+                        !== $metadata['idempotency_fingerprint']) {
+                        throw new WarehouseOperationIdempotencyConflictException(
+                            trans_message('warehouse_basic.idempotency_conflict')
+                        );
+                    }
+
+                    $balance = $this->getAssetBalance($organizationId, $warehouseId, $materialId);
+                    DB::commit();
+
+                    return [
+                        'reserved' => true,
+                        'reservation_id' => $existingReservation->id,
+                        'quantity' => (float) $existingReservation->quantity,
+                        'expires_at' => $existingReservation->expires_at->toDateTimeString(),
+                        'remaining_available' => $balance ? (float) $balance->availableQuantity : 0,
+                    ];
+                }
+            }
 
             // Создаем резервацию
             $expiresAt = isset($metadata['expires_hours'])
@@ -1728,7 +1928,7 @@ class WarehouseService implements WarehouseReportDataProvider
             ]);
 
             // Резервируем в балансах (партии)
-            $this->reserveQuantity($organizationId, $warehouseId, $materialId, $quantity);
+            $this->reserveQuantity($organizationId, $warehouseId, $materialId, $quantity, $metadata);
 
             $this->logging->business('warehouse.asset.reserved', [
                 'organization_id' => $organizationId,
@@ -1810,6 +2010,31 @@ class WarehouseService implements WarehouseReportDataProvider
         DB::beginTransaction();
 
         try {
+            $this->lockWarehouses($organizationId, [$warehouseId]);
+            $metadata = $this->prepareIdempotencyMetadata('unreservation', [
+                'warehouse_id' => $warehouseId,
+                'material_id' => $materialId,
+                'quantity' => $quantity,
+                'metadata' => $metadata,
+            ], $metadata);
+            $existingMovement = $this->findIdempotentMovement(
+                $organizationId,
+                'unreservation',
+                (string) ($metadata['idempotency_key'] ?? ''),
+                (string) ($metadata['idempotency_fingerprint'] ?? ''),
+            );
+            if ($existingMovement !== null) {
+                $balance = $this->getAssetBalance($organizationId, $warehouseId, $materialId);
+                DB::commit();
+
+                return [
+                    'released' => true,
+                    'quantity' => (float) $existingMovement->quantity,
+                    'released_reservation_ids' => $existingMovement->metadata['released_reservation_ids'] ?? [],
+                    'remaining_reserved' => $balance ? (float) $balance->reservedQuantity : 0,
+                    'remaining_available' => $balance ? (float) $balance->availableQuantity : 0,
+                ];
+            }
             $activeReservations = AssetReservation::where('organization_id', $organizationId)
                 ->where('warehouse_id', $warehouseId)
                 ->where('material_id', $materialId)
@@ -1833,7 +2058,13 @@ class WarehouseService implements WarehouseReportDataProvider
                 );
             }
 
-            $this->unreserveQuantity($organizationId, $warehouseId, $materialId, $quantity);
+            $movement = $this->unreserveQuantity(
+                $organizationId,
+                $warehouseId,
+                $materialId,
+                $quantity,
+                $metadata,
+            );
 
             $remainingToRelease = $quantity;
             $releasedReservationIds = [];
@@ -1874,6 +2105,13 @@ class WarehouseService implements WarehouseReportDataProvider
 
                 $remainingToRelease -= $takeFromReservation;
             }
+
+            $movementMetadata = is_array($movement->metadata) ? $movement->metadata : [];
+            $movement->update([
+                'metadata' => array_merge($movementMetadata, [
+                    'released_reservation_ids' => $releasedReservationIds,
+                ]),
+            ]);
 
             $balance = $this->getAssetBalance($organizationId, $warehouseId, $materialId);
 

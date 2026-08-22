@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Controllers\Mobile;
 
+use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptIdempotencyConflictException;
 use App\BusinessModules\Features\Procurement\Http\Resources\MobileProcurementApprovalResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\MobilePurchaseOrderResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\MobilePurchaseRequestResource;
@@ -25,8 +26,7 @@ final class ProcurementController extends Controller
     public function __construct(
         private readonly MobileProcurementService $service,
         private readonly AuthorizationService $authorizationService
-    ) {
-    }
+    ) {}
 
     public function summary(Request $request): JsonResponse
     {
@@ -265,11 +265,12 @@ final class ProcurementController extends Controller
             $validated = $this->validated($request, [
                 'warehouse_id' => ['required', 'integer'],
                 'items' => ['required', 'array', 'min:1'],
-                'items.*.item_id' => ['required', 'integer'],
+                'items.*.item_id' => ['required', 'integer', 'distinct'],
                 'items.*.quantity_received' => ['required', 'numeric', 'min:0.001'],
                 'items.*.price' => ['required', 'numeric', 'min:0'],
                 'receipt_date' => ['required', 'date'],
                 'notes' => ['nullable', 'string', 'max:2000'],
+                'idempotency_key' => ['required', 'uuid'],
             ]);
             $updated = $this->service->receiveMaterials(
                 $this->organizationId($request),
@@ -280,6 +281,7 @@ final class ProcurementController extends Controller
                 [
                     'receipt_date' => $validated['receipt_date'] ?? null,
                     'notes' => $validated['notes'] ?? null,
+                    'idempotency_key' => $validated['idempotency_key'],
                 ]
             );
 
@@ -289,6 +291,8 @@ final class ProcurementController extends Controller
             );
         } catch (ValidationException $exception) {
             return $this->validationFailed($exception);
+        } catch (PurchaseReceiptIdempotencyConflictException $exception) {
+            return MobileResponse::error($exception->getMessage(), 409);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -331,7 +335,7 @@ final class ProcurementController extends Controller
         $user = $request->user();
         $organizationId = $this->organizationId($request);
 
-        if (!$user || $organizationId <= 0) {
+        if (! $user || $organizationId <= 0) {
             return $this->permissionDenied();
         }
 
@@ -348,7 +352,7 @@ final class ProcurementController extends Controller
     {
         $user = $request->user();
 
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             throw new DomainException(trans_message('procurement.mobile.errors.permission_denied'));
         }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
+use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptIdempotencyConflictException;
 use App\BusinessModules\Features\Procurement\Http\Requests\CancelPurchaseOrderRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\ReturnPurchaseReceiptLineRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\ReversePurchaseReceiptLineRequest;
@@ -369,7 +370,7 @@ class PurchaseOrderController extends Controller
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
-            $validated = $this->validateReceiptPayload($request, $order, $organizationId);
+            $validated = $this->validateReceiptPayload($request, $order, $organizationId, true);
 
             $received = $this->service->receiveMaterials(
                 $order,
@@ -380,6 +381,7 @@ class PurchaseOrderController extends Controller
                     'receipt_date' => $validated['receipt_date'] ?? null,
                     'notes' => $validated['notes'] ?? null,
                     'metadata' => $validated['metadata'] ?? null,
+                    'idempotency_key' => $validated['idempotency_key'],
                 ]
             );
 
@@ -389,6 +391,8 @@ class PurchaseOrderController extends Controller
             );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (PurchaseReceiptIdempotencyConflictException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
         } catch (\DomainException) {
             return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
@@ -650,8 +654,12 @@ class PurchaseOrderController extends Controller
         };
     }
 
-    private function validateReceiptPayload(Request $request, PurchaseOrder $order, int $organizationId): array
-    {
+    private function validateReceiptPayload(
+        Request $request,
+        PurchaseOrder $order,
+        int $organizationId,
+        bool $requireIdempotencyKey = false,
+    ): array {
         return $request->validate([
             'warehouse_id' => [
                 'required',
@@ -666,6 +674,7 @@ class PurchaseOrderController extends Controller
             'items.*.item_id' => [
                 'required',
                 'integer',
+                'distinct',
                 Rule::exists('purchase_order_items', 'id')->where(static function ($query) use ($order) {
                     $query->where('purchase_order_id', $order->id);
                 }),
@@ -676,6 +685,7 @@ class PurchaseOrderController extends Controller
             'receipt_date' => ['sometimes', 'date'],
             'notes' => ['sometimes', 'nullable', 'string', 'max:2000'],
             'metadata' => ['sometimes', 'array'],
+            'idempotency_key' => [$requireIdempotencyKey ? 'required' : 'sometimes', 'uuid'],
         ]);
     }
 }

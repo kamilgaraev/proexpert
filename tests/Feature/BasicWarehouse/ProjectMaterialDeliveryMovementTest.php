@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\BasicWarehouse;
 
+use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
@@ -48,8 +49,8 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'responsible_user_id' => $responsibleUser->id,
-            'name' => 'Ответственный: ' . $responsibleUser->name,
-            'code' => 'CUST-' . $responsibleUser->id,
+            'name' => 'Ответственный: '.$responsibleUser->name,
+            'code' => 'CUST-'.$responsibleUser->id,
             'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
             'is_active' => true,
             'is_main' => false,
@@ -122,14 +123,25 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
 
         $delivery = $setup['delivery']->fresh();
 
+        $receivePayload = [
+            'idempotency_key' => '66666666-6666-4666-8666-666666666666',
+            'quantity' => 25,
+            'notes' => 'Принято в админке',
+        ];
         $response = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/project-material-deliveries/{$delivery->id}/receive", [
-                'quantity' => 25,
-                'notes' => 'Принято в админке',
-            ]);
+            ->postJson(
+                "/api/v1/admin/project-material-deliveries/{$delivery->id}/receive",
+                $receivePayload,
+            );
 
         $response->assertOk();
         $response->assertJsonPath('success', true);
+        $this->withHeaders($context->authHeaders())
+            ->postJson(
+                "/api/v1/admin/project-material-deliveries/{$delivery->id}/receive",
+                $receivePayload,
+            )
+            ->assertOk();
 
         $delivery = $delivery->fresh();
 
@@ -153,6 +165,18 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
             'operation_category' => WarehouseMovement::CATEGORY_PROJECT_DELIVERY,
             'project_material_delivery_id' => $delivery->id,
         ]);
+        $this->assertSame(1, WarehouseMovement::query()
+            ->where('project_material_delivery_id', $delivery->id)
+            ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_IN)
+            ->count());
+
+        $receivePayload['quantity'] = 24;
+        $this->withHeaders($context->authHeaders())
+            ->postJson(
+                "/api/v1/admin/project-material-deliveries/{$delivery->id}/receive",
+                $receivePayload,
+            )
+            ->assertStatus(409);
     }
 
     public function test_admin_delivery_cannot_receive_more_than_shipped(): void
@@ -170,9 +194,12 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $delivery = $setup['delivery']->fresh();
 
         $response = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/project-material-deliveries/{$delivery->id}/receive", [
-                'quantity' => 11,
-            ]);
+            ->postJson(
+                "/api/v1/admin/project-material-deliveries/{$delivery->id}/receive",
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'quantity' => 11,
+                ]);
 
         $response->assertStatus(422);
 
@@ -184,6 +211,54 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         ]);
     }
 
+    public function test_cancelling_partially_received_delivery_returns_only_unaccepted_transit_stock(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createDeliveryContext($context);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                'quantity' => 10,
+            ])
+            ->assertOk();
+        $delivery = $setup['delivery']->fresh();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/project-material-deliveries/{$delivery->id}/receive", [
+                'idempotency_key' => '88888888-8888-4888-8888-888888888888',
+                'quantity' => 4,
+            ])
+            ->assertOk();
+
+        $cancelEndpoint = "/api/v1/admin/project-material-deliveries/{$delivery->id}/cancel";
+        $this->withHeaders($context->authHeaders())
+            ->postJson($cancelEndpoint, ['notes' => 'Отмена остатка поставки'])
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson($cancelEndpoint, ['notes' => 'Повтор после таймаута'])
+            ->assertOk();
+
+        $delivery = $delivery->fresh();
+        $this->assertSame(ProjectMaterialDeliveryStatusEnum::CANCELLED, $delivery->status);
+        $this->assertSame(96.0, (float) WarehouseBalance::query()
+            ->where('warehouse_id', $setup['sourceWarehouse']->id)
+            ->where('material_id', $setup['material']->id)
+            ->sum('available_quantity'));
+        $this->assertSame(4.0, (float) WarehouseBalance::query()
+            ->where('warehouse_id', $delivery->project_warehouse_id)
+            ->where('material_id', $setup['material']->id)
+            ->sum('available_quantity'));
+
+        $reversalMovements = WarehouseMovement::query()
+            ->where('project_material_delivery_id', $delivery->id)
+            ->where('metadata->delivery_reversal', true)
+            ->get();
+        $this->assertCount(2, $reversalMovements);
+        $this->assertSame(6.0, (float) $reversalMovements
+            ->firstWhere('movement_type', WarehouseMovement::TYPE_TRANSFER_OUT)
+            ->quantity);
+    }
+
     private function createDeliveryContext(AdminApiTestContext $context): array
     {
         $project = Project::factory()->create([
@@ -192,7 +267,7 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $sourceWarehouse = OrganizationWarehouse::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Центральный склад',
-            'code' => 'MAIN-' . $project->id,
+            'code' => 'MAIN-'.$project->id,
             'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
             'is_main' => true,
             'is_active' => true,
@@ -200,7 +275,7 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $material = Material::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Гвозди строительные',
-            'code' => 'NAILS-' . $project->id,
+            'code' => 'NAILS-'.$project->id,
             'default_price' => 12.5,
             'is_active' => true,
         ]);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Mobile;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\ProjectMaterialDeliveryResource;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
@@ -127,13 +128,20 @@ class ProjectMaterialDeliveryController extends Controller
     {
         try {
             $validated = $request->validate([
+                'idempotency_key' => ['required', 'uuid'],
                 'quantity' => ['required', 'numeric', 'min:0.001'],
                 'notes' => ['nullable', 'string'],
             ]);
 
             $delivery = $this->findDeliveryForUser($request, $deliveryId);
             $updated = $this->deliveryService
-                ->receive($delivery, $request->user(), (float) $validated['quantity'], $validated['notes'] ?? null)
+                ->receive(
+                    $delivery,
+                    $request->user(),
+                    (float) $validated['quantity'],
+                    $validated['notes'] ?? null,
+                    $validated['idempotency_key'],
+                )
                 ->load(['project', 'material.measurementUnit', 'warehouse', 'projectWarehouse', 'latestEvent']);
 
             return MobileResponse::success(
@@ -142,6 +150,8 @@ class ProjectMaterialDeliveryController extends Controller
             );
         } catch (ValidationException $exception) {
             return MobileResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
+        } catch (WarehouseOperationIdempotencyConflictException $exception) {
+            return MobileResponse::error($exception->getMessage(), 409);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {

@@ -162,6 +162,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $receiveResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
                 'warehouse_id' => $warehouse->id,
+                'idempotency_key' => '052bda50-fb35-4b67-8990-b74e3ac83929',
                 'receipt_date' => now()->toDateString(),
                 'items' => [
                     [
@@ -277,6 +278,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $receiveResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
                 'warehouse_id' => $warehouse->id,
+                'idempotency_key' => 'd1e0de99-d794-47fe-bf06-3df00abc541d',
                 'items' => [
                     [
                         'item_id' => $item->id,
@@ -330,6 +332,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-document/pdf", [
                 'warehouse_id' => $warehouse->id,
+                'idempotency_key' => 'd282ac33-39e0-4615-93b1-a3a8fa26928e',
                 'receipt_date' => now()->toDateString(),
                 'items' => [
                     [
@@ -582,6 +585,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $receiveResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
                 'warehouse_id' => $warehouse->id,
+                'idempotency_key' => '7b434ade-a9de-48a2-8577-269217fd5cc2',
                 'items' => [
                     [
                         'item_id' => $item->id,
@@ -701,6 +705,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
                 'warehouse_id' => $warehouse->id,
+                'idempotency_key' => '3ab17910-8257-4a4c-96b0-518ed2d6bc9b',
                 'receipt_date' => now()->toDateString(),
                 'items' => [
                     [

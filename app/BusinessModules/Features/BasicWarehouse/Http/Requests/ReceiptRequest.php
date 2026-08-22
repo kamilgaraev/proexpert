@@ -39,6 +39,7 @@ class ReceiptRequest extends FormRequest
         $organizationId = $this->user()?->current_organization_id;
 
         return [
+            'idempotency_key' => 'required|uuid',
             'warehouse_id' => [
                 'required',
                 Rule::exists('organization_warehouses', 'id')
@@ -84,7 +85,7 @@ class ReceiptRequest extends FormRequest
 
     private function decodeJsonInput(mixed $value): mixed
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return $value;
         }
 
@@ -117,7 +118,7 @@ class ReceiptRequest extends FormRequest
 
     private function normalizeNullableValue(mixed $value): mixed
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return $value;
         }
 

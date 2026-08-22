@@ -74,10 +74,13 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
             ->assertJsonPath('data.items.0.status', ProjectMaterialDeliveryStatusEnum::IN_TRANSIT->value);
 
         $mobileReceiveResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/mobile/warehouse/project-material-deliveries/{$delivery->id}/receive", [
-                'quantity' => 3,
-                'notes' => 'Accepted on site by mobile',
-            ]);
+            ->postJson(
+                "/api/v1/mobile/warehouse/project-material-deliveries/{$delivery->id}/receive",
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'quantity' => 3,
+                    'notes' => 'Accepted on site by mobile',
+                ]);
 
         $mobileReceiveResponse->assertOk()
             ->assertJsonPath('data.id', $delivery->id)
@@ -116,10 +119,13 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
             ->assertJsonPath('data.summary.accepted_quantity', 0);
 
         $completeReceiveResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/mobile/warehouse/project-material-deliveries/{$delivery->id}/receive", [
-                'quantity' => 2,
-                'notes' => 'Remaining quantity accepted',
-            ]);
+            ->postJson(
+                "/api/v1/mobile/warehouse/project-material-deliveries/{$delivery->id}/receive",
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'quantity' => 2,
+                    'notes' => 'Remaining quantity accepted',
+                ]);
 
         $completeReceiveResponse->assertOk()
             ->assertJsonPath('data.status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)

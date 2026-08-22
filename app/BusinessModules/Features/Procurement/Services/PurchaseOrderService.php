@@ -12,6 +12,7 @@ use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnAuth
 use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnUnitOfWork;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptIdempotencyConflictException;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptReturn;
@@ -201,33 +202,40 @@ class PurchaseOrderService
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
     {
-        $this->lifecycleService->assertCanCreateSupplierRequest($request);
-        $request->loadMissing(['lines', 'siteRequest']);
-
-        if ($request->lines->isEmpty()) {
-            throw new \DomainException(trans_message('procurement.supplier_requests.purchase_request_lines_required'));
-        }
-
-        if ($request->purchaseOrders()->exists()) {
-            throw new \DomainException(trans_message('procurement.purchase_orders.already_exists_for_request'));
-        }
-
-        $supplier = Supplier::query()
-            ->where('organization_id', $request->organization_id)
-            ->where('id', $supplierId)
-            ->where('is_active', true)
-            ->first();
-
-        if (! $supplier) {
-            throw new \DomainException(trans_message('procurement.purchase_orders.supplier_not_found'));
-        }
-
-        $supplierParty = $this->supplierPartyService->resolveRegisteredParty($request->organization_id, $supplierId);
-        $supplierSnapshot = $this->supplierPartyService->snapshotForDocument($supplierParty);
-
         DB::beginTransaction();
 
         try {
+            $request = PurchaseRequest::query()
+                ->where('organization_id', $request->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($request->id);
+            $existingOrder = $request->purchaseOrders()->first();
+            if ($existingOrder !== null) {
+                DB::commit();
+
+                return $existingOrder->fresh(['supplier', 'supplierParty', 'purchaseRequest', 'items']);
+            }
+
+            $this->lifecycleService->assertCanCreateSupplierRequest($request);
+            $request->loadMissing(['lines', 'siteRequest']);
+
+            if ($request->lines->isEmpty()) {
+                throw new \DomainException(trans_message('procurement.supplier_requests.purchase_request_lines_required'));
+            }
+
+            $supplier = Supplier::query()
+                ->where('organization_id', $request->organization_id)
+                ->where('id', $supplierId)
+                ->where('is_active', true)
+                ->first();
+
+            if (! $supplier) {
+                throw new \DomainException(trans_message('procurement.purchase_orders.supplier_not_found'));
+            }
+
+            $supplierParty = $this->supplierPartyService->resolveRegisteredParty($request->organization_id, $supplierId);
+            $supplierSnapshot = $this->supplierPartyService->snapshotForDocument($supplierParty);
+
             $orderNumber = $this->generateOrderNumber();
 
             $order = PurchaseOrder::create([
@@ -553,7 +561,36 @@ class PurchaseOrderService
         callable $onReceived,
     ): PurchaseOrder {
         $order = $this->lockPurchaseOrderForReceipt($order);
+        $idempotencyKey = trim((string) ($receiptData['idempotency_key'] ?? ''));
+        $payloadFingerprint = PurchaseReceiptIdempotency::fingerprint($warehouseId, $items, $receiptData);
+
+        if ($idempotencyKey !== '') {
+            $existingReceipt = PurchaseReceipt::query()
+                ->where('organization_id', $order->organization_id)
+                ->where('purchase_order_id', $order->id)
+                ->where('idempotency_key', $idempotencyKey)
+                ->first();
+
+            if ($existingReceipt instanceof PurchaseReceipt) {
+                $existingMetadata = is_array($existingReceipt->metadata) ? $existingReceipt->metadata : [];
+                if (! hash_equals(
+                    (string) ($existingMetadata['idempotency_fingerprint'] ?? ''),
+                    $payloadFingerprint,
+                )) {
+                    throw new PurchaseReceiptIdempotencyConflictException;
+                }
+
+                return $this->freshReceivedPurchaseOrder($order);
+            }
+        }
+
         $this->assertPurchaseOrderCanReceiveMaterials($order, $items);
+        $receiptMetadata = is_array($receiptData['metadata'] ?? null) ? $receiptData['metadata'] : [];
+        if ($idempotencyKey !== '') {
+            $receiptMetadata['idempotency_key'] = $idempotencyKey;
+            $receiptMetadata['idempotency_fingerprint'] = $payloadFingerprint;
+        }
+        $receiptData['metadata'] = $receiptMetadata;
         $receivedAt = $this->ownerWorkflowRuntime->occurredAt();
         $ownerState = $this->persistPurchaseReceiptOwnerState(
             $order,
@@ -612,6 +649,7 @@ class PurchaseOrderService
             'received_by_user_id' => $userId,
             'receipt_number' => $receiptNumber,
             'receipt_date' => $receiptDate,
+            'idempotency_key' => $receiptData['idempotency_key'] ?? null,
             'notes' => $receiptData['notes'] ?? null,
             'metadata' => $receiptMetadata,
         ]);

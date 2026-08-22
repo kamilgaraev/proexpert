@@ -9,6 +9,7 @@ use App\Models\Project;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+
 use function trans_message;
 
 class WriteOffRequest extends FormRequest
@@ -23,6 +24,7 @@ class WriteOffRequest extends FormRequest
         $organizationId = $this->user()?->current_organization_id;
 
         return [
+            'idempotency_key' => 'required|uuid',
             'warehouse_id' => [
                 'required',
                 Rule::exists('organization_warehouses', 'id')

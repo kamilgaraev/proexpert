@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
+
 use function trans_message;
 
 class WarehouseOperationsControllerTest extends TestCase
@@ -97,33 +98,42 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->allowAdminAccess();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $sourceWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 10,
-                'price' => 100,
-                'reason' => 'First batch',
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $sourceWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 10,
+                    'price' => 100,
+                    'reason' => 'First batch',
+                ])
             ->assertCreated();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $sourceWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 5,
-                'price' => 150,
-                'reason' => 'Second batch',
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $sourceWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 5,
+                    'price' => 150,
+                    'reason' => 'Second batch',
+                ])
             ->assertCreated();
 
         $writeOffResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/write-off', [
-                'warehouse_id' => $sourceWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 12,
-                'reason' => 'Site issue',
-                'operation_category' => WarehouseMovement::CATEGORY_LOSS,
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/write-off',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $sourceWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 12,
+                    'reason' => 'Site issue',
+                    'operation_category' => WarehouseMovement::CATEGORY_LOSS,
+                ])
             ->assertOk();
         $writeOffResponse->assertJsonPath('data.movement.operation_category', WarehouseMovement::CATEGORY_LOSS);
 
@@ -137,13 +147,16 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->assertSame(108.33, round((float) $writeOffMovement->price, 2));
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/transfer', [
-                'from_warehouse_id' => $sourceWarehouse->id,
-                'to_warehouse_id' => $targetWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 2,
-                'reason' => 'Move to target',
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/transfer',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'from_warehouse_id' => $sourceWarehouse->id,
+                    'to_warehouse_id' => $targetWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 2,
+                    'reason' => 'Move to target',
+                ])
             ->assertOk();
 
         $this->assertSame(1.0, $this->balanceQuantity($context->organization->id, $sourceWarehouse->id, $material->id, 150));
@@ -162,23 +175,29 @@ class WarehouseOperationsControllerTest extends TestCase
         ]);
 
         $anotherReserveResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/reserve', [
-                'warehouse_id' => $targetWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 0.75,
-                'project_id' => $anotherProject->id,
-                'reason' => 'Hold for another project',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/reserve',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $targetWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 0.75,
+                    'project_id' => $anotherProject->id,
+                    'reason' => 'Hold for another project',
+                ]);
 
         $anotherReserveResponse->assertOk();
         $reserveResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/reserve', [
-                'warehouse_id' => $targetWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 1,
-                'project_id' => $project->id,
-                'reason' => 'Hold for project',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/reserve',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $targetWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 1,
+                    'project_id' => $project->id,
+                    'reason' => 'Hold for project',
+                ]);
 
         $reserveResponse->assertOk();
         $reservation = AssetReservation::query()
@@ -202,13 +221,16 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->assertSame(1.75, $this->reservedQuantity($context->organization->id, $targetWarehouse->id, $material->id));
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/unreserve', [
-                'warehouse_id' => $targetWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 0.5,
-                'project_id' => $project->id,
-                'reason' => 'Partially release',
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/unreserve',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $targetWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 0.5,
+                    'project_id' => $project->id,
+                    'reason' => 'Partially release',
+                ])
             ->assertOk();
 
         $this->assertSame(0.75, $this->availableQuantity($context->organization->id, $targetWarehouse->id, $material->id));
@@ -233,68 +255,86 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->allowAdminAccess();
 
         $foreignWarehouseWriteOff = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/write-off', [
-                'warehouse_id' => $foreignWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 1,
-                'reason' => 'Bad warehouse',
-                'operation_category' => WarehouseMovement::CATEGORY_LOSS,
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/write-off',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $foreignWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 1,
+                    'reason' => 'Bad warehouse',
+                    'operation_category' => WarehouseMovement::CATEGORY_LOSS,
+                ]);
 
         $foreignWarehouseWriteOff->assertStatus(422);
 
         $foreignMaterialWriteOff = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/write-off', [
-                'warehouse_id' => $warehouse->id,
-                'material_id' => $foreignMaterial->id,
-                'quantity' => 1,
-                'reason' => 'Bad material',
-                'operation_category' => WarehouseMovement::CATEGORY_LOSS,
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/write-off',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'material_id' => $foreignMaterial->id,
+                    'quantity' => 1,
+                    'reason' => 'Bad material',
+                    'operation_category' => WarehouseMovement::CATEGORY_LOSS,
+                ]);
 
         $foreignMaterialWriteOff->assertStatus(422);
 
         $foreignTransferTarget = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/transfer', [
-                'from_warehouse_id' => $warehouse->id,
-                'to_warehouse_id' => $foreignWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 1,
-                'reason' => 'Bad target',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/transfer',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'from_warehouse_id' => $warehouse->id,
+                    'to_warehouse_id' => $foreignWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 1,
+                    'reason' => 'Bad target',
+                ]);
 
         $foreignTransferTarget->assertStatus(422);
 
         $foreignMaterialReserve = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/reserve', [
-                'warehouse_id' => $warehouse->id,
-                'material_id' => $foreignMaterial->id,
-                'quantity' => 1,
-                'reason' => 'Bad reserve',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/reserve',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'material_id' => $foreignMaterial->id,
+                    'quantity' => 1,
+                    'reason' => 'Bad reserve',
+                ]);
 
         $foreignMaterialReserve->assertStatus(422);
 
         $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
         $foreignProjectReceipt = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $warehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 1,
-                'price' => 100,
-                'project_id' => $foreignProject->id,
-                'reason' => 'Bad project',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 1,
+                    'price' => 100,
+                    'project_id' => $foreignProject->id,
+                    'reason' => 'Bad project',
+                ]);
 
         $foreignProjectReceipt->assertStatus(422);
 
         $foreignWarehouseUnreserve = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/unreserve', [
-                'warehouse_id' => $foreignWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 1,
-                'reason' => 'Bad release',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/unreserve',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $foreignWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 1,
+                    'reason' => 'Bad release',
+                ]);
 
         $foreignWarehouseUnreserve->assertStatus(422);
 
@@ -315,16 +355,19 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->allowAdminAccess();
 
         $this->withHeaders($context->authHeaders())
-            ->post('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => (string) $warehouse->id,
-                'material_id' => (string) $material->id,
-                'quantity' => '2',
-                'price' => '15000',
-                'project_id' => 'null',
-                'document_number' => '1',
-                'reason' => 'Покупка',
-                'metadata' => '[]',
-            ])
+            ->post(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => (string) $warehouse->id,
+                    'material_id' => (string) $material->id,
+                    'quantity' => '2',
+                    'price' => '15000',
+                    'project_id' => 'null',
+                    'document_number' => '1',
+                    'reason' => 'Покупка',
+                    'metadata' => '[]',
+                ])
             ->assertCreated();
 
         $this->assertDatabaseHas('warehouse_movements', [
@@ -355,13 +398,16 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->allowAdminAccess();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $warehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 5,
-                'price' => 100,
-                'reason' => 'Initial contractor stock',
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 5,
+                    'price' => 100,
+                    'reason' => 'Initial contractor stock',
+                ])
             ->assertCreated();
 
         $foreignPayload = [
@@ -450,13 +496,16 @@ class WarehouseOperationsControllerTest extends TestCase
         ]);
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $warehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 5,
-                'price' => 100,
-                'reason' => 'Initial cross-organization stock',
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 5,
+                    'price' => 100,
+                    'reason' => 'Initial cross-organization stock',
+                ])
             ->assertCreated();
 
         $transferResponse = $this->withHeaders($context->authHeaders())
@@ -505,23 +554,29 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->allowAdminAccess();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $sourceWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 3,
-                'price' => 100,
-                'reason' => 'Initial stock',
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $sourceWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 3,
+                    'price' => 100,
+                    'reason' => 'Initial stock',
+                ])
             ->assertCreated();
 
         $writeOffResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/write-off', [
-                'warehouse_id' => $sourceWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 4,
-                'reason' => 'Too much write off',
-                'operation_category' => WarehouseMovement::CATEGORY_LOSS,
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/write-off',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $sourceWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 4,
+                    'reason' => 'Too much write off',
+                    'operation_category' => WarehouseMovement::CATEGORY_LOSS,
+                ]);
 
         $writeOffResponse
             ->assertStatus(422)
@@ -537,13 +592,16 @@ class WarehouseOperationsControllerTest extends TestCase
         ]);
 
         $transferResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/transfer', [
-                'from_warehouse_id' => $sourceWarehouse->id,
-                'to_warehouse_id' => $targetWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 4,
-                'reason' => 'Too much transfer',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/transfer',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'from_warehouse_id' => $sourceWarehouse->id,
+                    'to_warehouse_id' => $targetWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 4,
+                    'reason' => 'Too much transfer',
+                ]);
 
         $transferResponse
             ->assertStatus(422)
@@ -559,12 +617,15 @@ class WarehouseOperationsControllerTest extends TestCase
         ]);
 
         $reserveResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/reserve', [
-                'warehouse_id' => $sourceWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 4,
-                'reason' => 'Too much reserve',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/reserve',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $sourceWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 4,
+                    'reason' => 'Too much reserve',
+                ]);
 
         $reserveResponse
             ->assertStatus(422)
@@ -581,12 +642,15 @@ class WarehouseOperationsControllerTest extends TestCase
         ]);
 
         $unreserveResponse = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/unreserve', [
-                'warehouse_id' => $sourceWarehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 1,
-                'reason' => 'Nothing to release',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/unreserve',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $sourceWarehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 1,
+                    'reason' => 'Nothing to release',
+                ]);
 
         $unreserveResponse
             ->assertStatus(422)
@@ -607,23 +671,29 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->allowAdminAccess();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
-                'warehouse_id' => $warehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 3,
-                'price' => 100,
-                'reason' => 'Initial stock',
-            ])
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/receipt',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'warehouse_id' => $warehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 3,
+                    'price' => 100,
+                    'reason' => 'Initial stock',
+                ])
             ->assertCreated();
 
         $response = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/warehouses/operations/transfer', [
-                'from_warehouse_id' => $warehouse->id,
-                'to_warehouse_id' => $warehouse->id,
-                'material_id' => $material->id,
-                'quantity' => 1,
-                'reason' => 'Same warehouse transfer',
-            ]);
+            ->postJson(
+                '/api/v1/admin/warehouses/operations/transfer',
+                [
+                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'from_warehouse_id' => $warehouse->id,
+                    'to_warehouse_id' => $warehouse->id,
+                    'material_id' => $material->id,
+                    'quantity' => 1,
+                    'reason' => 'Same warehouse transfer',
+                ]);
 
         $response
             ->assertStatus(422)
@@ -634,6 +704,100 @@ class WarehouseOperationsControllerTest extends TestCase
             'organization_id' => $context->organization->id,
             'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT,
         ]);
+    }
+
+    public function test_manual_warehouse_operations_are_idempotent_and_reject_payload_conflicts(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Кабель', 'CABLE-IDEMP');
+        $sourceWarehouse = $this->createWarehouse($context->organization->id, 'Основной склад', 'IDEMP-SRC');
+        $targetWarehouse = $this->createWarehouse($context->organization->id, 'Склад объекта', 'IDEMP-DST');
+        $this->allowAdminAccess();
+
+        $operations = [
+            ['/receipt', [
+                'idempotency_key' => '11111111-1111-4111-8111-111111111111',
+                'warehouse_id' => $sourceWarehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 10,
+                'price' => 100,
+            ], 201],
+            ['/reserve', [
+                'idempotency_key' => '22222222-2222-4222-8222-222222222222',
+                'warehouse_id' => $sourceWarehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 2,
+            ], 200],
+            ['/unreserve', [
+                'idempotency_key' => '33333333-3333-4333-8333-333333333333',
+                'warehouse_id' => $sourceWarehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 1,
+            ], 200],
+            ['/write-off', [
+                'idempotency_key' => '44444444-4444-4444-8444-444444444444',
+                'warehouse_id' => $sourceWarehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 3,
+                'reason' => 'Расход на производство',
+                'operation_category' => WarehouseMovement::CATEGORY_LOSS,
+            ], 200],
+            ['/transfer', [
+                'idempotency_key' => '55555555-5555-4555-8555-555555555555',
+                'from_warehouse_id' => $sourceWarehouse->id,
+                'to_warehouse_id' => $targetWarehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 2,
+            ], 200],
+        ];
+
+        foreach ($operations as [$path, $payload, $status]) {
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouses/operations'.$path, $payload)
+                ->assertStatus($status);
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouses/operations'.$path, $payload)
+                ->assertStatus($status);
+        }
+
+        $this->assertSame(4.0, $this->availableQuantity(
+            $context->organization->id,
+            $sourceWarehouse->id,
+            $material->id,
+        ));
+        $this->assertSame(1.0, $this->reservedQuantity(
+            $context->organization->id,
+            $sourceWarehouse->id,
+            $material->id,
+        ));
+        $this->assertSame(2.0, $this->availableQuantity(
+            $context->organization->id,
+            $targetWarehouse->id,
+            $material->id,
+        ));
+
+        $this->assertDatabaseCount('warehouse_movements', 6);
+        foreach ([
+            'receipt',
+            'reservation',
+            'unreservation',
+            'write_off',
+            'transfer_out',
+            'transfer_in',
+        ] as $movementType) {
+            $this->assertSame(1, WarehouseMovement::query()
+                ->where('organization_id', $context->organization->id)
+                ->where('movement_type', $movementType)
+                ->count());
+        }
+
+        $conflictingReceipt = $operations[0][1];
+        $conflictingReceipt['quantity'] = 11;
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', $conflictingReceipt)
+            ->assertStatus(409)
+            ->assertJsonPath('message', trans_message('warehouse_basic.idempotency_conflict'));
     }
 
     private function createUnit(int $organizationId): MeasurementUnit
