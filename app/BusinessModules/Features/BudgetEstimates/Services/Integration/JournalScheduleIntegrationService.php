@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Integration;
 
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\Schedule\TaskStatusEnum;
+use App\Models\CompletedWork;
 use App\Models\ConstructionJournalEntry;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
@@ -17,36 +18,62 @@ class JournalScheduleIntegrationService
 {
     public function __construct(
         private readonly ScheduleTaskCompletedWorkService $scheduleTaskCompletedWorkService,
-    ) {
-    }
+    ) {}
 
     public function updateTaskProgressFromEntry(ConstructionJournalEntry $entry): ?ScheduleTask
     {
-        if (!$entry->schedule_task_id || $entry->status !== JournalEntryStatusEnum::APPROVED) {
+        if (! $entry->schedule_task_id || $entry->status !== JournalEntryStatusEnum::APPROVED) {
             return null;
         }
 
         $task = $entry->scheduleTask;
-        if (!$task) {
+        if (! $task) {
             return null;
         }
 
-        if (!$task->actual_start_date) {
-            $task->update(['actual_start_date' => $entry->entry_date]);
-        }
-
         $this->scheduleTaskCompletedWorkService->syncCompletedQuantity($task);
-        $task = $task->fresh();
+        $task = $task->fresh(['estimateItem']);
         $progress = (float) $task->progress_percent;
+        $plannedQuantity = (float) ($task->estimateItem?->quantity_total ?? $task->quantity ?? 0);
+        $facts = CompletedWork::query()
+            ->effectiveForSchedule()
+            ->where('schedule_task_id', $task->id)
+            ->where('status', 'confirmed')
+            ->orderBy('completion_date')
+            ->orderBy('id')
+            ->get(['id', 'completion_date', 'completed_quantity', 'quantity']);
+        $dates = $this->calculateActualDates($facts, $plannedQuantity);
 
-        if ($progress >= 100 && !$task->actual_end_date) {
-            $task->update([
-                'actual_end_date' => $entry->entry_date,
-                'status' => TaskStatusEnum::COMPLETED,
-            ]);
-        }
+        $task->update([
+            'actual_start_date' => $dates['start'],
+            'actual_end_date' => $dates['end'],
+            'status' => $progress >= 100 ? TaskStatusEnum::COMPLETED : $task->status,
+        ]);
 
         return $task->fresh();
+    }
+
+    private function calculateActualDates(Collection $facts, float $plannedQuantity): array
+    {
+        $orderedFacts = $facts
+            ->filter(static fn (object $fact): bool => $fact->completion_date !== null)
+            ->sortBy(static fn (object $fact): string => Carbon::parse($fact->completion_date)->toDateString())
+            ->values();
+        $start = $orderedFacts->isEmpty() ? null : Carbon::parse($orderedFacts->first()->completion_date);
+        $end = null;
+        $completedQuantity = 0.0;
+
+        if ($plannedQuantity > 0) {
+            foreach ($orderedFacts as $fact) {
+                $completedQuantity += (float) ($fact->completed_quantity ?? $fact->quantity ?? 0);
+                if ($completedQuantity >= $plannedQuantity) {
+                    $end = Carbon::parse($fact->completion_date);
+                    break;
+                }
+            }
+        }
+
+        return ['start' => $start, 'end' => $end];
     }
 
     public function suggestTasksForDate(ProjectSchedule $schedule, Carbon $date): Collection
@@ -150,7 +177,7 @@ class JournalScheduleIntegrationService
 
     protected function calculatePlannedProgress(ScheduleTask $task): float
     {
-        if (!$task->planned_start_date || !$task->planned_end_date) {
+        if (! $task->planned_start_date || ! $task->planned_end_date) {
             return 0;
         }
 

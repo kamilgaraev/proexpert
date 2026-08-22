@@ -305,7 +305,7 @@ class ActReportsController extends Controller
         try {
             $organizationId = $this->accessService->currentOrganizationId($request);
             $act = $this->accessService->resolveAccessibleAct($request, $act);
-            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_EDIT, $organizationId);
+            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_APPROVE, $organizationId);
 
             return AdminResponse::success(
                 new ContractPerformanceActResource($this->workflowService->approve($act, (int) $request->user()?->id)),

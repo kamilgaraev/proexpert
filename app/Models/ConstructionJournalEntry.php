@@ -22,6 +22,8 @@ class ConstructionJournalEntry extends Model
         'estimate_id',
         'entry_date',
         'entry_number',
+        'idempotency_key',
+        'payload_fingerprint',
         'work_description',
         'status',
         'created_by_user_id',
@@ -87,6 +89,13 @@ class ConstructionJournalEntry extends Model
         return $this->hasMany(JournalMaterial::class, 'journal_entry_id');
     }
 
+    public function approvalEvents(): HasMany
+    {
+        return $this->hasMany(JournalEntryApprovalEvent::class, 'journal_entry_id')
+            ->orderBy('occurred_at')
+            ->orderBy('id');
+    }
+
     public function completedWorks(): HasMany
     {
         return $this->hasMany(CompletedWork::class, 'journal_entry_id');
@@ -124,16 +133,21 @@ class ConstructionJournalEntry extends Model
 
     public function submit(): bool
     {
-        if (!$this->status->canSubmit()) {
+        if (! $this->status->canSubmit()) {
             throw new \DomainException('Запись не может быть отправлена на утверждение в текущем статусе');
         }
 
-        return $this->update(['status' => JournalEntryStatusEnum::SUBMITTED]);
+        return $this->update([
+            'status' => JournalEntryStatusEnum::SUBMITTED,
+            'approved_by_user_id' => null,
+            'approved_at' => null,
+            'rejection_reason' => null,
+        ]);
     }
 
     public function approve(User $approver): bool
     {
-        if (!$this->status->canApprove()) {
+        if (! $this->status->canApprove()) {
             throw new \DomainException('Запись не может быть утверждена в текущем статусе');
         }
 
@@ -147,7 +161,7 @@ class ConstructionJournalEntry extends Model
 
     public function reject(User $approver, string $reason): bool
     {
-        if (!$this->status->canReject()) {
+        if (! $this->status->canReject()) {
             throw new \DomainException('Запись не может быть отклонена в текущем статусе');
         }
 
@@ -166,7 +180,7 @@ class ConstructionJournalEntry extends Model
 
     public function updateScheduleProgress(): void
     {
-        if (!$this->schedule_task_id || $this->status !== JournalEntryStatusEnum::APPROVED) {
+        if (! $this->schedule_task_id || $this->status !== JournalEntryStatusEnum::APPROVED) {
             return;
         }
     }
@@ -192,7 +206,7 @@ class ConstructionJournalEntry extends Model
         if ($user && $user->current_organization_id) {
             $project = $entry->journal?->project;
 
-            if (!$project || !$project->hasOrganization($user->current_organization_id)) {
+            if (! $project || ! $project->hasOrganization($user->current_organization_id)) {
                 abort(403, 'У вас нет доступа к этой записи журнала');
             }
         }

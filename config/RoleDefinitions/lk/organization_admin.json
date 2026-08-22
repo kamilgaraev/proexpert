@@ -164,7 +164,8 @@
       "construction-journal.create",
       "construction-journal.edit",
       "construction-journal.approve",
-      "construction-journal.export"
+      "construction-journal.export",
+      "construction-journal.reopen"
     ],
     "contract-management": [
       "contracts.view",
@@ -277,6 +278,7 @@
       "act_reports.view",
       "act_reports.create",
       "act_reports.edit",
+      "act_reports.approve",
       "act_reports.delete",
       "act_reports.contracts.view",
       "act_reports.works.view",
@@ -489,7 +491,8 @@
       "construction-journal.edit_all",
       "construction-journal.delete",
       "construction-journal.approve",
-      "construction-journal.export"
+      "construction-journal.export",
+      "construction-journal.reopen"
     ],
     "payments": [
       "payments.dashboard.view",

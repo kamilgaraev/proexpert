@@ -10,7 +10,7 @@ class ContractPerformanceActDTO
         public readonly ?string $act_document_number,
         public readonly string $act_date, // Y-m-d format
         public readonly ?string $description,
-        public readonly bool $is_approved = true, // По умолчанию одобрен при создании, если не указано иное
+        public readonly bool $is_approved = false,
         public readonly ?string $approval_date = null, // Y-m-d format, если is_approved = true
         public readonly array $completed_works = [], // Массив выполненных работ с количествами
         public readonly float $amount = 0, // Сумма акта (рассчитывается автоматически)
@@ -62,13 +62,14 @@ class ContractPerformanceActDTO
             $currency = $work['currency'] ?? $this->currency;
             $syncData[$work['completed_work_id']] = [
                 'included_quantity' => $work['included_quantity'],
-                'included_amount' => $work['included_amount'],
+                'included_amount' => $work['included_amount'] ?? 0,
                 'currency' => is_string($currency) && trim($currency) !== ''
                     ? strtoupper($currency)
                     : null,
                 'notes' => $work['notes'] ?? null,
             ];
         }
+
         return $syncData;
     }
 }

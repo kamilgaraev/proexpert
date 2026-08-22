@@ -2,6 +2,7 @@
 
 namespace App\Policies;
 
+use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
@@ -13,18 +14,25 @@ class ConstructionJournalEntryPolicy
     {
         $organizationId = $user->current_organization_id;
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return false;
         }
 
         return $project->hasOrganization($organizationId);
     }
 
+    private function hasJournalAccess(User $user, ConstructionJournal $journal): bool
+    {
+        return (int) $user->current_organization_id === (int) $journal->organization_id
+            && $journal->project !== null
+            && $this->hasProjectAccess($user, $journal->project);
+    }
+
     private function hasModulePermission(User $user, array $permissions, ?Project $project = null): bool
     {
         $organizationId = $user->current_organization_id;
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return false;
         }
 
@@ -50,7 +58,7 @@ class ConstructionJournalEntryPolicy
     {
         $project = $entry->journal?->project;
 
-        if (!$project || !$this->hasProjectAccess($user, $project)) {
+        if (! $project || ! $entry->journal || ! $this->hasJournalAccess($user, $entry->journal)) {
             return false;
         }
 
@@ -61,11 +69,11 @@ class ConstructionJournalEntryPolicy
     {
         $project = $journal->project;
 
-        if (!$project || !$this->hasProjectAccess($user, $project)) {
+        if (! $project || ! $this->hasJournalAccess($user, $journal)) {
             return false;
         }
 
-        if (!$journal->canBeEdited()) {
+        if (! $journal->canBeEdited()) {
             return false;
         }
 
@@ -76,18 +84,22 @@ class ConstructionJournalEntryPolicy
     {
         $project = $entry->journal?->project;
 
-        if (!$project || !$this->hasProjectAccess($user, $project)) {
+        if (! $project || ! $entry->journal || ! $this->hasJournalAccess($user, $entry->journal)) {
+            return false;
+        }
+
+        if ($entry->journal->status !== JournalStatusEnum::ACTIVE) {
             return false;
         }
 
         $isOwner = $entry->created_by_user_id === $user->id;
         $canEditAll = $this->hasModulePermission($user, ['edit_all', '*'], $project);
 
-        if (!$isOwner && !$canEditAll) {
+        if (! $isOwner && ! $canEditAll) {
             return false;
         }
 
-        if (!$entry->canBeEdited()) {
+        if (! $entry->canBeEdited()) {
             return false;
         }
 
@@ -98,18 +110,22 @@ class ConstructionJournalEntryPolicy
     {
         $project = $entry->journal?->project;
 
-        if (!$project || !$this->hasProjectAccess($user, $project)) {
+        if (! $project || ! $entry->journal || ! $this->hasJournalAccess($user, $entry->journal)) {
+            return false;
+        }
+
+        if ($entry->journal->status !== JournalStatusEnum::ACTIVE) {
             return false;
         }
 
         $isOwner = $entry->created_by_user_id === $user->id;
         $canDeleteAll = $this->hasModulePermission($user, ['delete_all', '*'], $project);
 
-        if (!$isOwner && !$canDeleteAll) {
+        if (! $isOwner && ! $canDeleteAll) {
             return false;
         }
 
-        if (!$entry->canBeEdited()) {
+        if (! $entry->canBeEdited()) {
             return false;
         }
 
@@ -120,7 +136,11 @@ class ConstructionJournalEntryPolicy
     {
         $project = $entry->journal?->project;
 
-        if (!$project || !$this->hasProjectAccess($user, $project)) {
+        if (! $project || ! $entry->journal || ! $this->hasJournalAccess($user, $entry->journal)) {
+            return false;
+        }
+
+        if ($entry->journal->status !== JournalStatusEnum::ACTIVE) {
             return false;
         }
 
@@ -128,7 +148,7 @@ class ConstructionJournalEntryPolicy
 
         if (
             $entry->created_by_user_id === $user->id
-            && (!$journalOrganizationId || !$this->isOrganizationOwner($user, (int) $journalOrganizationId))
+            && (! $journalOrganizationId || ! $this->isOrganizationOwner($user, (int) $journalOrganizationId))
         ) {
             return false;
         }

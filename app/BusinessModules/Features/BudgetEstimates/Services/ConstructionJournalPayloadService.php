@@ -17,8 +17,7 @@ class ConstructionJournalPayloadService
     public function __construct(
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly WorkflowGuardService $workflowGuardService,
-    ) {
-    }
+    ) {}
 
     public function mapJournal(ConstructionJournal $journal, User $user, bool $includeEntries = false): array
     {
@@ -72,6 +71,7 @@ class ConstructionJournalPayloadService
             'materials.estimateItem',
             'equipment.estimateItem',
             'workers.estimateItem',
+            'approvalEvents.actor',
         ]);
 
         $blockers = $this->workflowGuardService->journalEntryBlockers($entry);
@@ -94,6 +94,15 @@ class ConstructionJournalPayloadService
             'safety_notes' => $entry->safety_notes,
             'visitors_notes' => $entry->visitors_notes,
             'quality_notes' => $entry->quality_notes,
+            'approval_history' => $entry->approvalEvents->map(fn ($event): array => [
+                'id' => $event->id,
+                'event' => $event->event,
+                'from_status' => $event->from_status,
+                'to_status' => $event->to_status,
+                'reason' => $event->reason,
+                'occurred_at' => optional($event->occurred_at)?->toIso8601String(),
+                'actor' => $event->actor ? $this->mapUser($event->actor) : null,
+            ])->values()->all(),
             'created_at' => optional($entry->created_at)?->toDateTimeString(),
             'updated_at' => optional($entry->updated_at)?->toDateTimeString(),
             'journal' => $includeJournal && $entry->relationLoaded('journal') && $entry->journal
@@ -271,6 +280,12 @@ class ConstructionJournalPayloadService
             $actions[] = 'delete';
         }
 
+        foreach (['close', 'archive', 'reopen'] as $lifecycleAction) {
+            if (Gate::forUser($user)->allows($lifecycleAction, $subject)) {
+                $actions[] = $lifecycleAction;
+            }
+        }
+
         if (Gate::forUser($user)->allows('export', $subject)) {
             $actions[] = 'export';
         }
@@ -326,8 +341,8 @@ class ConstructionJournalPayloadService
 
         $blockers = $this->workflowGuardService->journalEntryBlockers($entry);
 
-        return !collect($blockers)->contains(
-            fn (array $blocker): bool => !($blocker['can_override'] ?? false)
+        return ! collect($blockers)->contains(
+            fn (array $blocker): bool => ! ($blocker['can_override'] ?? false)
         );
     }
 

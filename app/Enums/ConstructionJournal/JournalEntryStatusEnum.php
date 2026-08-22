@@ -11,7 +11,7 @@ enum JournalEntryStatusEnum: string
 
     public function label(): string
     {
-        return match($this) {
+        return match ($this) {
             self::DRAFT => 'Черновик',
             self::SUBMITTED => 'На утверждении',
             self::APPROVED => 'Утверждено',
@@ -21,7 +21,7 @@ enum JournalEntryStatusEnum: string
 
     public function color(): string
     {
-        return match($this) {
+        return match ($this) {
             self::DRAFT => 'secondary',
             self::SUBMITTED => 'info',
             self::APPROVED => 'success',
@@ -36,7 +36,7 @@ enum JournalEntryStatusEnum: string
 
     public function canSubmit(): bool
     {
-        return $this === self::DRAFT;
+        return in_array($this, [self::DRAFT, self::REJECTED], true);
     }
 
     public function canApprove(): bool
@@ -52,7 +52,7 @@ enum JournalEntryStatusEnum: string
     public static function getOptions(): array
     {
         return array_map(
-            fn($case) => [
+            fn ($case) => [
                 'value' => $case->value,
                 'label' => $case->label(),
                 'color' => $case->color(),
@@ -61,4 +61,3 @@ enum JournalEntryStatusEnum: string
         );
     }
 }
-

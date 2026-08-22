@@ -128,6 +128,8 @@ return [
         'contracts.delete' => 'Удаление договоров',
         'reports.view' => 'Просмотр отчётов',
         'reports.run' => 'Формирование отчётов',
+        'act_reports.approve' => 'Согласование актов выполненных работ',
+        'construction-journal.reopen' => 'Возобновление закрытых журналов работ',
         'reports.create' => 'Создание отчетов',
         'reports.export' => 'Экспорт отчётов',
         'reports.download' => 'Скачивание отчётов',

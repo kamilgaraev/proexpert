@@ -102,8 +102,6 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::prefix('{contract}/performance-acts')->group(function () {
             Route::get('/', [ContractPerformanceActController::class, 'index'])
                 ->middleware('authorize:contracts.performance_acts.view,project,project');
-            Route::post('/', [ContractPerformanceActController::class, 'store'])
-                ->middleware('authorize:contracts.performance_acts.create,project,project');
             Route::get('/{performance_act}', [ContractPerformanceActController::class, 'show'])
                 ->middleware('authorize:contracts.performance_acts.view,project,project');
             Route::match(['put', 'patch'], '/{performance_act}', [ContractPerformanceActController::class, 'update'])
@@ -111,9 +109,6 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
             Route::delete('/{performance_act}', [ContractPerformanceActController::class, 'destroy'])
                 ->middleware('authorize:contracts.performance_acts.delete,project,project');
         });
-
-        Route::get('/{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks'])
-            ->middleware('authorize:contracts.performance_acts.create,project,project');
 
         // УСТАРЕВШИЕ МАРШРУТЫ - УДАЛЕНЫ
         // Contract Payments теперь управляются через модуль Payments

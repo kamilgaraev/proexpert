@@ -53,9 +53,6 @@ Route::group(['prefix' => 'contracts'], function () {
     Route::get('{contract}/export-ks6a', [ContractController::class, 'exportKS6a'])
         ->middleware('authorize:contracts.performance_acts.export')
         ->name('contracts.export-ks6a');
-    Route::get('{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks'])
-        ->middleware('authorize:contracts.performance_acts.create')
-        ->name('contracts.available-works-for-acts');
 });
 
 // Вложенные маршруты для Актов выполненных работ к Контрактам
@@ -65,9 +62,6 @@ Route::group(['prefix' => 'contracts'], function () {
 Route::get('contracts/{contract}/performance-acts', [ContractPerformanceActController::class, 'index'])
     ->middleware('authorize:contracts.performance_acts.view')
     ->name('contracts.performance-acts.index');
-Route::post('contracts/{contract}/performance-acts', [ContractPerformanceActController::class, 'store'])
-    ->middleware('authorize:contracts.performance_acts.create')
-    ->name('contracts.performance-acts.store');
 Route::get('performance-acts/{performance_act}', [ContractPerformanceActController::class, 'show'])
     ->middleware('authorize:contracts.performance_acts.view')
     ->name('performance-acts.show');

@@ -2,34 +2,37 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Export;
 
-use App\Models\Estimate;
+use App\Helpers\NumberToWordsHelper;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
-use App\Helpers\NumberToWordsHelper;
+use App\Services\Acting\ActingPriceService;
+use App\Services\Storage\FileService;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\Font;
-use Barryvdh\DomPDF\Facade\Pdf;
-use App\Services\Storage\FileService;
-use Illuminate\Support\Str;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class OfficialFormsExportService
 {
+    private const MAX_SPREADSHEET_ENTRIES = 20000;
+
     public function __construct(
-        protected FileService $fileService
+        protected FileService $fileService,
+        protected ActingPriceService $priceService,
     ) {}
 
     public function getFileService(): FileService
     {
         return $this->fileService;
     }
+
     public function exportKS2ToExcel(ContractPerformanceAct $act, Contract $contract): string
     {
-        $spreadsheet = new Spreadsheet();
+        $this->assertActApprovedForExport($act);
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
 
         $this->setKS2Header($sheet, $act, $contract);
@@ -46,7 +49,8 @@ class OfficialFormsExportService
 
     public function exportKS3ToExcel(ContractPerformanceAct $act, Contract $contract): string
     {
-        $spreadsheet = new Spreadsheet();
+        $this->assertActApprovedForExport($act);
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
 
         $this->setKS3Header($sheet, $act, $contract);
@@ -64,14 +68,14 @@ class OfficialFormsExportService
     protected function saveSpreadsheetToS3(Spreadsheet $spreadsheet, string $path, $organization): string
     {
         $writer = new Xlsx($spreadsheet);
-        
+
         ob_start();
         $writer->save('php://output');
         $content = ob_get_clean();
 
         $orgId = $organization instanceof \App\Models\Organization ? $organization->id : $organization;
         $s3Path = "org-{$orgId}/{$path}";
-        
+
         $this->fileService->disk($organization)->put($s3Path, $content);
 
         return $s3Path;
@@ -79,11 +83,12 @@ class OfficialFormsExportService
 
     public function exportKS2ToPdf(ContractPerformanceAct $act, Contract $contract): string
     {
+        $this->assertActApprovedForExport($act);
         $data = $this->prepareKS2Data($act, $contract);
         $pdf = Pdf::loadView('estimates.exports.ks2', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
-        
+
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-2_{$actNumber}_{$contract->number}.pdf";
         $path = "exports/acts/ks2/{$filename}";
@@ -93,11 +98,12 @@ class OfficialFormsExportService
 
     public function exportKS3ToPdf(ContractPerformanceAct $act, Contract $contract): string
     {
+        $this->assertActApprovedForExport($act);
         $data = $this->prepareKS3Data($act, $contract);
         $pdf = Pdf::loadView('estimates.exports.ks3', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
-        
+
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-3_{$actNumber}_{$contract->number}.pdf";
         $path = "exports/acts/ks3/{$filename}";
@@ -108,32 +114,31 @@ class OfficialFormsExportService
     protected function savePdfToS3($pdf, string $path, $organization): string
     {
         $content = $pdf->output();
-        
+
         $orgId = $organization instanceof \App\Models\Organization ? $organization->id : $organization;
         $s3Path = "org-{$orgId}/{$path}";
-        
+
         $this->fileService->disk($organization)->put($s3Path, $content);
 
         return $s3Path;
     }
-
 
     /**
      * Экспорт Журнала учета выполненных работ (Форма КС-6а) в Excel на S3
      */
     public function exportKS6aToExcel(Contract $contract): string
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
-        
+
         $this->setKS6aHeader($sheet, $contract);
         $this->setKS6aTable($sheet, $contract);
         $this->setKS6aFooter($sheet, $contract);
         $this->applyKS6aStyles($sheet);
-        
-        $filename = "KS6a_" . ($contract->number ?: $contract->id) . ".xlsx";
+
+        $filename = 'KS6a_'.($contract->number ?: $contract->id).'.xlsx';
         $path = "exports/acts/ks6a/{$filename}";
-        
+
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $contract->organization);
     }
 
@@ -144,31 +149,29 @@ class OfficialFormsExportService
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
 
-        $filename = "KS-6a_" . ($contract->number ?: $contract->id) . ".pdf";
+        $filename = 'KS-6a_'.($contract->number ?: $contract->id).'.pdf';
         $path = "exports/acts/ks6a/{$filename}";
 
         return $this->savePdfToS3($pdf, $path, $contract->organization);
     }
 
-
-
     protected function setKS6aHeader($sheet, Contract $contract): void
     {
         $org = $contract->organization;
         $customer = $contract->project->client ?? $org; // Референс
-        
+
         $sheet->setCellValue('J1', 'Унифицированная форма № КС-6а');
         $sheet->setCellValue('J2', 'Утверждена постановлением Госкомстата');
         $sheet->setCellValue('J3', 'России от 30.10.97 № 71а');
-        
-        $sheet->setCellValue('A5', 'Стройка: ' . $contract->project->name);
-        $sheet->setCellValue('A6', 'Объект: ' . $contract->project->name);
-        $sheet->setCellValue('A7', 'Подрядчик: ' . ($contract->contractor->name ?? $org->name));
-        $sheet->setCellValue('A8', 'Заказчик: ' . ($customer->name ?? ''));
-        
+
+        $sheet->setCellValue('A5', 'Стройка: '.$contract->project->name);
+        $sheet->setCellValue('A6', 'Объект: '.$contract->project->name);
+        $sheet->setCellValue('A7', 'Подрядчик: '.($contract->contractor->name ?? $org->name));
+        $sheet->setCellValue('A8', 'Заказчик: '.($customer->name ?? ''));
+
         $sheet->setCellValue('A10', 'ЖУРНАЛ УЧЕТА ВЫПОЛНЕННЫХ РАБОТ');
         $sheet->getStyle('A10')->getFont()->setBold(true)->setSize(14);
-        
+
         $sheet->setCellValue('D11', 'Номер документа');
         $sheet->setCellValue('E11', 'Дата составления');
         $sheet->setCellValue('D12', $contract->number ?: $contract->id);
@@ -183,7 +186,7 @@ class OfficialFormsExportService
         $sheet->setCellValue("E{$row}", 'Ед. изм.');
         $sheet->setCellValue("F{$row}", 'Цена');
         $sheet->setCellValue("G{$row}", 'Выполнено за период (по месяцам)');
-        
+
         // Агрегируем суммы по месяцам из актов
         $acts = $contract->performanceActs()->where('is_approved', true)->orderBy('act_date')->get();
         $monthlyTotals = [];
@@ -191,15 +194,15 @@ class OfficialFormsExportService
             $month = $act->act_date->format('M Y');
             $monthlyTotals[$month] = ($monthlyTotals[$month] ?? 0) + $act->amount;
         }
-        
+
         $colOffset = 7; // Начинаем с G
         foreach ($monthlyTotals as $month => $total) {
             $column = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colOffset);
             $sheet->setCellValue("{$column}{$row}", $month);
-            $sheet->setCellValue("{$column}" . ($row + 1), $total);
+            $sheet->setCellValue("{$column}".($row + 1), $total);
             $colOffset++;
         }
-        
+
         $row += 2;
         $sheet->setCellValue("A{$row}", 'ИТОГО');
         $sheet->setCellValue("G{$row}", $contract->total_performed_amount);
@@ -223,71 +226,71 @@ class OfficialFormsExportService
     protected function setKS2Header($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
         $row = 1;
-        
+
         // Заголовок формы
         $sheet->setCellValue("A{$row}", 'Унифицированная форма № КС-2');
         $sheet->mergeCells("A{$row}:H{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Утверждена постановлением Госкомстата России от 11.11.99 № 100');
         $sheet->mergeCells("A{$row}:H{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Форма по ОКУД 322005');
         $sheet->mergeCells("A{$row}:H{$row}");
         $row += 2;
-        
+
         // Секции сторон
         $customerOrg = $contract->project?->organization ?? $contract->organization;
         $contractor = $contract->contractor;
-        
+
         // Инвестор (пусто)
         $sheet->setCellValue("A{$row}", 'Инвестор');
         $sheet->setCellValue("B{$row}", '');
         $sheet->mergeCells("B{$row}:H{$row}");
         $row++;
-        
+
         // Заказчик
         $customerName = $customerOrg?->legal_name ?? $customerOrg?->name ?? '';
         $customerInn = $customerOrg?->tax_number ?? '';
         $customerAddress = $this->formatAddress($customerOrg);
         $sheet->setCellValue("A{$row}", 'Заказчик');
-        $sheet->setCellValue("B{$row}", $customerName . ($customerInn ? ', ИНН ' . $customerInn : '') . ($customerAddress ? ', ' . $customerAddress : ''));
+        $sheet->setCellValue("B{$row}", $customerName.($customerInn ? ', ИНН '.$customerInn : '').($customerAddress ? ', '.$customerAddress : ''));
         $sheet->mergeCells("B{$row}:H{$row}");
         $row++;
-        
+
         // Заказчик (Генподрядчик)
         $sheet->setCellValue("A{$row}", 'Заказчик (Генподрядчик)');
-        $sheet->setCellValue("B{$row}", $customerName . ($customerInn ? ', ИНН ' . $customerInn : '') . ($customerAddress ? ', ' . $customerAddress : ''));
+        $sheet->setCellValue("B{$row}", $customerName.($customerInn ? ', ИНН '.$customerInn : '').($customerAddress ? ', '.$customerAddress : ''));
         $sheet->mergeCells("B{$row}:H{$row}");
         $row++;
-        
+
         // Подрядчик (Субподрядчик)
         $contractorName = $contractor?->name ?? '';
         $contractorInn = $contractor?->inn ?? '';
         $contractorAddress = $contractor?->legal_address ?? '';
         $sheet->setCellValue("A{$row}", 'Подрядчик (Субподрядчик)');
-        $sheet->setCellValue("B{$row}", $contractorName . ($contractorInn ? ', ИНН ' . $contractorInn : '') . ($contractorAddress ? ', ' . $contractorAddress : ''));
+        $sheet->setCellValue("B{$row}", $contractorName.($contractorInn ? ', ИНН '.$contractorInn : '').($contractorAddress ? ', '.$contractorAddress : ''));
         $sheet->mergeCells("B{$row}:H{$row}");
         $row += 2;
-        
+
         // Стройка и Объект
         $projectName = $contract->project?->name ?? '';
         $sheet->setCellValue("A{$row}", 'Стройка');
         $sheet->setCellValue("B{$row}", '');
         $sheet->mergeCells("B{$row}:H{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Объект');
         $sheet->setCellValue("B{$row}", $projectName);
         $sheet->mergeCells("B{$row}:H{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Вид деятельности по ОКВЭД');
         $sheet->setCellValue("B{$row}", '');
         $sheet->mergeCells("B{$row}:H{$row}");
         $row += 2;
-        
+
         // Договор подряда
         $sheet->setCellValue("A{$row}", 'Договор подряда (контракт)');
         $row++;
@@ -300,15 +303,15 @@ class OfficialFormsExportService
         $sheet->setCellValue("B{$row}", '');
         $sheet->mergeCells("B{$row}:H{$row}");
         $row += 2;
-        
+
         // Отчетный период
         $periodStart = $act->period_start ?? $act->act_date->copy()->startOfMonth();
         $periodEnd = $act->period_end ?? $act->act_date->copy()->endOfMonth();
         $sheet->setCellValue("A{$row}", 'Отчетный период');
-        $sheet->setCellValue("B{$row}", 'с ' . $periodStart->format('d.m.Y') . ' по ' . $periodEnd->format('d.m.Y'));
+        $sheet->setCellValue("B{$row}", 'с '.$periodStart->format('d.m.Y').' по '.$periodEnd->format('d.m.Y'));
         $sheet->mergeCells("B{$row}:H{$row}");
         $row += 2;
-        
+
         // Номер документа и дата составления
         $actNumber = $act->act_document_number ?? str_pad($act->id, 10, '0', STR_PAD_LEFT);
         $sheet->setCellValue("A{$row}", 'Номер документа');
@@ -316,15 +319,15 @@ class OfficialFormsExportService
         $sheet->setCellValue("D{$row}", 'Дата составления');
         $sheet->setCellValue("E{$row}", $act->act_date->format('d.m.Y'));
         $row += 2;
-        
+
         // Сметная стоимость
         $estimate = $contract->estimate ?? null;
         $contractAmount = $contract->is_fixed_amount ? ($contract->total_amount ?? 0) : ($estimate?->total_amount ?? 0);
         $sheet->setCellValue("A{$row}", 'Сметная (договорная) стоимость в соответствии с договором подряда (субподряда)');
-        $sheet->setCellValue("B{$row}", number_format($contractAmount, 2, ',', ' ') . ' руб.');
+        $sheet->setCellValue("B{$row}", number_format($contractAmount, 2, ',', ' ').' руб.');
         $sheet->mergeCells("B{$row}:H{$row}");
         $row += 2;
-        
+
         // Заголовок таблицы
         $sheet->setCellValue("A{$row}", '№ п/п');
         $sheet->setCellValue("B{$row}", 'по смете');
@@ -349,7 +352,7 @@ class OfficialFormsExportService
             $unitPrice = $line['unit_price'] !== null
                 ? (float) $line['unit_price']
                 : ($includedQuantity > 0 ? ($includedAmount / $includedQuantity) : 0);
-            
+
             $sheet->setCellValue("A{$row}", $index + 1);
             $sheet->setCellValue("B{$row}", ''); // по смете
             $sheet->setCellValue("C{$row}", $line['title'] ?? '');
@@ -370,16 +373,16 @@ class OfficialFormsExportService
         $sheet->mergeCells("C{$row}:F{$row}");
         $sheet->setCellValue("G{$row}", $totalAmount);
         $row++;
-        
+
         // НДС (20%)
-        $vatAmount = round($totalAmount * 0.20, 2);
+        $vatAmount = $this->priceService->vatAmountFromGross($totalAmount, $act->contract?->estimate);
         $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", '');
         $sheet->setCellValue("C{$row}", 'НДС');
         $sheet->mergeCells("C{$row}:F{$row}");
         $sheet->setCellValue("G{$row}", $vatAmount);
         $row++;
-        
+
         // Всего по Акту
         $totalWithVat = $totalAmount; // В примере общая сумма без НДС, НДС отдельно
         $sheet->setCellValue("A{$row}", '');
@@ -388,10 +391,10 @@ class OfficialFormsExportService
         $sheet->mergeCells("C{$row}:F{$row}");
         $sheet->setCellValue("G{$row}", $totalAmount);
         $row += 2;
-        
+
         // Сумма прописью
         $amountInWords = NumberToWordsHelper::amountToWords($totalAmount);
-        $sheet->setCellValue("A{$row}", 'Сумма прописью по акту: ' . $amountInWords);
+        $sheet->setCellValue("A{$row}", 'Сумма прописью по акту: '.$amountInWords);
         $sheet->mergeCells("A{$row}:H{$row}");
     }
 
@@ -427,71 +430,71 @@ class OfficialFormsExportService
     protected function setKS3Header($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
         $row = 1;
-        
+
         // Заголовок формы
         $sheet->setCellValue("A{$row}", 'Унифицированная форма № КС-3');
         $sheet->mergeCells("A{$row}:G{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Утверждена постановлением Госкомстата России от 11.11.99 № 100');
         $sheet->mergeCells("A{$row}:G{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Форма по ОКУД 322005');
         $sheet->mergeCells("A{$row}:G{$row}");
         $row += 2;
-        
+
         // Секции сторон
         $customerOrg = $contract->project?->organization ?? $contract->organization;
         $contractor = $contract->contractor;
-        
+
         // Инвестор (пусто)
         $sheet->setCellValue("A{$row}", 'Инвестор');
         $sheet->setCellValue("B{$row}", '');
         $sheet->mergeCells("B{$row}:G{$row}");
         $row++;
-        
+
         // Заказчик
         $customerName = $customerOrg?->legal_name ?? $customerOrg?->name ?? '';
         $customerInn = $customerOrg?->tax_number ?? '';
         $customerAddress = $this->formatAddress($customerOrg);
         $sheet->setCellValue("A{$row}", 'Заказчик');
-        $sheet->setCellValue("B{$row}", $customerName . ($customerInn ? ', ИНН ' . $customerInn : '') . ($customerAddress ? ', ' . $customerAddress : ''));
+        $sheet->setCellValue("B{$row}", $customerName.($customerInn ? ', ИНН '.$customerInn : '').($customerAddress ? ', '.$customerAddress : ''));
         $sheet->mergeCells("B{$row}:G{$row}");
         $row++;
-        
+
         // Заказчик (Генподрядчик)
         $sheet->setCellValue("A{$row}", 'Заказчик (Генподрядчик)');
-        $sheet->setCellValue("B{$row}", $customerName . ($customerInn ? ', ИНН ' . $customerInn : '') . ($customerAddress ? ', ' . $customerAddress : ''));
+        $sheet->setCellValue("B{$row}", $customerName.($customerInn ? ', ИНН '.$customerInn : '').($customerAddress ? ', '.$customerAddress : ''));
         $sheet->mergeCells("B{$row}:G{$row}");
         $row++;
-        
+
         // Подрядчик (Субподрядчик)
         $contractorName = $contractor?->name ?? '';
         $contractorInn = $contractor?->inn ?? '';
         $contractorAddress = $contractor?->legal_address ?? '';
         $sheet->setCellValue("A{$row}", 'Подрядчик (Субподрядчик)');
-        $sheet->setCellValue("B{$row}", $contractorName . ($contractorInn ? ', ИНН ' . $contractorInn : '') . ($contractorAddress ? ', ' . $contractorAddress : ''));
+        $sheet->setCellValue("B{$row}", $contractorName.($contractorInn ? ', ИНН '.$contractorInn : '').($contractorAddress ? ', '.$contractorAddress : ''));
         $sheet->mergeCells("B{$row}:G{$row}");
         $row += 2;
-        
+
         // Стройка и Объект
         $projectName = $contract->project?->name ?? '';
         $sheet->setCellValue("A{$row}", 'Стройка');
         $sheet->setCellValue("B{$row}", '');
         $sheet->mergeCells("B{$row}:G{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Объект');
         $sheet->setCellValue("B{$row}", $projectName);
         $sheet->mergeCells("B{$row}:G{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Вид деятельности по ОКВЭД');
         $sheet->setCellValue("B{$row}", '');
         $sheet->mergeCells("B{$row}:G{$row}");
         $row += 2;
-        
+
         // Договор подряда
         $sheet->setCellValue("A{$row}", 'Договор подряда (контракт)');
         $row++;
@@ -504,15 +507,15 @@ class OfficialFormsExportService
         $sheet->setCellValue("B{$row}", '');
         $sheet->mergeCells("B{$row}:G{$row}");
         $row += 2;
-        
+
         // Отчетный период
         $periodStart = $act->act_date->copy()->startOfMonth();
         $periodEnd = $act->act_date->copy()->endOfMonth();
         $sheet->setCellValue("A{$row}", 'Отчетный период');
-        $sheet->setCellValue("B{$row}", 'с ' . $periodStart->format('d.m.Y') . ' по ' . $periodEnd->format('d.m.Y'));
+        $sheet->setCellValue("B{$row}", 'с '.$periodStart->format('d.m.Y').' по '.$periodEnd->format('d.m.Y'));
         $sheet->mergeCells("B{$row}:G{$row}");
         $row += 2;
-        
+
         // Номер документа и дата составления
         $actNumber = $act->act_document_number ?? str_pad($act->id, 10, '0', STR_PAD_LEFT);
         $sheet->setCellValue("A{$row}", 'Номер документа');
@@ -520,14 +523,14 @@ class OfficialFormsExportService
         $sheet->setCellValue("D{$row}", 'Дата составления');
         $sheet->setCellValue("E{$row}", $act->act_date->format('d.m.Y'));
         $row += 2;
-        
+
         // Заголовок таблицы
         $sheet->setCellValue("A{$row}", '№ по порядку');
         $sheet->setCellValue("B{$row}", 'Наименование пусковых комплексов, объектов, видов работ, оборудования, затрат');
         $sheet->setCellValue("C{$row}", 'Код');
         $sheet->setCellValue("D{$row}", 'Стоимость выполненных работ и затрат, руб.');
         $row++;
-        
+
         // Подзаголовки колонок стоимости
         $sheet->setCellValue("D{$row}", 'с начала проведения работ');
         $sheet->setCellValue("E{$row}", 'с начала года');
@@ -539,27 +542,29 @@ class OfficialFormsExportService
     {
         $startRow = $sheet->getHighestRow() + 1;
         $row = $startRow;
-        
+
         $contract = $act->contract;
         $estimate = $contract->estimate ?? null;
         $actAmount = (float) ($act->amount ?? 0);
         $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
-        
+
         // Сумма с начала года (сумма всех актов за текущий год)
         // Для мультипроектных контрактов фильтруем по project_id
         $yearStart = $act->act_date->copy()->startOfYear();
         $yearTotal = $contract->performanceActs()
+            ->where('is_approved', true)
             ->where('project_id', $act->project_id)
             ->where('act_date', '>=', $yearStart)
             ->where('act_date', '<=', $act->act_date)
             ->sum('amount');
-        
+
         // Сумма с начала строительства (сумма всех актов этого проекта)
         $totalFromStart = $contract->performanceActs()
+            ->where('is_approved', true)
             ->where('project_id', $act->project_id)
             ->where('act_date', '<=', $act->act_date)
             ->sum('amount');
-        
+
         // Всего работ и затрат
         $sheet->setCellValue("A{$row}", '1');
         $sheet->setCellValue("B{$row}", 'Всего работ и затрат, включаемых в стоимость работ');
@@ -569,17 +574,17 @@ class OfficialFormsExportService
         $sheet->setCellValue("F{$row}", $actAmount);
         $sheet->setCellValue("G{$row}", '');
         $row++;
-        
+
         // в том числе:
         $sheet->setCellValue("B{$row}", 'в том числе:');
         $sheet->mergeCells("B{$row}:G{$row}");
         $row++;
-        
+
         // Детализация по работам
         $workIndex = 2;
         foreach ($this->actLinesForExport($act) as $line) {
             $includedAmount = (float) ($line['amount'] ?? 0);
-            
+
             $sheet->setCellValue("A{$row}", $workIndex);
             $sheet->setCellValue("B{$row}", $line['title'] ?? '');
             $sheet->setCellValue("C{$row}", $line['code'] ?? '');
@@ -587,11 +592,11 @@ class OfficialFormsExportService
             $sheet->setCellValue("E{$row}", $yearTotal);
             $sheet->setCellValue("F{$row}", $includedAmount);
             $sheet->setCellValue("G{$row}", '');
-            
+
             $workIndex++;
             $row++;
         }
-        
+
         // Итого
         $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", 'ИТОГО:');
@@ -601,9 +606,9 @@ class OfficialFormsExportService
         $sheet->setCellValue("F{$row}", $actAmount);
         $sheet->setCellValue("G{$row}", '');
         $row++;
-        
+
         // Сумма НДС
-        $vatAmount = round($actAmount * 0.20, 2);
+        $vatAmount = $this->priceService->vatAmountFromGross($actAmount, $act->contract?->estimate);
         $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", 'Сумма НДС');
         $sheet->setCellValue("C{$row}", '');
@@ -611,7 +616,7 @@ class OfficialFormsExportService
         $sheet->setCellValue("E{$row}", '');
         $sheet->setCellValue("F{$row}", $vatAmount);
         $row++;
-        
+
         // Всего с учетом НДС
         $totalWithVat = $actAmount; // В примере общая сумма без НДС
         $sheet->setCellValue("A{$row}", '');
@@ -628,7 +633,7 @@ class OfficialFormsExportService
         $row = $lastRow + 3;
 
         $actAmount = (float) ($act->amount ?? 0);
-        $sheet->setCellValue("A{$row}", 'Итого стоимость выполненных работ: ' . number_format($actAmount, 2, ',', ' ') . ' руб.');
+        $sheet->setCellValue("A{$row}", 'Итого стоимость выполненных работ: '.number_format($actAmount, 2, ',', ' ').' руб.');
         $sheet->mergeCells("A{$row}:G{$row}");
         $row += 3;
 
@@ -646,11 +651,11 @@ class OfficialFormsExportService
     {
         $highestRow = $sheet->getHighestRow();
         $highestColumn = $sheet->getHighestColumn();
-        
+
         // Заголовок формы
         $sheet->getStyle('A1:H1')->getFont()->setBold(true)->setSize(12);
         $sheet->getStyle('A1:H1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        
+
         // Заголовок таблицы
         $headerRow = $this->findHeaderRow($sheet, '№ п/п');
         if ($headerRow) {
@@ -662,16 +667,16 @@ class OfficialFormsExportService
                 ->setFillType(Fill::FILL_SOLID)
                 ->getStartColor()->setRGB('E0E0E0');
         }
-        
+
         // Границы для всех ячеек с данными
         $dataStartRow = $headerRow ? $headerRow + 1 : 11;
         for ($row = $dataStartRow; $row <= $highestRow; $row++) {
             $sheet->getStyle("A{$row}:H{$row}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
         }
-        
+
         // Выравнивание числовых колонок
         $sheet->getStyle("E{$dataStartRow}:G{$highestRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-        
+
         // Ширина колонок
         $sheet->getColumnDimension('A')->setWidth(8);
         $sheet->getColumnDimension('B')->setWidth(12);
@@ -681,7 +686,7 @@ class OfficialFormsExportService
         $sheet->getColumnDimension('F')->setWidth(18);
         $sheet->getColumnDimension('G')->setWidth(18);
         $sheet->getColumnDimension('H')->setWidth(20);
-        
+
         // Перенос текста для длинных ячеек
         $sheet->getStyle("B1:H{$highestRow}")->getAlignment()->setWrapText(true);
     }
@@ -689,11 +694,11 @@ class OfficialFormsExportService
     protected function applyKS3Styles($sheet): void
     {
         $highestRow = $sheet->getHighestRow();
-        
+
         // Заголовок формы
         $sheet->getStyle('A1:G1')->getFont()->setBold(true)->setSize(12);
         $sheet->getStyle('A1:G1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        
+
         // Заголовок таблицы
         $headerRow = $this->findHeaderRow($sheet, '№ по порядку');
         if ($headerRow) {
@@ -704,23 +709,23 @@ class OfficialFormsExportService
             $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getFill()
                 ->setFillType(Fill::FILL_SOLID)
                 ->getStartColor()->setRGB('E0E0E0');
-            
+
             // Подзаголовки на следующей строке
             $subHeaderRow = $headerRow + 1;
             $sheet->getStyle("D{$subHeaderRow}:G{$subHeaderRow}")->getFont()->setBold(true)->setSize(8);
             $sheet->getStyle("D{$subHeaderRow}:G{$subHeaderRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
             $sheet->getStyle("D{$subHeaderRow}:G{$subHeaderRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
         }
-        
+
         // Границы для всех ячеек с данными
         $dataStartRow = $headerRow ? $headerRow + 2 : 10;
         for ($row = $dataStartRow; $row <= $highestRow; $row++) {
             $sheet->getStyle("A{$row}:G{$row}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
         }
-        
+
         // Выравнивание числовых колонок
         $sheet->getStyle("D{$dataStartRow}:F{$highestRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-        
+
         // Ширина колонок
         $sheet->getColumnDimension('A')->setWidth(10);
         $sheet->getColumnDimension('B')->setWidth(50);
@@ -729,7 +734,7 @@ class OfficialFormsExportService
         $sheet->getColumnDimension('E')->setWidth(20);
         $sheet->getColumnDimension('F')->setWidth(20);
         $sheet->getColumnDimension('G')->setWidth(15);
-        
+
         // Перенос текста
         $sheet->getStyle("B{$dataStartRow}:G{$highestRow}")->getAlignment()->setWrapText(true);
     }
@@ -743,26 +748,27 @@ class OfficialFormsExportService
                 return $row;
             }
         }
+
         return null;
     }
 
     protected function formatAddress($organization): string
     {
-        if (!$organization) {
+        if (! $organization) {
             return '';
         }
-        
+
         $parts = [];
         if ($organization->postal_code) {
             $parts[] = $organization->postal_code;
         }
         if ($organization->city) {
-            $parts[] = $organization->city . ' г';
+            $parts[] = $organization->city.' г';
         }
         if ($organization->address) {
             $parts[] = $organization->address;
         }
-        
+
         return implode(', ', $parts);
     }
 
@@ -775,25 +781,24 @@ class OfficialFormsExportService
             'contract.contractor',
             'contract.project.organization',
             'contract.organization',
-            'contract.estimate'
+            'contract.estimate',
         ]);
-        
+
         $works = $this->actLinesForExport($act);
         $totalAmount = (float) $works->sum(fn (array $line): float => (float) ($line['amount'] ?? 0));
-        
+
         $totalAmount = $totalAmount > 0 ? $totalAmount : (float) ($act->amount ?? 0);
-        $vatAmount = round($totalAmount * 0.20, 2);
-        
         $customerOrg = $contract->project?->organization ?? $contract->organization;
         $contractor = $contract->contractor;
         $estimate = $contract->estimate;
+        $vatAmount = $this->priceService->vatAmountFromGross($totalAmount, $estimate);
         $contractAmount = $contract->is_fixed_amount ? ($contract->total_amount ?? 0) : ($estimate?->total_amount ?? 0);
-        
+
         // Период отчета
         $actDate = $act->act_date;
         $periodStart = $act->period_start ?? $actDate->copy()->startOfMonth();
         $periodEnd = $act->period_end ?? $actDate->copy()->endOfMonth();
-        
+
         return [
             'act' => $act,
             'contract' => $contract,
@@ -819,37 +824,39 @@ class OfficialFormsExportService
             'contract.project.organization',
             'contract.organization',
             'contract.estimate',
-            'contract.completedWorks.workType'
+            'contract.completedWorks.workType',
         ]);
-        
+
         $estimate = $contract->estimate;
         $actAmount = (float) ($act->amount ?? 0);
         $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
-        $vatAmount = round($actAmount * 0.20, 2);
-        
+        $vatAmount = $this->priceService->vatAmountFromGross($actAmount, $estimate);
+
         // Сумма с начала года (сумма всех актов за текущий год)
         // Для мультипроектных контрактов фильтруем по project_id
         $yearStart = $act->act_date->copy()->startOfYear();
         $yearTotal = $contract->performanceActs()
             ->where('project_id', $act->project_id)
+            ->where('is_approved', true)
             ->where('act_date', '>=', $yearStart)
             ->where('act_date', '<=', $act->act_date)
             ->sum('amount');
-        
+
         // Сумма с начала строительства (сумма всех актов этого проекта)
         $totalFromStart = $contract->performanceActs()
             ->where('project_id', $act->project_id)
+            ->where('is_approved', true)
             ->where('act_date', '<=', $act->act_date)
             ->sum('amount');
-        
+
         // Период отчета
         $actDate = $act->act_date;
         $periodStart = $act->period_start ?? $actDate->copy()->startOfMonth();
         $periodEnd = $act->period_end ?? $actDate->copy()->endOfMonth();
-        
+
         $customerOrg = $contract->project?->organization ?? $contract->organization;
         $contractor = $contract->contractor;
-        
+
         return [
             'act' => $act,
             'contract' => $contract,
@@ -915,10 +922,10 @@ class OfficialFormsExportService
         \App\Models\ConstructionJournal $journal,
         \Carbon\Carbon $from,
         \Carbon\Carbon $to,
-        ?int $estimateId = null
-    ): string
-    {
-        $spreadsheet = new Spreadsheet();
+        ?int $estimateId = null,
+        ?string $exportId = null
+    ): string {
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
 
         $this->setKS6Header($sheet, $journal, $from, $to);
@@ -927,7 +934,10 @@ class OfficialFormsExportService
         $this->applyKS6Styles($sheet);
 
         $journalNumber = $journal->journal_number ?? $journal->id;
-        $filename = "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.xlsx";
+        $filename = $this->uniqueExportFilename(
+            "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.xlsx",
+            $exportId
+        );
         $path = "exports/journal/ks6/{$filename}";
 
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization);
@@ -937,23 +947,28 @@ class OfficialFormsExportService
         \App\Models\ConstructionJournal $journal,
         \Carbon\Carbon $from,
         \Carbon\Carbon $to,
-        ?int $estimateId = null
-    ): string
-    {
+        ?int $estimateId = null,
+        ?string $exportId = null
+    ): string {
         $data = $this->prepareKS6Data($journal, $from, $to, $estimateId);
         $pdf = Pdf::loadView('estimates.exports.ks6', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
-        
+
         $journalNumber = $journal->journal_number ?? $journal->id;
-        $filename = "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.pdf";
+        $filename = $this->uniqueExportFilename(
+            "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.pdf",
+            $exportId
+        );
         $path = "exports/journal/ks6/{$filename}";
 
         return $this->savePdfToS3($pdf, $path, $journal->project->organization);
     }
 
-    public function exportDailyReportToPdf(\App\Models\ConstructionJournalEntry $entry): string
-    {
+    public function exportDailyReportToPdf(
+        \App\Models\ConstructionJournalEntry $entry,
+        ?string $exportId = null
+    ): string {
         $data = [
             'entry' => $entry->load([
                 'journal.project',
@@ -964,22 +979,28 @@ class OfficialFormsExportService
                 'workVolumes.workType',
                 'workers',
                 'equipment',
-                'materials'
+                'materials',
             ]),
         ];
-        
+
         $pdf = Pdf::loadView('estimates.exports.journal_daily_report', $data);
-        
+
         $journalNumber = $entry->journal->journal_number ?? $entry->journal_id;
-        $filename = "Daily_Report_{$journalNumber}_{$entry->entry_date->format('Ymd')}_{$entry->entry_number}.pdf";
+        $filename = $this->uniqueExportFilename(
+            "Daily_Report_{$journalNumber}_{$entry->entry_date->format('Ymd')}_{$entry->entry_number}.pdf",
+            $exportId
+        );
         $path = "exports/journal/daily/{$filename}";
 
         return $this->savePdfToS3($pdf, $path, $entry->journal->project->organization);
     }
 
-    public function exportExtendedReportToExcel(\App\Models\ConstructionJournal $journal, array $options): string
-    {
-        $spreadsheet = new Spreadsheet();
+    public function exportExtendedReportToExcel(
+        \App\Models\ConstructionJournal $journal,
+        array $options,
+        ?string $exportId = null
+    ): string {
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
 
         $from = \Carbon\Carbon::parse($options['date_from']);
@@ -989,14 +1010,20 @@ class OfficialFormsExportService
         $this->setExtendedReportData($sheet, $journal, $from, $to, $options);
         $this->applyExtendedReportStyles($sheet);
 
-        $filename = "Extended_Report_" . ($journal->journal_number ?? $journal->id) . ".xlsx";
+        $filename = $this->uniqueExportFilename(
+            'Extended_Report_'.($journal->journal_number ?? $journal->id).'.xlsx',
+            $exportId
+        );
         $path = "exports/journal/extended/{$filename}";
 
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $journal->project->organization);
     }
 
-    public function exportExtendedReportToPdf(\App\Models\ConstructionJournal $journal, array $options): string
-    {
+    public function exportExtendedReportToPdf(
+        \App\Models\ConstructionJournal $journal,
+        array $options,
+        ?string $exportId = null
+    ): string {
         $journal->loadMissing('project.organization');
 
         $from = \Carbon\Carbon::parse($options['date_from']);
@@ -1015,6 +1042,7 @@ class OfficialFormsExportService
             ])
             ->orderBy('entry_date')
             ->orderBy('entry_number')
+            ->tap(fn ($query) => $this->assertPdfExportSize($query))
             ->get();
 
         $totals = [
@@ -1036,10 +1064,25 @@ class OfficialFormsExportService
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
 
-        $filename = 'Extended_Report_' . ($journal->journal_number ?? $journal->id) . '.pdf';
+        $filename = $this->uniqueExportFilename(
+            'Extended_Report_'.($journal->journal_number ?? $journal->id).'.pdf',
+            $exportId
+        );
         $path = "exports/journal/extended/{$filename}";
 
         return $this->savePdfToS3($pdf, $path, $journal->project->organization);
+    }
+
+    private function uniqueExportFilename(string $filename, ?string $exportId): string
+    {
+        if ($exportId === null) {
+            return $filename;
+        }
+
+        $extension = pathinfo($filename, PATHINFO_EXTENSION);
+        $name = pathinfo($filename, PATHINFO_FILENAME);
+
+        return "{$name}_{$exportId}.{$extension}";
     }
 
     // === KS-6 HELPER METHODS ===
@@ -1047,28 +1090,28 @@ class OfficialFormsExportService
     protected function setKS6Header($sheet, \App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): void
     {
         $row = 1;
-        
+
         $sheet->setCellValue("A{$row}", 'ОБЩИЙ ЖУРНАЛ РАБОТ (форма КС-6)');
         $sheet->mergeCells("A{$row}:H{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Утверждена постановлением Госкомстата России от 11.11.99 № 100');
         $sheet->mergeCells("A{$row}:H{$row}");
         $row += 2;
-        
+
         $project = $journal->project;
-        $sheet->setCellValue("A{$row}", 'Объект: ' . ($project->name ?? ''));
+        $sheet->setCellValue("A{$row}", 'Объект: '.($project->name ?? ''));
         $sheet->mergeCells("A{$row}:H{$row}");
         $row++;
-        
-        $sheet->setCellValue("A{$row}", 'Журнал № ' . ($journal->journal_number ?? $journal->id));
+
+        $sheet->setCellValue("A{$row}", 'Журнал № '.($journal->journal_number ?? $journal->id));
         $sheet->mergeCells("A{$row}:H{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", "Период: с {$from->format('d.m.Y')} по {$to->format('d.m.Y')}");
         $sheet->mergeCells("A{$row}:H{$row}");
         $row += 2;
-        
+
         // Заголовки таблицы
         $sheet->setCellValue("A{$row}", '№ записи');
         $sheet->setCellValue("B{$row}", 'Дата');
@@ -1086,43 +1129,49 @@ class OfficialFormsExportService
         \Carbon\Carbon $from,
         \Carbon\Carbon $to,
         ?int $estimateId = null
-    ): void
-    {
+    ): void {
         $startRow = $sheet->getHighestRow() + 1;
         $row = $startRow;
 
-        $entries = $this->journalEntriesForExport($journal, $from, $to, $estimateId)
-            ->with(['workVolumes', 'workers', 'equipment', 'createdBy'])
+        $query = $this->journalEntriesForExport($journal, $from, $to, $estimateId, true)
+            ->with([
+                'workVolumes.measurementUnit',
+                'workVolumes.workType.measurementUnit',
+                'workers',
+                'equipment',
+                'createdBy',
+            ])
             ->orderBy('entry_date')
-            ->orderBy('entry_number')
-            ->get();
+            ->orderBy('entry_number');
+        $this->assertSpreadsheetExportSize($query);
+        $entries = $query->lazy(200);
 
         foreach ($entries as $entry) {
             $sheet->setCellValue("A{$row}", $entry->entry_number);
             $sheet->setCellValue("B{$row}", $entry->entry_date->format('d.m.Y'));
             $sheet->setCellValue("C{$row}", $entry->work_description);
-            
+
             $volumesText = $entry->workVolumes->map(function ($v) {
-                return $v->quantity . ' ' . ($v->measurementUnit?->short_name ?? '');
+                return $v->quantity.' '.($v->measurementUnit?->short_name ?? '');
             })->implode(', ');
             $sheet->setCellValue("D{$row}", $volumesText);
-            
+
             $workersText = $entry->workers->map(function ($w) {
-                return $w->specialty . ': ' . $w->workers_count;
+                return $w->specialty.': '.$w->workers_count;
             })->implode(', ');
             $sheet->setCellValue("E{$row}", $workersText);
-            
+
             $equipmentText = $entry->equipment->map(function ($e) {
                 return $e->equipment_name;
             })->implode(', ');
             $sheet->setCellValue("F{$row}", $equipmentText);
-            
+
             $weather = $entry->weather_conditions;
-            $weatherText = $weather ? ($weather['temperature'] ?? '') . '°C, ' . ($weather['precipitation'] ?? '') : '';
+            $weatherText = $weather ? ($weather['temperature'] ?? '').'°C, '.($weather['precipitation'] ?? '') : '';
             $sheet->setCellValue("G{$row}", $weatherText);
-            
+
             $sheet->setCellValue("H{$row}", $entry->status->label());
-            
+
             $row++;
         }
     }
@@ -1142,23 +1191,23 @@ class OfficialFormsExportService
     protected function applyKS6Styles($sheet): void
     {
         $highestRow = $sheet->getHighestRow();
-        
+
         // Заголовок
         $sheet->getStyle('A1:H1')->getFont()->setBold(true)->setSize(14);
         $sheet->getStyle('A1:H1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        
+
         // Заголовки таблицы
         $headerRow = 8;
         $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getFont()->setBold(true);
         $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-        
+
         // Данные
         for ($row = $headerRow + 1; $row <= $highestRow; $row++) {
             $sheet->getStyle("A{$row}:H{$row}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
             $sheet->getStyle("A{$row}:H{$row}")->getAlignment()->setWrapText(true);
         }
-        
+
         // Ширина колонок
         $sheet->getColumnDimension('A')->setWidth(10);
         $sheet->getColumnDimension('B')->setWidth(12);
@@ -1175,9 +1224,8 @@ class OfficialFormsExportService
         \Carbon\Carbon $from,
         \Carbon\Carbon $to,
         ?int $estimateId = null
-    ): array
-    {
-        $entries = $this->journalEntriesForExport($journal, $from, $to, $estimateId)
+    ): array {
+        $entries = $this->journalEntriesForExport($journal, $from, $to, $estimateId, true)
             ->with([
                 'workVolumes.estimateItem.measurementUnit',
                 'workVolumes.measurementUnit',
@@ -1190,6 +1238,7 @@ class OfficialFormsExportService
             ])
             ->orderBy('entry_date')
             ->orderBy('entry_number')
+            ->tap(fn ($query) => $this->assertPdfExportSize($query))
             ->get();
 
         return [
@@ -1211,6 +1260,30 @@ class OfficialFormsExportService
             ->whereBetween('entry_date', [$from, $to])
             ->when($estimateId !== null, fn ($query) => $query->where('estimate_id', $estimateId))
             ->when($approvedOnly, fn ($query) => $query->approved());
+    }
+
+    private function assertPdfExportSize($query): void
+    {
+        if ((clone $query)->limit(2001)->pluck('id')->count() > 2000) {
+            throw new \DomainException(trans_message('construction_journal.errors.pdf_export_too_large'));
+        }
+    }
+
+    private function assertSpreadsheetExportSize($query): void
+    {
+        if ((clone $query)->limit(self::MAX_SPREADSHEET_ENTRIES + 1)->pluck('id')->count() > self::MAX_SPREADSHEET_ENTRIES) {
+            throw new \DomainException(trans_message('construction_journal.errors.spreadsheet_export_too_large'));
+        }
+    }
+
+    private function assertActApprovedForExport(ContractPerformanceAct $act): void
+    {
+        if (! (bool) $act->is_approved || ! in_array($act->status, [
+            ContractPerformanceAct::STATUS_APPROVED,
+            ContractPerformanceAct::STATUS_SIGNED,
+        ], true)) {
+            throw new \DomainException(trans_message('act_reports.official_export_requires_approved_act'));
+        }
     }
 
     protected function prepareKS6aData(Contract $contract): array
@@ -1309,7 +1382,7 @@ class OfficialFormsExportService
                 $workType = $line->completedWork?->workType ?? $estimateItem?->workType;
                 $key = $estimateItem ? "estimate:{$estimateItem->id}" : ($line->completed_work_id ? "work:{$line->completed_work_id}" : "line:{$line->id}");
 
-                if (!$rows->has($key)) {
+                if (! $rows->has($key)) {
                     $quantity = (float) ($estimateItem?->quantity_total ?? $estimateItem?->quantity ?? $line->quantity ?? 0);
                     $amount = (float) ($estimateItem?->total_amount ?? $estimateItem?->current_total_amount ?? $line->amount ?? 0);
 
@@ -1349,7 +1422,7 @@ class OfficialFormsExportService
                     $workType = $work->workType ?? $estimateItem?->workType;
                     $key = $estimateItem ? "estimate:{$estimateItem->id}" : "work:{$work->id}";
 
-                    if (!$rows->has($key)) {
+                    if (! $rows->has($key)) {
                         $quantity = (float) ($estimateItem?->quantity_total ?? $estimateItem?->quantity ?? $work->quantity ?? 0);
                         $amount = (float) ($estimateItem?->total_amount ?? $estimateItem?->current_total_amount ?? $work->total_amount ?? 0);
 
@@ -1416,7 +1489,7 @@ class OfficialFormsExportService
 
     protected function formatRussianMonth(?string $monthKey): string
     {
-        if (!$monthKey) {
+        if (! $monthKey) {
             return '';
         }
 
@@ -1436,16 +1509,16 @@ class OfficialFormsExportService
             12 => 'декабрь',
         ];
 
-        return ($months[(int) $month] ?? '') . ' ' . $year . ' г.';
+        return ($months[(int) $month] ?? '').' '.$year.' г.';
     }
 
     protected function formatRemainingMonth(?string $monthKey): string
     {
-        if (!$monthKey) {
+        if (! $monthKey) {
             return '';
         }
 
-        return 'на ' . $this->formatRussianMonth(
+        return 'на '.$this->formatRussianMonth(
             \Illuminate\Support\Carbon::createFromFormat('Y-m-d', "{$monthKey}-01")->addMonth()->format('Y-m')
         );
     }
@@ -1456,11 +1529,11 @@ class OfficialFormsExportService
         $sheet->setCellValue("A{$row}", 'РАСШИРЕННЫЙ ОТЧЕТ ПО ЖУРНАЛУ РАБОТ');
         $sheet->mergeCells("A{$row}:J{$row}");
         $row += 2;
-        
-        $sheet->setCellValue("A{$row}", 'Проект: ' . ($journal->project->name ?? ''));
+
+        $sheet->setCellValue("A{$row}", 'Проект: '.($journal->project->name ?? ''));
         $sheet->mergeCells("A{$row}:J{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", "Период: с {$from->format('d.m.Y')} по {$to->format('d.m.Y')}");
         $sheet->mergeCells("A{$row}:J{$row}");
         $row += 2;
@@ -1469,67 +1542,77 @@ class OfficialFormsExportService
     protected function setExtendedReportData($sheet, \App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to, array $options): void
     {
         $row = $sheet->getHighestRow() + 1;
-        
-        $entries = $this->journalEntriesForExport($journal, $from, $to, $options['estimate_id'] ?? null, true)
+
+        $query = $this->journalEntriesForExport($journal, $from, $to, $options['estimate_id'] ?? null, true)
             ->with(['workVolumes', 'workers', 'equipment', 'materials'])
-            ->get();
+            ->orderBy('entry_date')
+            ->orderBy('entry_number');
+        $this->assertSpreadsheetExportSize($query);
+        $summary = $this->aggregateExtendedReportEntries($query->lazy(200));
 
         // Сводная статистика
         $sheet->setCellValue("A{$row}", 'СВОДНАЯ СТАТИСТИКА');
         $sheet->mergeCells("A{$row}:J{$row}");
         $row += 2;
-        
-        $totalEntries = $entries->count();
-        $totalWorkers = $entries->sum(function ($e) { return $e->workers->sum('workers_count'); });
-        $totalWorkHours = $entries->sum(function ($e) { return $e->workers->sum('hours_worked'); });
-        
+
         $sheet->setCellValue("A{$row}", 'Всего записей:');
-        $sheet->setCellValue("B{$row}", $totalEntries);
+        $sheet->setCellValue("B{$row}", $summary['total_entries']);
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Всего рабочих:');
-        $sheet->setCellValue("B{$row}", $totalWorkers);
+        $sheet->setCellValue("B{$row}", $summary['total_workers']);
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Всего человеко-часов:');
-        $sheet->setCellValue("B{$row}", $totalWorkHours);
+        $sheet->setCellValue("B{$row}", $summary['total_work_hours']);
         $row += 2;
-        
+
         // Детализация по объемам
         if ($options['include_materials'] ?? true) {
-            $this->addMaterialsSummary($sheet, $row, $entries);
+            $this->addMaterialsSummary($sheet, $row, $summary['materials']);
         }
     }
 
-    protected function addMaterialsSummary($sheet, &$row, $entries): void
+    private function aggregateExtendedReportEntries(iterable $entries): array
+    {
+        $summary = [
+            'total_entries' => 0,
+            'total_workers' => 0.0,
+            'total_work_hours' => 0.0,
+            'materials' => [],
+        ];
+        foreach ($entries as $entry) {
+            $summary['total_entries']++;
+            $summary['total_workers'] += (float) $entry->workers->sum('workers_count');
+            $summary['total_work_hours'] += (float) $entry->workers->sum('hours_worked');
+            foreach ($entry->materials as $material) {
+                $key = $material->material_name.'_'.$material->measurement_unit;
+                $summary['materials'][$key] ??= [
+                    'name' => $material->material_name,
+                    'quantity' => 0.0,
+                    'unit' => $material->measurement_unit,
+                    'count' => 0,
+                ];
+                $summary['materials'][$key]['quantity'] += (float) $material->quantity;
+                $summary['materials'][$key]['count']++;
+            }
+        }
+
+        return $summary;
+    }
+
+    protected function addMaterialsSummary($sheet, &$row, array $materialsSummary): void
     {
         $sheet->setCellValue("A{$row}", 'ИСПОЛЬЗОВАННЫЕ МАТЕРИАЛЫ');
         $sheet->mergeCells("A{$row}:D{$row}");
         $row++;
-        
+
         $sheet->setCellValue("A{$row}", 'Материал');
         $sheet->setCellValue("B{$row}", 'Количество');
         $sheet->setCellValue("C{$row}", 'Ед. изм.');
         $sheet->setCellValue("D{$row}", 'Записей');
         $row++;
-        
-        $materialsSummary = [];
-        foreach ($entries as $entry) {
-            foreach ($entry->materials as $material) {
-                $key = $material->material_name . '_' . $material->measurement_unit;
-                if (!isset($materialsSummary[$key])) {
-                    $materialsSummary[$key] = [
-                        'name' => $material->material_name,
-                        'quantity' => 0,
-                        'unit' => $material->measurement_unit,
-                        'count' => 0,
-                    ];
-                }
-                $materialsSummary[$key]['quantity'] += $material->quantity;
-                $materialsSummary[$key]['count']++;
-            }
-        }
-        
+
         foreach ($materialsSummary as $material) {
             $sheet->setCellValue("A{$row}", $material['name']);
             $sheet->setCellValue("B{$row}", $material['quantity']);
@@ -1537,21 +1620,21 @@ class OfficialFormsExportService
             $sheet->setCellValue("D{$row}", $material['count']);
             $row++;
         }
-        
+
         $row += 2;
     }
 
     protected function applyExtendedReportStyles($sheet): void
     {
         $highestRow = $sheet->getHighestRow();
-        
+
         $sheet->getStyle('A1:J1')->getFont()->setBold(true)->setSize(14);
         $sheet->getStyle('A1:J1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        
+
         for ($row = 1; $row <= $highestRow; $row++) {
             $sheet->getStyle("A{$row}:J{$row}")->getAlignment()->setWrapText(true);
         }
-        
+
         $sheet->getColumnDimension('A')->setWidth(30);
         $sheet->getColumnDimension('B')->setWidth(15);
         $sheet->getColumnDimension('C')->setWidth(15);

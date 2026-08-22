@@ -15,12 +15,14 @@ use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Enums\EstimatePositionItemType;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
+use App\Models\Contract;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\WorkType;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 
 class MobileConstructionJournalService
 {
@@ -35,6 +37,9 @@ class MobileConstructionJournalService
         'approve',
         'reject',
         'export_daily_report',
+        'close',
+        'archive',
+        'reopen',
     ];
 
     public function __construct(
@@ -140,7 +145,12 @@ class MobileConstructionJournalService
 
         $entries = $query->orderByDesc('entry_date')
             ->orderByDesc('entry_number')
-            ->paginate((int) ($filters['per_page'] ?? 20), ['*'], 'page', (int) ($filters['page'] ?? 1));
+            ->paginate(
+                min(100, max(1, (int) ($filters['per_page'] ?? 20))),
+                ['*'],
+                'page',
+                max(1, (int) ($filters['page'] ?? 1))
+            );
 
         return [
             'items' => collect($entries->items())
@@ -160,6 +170,7 @@ class MobileConstructionJournalService
         $estimates = Estimate::query()
             ->where('organization_id', $journal->organization_id)
             ->where('project_id', $journal->project_id)
+            ->where('status', 'approved')
             ->with([
                 'items' => function ($query): void {
                     $query->where('item_type', EstimatePositionItemType::WORK->value)
@@ -174,7 +185,10 @@ class MobileConstructionJournalService
             ->get();
 
         $workTypes = WorkType::query()
-            ->where('organization_id', $journal->organization_id)
+            ->where(function ($query) use ($journal): void {
+                $query->where('organization_id', $journal->organization_id)
+                    ->orWhereNull('organization_id');
+            })
             ->where('is_active', true)
             ->with('measurementUnit')
             ->orderBy('name')
@@ -481,6 +495,37 @@ class MobileConstructionJournalService
         }
 
         return $value;
+    }
+
+    public function buildJournalFormOptions(User $user, Project $project): array
+    {
+        if ((int) $user->current_organization_id !== (int) $project->organization_id) {
+            throw new AuthorizationException(trans_message('errors.unauthorized'));
+        }
+
+        $contracts = Contract::query()
+            ->where('organization_id', $project->organization_id)
+            ->where(function ($query) use ($project): void {
+                $query->where('project_id', $project->id)
+                    ->orWhereHas('projects', static function ($projectsQuery) use ($project): void {
+                        $projectsQuery->where('projects.id', $project->id);
+                    });
+            })
+            ->whereIn('status', ['active', 'completed'])
+            ->with('contractor:id,name')
+            ->orderBy('number')
+            ->get();
+
+        return [
+            'contracts' => $contracts->map(static fn (Contract $contract): array => [
+                'id' => $contract->id,
+                'number' => $contract->number,
+                'contractor_name' => $contract->contractor?->name,
+                'status' => $contract->status instanceof \BackedEnum
+                    ? $contract->status->value
+                    : (string) $contract->status,
+            ])->values()->all(),
+        ];
     }
 
     private function requiredPayloadArray(array $payload, string $key): array

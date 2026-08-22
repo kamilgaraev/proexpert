@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::middleware(['auth:api_admin'])->group(function () {
-    
+
     // Журналы работ
     Route::prefix('projects/{project}')->group(function () {
         Route::get('construction-journals', [ConstructionJournalController::class, 'index'])
@@ -31,7 +31,13 @@ Route::middleware(['auth:api_admin'])->group(function () {
             ->name('construction-journals.update');
         Route::delete('/', [ConstructionJournalController::class, 'destroy'])
             ->name('construction-journals.destroy');
-        
+        Route::post('close', [ConstructionJournalController::class, 'close'])
+            ->name('construction-journals.close');
+        Route::post('archive', [ConstructionJournalController::class, 'archive'])
+            ->name('construction-journals.archive');
+        Route::post('reopen', [ConstructionJournalController::class, 'reopen'])
+            ->name('construction-journals.reopen');
+
         // Записи журнала
         Route::get('entries', [ConstructionJournalController::class, 'entries'])
             ->name('construction-journals.entries.index');
@@ -47,7 +53,7 @@ Route::middleware(['auth:api_admin'])->group(function () {
             ->name('journal-entries.update');
         Route::delete('/', [ConstructionJournalEntryController::class, 'destroy'])
             ->name('journal-entries.destroy');
-        
+
         // Workflow утверждения
         Route::post('submit', [ConstructionJournalEntryController::class, 'submit'])
             ->name('journal-entries.submit');
@@ -67,5 +73,6 @@ Route::middleware(['auth:api_admin'])->group(function () {
 
     Route::post('journal-entries/{entry}/export/daily-report', [JournalExportController::class, 'exportDailyReport'])
         ->name('journal-entries.export.daily-report');
+    Route::get('construction-journal-exports/{export}', [JournalExportController::class, 'status'])
+        ->name('construction-journal-exports.status');
 });
-
