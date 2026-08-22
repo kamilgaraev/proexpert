@@ -22,8 +22,7 @@ class ActingActWizardService
         private readonly ActingPolicyResolver $policyResolver,
         private readonly ActingPriceService $priceService,
         private readonly ActingQuantityReservationService $quantityReservations,
-    ) {
-    }
+    ) {}
 
     public function createFromWizard(
         int $organizationId,
@@ -36,7 +35,7 @@ class ActingActWizardService
             ->where('organization_id', $organizationId)
             ->first();
 
-        if (!$contract) {
+        if (! $contract) {
             throw new BusinessLogicException(trans_message('act_reports.contract_not_found'), 404);
         }
 
@@ -52,7 +51,7 @@ class ActingActWizardService
             throw new BusinessLogicException(trans_message('act_reports.empty_act_not_allowed'), 422);
         }
 
-        if ($manualLines !== [] && !$canManageManualLines) {
+        if ($manualLines !== [] && ! $canManageManualLines) {
             throw new BusinessLogicException(trans_message('act_reports.manual_line_permission_denied'), 403);
         }
 
@@ -98,8 +97,7 @@ class ActingActWizardService
         Collection $selectedGroups,
         Collection $works,
         CurrencyCode $currency,
-    ): void
-    {
+    ): void {
         if ($selectedGroups->isEmpty()) {
             return;
         }
@@ -109,7 +107,7 @@ class ActingActWizardService
             $workId = (int) $workId;
             $work = $works->get($workId);
 
-            if (!$work) {
+            if (! $work) {
                 throw new BusinessLogicException(trans_message('act_reports.work_not_available_for_acting'), 422);
             }
 
@@ -131,7 +129,7 @@ class ActingActWizardService
                 'completed_work_id' => $work->id,
                 'estimate_item_id' => $work->estimate_item_id,
                 'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
-                'title' => trans_message('act_reports.completed_work_line_title', ['id' => (string) $work->id]),
+                'title' => $this->resolveCompletedWorkTitle($work),
                 'quantity' => $quantityDecimal,
                 'unit_price' => $unitPrice,
                 'amount' => round((float) $quantityDecimal * $unitPrice, 2),
@@ -161,7 +159,12 @@ class ActingActWizardService
 
         $workIds = $selectedGroups->keys()->map(fn ($id): int => (int) $id)->values();
         $works = CompletedWork::query()
-            ->with('estimateItem.contractLinks', 'estimateItem.estimate')
+            ->with(
+                'estimateItem.contractLinks',
+                'estimateItem.estimate',
+                'workType',
+                'journalEntry',
+            )
             ->where('organization_id', $organizationId)
             ->whereIn('id', $workIds)
             ->where(function ($query) use ($contract): void {
@@ -222,7 +225,7 @@ class ActingActWizardService
         }
 
         $projectId = (int) $projectIds->first();
-        if (!$allowedProjectIds->contains($projectId)) {
+        if (! $allowedProjectIds->contains($projectId)) {
             throw new BusinessLogicException(trans_message('act_reports.work_not_available_for_acting'), 422);
         }
 
@@ -238,7 +241,7 @@ class ActingActWizardService
         $hasContractCoverage = $work->estimateItem?->contractLinks
             ?->contains(fn ($link): bool => (int) $link->contract_id === (int) $contract->id) ?? false;
 
-        if (!$hasContractCoverage) {
+        if (! $hasContractCoverage) {
             return;
         }
 
@@ -246,6 +249,21 @@ class ActingActWizardService
             'contract_id' => $contract->id,
             'contractor_id' => $work->contractor_id ?? $contract->contractor_id,
         ])->save();
+    }
+
+    private function resolveCompletedWorkTitle(CompletedWork $work): string
+    {
+        foreach ([
+            $work->estimateItem?->name,
+            $work->workType?->name,
+            $work->journalEntry?->work_description,
+        ] as $title) {
+            if (is_string($title) && trim($title) !== '') {
+                return trim($title);
+            }
+        }
+
+        return trans_message('act_reports.completed_work_line_title', ['id' => (string) $work->id]);
     }
 
     private function sumRequestedQuantity(Collection $selectedWorks, int $availableQuantity): int

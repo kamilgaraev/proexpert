@@ -2,6 +2,7 @@
 
 namespace App\Policies;
 
+use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Models\ConstructionJournal;
 use App\Models\Project;
 use App\Models\User;
@@ -12,11 +13,18 @@ class ConstructionJournalPolicy
     {
         $organizationId = $user->current_organization_id;
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return false;
         }
 
         return $project->hasOrganization($organizationId);
+    }
+
+    private function hasJournalAccess(User $user, ConstructionJournal $journal): bool
+    {
+        return (int) $user->current_organization_id === (int) $journal->organization_id
+            && $journal->project !== null
+            && $this->hasProjectAccess($user, $journal->project);
     }
 
     private function hasModulePermission(
@@ -27,7 +35,7 @@ class ConstructionJournalPolicy
     ): bool {
         $orgId = $organizationId ?? $user->current_organization_id;
 
-        if (!$orgId) {
+        if (! $orgId) {
             return false;
         }
 
@@ -54,7 +62,7 @@ class ConstructionJournalPolicy
 
     public function viewAny(User $user, Project $project): bool
     {
-        if (!$this->hasProjectAccess($user, $project)) {
+        if (! $this->hasProjectAccess($user, $project)) {
             return false;
         }
 
@@ -64,7 +72,7 @@ class ConstructionJournalPolicy
     public function view(User $user, Project|ConstructionJournal $model): bool
     {
         if ($model instanceof Project) {
-            if (!$this->hasProjectAccess($user, $model)) {
+            if (! $this->hasProjectAccess($user, $model)) {
                 return false;
             }
 
@@ -73,7 +81,7 @@ class ConstructionJournalPolicy
 
         $project = $model->project;
 
-        if (!$project || !$this->hasProjectAccess($user, $project)) {
+        if (! $project || ! $this->hasJournalAccess($user, $model)) {
             return false;
         }
 
@@ -82,7 +90,7 @@ class ConstructionJournalPolicy
 
     public function create(User $user, Project $project): bool
     {
-        if (!$this->hasProjectAccess($user, $project)) {
+        if (! $this->hasProjectAccess($user, $project)) {
             return false;
         }
 
@@ -93,11 +101,11 @@ class ConstructionJournalPolicy
     {
         $project = $journal->project;
 
-        if (!$project || !$this->hasProjectAccess($user, $project)) {
+        if (! $project || ! $this->hasJournalAccess($user, $journal)) {
             return false;
         }
 
-        if (!$journal->canBeEdited()) {
+        if (! $journal->canBeEdited()) {
             return false;
         }
 
@@ -108,21 +116,50 @@ class ConstructionJournalPolicy
     {
         $project = $journal->project;
 
-        if (!$project || !$this->hasProjectAccess($user, $project)) {
+        if (! $project || ! $this->hasJournalAccess($user, $journal)) {
             return false;
         }
 
         return $this->hasModulePermission($user, ['delete', '*'], null, $project->id);
     }
 
+    public function close(User $user, ConstructionJournal $journal): bool
+    {
+        return $journal->status === JournalStatusEnum::ACTIVE
+            && $this->canManageLifecycle($user, $journal, ['edit', '*']);
+    }
+
+    public function archive(User $user, ConstructionJournal $journal): bool
+    {
+        return $journal->status === JournalStatusEnum::CLOSED
+            && $this->canManageLifecycle($user, $journal, ['edit', '*']);
+    }
+
+    public function reopen(User $user, ConstructionJournal $journal): bool
+    {
+        return $journal->status === JournalStatusEnum::CLOSED
+            && $this->canManageLifecycle($user, $journal, ['reopen', '*']);
+    }
+
     public function export(User $user, ConstructionJournal $journal): bool
     {
         $project = $journal->project;
 
-        if (!$project || !$this->hasProjectAccess($user, $project)) {
+        if (! $project || ! $this->hasJournalAccess($user, $journal)) {
             return false;
         }
 
         return $this->hasModulePermission($user, ['export', '*'], null, $project->id);
+    }
+
+    private function canManageLifecycle(User $user, ConstructionJournal $journal, array $permissions): bool
+    {
+        $project = $journal->project;
+
+        if (! $project || ! $this->hasJournalAccess($user, $journal)) {
+            return false;
+        }
+
+        return $this->hasModulePermission($user, $permissions, null, $project->id);
     }
 }

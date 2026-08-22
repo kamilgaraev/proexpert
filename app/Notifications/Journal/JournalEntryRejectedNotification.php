@@ -3,6 +3,7 @@
 namespace App\Notifications\Journal;
 
 use App\Models\ConstructionJournalEntry;
+use App\Support\ConstructionJournalDeepLink;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -26,17 +27,17 @@ class JournalEntryRejectedNotification extends Notification implements ShouldQue
     {
         $journal = $this->entry->journal;
         $projectName = $journal->project->name ?? 'Проект';
-        
+
         return (new MailMessage)
             ->subject('Ваша запись журнала работ отклонена')
             ->greeting('Здравствуйте!')
             ->line("Ваша запись в журнале работ проекта \"{$projectName}\" была отклонена.")
             ->line("**Запись №{$this->entry->entry_number}** от {$this->entry->entry_date->format('d.m.Y')}")
             ->line("**Отклонил:** {$this->entry->approvedBy->name}")
-            ->line("**Причина отклонения:**")
+            ->line('**Причина отклонения:**')
             ->line($this->reason)
             ->line('Пожалуйста, внесите необходимые исправления и отправьте запись на повторное утверждение.')
-            ->action('Перейти к записи', url("/admin/construction-journals/{$journal->id}/entries/{$this->entry->id}"))
+            ->action('Перейти к записи', ConstructionJournalDeepLink::entryUrl($journal->id, $this->entry->id))
             ->line('Спасибо за понимание!');
     }
 
@@ -51,7 +52,7 @@ class JournalEntryRejectedNotification extends Notification implements ShouldQue
             'rejected_at' => $this->entry->approved_at->format('Y-m-d H:i:s'),
             'rejection_reason' => $this->reason,
             'project_name' => $this->entry->journal->project->name ?? null,
+            'url' => ConstructionJournalDeepLink::entryPath($this->entry->journal_id, $this->entry->id),
         ];
     }
 }
-

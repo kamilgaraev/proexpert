@@ -7,6 +7,8 @@ namespace App\Http\Controllers\Api;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ConstructionJournal\StoreConstructionJournalRequest;
+use App\Http\Requests\ConstructionJournal\UpdateConstructionJournalRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
@@ -16,14 +18,14 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class ConstructionJournalController extends Controller
 {
     public function __construct(
         protected ConstructionJournalService $journalService,
         protected ConstructionJournalPayloadService $payloadService
-    ) {
-    }
+    ) {}
 
     public function index(Request $request, Project $project): JsonResponse
     {
@@ -42,7 +44,7 @@ class ConstructionJournalController extends Controller
                     $query->where('status', $request->string('status'));
                 })
                 ->orderByDesc('created_at')
-                ->paginate((int) $request->input('per_page', 15));
+                ->paginate(min(100, max(1, $request->integer('per_page', 15))));
 
             $data = collect($journals->items())
                 ->map(fn (ConstructionJournal $journal): array => $this->payloadService->mapJournal($journal, $request->user()))
@@ -64,6 +66,8 @@ class ConstructionJournalController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -79,19 +83,12 @@ class ConstructionJournalController extends Controller
         }
     }
 
-    public function store(Request $request, Project $project): JsonResponse
+    public function store(StoreConstructionJournalRequest $request, Project $project): JsonResponse
     {
         try {
             $this->authorize('create', [ConstructionJournal::class, $project]);
 
-            $validated = $request->validate([
-                'name' => 'required|string|max:255',
-                'journal_number' => 'nullable|string|max:50',
-                'contract_id' => 'nullable|integer',
-                'start_date' => 'required|date',
-                'end_date' => 'nullable|date|after_or_equal:start_date',
-                'status' => 'nullable|in:active,archived,closed',
-            ]);
+            $validated = $request->validated();
 
             $journal = $this->journalService->createJournal($project, $validated, $request->user());
 
@@ -102,6 +99,8 @@ class ConstructionJournalController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -167,18 +166,12 @@ class ConstructionJournalController extends Controller
         }
     }
 
-    public function update(Request $request, ConstructionJournal $journal): JsonResponse
+    public function update(UpdateConstructionJournalRequest $request, ConstructionJournal $journal): JsonResponse
     {
         try {
             $this->authorize('update', $journal);
 
-            $validated = $request->validate([
-                'name' => 'sometimes|string|max:255',
-                'journal_number' => 'nullable|string|max:50',
-                'contract_id' => 'nullable|integer',
-                'end_date' => 'nullable|date',
-                'status' => 'nullable|in:active,archived,closed',
-            ]);
+            $validated = $request->validated();
 
             $journal = $this->journalService->updateJournal($journal, $validated);
 
@@ -188,6 +181,8 @@ class ConstructionJournalController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -225,6 +220,39 @@ class ConstructionJournalController extends Controller
 
             return AdminResponse::error(trans_message('construction_journal.errors.delete_failed'), 500);
         }
+    }
+
+    public function close(Request $request, ConstructionJournal $journal): JsonResponse
+    {
+        return $this->transitionJournal(
+            $request,
+            $journal,
+            'close',
+            fn (): ConstructionJournal => $this->journalService->closeJournal($journal),
+            'construction_journal.messages.closed'
+        );
+    }
+
+    public function archive(Request $request, ConstructionJournal $journal): JsonResponse
+    {
+        return $this->transitionJournal(
+            $request,
+            $journal,
+            'archive',
+            fn (): ConstructionJournal => $this->journalService->archiveJournal($journal),
+            'construction_journal.messages.archived'
+        );
+    }
+
+    public function reopen(Request $request, ConstructionJournal $journal): JsonResponse
+    {
+        return $this->transitionJournal(
+            $request,
+            $journal,
+            'reopen',
+            fn (): ConstructionJournal => $this->journalService->reopenJournal($journal),
+            'construction_journal.messages.reopened'
+        );
     }
 
     public function entries(Request $request, ConstructionJournal $journal): JsonResponse
@@ -265,7 +293,7 @@ class ConstructionJournalController extends Controller
 
             $entries = $query->orderByDesc('entry_date')
                 ->orderByDesc('entry_number')
-                ->paginate((int) $request->input('per_page', 20));
+                ->paginate(min(100, max(1, $request->integer('per_page', 20))));
 
             $data = collect($entries->items())
                 ->map(fn (ConstructionJournalEntry $entry): array => $this->payloadService->mapEntry($entry, $request->user()))
@@ -296,6 +324,38 @@ class ConstructionJournalController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('construction_journal.errors.load_failed'), 500);
+        }
+    }
+
+    private function transitionJournal(
+        Request $request,
+        ConstructionJournal $journal,
+        string $ability,
+        callable $transition,
+        string $successMessage
+    ): JsonResponse {
+        try {
+            $this->authorize($ability, $journal);
+            $journal = $transition();
+
+            return AdminResponse::success(
+                $this->payloadService->mapJournal($journal, $request->user()),
+                trans_message($successMessage)
+            );
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('construction_journal.transition.error', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->user()?->current_organization_id,
+                'journal_id' => $journal->id,
+                'ability' => $ability,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('construction_journal.errors.transition_failed'), 500);
         }
     }
 }

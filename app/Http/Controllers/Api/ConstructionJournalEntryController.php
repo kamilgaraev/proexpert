@@ -7,7 +7,12 @@ namespace App\Http\Controllers\Api;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
 use App\BusinessModules\Features\BudgetEstimates\Services\JournalApprovalService;
+use App\BusinessModules\Features\BudgetEstimates\Services\JournalEntryWorkflowService;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ConstructionJournal\ApproveJournalEntryRequest;
+use App\Http\Requests\ConstructionJournal\RejectJournalEntryRequest;
+use App\Http\Requests\ConstructionJournal\StoreJournalEntryRequest;
+use App\Http\Requests\ConstructionJournal\UpdateJournalEntryRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
@@ -23,17 +28,17 @@ class ConstructionJournalEntryController extends Controller
     public function __construct(
         protected ConstructionJournalService $journalService,
         protected JournalApprovalService $approvalService,
+        protected JournalEntryWorkflowService $entryWorkflowService,
         protected ConstructionJournalPayloadService $payloadService
-    ) {
-    }
+    ) {}
 
-    public function store(Request $request, ConstructionJournal $journal): JsonResponse
+    public function store(StoreJournalEntryRequest $request, ConstructionJournal $journal): JsonResponse
     {
         try {
             $this->authorize('create', [ConstructionJournalEntry::class, $journal]);
 
-            $validated = $request->validate($this->entryRules());
-            $entry = $this->journalService->createEntry($journal, $validated, $request->user());
+            $validated = $request->validated();
+            $entry = $this->entryWorkflowService->create($journal, $validated, $request->user());
 
             return AdminResponse::success(
                 $this->payloadService->mapEntry($entry, $request->user()),
@@ -99,16 +104,16 @@ class ConstructionJournalEntryController extends Controller
         }
     }
 
-    public function update(Request $request, ConstructionJournalEntry $entry): JsonResponse
+    public function update(UpdateJournalEntryRequest $request, ConstructionJournalEntry $entry): JsonResponse
     {
         try {
             $this->authorize('update', $entry);
 
-            if (!$entry->canBeEdited()) {
+            if (! $entry->canBeEdited()) {
                 return AdminResponse::error(trans_message('construction_journal.errors.entry_edit_forbidden_status'), 422);
             }
 
-            $validated = $request->validate($this->entryRules(true));
+            $validated = $request->validated();
             $entry = $this->journalService->updateEntry($entry, $validated);
 
             return AdminResponse::success(
@@ -139,7 +144,7 @@ class ConstructionJournalEntryController extends Controller
         try {
             $this->authorize('delete', $entry);
 
-            if (!$entry->canBeEdited()) {
+            if (! $entry->canBeEdited()) {
                 return AdminResponse::error(trans_message('construction_journal.errors.entry_delete_forbidden_status'), 422);
             }
 
@@ -167,7 +172,10 @@ class ConstructionJournalEntryController extends Controller
         try {
             $this->authorize('update', $entry);
 
-            $entry = $this->approvalService->submitForApproval($entry->load(['journal', 'createdBy', 'workVolumes']));
+            $entry = $this->approvalService->submitForApproval(
+                $entry->load(['journal', 'createdBy', 'workVolumes']),
+                $request->user()
+            );
 
             return AdminResponse::success(
                 $this->payloadService->mapEntry($entry->load(['journal', 'createdBy', 'approvedBy', 'workVolumes']), $request->user()),
@@ -189,12 +197,12 @@ class ConstructionJournalEntryController extends Controller
         }
     }
 
-    public function approve(Request $request, ConstructionJournalEntry $entry): JsonResponse
+    public function approve(ApproveJournalEntryRequest $request, ConstructionJournalEntry $entry): JsonResponse
     {
         try {
             $this->authorize('approve', $entry);
 
-            $validated = $request->validate($this->overrideRules());
+            $validated = $request->validated();
             $entry = $this->approvalService->approve(
                 $entry->load(['journal', 'createdBy', 'scheduleTask', 'workVolumes']),
                 $request->user(),
@@ -233,14 +241,12 @@ class ConstructionJournalEntryController extends Controller
         }
     }
 
-    public function reject(Request $request, ConstructionJournalEntry $entry): JsonResponse
+    public function reject(RejectJournalEntryRequest $request, ConstructionJournalEntry $entry): JsonResponse
     {
         try {
             $this->authorize('approve', $entry);
 
-            $validated = $request->validate([
-                'reason' => 'required|string|min:10',
-            ]);
+            $validated = $request->validated();
 
             $entry = $this->approvalService->reject($entry->load(['journal', 'createdBy']), $request->user(), $validated['reason']);
 
@@ -277,60 +283,5 @@ class ConstructionJournalEntryController extends Controller
 
             return AdminResponse::error(trans_message('construction_journal.errors.reject_failed'), 500);
         }
-    }
-
-    private function entryRules(bool $partial = false): array
-    {
-        $prefix = $partial ? 'sometimes|' : '';
-
-        return [
-            'schedule_task_id' => $prefix . 'nullable|integer',
-            'estimate_id' => $prefix . 'nullable|integer',
-            'entry_date' => $partial ? 'sometimes|date' : 'required|date',
-            'entry_number' => $prefix . 'nullable|integer|min:1',
-            'work_description' => $partial ? 'sometimes|string' : 'required|string',
-            'weather_conditions' => $prefix . 'nullable|array',
-            'weather_conditions.temperature' => 'nullable|numeric',
-            'weather_conditions.precipitation' => 'nullable|string',
-            'weather_conditions.wind_speed' => 'nullable|numeric',
-            'problems_description' => $prefix . 'nullable|string',
-            'safety_notes' => $prefix . 'nullable|string',
-            'visitors_notes' => $prefix . 'nullable|string',
-            'quality_notes' => $prefix . 'nullable|string',
-            'work_volumes' => $prefix . 'nullable|array',
-            'work_volumes.*.id' => 'nullable|integer',
-            'work_volumes.*.estimate_item_id' => 'nullable|integer',
-            'work_volumes.*.work_type_id' => 'nullable|integer',
-            'work_volumes.*.quantity' => 'required|numeric|min:0.001',
-            'work_volumes.*.measurement_unit_id' => 'nullable|integer',
-            'work_volumes.*.notes' => 'nullable|string',
-            'work_volumes.*.auto_attach_contract_coverage' => 'nullable|boolean',
-            'workers' => $prefix . 'nullable|array',
-            'workers.*.specialty' => 'required|string',
-            'workers.*.workers_count' => 'required|integer|min:1',
-            'workers.*.hours_worked' => 'nullable|numeric|min:0',
-            'equipment' => $prefix . 'nullable|array',
-            'equipment.*.equipment_name' => 'required|string',
-            'equipment.*.equipment_type' => 'nullable|string',
-            'equipment.*.quantity' => 'nullable|integer|min:1',
-            'equipment.*.hours_used' => 'nullable|numeric|min:0',
-            'materials' => $prefix . 'nullable|array',
-            'materials.*.material_id' => 'nullable|integer',
-            'materials.*.project_material_delivery_id' => 'nullable|integer',
-            'materials.*.material_name' => 'required|string',
-            'materials.*.quantity' => 'required|numeric|min:0',
-            'materials.*.measurement_unit' => 'required|string',
-            'materials.*.notes' => 'nullable|string',
-        ];
-    }
-
-    private function overrideRules(): array
-    {
-        return [
-            'override' => ['nullable', 'array'],
-            'override.enabled' => ['nullable', 'boolean'],
-            'override.reason' => ['nullable', 'string', 'max:2000'],
-            'override.target' => ['nullable', 'in:schedule_missing,contract_missing,over_coverage,manual_act_line'],
-        ];
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Notifications\Journal;
 
 use App\Models\ConstructionJournalEntry;
+use App\Support\ConstructionJournalDeepLink;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -25,7 +26,7 @@ class JournalEntryPendingApprovalNotification extends Notification implements Sh
     {
         $journal = $this->entry->journal;
         $projectName = $journal->project->name ?? 'Проект';
-        
+
         return (new MailMessage)
             ->subject('Новая запись журнала работ ожидает утверждения')
             ->greeting('Здравствуйте!')
@@ -33,7 +34,7 @@ class JournalEntryPendingApprovalNotification extends Notification implements Sh
             ->line("**Запись №{$this->entry->entry_number}** от {$this->entry->entry_date->format('d.m.Y')}")
             ->line("**Описание работ:** {$this->entry->work_description}")
             ->line("**Создал:** {$this->entry->createdBy->name}")
-            ->action('Перейти к утверждению', url("/admin/construction-journals/{$journal->id}/entries/{$this->entry->id}"))
+            ->action('Перейти к утверждению', ConstructionJournalDeepLink::entryUrl($journal->id, $this->entry->id))
             ->line('Спасибо за внимание!');
     }
 
@@ -47,7 +48,7 @@ class JournalEntryPendingApprovalNotification extends Notification implements Sh
             'work_description' => $this->entry->work_description,
             'created_by_name' => $this->entry->createdBy->name,
             'project_name' => $this->entry->journal->project->name ?? null,
+            'url' => ConstructionJournalDeepLink::entryPath($this->entry->journal_id, $this->entry->id),
         ];
     }
 }
-

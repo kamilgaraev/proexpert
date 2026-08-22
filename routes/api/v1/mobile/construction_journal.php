@@ -7,9 +7,14 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function () {
     Route::get('/construction-journals', [ConstructionJournalController::class, 'index'])->name('construction-journals.index');
+    Route::get('/construction-journals/form-options', [ConstructionJournalController::class, 'formOptions'])
+        ->name('construction-journals.form-options');
     Route::post('/construction-journals', [ConstructionJournalController::class, 'store'])->name('construction-journals.store');
     Route::get('/construction-journals/{journal}', [ConstructionJournalController::class, 'show'])->name('construction-journals.show');
     Route::put('/construction-journals/{journal}', [ConstructionJournalController::class, 'update'])->name('construction-journals.update');
+    Route::post('/construction-journals/{journal}/close', [ConstructionJournalController::class, 'close'])->name('construction-journals.close');
+    Route::post('/construction-journals/{journal}/archive', [ConstructionJournalController::class, 'archive'])->name('construction-journals.archive');
+    Route::post('/construction-journals/{journal}/reopen', [ConstructionJournalController::class, 'reopen'])->name('construction-journals.reopen');
 
     Route::get('/construction-journals/{journal}/entries', [ConstructionJournalController::class, 'entries'])
         ->name('construction-journals.entries.index');
@@ -31,4 +36,6 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
         ->name('construction-journals.export.extended');
     Route::post('/journal-entries/{entry}/export/daily-report', [JournalExportController::class, 'exportDailyReport'])
         ->name('journal-entries.export.daily-report');
+    Route::get('/construction-journal-exports/{export}', [JournalExportController::class, 'status'])
+        ->name('construction-journal-exports.status');
 });

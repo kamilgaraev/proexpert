@@ -3,6 +3,7 @@
 namespace App\Notifications\Journal;
 
 use App\Models\ConstructionJournalEntry;
+use App\Support\ConstructionJournalDeepLink;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -25,7 +26,7 @@ class JournalEntryApprovedNotification extends Notification implements ShouldQue
     {
         $journal = $this->entry->journal;
         $projectName = $journal->project->name ?? 'Проект';
-        
+
         return (new MailMessage)
             ->subject('Ваша запись журнала работ утверждена')
             ->greeting('Здравствуйте!')
@@ -33,7 +34,7 @@ class JournalEntryApprovedNotification extends Notification implements ShouldQue
             ->line("**Запись №{$this->entry->entry_number}** от {$this->entry->entry_date->format('d.m.Y')}")
             ->line("**Утвердил:** {$this->entry->approvedBy->name}")
             ->line("**Дата утверждения:** {$this->entry->approved_at->format('d.m.Y H:i')}")
-            ->action('Просмотреть запись', url("/admin/construction-journals/{$journal->id}/entries/{$this->entry->id}"))
+            ->action('Просмотреть запись', ConstructionJournalDeepLink::entryUrl($journal->id, $this->entry->id))
             ->line('Спасибо за работу!');
     }
 
@@ -47,7 +48,7 @@ class JournalEntryApprovedNotification extends Notification implements ShouldQue
             'approved_by_name' => $this->entry->approvedBy->name,
             'approved_at' => $this->entry->approved_at->format('Y-m-d H:i:s'),
             'project_name' => $this->entry->journal->project->name ?? null,
+            'url' => ConstructionJournalDeepLink::entryPath($this->entry->journal_id, $this->entry->id),
         ];
     }
 }
-

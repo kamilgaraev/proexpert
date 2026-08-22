@@ -6,6 +6,8 @@ namespace App\Http\Controllers\Api\V1\Mobile;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ConstructionJournal\MobileStoreConstructionJournalRequest;
+use App\Http\Requests\ConstructionJournal\UpdateConstructionJournalRequest;
 use App\Http\Responses\MobileResponse;
 use App\Models\ConstructionJournal;
 use App\Services\Mobile\MobileConstructionJournalService;
@@ -21,14 +23,13 @@ class ConstructionJournalController extends Controller
     public function __construct(
         private readonly MobileConstructionJournalService $mobileJournalService,
         private readonly ConstructionJournalService $journalService
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
@@ -39,7 +40,7 @@ class ConstructionJournalController extends Controller
                     $user,
                     $project,
                     max(1, $request->integer('page', 1)),
-                    max(1, $request->integer('per_page', 15)),
+                    min(100, max(1, $request->integer('per_page', 15))),
                     $request->string('status')->toString() ?: null
                 )
             );
@@ -61,26 +62,18 @@ class ConstructionJournalController extends Controller
         }
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(MobileStoreConstructionJournalRequest $request): JsonResponse
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
             $project = $this->mobileJournalService->resolveProject($user, $request->integer('project_id'));
             $this->authorize('create', [ConstructionJournal::class, $project]);
 
-            $validated = $request->validate([
-                'project_id' => 'required|integer',
-                'name' => 'required|string|max:255',
-                'journal_number' => 'nullable|string|max:50',
-                'contract_id' => 'nullable|integer',
-                'start_date' => 'required|date',
-                'end_date' => 'nullable|date|after_or_equal:start_date',
-                'status' => 'required|in:active,archived,closed',
-            ]);
+            $validated = $request->validated();
 
             $journal = $this->journalService->createJournal($project, $validated, $user);
 
@@ -107,11 +100,41 @@ class ConstructionJournalController extends Controller
         }
     }
 
+    public function formOptions(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            if (! $user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $project = $this->mobileJournalService->resolveProject($user, $request->integer('project_id'));
+            $this->authorize('create', [ConstructionJournal::class, $project]);
+
+            return MobileResponse::success(
+                $this->mobileJournalService->buildJournalFormOptions($user, $project),
+            );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('mobile.construction_journal.form_options.error', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->user()?->current_organization_id,
+                'project_id' => $request->input('project_id'),
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('mobile_construction_journal.errors.load_failed'), 500);
+        }
+    }
+
     public function show(ConstructionJournal $journal, Request $request): JsonResponse
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
@@ -149,6 +172,8 @@ class ConstructionJournalController extends Controller
             return MobileResponse::success($this->mobileJournalService->mapMobileJournal($journal, $user, true));
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -163,25 +188,18 @@ class ConstructionJournalController extends Controller
         }
     }
 
-    public function update(ConstructionJournal $journal, Request $request): JsonResponse
+    public function update(ConstructionJournal $journal, UpdateConstructionJournalRequest $request): JsonResponse
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
             $this->mobileJournalService->assertJournalAccess($user, $journal);
             $this->authorize('update', $journal);
 
-            $validated = $request->validate([
-                'name' => 'sometimes|string|max:255',
-                'journal_number' => 'nullable|string|max:50',
-                'contract_id' => 'nullable|integer',
-                'start_date' => 'sometimes|date',
-                'end_date' => 'nullable|date',
-                'status' => 'nullable|in:active,archived,closed',
-            ]);
+            $validated = $request->validated();
 
             $journal = $this->journalService->updateJournal($journal, $validated);
 
@@ -191,6 +209,8 @@ class ConstructionJournalController extends Controller
             );
         } catch (AuthorizationException $exception) {
             return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -210,7 +230,7 @@ class ConstructionJournalController extends Controller
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
@@ -248,7 +268,7 @@ class ConstructionJournalController extends Controller
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
@@ -269,6 +289,77 @@ class ConstructionJournalController extends Controller
             ]);
 
             return MobileResponse::error(trans_message('mobile_construction_journal.errors.load_failed'), 500);
+        }
+    }
+
+    public function close(ConstructionJournal $journal, Request $request): JsonResponse
+    {
+        return $this->transitionJournal(
+            $request,
+            $journal,
+            'close',
+            fn (): ConstructionJournal => $this->journalService->closeJournal($journal),
+            'construction_journal.messages.closed',
+        );
+    }
+
+    public function archive(ConstructionJournal $journal, Request $request): JsonResponse
+    {
+        return $this->transitionJournal(
+            $request,
+            $journal,
+            'archive',
+            fn (): ConstructionJournal => $this->journalService->archiveJournal($journal),
+            'construction_journal.messages.archived',
+        );
+    }
+
+    public function reopen(ConstructionJournal $journal, Request $request): JsonResponse
+    {
+        return $this->transitionJournal(
+            $request,
+            $journal,
+            'reopen',
+            fn (): ConstructionJournal => $this->journalService->reopenJournal($journal),
+            'construction_journal.messages.reopened',
+        );
+    }
+
+    private function transitionJournal(
+        Request $request,
+        ConstructionJournal $journal,
+        string $ability,
+        callable $transition,
+        string $successMessage,
+    ): JsonResponse {
+        try {
+            $user = $request->user();
+            if (! $user) {
+                return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
+            }
+
+            $this->mobileJournalService->assertJournalAccess($user, $journal);
+            $this->authorize($ability, $journal);
+            $journal = $transition();
+
+            return MobileResponse::success(
+                $this->mobileJournalService->mapMobileJournal($journal, $user),
+                trans_message($successMessage),
+            );
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('mobile.construction_journal.transition.error', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->user()?->current_organization_id,
+                'journal_id' => $journal->id,
+                'ability' => $ability,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('construction_journal.errors.transition_failed'), 500);
         }
     }
 }

@@ -4,9 +4,9 @@ namespace App\Services\Contract;
 
 use App\DTOs\Contract\ContractPerformanceActDTO;
 use App\Exceptions\BusinessLogicException;
+use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
-use App\Models\CompletedWork;
 use App\Models\File;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use App\Services\Acting\ActingQuantityReservationService;
@@ -261,8 +261,12 @@ class ContractPerformanceActService
 
         $oldData = [];
 
-        $updateData = $actDTO->toArray();
-        $updated = DB::transaction(function () use (&$oldData, $actDTO, $actId, $updateData): bool {
+        $updateData = array_intersect_key($actDTO->toArray(), array_flip([
+            'act_document_number',
+            'act_date',
+            'description',
+        ]));
+        $updated = DB::transaction(function () use (&$oldData, $actId, $updateData): bool {
             $act = ContractPerformanceAct::query()
                 ->whereKey($actId)
                 ->lockForUpdate()
@@ -279,57 +283,18 @@ class ContractPerformanceActService
                 ContractPerformanceAct::STATUS_APPROVED,
                 ContractPerformanceAct::STATUS_SIGNED,
             ], true);
-            $isExplicitLegacyReversal = (bool) $act->is_approved
-                && ! in_array($act->status, [
-                    ContractPerformanceAct::STATUS_APPROVED,
-                    ContractPerformanceAct::STATUS_SIGNED,
-                ], true)
-                && array_key_exists('is_approved', $updateData)
-                && $updateData['is_approved'] === false
-                && array_diff(array_keys($updateData), ['is_approved', 'approval_date']) === [];
-            if ($wasAccepted && $actDTO->completedWorksProvided) {
-                throw new BusinessLogicException(trans_message('act_reports.accepted_act_lines_immutable'));
-            }
-            if ($wasAccepted
-                && $actDTO->currency !== null
-                && strtoupper($actDTO->currency) !== strtoupper((string) $act->currency)
-            ) {
-                throw new BusinessLogicException(trans_message('act_reports.accepted_act_lines_immutable'));
-            }
-            if ($wasAccepted && ! $isExplicitLegacyReversal) {
+            if ($wasAccepted) {
                 throw new BusinessLogicException(trans_message('act_reports.act_already_approved'), 400);
             }
 
-            if ($actDTO->completedWorksProvided) {
-                $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
-                $act->recalculateAmount();
-            } elseif ($act->completedWorks()->count() > 0) {
-                $act->recalculateAmount();
-            }
-
             $updated = $updateData === [] || $this->actRepository->update($actId, $updateData);
-            if (!$updated) {
+            if (! $updated) {
                 return false;
             }
 
             $current = $this->actRepository->find($actId);
             if ($current === null) {
                 return false;
-            }
-            $isAccepted = (bool) $current->is_approved || in_array($current->status, [
-                ContractPerformanceAct::STATUS_APPROVED,
-                ContractPerformanceAct::STATUS_SIGNED,
-            ], true);
-            if ($wasAccepted !== $isAccepted) {
-                $this->productionAcceptanceEvents->recordTransitionIfApplicable(
-                    $current,
-                    $wasAccepted ? 'approved' : 'pending',
-                    $isAccepted ? 'approved' : 'reopened',
-                    $isAccepted && $current->signed_at !== null
-                        ? CarbonImmutable::instance($current->signed_at)
-                        : CarbonImmutable::now(),
-                    Auth::id(),
-                );
             }
 
             return true;

@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use App\Enums\ConstructionJournal\JournalStatusEnum;
-use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -135,8 +134,10 @@ class ConstructionJournal extends Model
         if ($user && $user->current_organization_id) {
             $project = $journal->project;
 
-            if (!$project || !$project->hasOrganization($user->current_organization_id)) {
-                abort(403, 'У вас нет доступа к этому журналу');
+            if ((int) $journal->organization_id !== (int) $user->current_organization_id
+                || ! $project
+                || ! $project->hasOrganization($user->current_organization_id)) {
+                abort(403, trans_message('construction_journal.errors.access_denied'));
             }
         }
 

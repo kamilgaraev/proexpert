@@ -89,6 +89,7 @@
       "act_reports.view",
       "act_reports.create",
       "act_reports.edit",
+      "act_reports.approve",
       "act_reports.contracts.view",
       "act_reports.works.view",
       "act_reports.works.update",
@@ -207,7 +208,8 @@
       "construction-journal.delete",
       "construction-journal.delete_all",
       "construction-journal.approve",
-      "construction-journal.export"
+      "construction-journal.export",
+      "construction-journal.reopen"
     ],
     "payments": [
       "payments.dashboard.view",

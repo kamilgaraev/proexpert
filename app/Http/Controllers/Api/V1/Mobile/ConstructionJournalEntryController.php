@@ -6,7 +6,12 @@ namespace App\Http\Controllers\Api\V1\Mobile;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
 use App\BusinessModules\Features\BudgetEstimates\Services\JournalApprovalService;
+use App\BusinessModules\Features\BudgetEstimates\Services\JournalEntryWorkflowService;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ConstructionJournal\ApproveJournalEntryRequest;
+use App\Http\Requests\ConstructionJournal\RejectJournalEntryRequest;
+use App\Http\Requests\ConstructionJournal\StoreJournalEntryRequest;
+use App\Http\Requests\ConstructionJournal\UpdateJournalEntryRequest;
 use App\Http\Responses\MobileResponse;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
@@ -23,23 +28,23 @@ class ConstructionJournalEntryController extends Controller
     public function __construct(
         private readonly MobileConstructionJournalService $mobileJournalService,
         private readonly ConstructionJournalService $journalService,
-        private readonly JournalApprovalService $approvalService
-    ) {
-    }
+        private readonly JournalApprovalService $approvalService,
+        private readonly JournalEntryWorkflowService $entryWorkflowService
+    ) {}
 
-    public function store(ConstructionJournal $journal, Request $request): JsonResponse
+    public function store(ConstructionJournal $journal, StoreJournalEntryRequest $request): JsonResponse
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
             $this->mobileJournalService->assertJournalAccess($user, $journal);
             $this->authorize('create', [ConstructionJournalEntry::class, $journal]);
 
-            $validated = $request->validate($this->entryRules());
-            $entry = $this->journalService->createEntry($journal, $validated, $user);
+            $validated = $request->validated();
+            $entry = $this->entryWorkflowService->create($journal, $validated, $user);
 
             return MobileResponse::success(
                 $this->mobileJournalService->mapMobileEntry($entry, $user),
@@ -69,7 +74,7 @@ class ConstructionJournalEntryController extends Controller
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
@@ -111,22 +116,22 @@ class ConstructionJournalEntryController extends Controller
         }
     }
 
-    public function update(ConstructionJournalEntry $entry, Request $request): JsonResponse
+    public function update(ConstructionJournalEntry $entry, UpdateJournalEntryRequest $request): JsonResponse
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
             $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('update', $entry);
 
-            if (!$entry->canBeEdited()) {
+            if (! $entry->canBeEdited()) {
                 return MobileResponse::error(trans_message('construction_journal.errors.entry_edit_forbidden_status'), 422);
             }
 
-            $validated = $request->validate($this->entryRules(true));
+            $validated = $request->validated();
             $entry = $this->journalService->updateEntry($entry, $validated);
 
             return MobileResponse::success(
@@ -156,14 +161,14 @@ class ConstructionJournalEntryController extends Controller
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
             $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('delete', $entry);
 
-            if (!$entry->canBeEdited()) {
+            if (! $entry->canBeEdited()) {
                 return MobileResponse::error(trans_message('construction_journal.errors.entry_delete_forbidden_status'), 422);
             }
 
@@ -192,14 +197,17 @@ class ConstructionJournalEntryController extends Controller
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
             $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('update', $entry);
 
-            $entry = $this->approvalService->submitForApproval($entry->load(['journal', 'createdBy', 'workVolumes']));
+            $entry = $this->approvalService->submitForApproval(
+                $entry->load(['journal', 'createdBy', 'workVolumes']),
+                $user
+            );
 
             return MobileResponse::success(
                 $this->mobileJournalService->mapMobileEntry($entry->load([
@@ -235,18 +243,18 @@ class ConstructionJournalEntryController extends Controller
         }
     }
 
-    public function approve(ConstructionJournalEntry $entry, Request $request): JsonResponse
+    public function approve(ConstructionJournalEntry $entry, ApproveJournalEntryRequest $request): JsonResponse
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
             $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('approve', $entry);
 
-            $validated = $request->validate($this->overrideRules());
+            $validated = $request->validated();
             $entry = $this->approvalService->approve(
                 $entry->load(['journal', 'createdBy', 'scheduleTask', 'workVolumes']),
                 $user,
@@ -287,20 +295,18 @@ class ConstructionJournalEntryController extends Controller
         }
     }
 
-    public function reject(ConstructionJournalEntry $entry, Request $request): JsonResponse
+    public function reject(ConstructionJournalEntry $entry, RejectJournalEntryRequest $request): JsonResponse
     {
         try {
             $user = $request->user();
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('mobile_construction_journal.errors.unauthorized'), 401);
             }
 
             $this->mobileJournalService->assertJournalAccess($user, $entry->journal);
             $this->authorize('approve', $entry);
 
-            $validated = $request->validate([
-                'reason' => 'required|string|min:10',
-            ]);
+            $validated = $request->validated();
 
             $entry = $this->approvalService->reject($entry->load(['journal', 'createdBy']), $user, $validated['reason']);
 
@@ -335,61 +341,5 @@ class ConstructionJournalEntryController extends Controller
 
             return MobileResponse::error(trans_message('mobile_construction_journal.errors.reject_failed'), 500);
         }
-    }
-
-    private function entryRules(bool $partial = false): array
-    {
-        $prefix = $partial ? 'sometimes|' : '';
-
-        return [
-            'schedule_task_id' => $prefix . 'nullable|integer',
-            'estimate_id' => $prefix . 'nullable|integer',
-            'entry_date' => $partial ? 'sometimes|date' : 'required|date',
-            'entry_number' => $prefix . 'nullable|integer|min:1',
-            'work_description' => $partial ? 'sometimes|string' : 'required|string',
-            'status' => $partial ? 'sometimes|in:draft' : 'required|in:draft',
-            'weather_conditions' => $prefix . 'nullable|array',
-            'weather_conditions.temperature' => 'nullable|numeric',
-            'weather_conditions.precipitation' => 'nullable|string',
-            'weather_conditions.wind_speed' => 'nullable|numeric',
-            'problems_description' => $prefix . 'nullable|string',
-            'safety_notes' => $prefix . 'nullable|string',
-            'visitors_notes' => $prefix . 'nullable|string',
-            'quality_notes' => $prefix . 'nullable|string',
-            'work_volumes' => $prefix . 'nullable|array',
-            'work_volumes.*.id' => 'nullable|integer',
-            'work_volumes.*.estimate_item_id' => 'nullable|integer',
-            'work_volumes.*.work_type_id' => 'nullable|integer',
-            'work_volumes.*.quantity' => 'required|numeric|min:0.001',
-            'work_volumes.*.measurement_unit_id' => 'nullable|integer',
-            'work_volumes.*.notes' => 'nullable|string',
-            'work_volumes.*.auto_attach_contract_coverage' => 'nullable|boolean',
-            'workers' => $prefix . 'nullable|array',
-            'workers.*.specialty' => 'required|string',
-            'workers.*.workers_count' => 'required|integer|min:1',
-            'workers.*.hours_worked' => 'nullable|numeric|min:0',
-            'equipment' => $prefix . 'nullable|array',
-            'equipment.*.equipment_name' => 'required|string',
-            'equipment.*.equipment_type' => 'nullable|string',
-            'equipment.*.quantity' => 'nullable|integer|min:1',
-            'equipment.*.hours_used' => 'nullable|numeric|min:0',
-            'materials' => $prefix . 'nullable|array',
-            'materials.*.material_id' => 'nullable|integer',
-            'materials.*.project_material_delivery_id' => 'nullable|integer',
-            'materials.*.material_name' => 'required|string',
-            'materials.*.quantity' => 'required|numeric|min:0',
-            'materials.*.measurement_unit' => 'required|string',
-            'materials.*.notes' => 'nullable|string',
-        ];
-    }
-
-    private function overrideRules(): array
-    {
-        return [
-            'override' => ['nullable', 'array'],
-            'override.enabled' => ['nullable', 'boolean'],
-            'override.reason' => ['nullable', 'string', 'max:2000'],
-            'override.target' => ['nullable', 'in:schedule_missing,contract_missing,over_coverage,manual_act_line'],
-        ];
     }
 }

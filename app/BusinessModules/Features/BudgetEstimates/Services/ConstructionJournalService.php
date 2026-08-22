@@ -10,7 +10,6 @@ use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
-use BackedEnum;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Models\ConstructionJournal;
@@ -26,6 +25,7 @@ use App\Models\User;
 use App\Models\WorkType;
 use App\Services\CompletedWork\CompletedWorkFactService;
 use App\Services\Logging\LoggingService;
+use BackedEnum;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
@@ -39,23 +39,26 @@ class ConstructionJournalService
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly LoggingService $logging,
         private readonly WarehouseService $warehouseService,
-    ) {
-    }
+    ) {}
 
     public function createJournal(Project $project, array $data, User $user): ConstructionJournal
     {
         return DB::transaction(function () use ($project, $data, $user): ConstructionJournal {
-            $this->assertContractScope($project, $data['contract_id'] ?? null);
+            if (! isset($data['contract_id'])) {
+                throw new DomainException(trans_message('construction_journal.errors.contract_required'));
+            }
+
+            $this->assertContractScope($project, $data['contract_id']);
 
             $journal = ConstructionJournal::create([
                 'organization_id' => $project->organization_id,
                 'project_id' => $project->id,
-                'contract_id' => $data['contract_id'] ?? null,
+                'contract_id' => $data['contract_id'],
                 'name' => $data['name'],
                 'journal_number' => $data['journal_number'] ?? $this->generateJournalNumber($project),
                 'start_date' => $data['start_date'] ?? now(),
                 'end_date' => $data['end_date'] ?? null,
-                'status' => $data['status'] ?? JournalStatusEnum::ACTIVE,
+                'status' => JournalStatusEnum::ACTIVE,
                 'created_by_user_id' => $user->id,
             ]);
 
@@ -68,6 +71,7 @@ class ConstructionJournalService
 
     public function updateJournal(ConstructionJournal $journal, array $data): ConstructionJournal
     {
+        unset($data['status']);
         if (array_key_exists('contract_id', $data)) {
             $this->assertContractScope($journal->project, $data['contract_id']);
         }
@@ -83,6 +87,11 @@ class ConstructionJournalService
     public function deleteJournal(ConstructionJournal $journal): bool
     {
         return DB::transaction(function () use ($journal): bool {
+            $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
+            if ($journal->status !== JournalStatusEnum::ACTIVE || $journal->entries()->withTrashed()->exists()) {
+                throw new DomainException(trans_message('construction_journal.errors.delete_nonempty_forbidden'));
+            }
+
             $deleted = (bool) $journal->delete();
             $this->recordJournalAudit('construction_journal.deleted', $journal);
 
@@ -90,9 +99,57 @@ class ConstructionJournalService
         });
     }
 
+    public function closeJournal(ConstructionJournal $journal): ConstructionJournal
+    {
+        return DB::transaction(function () use ($journal): ConstructionJournal {
+            $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
+            if ($journal->status !== JournalStatusEnum::ACTIVE || $journal->entries()->whereIn('status', [
+                JournalEntryStatusEnum::DRAFT,
+                JournalEntryStatusEnum::SUBMITTED,
+                JournalEntryStatusEnum::REJECTED,
+            ])->exists()) {
+                throw new DomainException(trans_message('construction_journal.errors.close_pending_entries'));
+            }
+            $journal->update(['status' => JournalStatusEnum::CLOSED, 'end_date' => $journal->end_date ?? now()]);
+            $this->recordJournalAudit('construction_journal.closed', $journal);
+
+            return $journal->fresh(['project', 'contract', 'createdBy']);
+        });
+    }
+
+    public function archiveJournal(ConstructionJournal $journal): ConstructionJournal
+    {
+        return DB::transaction(function () use ($journal): ConstructionJournal {
+            $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
+            if ($journal->status !== JournalStatusEnum::CLOSED) {
+                throw new DomainException(trans_message('construction_journal.errors.archive_invalid_status'));
+            }
+            $journal->update(['status' => JournalStatusEnum::ARCHIVED]);
+            $this->recordJournalAudit('construction_journal.archived', $journal);
+
+            return $journal->fresh(['project', 'contract', 'createdBy']);
+        });
+    }
+
+    public function reopenJournal(ConstructionJournal $journal): ConstructionJournal
+    {
+        return DB::transaction(function () use ($journal): ConstructionJournal {
+            $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
+            if ($journal->status !== JournalStatusEnum::CLOSED) {
+                throw new DomainException(trans_message('construction_journal.errors.reopen_invalid_status'));
+            }
+            $journal->update(['status' => JournalStatusEnum::ACTIVE, 'end_date' => null]);
+            $this->recordJournalAudit('construction_journal.reopened', $journal);
+
+            return $journal->fresh(['project', 'contract', 'createdBy']);
+        });
+    }
+
     public function createEntry(ConstructionJournal $journal, array $data, User $user): ConstructionJournalEntry
     {
         return DB::transaction(function () use ($journal, $data, $user): ConstructionJournalEntry {
+            $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
+            $this->assertJournalActive($journal);
             $this->assertEntryScope($journal, $data, null, $user);
 
             $entryNumber = $data['entry_number'] ?? $journal->getNextEntryNumber();
@@ -104,7 +161,9 @@ class ConstructionJournalService
                 'entry_date' => $data['entry_date'],
                 'entry_number' => $entryNumber,
                 'work_description' => $data['work_description'],
-                'status' => $data['status'] ?? JournalEntryStatusEnum::DRAFT,
+                'status' => JournalEntryStatusEnum::DRAFT,
+                'idempotency_key' => $data['idempotency_key'] ?? null,
+                'payload_fingerprint' => $data['payload_fingerprint'] ?? null,
                 'created_by_user_id' => $user->id,
                 'weather_conditions' => $data['weather_conditions'] ?? null,
                 'problems_description' => $data['problems_description'] ?? null,
@@ -164,6 +223,8 @@ class ConstructionJournalService
     public function updateEntry(ConstructionJournalEntry $entry, array $data): ConstructionJournalEntry
     {
         return DB::transaction(function () use ($entry, $data): ConstructionJournalEntry {
+            $entry = $this->lockJournalAndEntry($entry);
+            $this->assertEntryEditable($entry);
             $this->assertEntryScope($entry->journal, $data, $entry);
 
             if (array_key_exists('materials', $data)) {
@@ -267,13 +328,46 @@ class ConstructionJournalService
     public function deleteEntry(ConstructionJournalEntry $entry): bool
     {
         return DB::transaction(function () use ($entry): bool {
-            $entry->loadMissing('journal');
+            $entry = $this->lockJournalAndEntry($entry);
+            if ($entry->status !== JournalEntryStatusEnum::DRAFT || $entry->approvalEvents()->exists()) {
+                throw new DomainException(trans_message('construction_journal.errors.entry_delete_history_forbidden'));
+            }
             $this->completedWorkFactService->deleteJournalEntryFacts($entry);
             $deleted = (bool) $entry->delete();
             $this->recordEntryAudit('construction_journal_entry.deleted', $entry);
 
             return $deleted;
         });
+    }
+
+    private function lockJournalAndEntry(ConstructionJournalEntry $entry): ConstructionJournalEntry
+    {
+        $journal = ConstructionJournal::query()
+            ->whereKey($entry->journal_id)
+            ->lockForUpdate()
+            ->firstOrFail();
+        $this->assertJournalActive($journal);
+
+        return ConstructionJournalEntry::query()
+            ->with('journal')
+            ->whereKey($entry->id)
+            ->where('journal_id', $journal->id)
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    private function assertJournalActive(ConstructionJournal $journal): void
+    {
+        if ($journal->status !== JournalStatusEnum::ACTIVE) {
+            throw new DomainException(trans_message('construction_journal.errors.journal_not_active'));
+        }
+    }
+
+    private function assertEntryEditable(ConstructionJournalEntry $entry): void
+    {
+        if (! $entry->canBeEdited()) {
+            throw new DomainException(trans_message('construction_journal.errors.entry_edit_invalid_status'));
+        }
     }
 
     public function getDailyEntries(ConstructionJournal $journal, Carbon $date): Collection
@@ -326,10 +420,6 @@ class ConstructionJournalService
                     ->find($estimateItemId)
                 : null;
 
-            if (($volume['auto_attach_contract_coverage'] ?? false) && $estimateItem) {
-                $this->journalContractCoverageService->ensureCoverage($entry->journal, $estimateItem);
-            }
-
             $entry->workVolumes()->create([
                 'estimate_item_id' => $estimateItemId,
                 'work_type_id' => $this->resolveWorkVolumeTypeId($entry, $volume, $estimateItem),
@@ -354,10 +444,6 @@ class ConstructionJournalService
                     ->with(['estimate', 'contractLinks.contract.contractor'])
                     ->find($estimateItemId)
                 : null;
-
-            if (($volume['auto_attach_contract_coverage'] ?? false) && $estimateItem) {
-                $this->journalContractCoverageService->ensureCoverage($entry->journal, $estimateItem);
-            }
 
             $payload = [
                 'estimate_item_id' => $estimateItemId,
@@ -391,7 +477,11 @@ class ConstructionJournalService
         array $volume,
         ?EstimateItem $estimateItem
     ): ?int {
-        if (!empty($volume['work_type_id'])) {
+        if ($estimateItem?->work_type_id) {
+            return (int) $estimateItem->work_type_id;
+        }
+
+        if (! empty($volume['work_type_id'])) {
             return (int) $volume['work_type_id'];
         }
 
@@ -407,7 +497,11 @@ class ConstructionJournalService
         array $volume,
         ?EstimateItem $estimateItem
     ): ?int {
-        if (!empty($volume['measurement_unit_id'])) {
+        if ($estimateItem?->measurement_unit_id) {
+            return (int) $estimateItem->measurement_unit_id;
+        }
+
+        if (! empty($volume['measurement_unit_id'])) {
             return (int) $volume['measurement_unit_id'];
         }
 
@@ -446,18 +540,41 @@ class ConstructionJournalService
     protected function attachMaterials(ConstructionJournalEntry $entry, array $materials): void
     {
         foreach ($materials as $material) {
-            $consumption = $this->writeOffJournalMaterialFromCustody($entry, $material);
-
             $entry->materials()->create([
                 'material_id' => $material['material_id'] ?? null,
                 'estimate_item_id' => $material['estimate_item_id'] ?? null,
                 'project_material_delivery_id' => $material['project_material_delivery_id'] ?? null,
-                'warehouse_movement_id' => $consumption['movement']?->id,
-                'custody_warehouse_id' => $consumption['custody_warehouse']?->id,
+                'warehouse_movement_id' => null,
+                'custody_warehouse_id' => null,
                 'material_name' => $material['material_name'],
                 'quantity' => $material['quantity'],
                 'measurement_unit' => $material['measurement_unit'],
                 'notes' => $material['notes'] ?? null,
+            ]);
+        }
+    }
+
+    public function commitMaterialConsumption(ConstructionJournalEntry $entry): void
+    {
+        $entry->loadMissing('journal');
+        $materials = $entry->materials()
+            ->whereNull('warehouse_movement_id')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($materials as $journalMaterial) {
+            $material = [
+                'material_id' => $journalMaterial->material_id,
+                'estimate_item_id' => $journalMaterial->estimate_item_id,
+                'project_material_delivery_id' => $journalMaterial->project_material_delivery_id,
+                'quantity' => $journalMaterial->quantity,
+            ];
+            $this->assertProjectMaterialDeliveryScope($entry->journal, $material, $entry);
+            $consumption = $this->writeOffJournalMaterialFromCustody($entry, $material);
+            $journalMaterial->update([
+                'warehouse_movement_id' => $consumption['movement']?->id,
+                'custody_warehouse_id' => $consumption['custody_warehouse']?->id,
             ]);
         }
     }
@@ -473,7 +590,7 @@ class ConstructionJournalService
     {
         $deliveryId = $material['project_material_delivery_id'] ?? null;
 
-        if (!$deliveryId) {
+        if (! $deliveryId) {
             return [
                 'movement' => null,
                 'custody_warehouse' => null,
@@ -485,7 +602,7 @@ class ConstructionJournalService
         $responsibleUserId = (int) $entry->created_by_user_id;
         $custodyWarehouse = $this->resolveResponsibleCustodyWarehouse($journal, $responsibleUserId);
 
-        if (!$custodyWarehouse) {
+        if (! $custodyWarehouse) {
             throw new DomainException(trans_message('basic_warehouse.validation.insufficient_custody_stock', [
                 'available' => 0,
                 'requested' => (float) ($material['quantity'] ?? 0),
@@ -522,7 +639,7 @@ class ConstructionJournalService
     ): void {
         $deliveryId = $material['project_material_delivery_id'] ?? null;
 
-        if (!$deliveryId) {
+        if (! $deliveryId) {
             return;
         }
 
@@ -540,6 +657,12 @@ class ConstructionJournalService
 
         $usedQuantity = (float) $delivery->journalMaterials()
             ->when($entry, fn ($query) => $query->where('journal_entry_id', '!=', $entry->id))
+            ->whereHas('journalEntry', static function ($query): void {
+                $query->whereIn('status', [
+                    JournalEntryStatusEnum::SUBMITTED,
+                    JournalEntryStatusEnum::APPROVED,
+                ]);
+            })
             ->sum('quantity');
         $availableQuantity = max(0.0, (float) $delivery->accepted_quantity - $usedQuantity);
 
@@ -570,7 +693,7 @@ class ConstructionJournalService
             ->where('status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)
             ->first();
 
-        if (!$delivery) {
+        if (! $delivery) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_project_material_delivery'));
         }
 
@@ -615,7 +738,7 @@ class ConstructionJournalService
 
     protected function assertContractScope(Project $project, ?int $contractId): void
     {
-        if (!$contractId) {
+        if (! $contractId) {
             return;
         }
 
@@ -630,7 +753,7 @@ class ConstructionJournalService
             })
             ->first();
 
-        if (!$contract) {
+        if (! $contract) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_contract'));
         }
     }
@@ -640,13 +763,14 @@ class ConstructionJournalService
         array $data,
         ?ConstructionJournalEntry $entry = null,
         ?User $user = null
-    ): void
-    {
+    ): void {
         $estimateId = $data['estimate_id'] ?? $entry?->estimate_id;
         $scheduleTaskId = $data['schedule_task_id'] ?? $entry?->schedule_task_id;
 
         $this->assertEstimateScope($journal, $estimateId);
         $this->assertScheduleTaskScope($journal, $scheduleTaskId, $estimateId);
+        $this->assertEntryEstimateConsistency($data['work_volumes'] ?? [], $estimateId);
+        $this->assertScheduleTaskVolumeCompatibility($data['work_volumes'] ?? [], $scheduleTaskId);
 
         foreach (($data['work_volumes'] ?? []) as $volume) {
             $this->assertEstimateItemScope($journal, $volume['estimate_item_id'] ?? null, $estimateId);
@@ -676,7 +800,7 @@ class ConstructionJournalService
 
     protected function assertEstimateScope(ConstructionJournal $journal, ?int $estimateId): void
     {
-        if (!$estimateId) {
+        if (! $estimateId) {
             return;
         }
 
@@ -684,16 +808,17 @@ class ConstructionJournalService
             ->where('id', $estimateId)
             ->where('organization_id', $journal->organization_id)
             ->where('project_id', $journal->project_id)
+            ->where('status', 'approved')
             ->first();
 
-        if (!$estimate) {
+        if (! $estimate) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_estimate'));
         }
     }
 
     protected function assertScheduleTaskScope(ConstructionJournal $journal, ?int $scheduleTaskId, ?int $estimateId): void
     {
-        if (!$scheduleTaskId) {
+        if (! $scheduleTaskId) {
             return;
         }
 
@@ -705,7 +830,7 @@ class ConstructionJournalService
             })
             ->first();
 
-        if (!$task) {
+        if (! $task) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_schedule_task'));
         }
 
@@ -717,7 +842,7 @@ class ConstructionJournalService
                 })
                 ->first();
 
-            if (!$estimateItem) {
+            if (! $estimateItem) {
                 throw new DomainException(trans_message('construction_journal.errors.schedule_task_estimate_mismatch'));
             }
         }
@@ -725,7 +850,7 @@ class ConstructionJournalService
 
     protected function assertEstimateItemScope(ConstructionJournal $journal, ?int $estimateItemId, ?int $estimateId): void
     {
-        if (!$estimateItemId) {
+        if (! $estimateItemId) {
             return;
         }
 
@@ -741,14 +866,54 @@ class ConstructionJournalService
             })
             ->first();
 
-        if (!$item) {
+        if (! $item) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_estimate_item'));
+        }
+    }
+
+    private function assertEntryEstimateConsistency(array $volumes, ?int $estimateId): void
+    {
+        $itemIds = collect($volumes)
+            ->pluck('estimate_item_id')
+            ->filter()
+            ->map(static fn ($id): int => (int) $id)
+            ->unique()
+            ->values();
+        if ($itemIds->isEmpty()) {
+            return;
+        }
+
+        $estimateIds = EstimateItem::query()
+            ->whereIn('id', $itemIds)
+            ->pluck('estimate_id')
+            ->map(static fn ($id): int => (int) $id)
+            ->unique();
+        if ($estimateIds->count() !== 1 || ($estimateId && ! $estimateIds->contains($estimateId))) {
+            throw new DomainException(trans_message('construction_journal.errors.entry_estimate_mismatch'));
+        }
+    }
+
+    private function assertScheduleTaskVolumeCompatibility(array $volumes, ?int $scheduleTaskId): void
+    {
+        if (! $scheduleTaskId) {
+            return;
+        }
+
+        $taskEstimateItemId = ScheduleTask::query()->whereKey($scheduleTaskId)->value('estimate_item_id');
+        if (! $taskEstimateItemId) {
+            return;
+        }
+
+        foreach ($volumes as $volume) {
+            if ((int) ($volume['estimate_item_id'] ?? 0) !== (int) $taskEstimateItemId) {
+                throw new DomainException(trans_message('construction_journal.errors.schedule_task_volume_mismatch'));
+            }
         }
     }
 
     protected function assertMaterialScope(ConstructionJournal $journal, ?int $materialId): void
     {
-        if (!$materialId) {
+        if (! $materialId) {
             return;
         }
 
@@ -757,7 +922,7 @@ class ConstructionJournalService
             ->where('organization_id', $journal->organization_id)
             ->first();
 
-        if (!$material) {
+        if (! $material) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_material'));
         }
     }
@@ -768,7 +933,7 @@ class ConstructionJournalService
         ?int $estimateId,
         array $allowedTypes
     ): void {
-        if (!$estimateItemId) {
+        if (! $estimateItemId) {
             return;
         }
 
@@ -785,14 +950,14 @@ class ConstructionJournalService
             })
             ->first();
 
-        if (!$item) {
+        if (! $item) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_estimate_item'));
         }
     }
 
     protected function assertWorkTypeScope(ConstructionJournal $journal, ?int $workTypeId): void
     {
-        if (!$workTypeId) {
+        if (! $workTypeId) {
             return;
         }
 
@@ -804,14 +969,14 @@ class ConstructionJournalService
             })
             ->first();
 
-        if (!$workType) {
+        if (! $workType) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_work_type'));
         }
     }
 
     protected function assertMeasurementUnitScope(ConstructionJournal $journal, ?int $measurementUnitId): void
     {
-        if (!$measurementUnitId) {
+        if (! $measurementUnitId) {
             return;
         }
 
@@ -824,7 +989,7 @@ class ConstructionJournalService
             })
             ->first();
 
-        if (!$unit) {
+        if (! $unit) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_measurement_unit'));
         }
     }

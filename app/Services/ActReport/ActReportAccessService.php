@@ -18,19 +18,28 @@ use function trans_message;
 class ActReportAccessService
 {
     public const PERMISSION_VIEW = 'act_reports.view';
+
     public const PERMISSION_CREATE = 'act_reports.create';
+
     public const PERMISSION_EDIT = 'act_reports.edit';
+
+    public const PERMISSION_APPROVE = 'act_reports.approve';
+
     public const PERMISSION_MANAGE_WORKS = 'act_reports.works.update';
+
     public const PERMISSION_CONTRACTS_VIEW = 'act_reports.contracts.view';
+
     public const PERMISSION_EXPORT_PDF = 'act_reports.export.pdf';
+
     public const PERMISSION_EXPORT_EXCEL = 'act_reports.export.excel';
+
     public const PERMISSION_BULK_EXPORT_EXCEL = 'act_reports.bulk_export.excel';
+
     public const PERMISSION_DOWNLOAD_PDF = 'act_reports.download_pdf';
 
     public function __construct(
         private readonly ContractAccessService $contractAccessService
-    ) {
-    }
+    ) {}
 
     public function currentOrganizationId(Request $request): int
     {
@@ -40,7 +49,7 @@ class ActReportAccessService
             ?? $request->user()?->current_organization_id
             ?? $request->user()?->organization_id;
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             throw new BusinessLogicException(trans_message('act_reports.organization_not_found'), 400);
         }
 
@@ -51,7 +60,7 @@ class ActReportAccessService
     {
         $user = $request->user();
 
-        if (!$user instanceof User || !$user->can($permission, ['organization_id' => $organizationId])) {
+        if (! $user instanceof User || ! $user->can($permission, ['organization_id' => $organizationId])) {
             throw new BusinessLogicException(trans_message('act_reports.access_denied'), 403);
         }
     }
@@ -61,7 +70,7 @@ class ActReportAccessService
         $organizationId = $this->currentOrganizationId($request);
         $act->loadMissing('contract.contractor', 'contract.organization');
 
-        if (!$act->contract || !$this->contractAccessService->canAccess($act->contract, $organizationId)) {
+        if (! $act->contract || ! $this->contractAccessService->canAccess($act->contract, $organizationId)) {
             throw new BusinessLogicException(trans_message('act_reports.access_denied'), 403);
         }
     }
@@ -82,7 +91,7 @@ class ActReportAccessService
 
         $resolvedAct = ContractPerformanceAct::query()->find((int) $act);
 
-        if (!$resolvedAct) {
+        if (! $resolvedAct) {
             throw new BusinessLogicException(trans_message('act_reports.act_not_found'), 404);
         }
 
@@ -97,7 +106,7 @@ class ActReportAccessService
             ->where('organization_id', (int) $act->contract->organization_id)
             ->find((int) $file);
 
-        if (!$resolvedFile) {
+        if (! $resolvedFile) {
             throw new BusinessLogicException(trans_message('act_reports.file_not_found'), 404);
         }
 
@@ -108,7 +117,7 @@ class ActReportAccessService
     {
         $contract = $this->contractAccessService->findAccessible($contractId, $organizationId);
 
-        if (!$contract) {
+        if (! $contract) {
             throw new BusinessLogicException(trans_message('act_reports.contract_not_found'), 404);
         }
 
