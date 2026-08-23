@@ -21,10 +21,9 @@ use DateTimeZone;
 use Illuminate\Database\ConnectionResolver;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\SQLiteConnection;
-use PDO;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class ReportingSourceGuardAndKeysetTest extends TestCase
 {
@@ -116,7 +115,7 @@ final class ReportingSourceGuardAndKeysetTest extends TestCase
 
     private function builder(): EloquentBuilder
     {
-        $connection = new SQLiteConnection(new PDO('sqlite::memory:'));
+        $connection = IsolatedPostgresTestDatabase::connection();
         $resolver = new ConnectionResolver(['testing' => $connection]);
         $resolver->setDefaultConnection('testing');
         Model::setConnectionResolver($resolver);

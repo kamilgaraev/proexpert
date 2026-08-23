@@ -15,7 +15,7 @@ final class DatabaseNotificationCommitSequencer implements NotificationCommitSeq
     public function run(User $user, array $interfaces, Closure $callback): mixed
     {
         $driver = DB::getDriverName();
-        NotificationSequenceDriverGuard::assertSupported($driver, app()->environment('testing'));
+        NotificationSequenceDriverGuard::assertSupported($driver);
 
         return DB::transaction(function () use ($user, $interfaces, $callback, $driver): mixed {
             if ($driver === 'pgsql') {

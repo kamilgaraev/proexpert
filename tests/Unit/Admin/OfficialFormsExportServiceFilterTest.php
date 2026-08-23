@@ -6,12 +6,14 @@ namespace Tests\Unit\Admin;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\Models\ConstructionJournal;
+use App\Services\Acting\ActingPriceService;
 use App\Services\Storage\FileService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
+use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
 
 class OfficialFormsExportServiceFilterTest extends TestCase
@@ -24,6 +26,14 @@ class OfficialFormsExportServiceFilterTest extends TestCase
     {
         parent::setUp();
 
+        $connectionName = DB::getDefaultConnection();
+        config()->set(
+            'database.connections.'.$connectionName,
+            IsolatedPostgresTestDatabase::configuration(),
+        );
+        DB::purge($connectionName);
+        DB::connection($connectionName);
+
         $this->createSchema();
     }
 
@@ -33,7 +43,10 @@ class OfficialFormsExportServiceFilterTest extends TestCase
         $firstEntryId = $this->createJournalEntry($journalId, 10, 'approved');
         $this->createJournalEntry($journalId, 20, 'approved');
 
-        $service = new TestableOfficialFormsExportService(Mockery::mock(FileService::class));
+        $service = new TestableOfficialFormsExportService(
+            Mockery::mock(FileService::class),
+            Mockery::mock(ActingPriceService::class),
+        );
 
         $entryIds = $service->entryIds(
             ConstructionJournal::query()->findOrFail($journalId),
@@ -51,7 +64,10 @@ class OfficialFormsExportServiceFilterTest extends TestCase
         $approvedEntryId = $this->createJournalEntry($journalId, 10, 'approved');
         $this->createJournalEntry($journalId, 10, 'draft');
 
-        $service = new TestableOfficialFormsExportService(Mockery::mock(FileService::class));
+        $service = new TestableOfficialFormsExportService(
+            Mockery::mock(FileService::class),
+            Mockery::mock(ActingPriceService::class),
+        );
 
         $entryIds = $service->entryIds(
             ConstructionJournal::query()->findOrFail($journalId),
@@ -89,10 +105,6 @@ class OfficialFormsExportServiceFilterTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['construction_journal_entries', 'construction_journals'] as $table) {
-            Schema::dropIfExists($table);
-        }
-
         Schema::create('construction_journals', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id');

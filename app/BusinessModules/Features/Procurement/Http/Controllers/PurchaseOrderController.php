@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
 use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptIdempotencyConflictException;
+use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptPaymentException;
 use App\BusinessModules\Features\Procurement\Http\Requests\CancelPurchaseOrderRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\ReturnPurchaseReceiptLineRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\ReversePurchaseReceiptLineRequest;
@@ -393,6 +394,8 @@ class PurchaseOrderController extends Controller
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (PurchaseReceiptIdempotencyConflictException $e) {
             return AdminResponse::error($e->getMessage(), 409);
+        } catch (PurchaseReceiptPaymentException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\DomainException) {
             return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
@@ -510,6 +513,8 @@ class PurchaseOrderController extends Controller
             return $this->receiptDocumentPdfService->download($order, $document);
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (PurchaseReceiptPaymentException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\DomainException) {
             return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {

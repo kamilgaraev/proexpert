@@ -5,15 +5,14 @@ declare(strict_types=1);
 namespace Tests\Unit\WorkforceManagement\Reporting;
 
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessOptionsService;
-use Illuminate\Database\SQLiteConnection;
-use PDO;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class PayrollReadinessOptionsServiceTest extends TestCase
 {
     public function test_options_are_limited_to_server_owned_organization_and_project(): void
     {
-        $connection = new SQLiteConnection(new PDO('sqlite::memory:'));
+        $connection = IsolatedPostgresTestDatabase::connection();
         foreach ([
             'CREATE TABLE workforce_payroll_periods (id INTEGER PRIMARY KEY, organization_id INTEGER, project_id INTEGER, period_start TEXT, period_end TEXT, status TEXT)',
             'CREATE TABLE workforce_payroll_calculation_versions (id INTEGER PRIMARY KEY, organization_id INTEGER, payroll_period_id INTEGER)',

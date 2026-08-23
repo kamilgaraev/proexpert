@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptPaymentException;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
@@ -66,11 +67,15 @@ final class PurchaseOrderPaymentGateService
         $requiredAmount = round($this->receivedAmount($order) + $incomingAmount, 2);
 
         if ($paidAmount <= 0.0001) {
-            throw new \DomainException(trans_message('procurement.purchase_orders.payment_required_before_receipt'));
+            throw new PurchaseReceiptPaymentException(
+                trans_message('procurement.purchase_orders.payment_required_before_receipt')
+            );
         }
 
         if ($paidAmount + 0.0001 < $requiredAmount) {
-            throw new \DomainException(trans_message('procurement.purchase_orders.payment_not_enough_for_receipt'));
+            throw new PurchaseReceiptPaymentException(
+                trans_message('procurement.purchase_orders.payment_not_enough_for_receipt')
+            );
         }
     }
 

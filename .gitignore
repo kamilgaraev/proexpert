@@ -67,7 +67,6 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 .cursor
 *.txt
 *.xml
-!phpunit.postgres.xml
 rr
 rr.exe
 .rr

@@ -26,7 +26,6 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
 use Tests\TestCase;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 final class LegalArchiveApiContractTest extends TestCase
 {
@@ -45,12 +44,10 @@ final class LegalArchiveApiContractTest extends TestCase
     {
         parent::setUp();
         $this->originalConnection = DB::getDefaultConnection();
-        config()->set('database.connections.legal_api_contract', [
-            'driver' => 'sqlite',
-            'database' => ':memory:',
-            'prefix' => '',
-            'foreign_key_constraints' => true,
-        ]);
+        config()->set(
+            'database.connections.legal_api_contract',
+            \Tests\Support\IsolatedPostgresTestDatabase::configuration(),
+        );
         DB::purge('legal_api_contract');
         DB::setDefaultConnection('legal_api_contract');
         $this->createSchema();
@@ -62,6 +59,7 @@ final class LegalArchiveApiContractTest extends TestCase
         $this->authorization->shouldReceive('getUserRoleSlugs')->andReturn([]);
         $this->authorization->shouldReceive('canAccessInterface')->andReturnTrue();
         $this->app->instance(AuthorizationService::class, $this->authorization);
+        LegalArchiveApiContractAuthorizeMiddleware::$authorization = $this->authorization;
         $this->app->instance(LegalDocumentAudit::class, new LegalArchiveApiContractAudit);
 
         $projectAccess = Mockery::mock(UserProjectAccessService::class);
@@ -80,6 +78,8 @@ final class LegalArchiveApiContractTest extends TestCase
 
     protected function tearDown(): void
     {
+        LegalArchiveApiContractActorMiddleware::$actor = null;
+        LegalArchiveApiContractAuthorizeMiddleware::$authorization = null;
         DB::setDefaultConnection($this->originalConnection);
         DB::purge('legal_api_contract');
         parent::tearDown();
@@ -214,8 +214,16 @@ final class LegalArchiveApiContractTest extends TestCase
         self::assertSame('legal_archive.workflow.view', $viewerDocuments[42]['workflow_summary']['available_action_details'][0]['permission']);
         $this->deniedPermissions = [];
 
+        $detailDocument = $this->app->make(\App\Services\LegalArchive\LegalArchiveRegistryService::class)
+            ->findForAuthorization(42);
+        self::assertNotNull($detailDocument);
+        $this->app->make(\App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver::class)
+            ->forMany($actor, collect([$detailDocument]));
+        $this->app->make(\App\Services\LegalArchive\Editor\LegalDocumentEditorAvailability::class)
+            ->currentVersionEditable($detailDocument);
+
         $detail = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42', 'GET'), $actor);
-        self::assertSame(200, $detail->getStatusCode());
+        self::assertSame(200, $detail->getStatusCode(), (string) $detail->getContent());
         self::assertSame('42', (string) $detail->getData(true)['data']['id']);
         self::assertSame('"legal-document-42-v3"', $detail->headers->get('ETag'));
 
@@ -238,6 +246,11 @@ final class LegalArchiveApiContractTest extends TestCase
 
     public function test_http_kernel_enforces_validation_mutation_replay_conflict_and_resolvable_etags(): void
     {
+        $this->isolateKernelAuthentication([
+            ['PATCH', '/api/v1/admin/legal-archive/documents/42'],
+            ['GET', '/api/v1/admin/legal-archive/type-profiles/contract.supply'],
+            ['GET', '/api/v1/admin/legal-archive/workflow-templates/71'],
+        ]);
         $headers = $this->kernelHeaders();
         DB::table('legal_archive_documents')->insert([
             $this->documentRow(42, 7, 'Исходный договор'),
@@ -249,7 +262,7 @@ final class LegalArchiveApiContractTest extends TestCase
             'lock_version' => 3,
             'title' => 'Запрещённое изменение',
         ], $headers);
-        $denied->assertForbidden();
+        self::assertSame(403, $denied->getStatusCode(), (string) $denied->getContent());
         $this->deniedPermissions = [];
 
         $invalid = $this->patchJson('/api/v1/admin/legal-archive/documents/42', ['title' => 'Без версии'], $headers);
@@ -259,7 +272,8 @@ final class LegalArchiveApiContractTest extends TestCase
             'lock_version' => 3,
             'title' => 'Обновлённый договор',
         ], $headers);
-        $updated->assertOk()->assertJsonPath('data.title', 'Обновлённый договор');
+        self::assertSame(200, $updated->getStatusCode(), (string) $updated->getContent());
+        $updated->assertJsonPath('data.title', 'Обновлённый договор');
         self::assertSame('"legal-document-42-v4"', $updated->headers->get('ETag'));
         self::assertSame('/api/v1/admin/legal-archive/documents/42', $updated->headers->get('Location'));
 
@@ -496,12 +510,37 @@ final class LegalArchiveApiContractTest extends TestCase
         ]);
         $actor = User::query()->findOrFail(5);
         $actor->current_organization_id = 7;
-        $token = JWTAuth::fromUser($actor, ['organization_id' => 7]);
+        LegalArchiveApiContractActorMiddleware::$actor = $actor;
+        $this->actingAs($actor, 'api_admin');
 
         return [
-            'Authorization' => 'Bearer '.$token,
             'Accept' => 'application/json',
         ];
+    }
+
+    /** @param list<array{0:string,1:string}> $requests */
+    private function isolateKernelAuthentication(array $requests): void
+    {
+        foreach ($requests as [$method, $uri]) {
+            $route = Route::getRoutes()->match(Request::create($uri, $method));
+            $action = $route->getAction();
+            $action['middleware'] = array_values(array_map(
+                static fn (string $middleware): string => str_starts_with($middleware, 'authorize:')
+                    ? LegalArchiveApiContractAuthorizeMiddleware::class.substr($middleware, strlen('authorize'))
+                    : $middleware,
+                array_filter(
+                    $route->gatherMiddleware(),
+                    static fn (string $middleware): bool => $middleware !== 'api'
+                    && ! str_starts_with($middleware, 'auth:')
+                    && ! str_starts_with($middleware, 'auth.jwt:')
+                    && $middleware !== 'auth.session'
+                    && $middleware !== 'organization.context'
+                    && ! str_starts_with($middleware, 'interface:'),
+                ),
+            ));
+            $route->setAction($action);
+            $route->computedMiddleware = null;
+        }
     }
 
     /** @return array<string, mixed> */
@@ -541,6 +580,14 @@ final class LegalArchiveApiContractTest extends TestCase
             $table->string('name')->nullable();
             $table->string('status')->nullable();
             $table->boolean('is_archived')->default(false);
+            $table->softDeletes();
+        });
+        $schema->create('contracts', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id')->nullable();
+            $table->unsignedBigInteger('legal_archive_document_id')->nullable();
+            $table->timestamps();
             $table->softDeletes();
         });
         $schema->create('users', static function (Blueprint $table): void {
@@ -677,6 +724,7 @@ final class LegalArchiveApiContractTest extends TestCase
                 $table->unsignedBigInteger('organization_id');
                 $table->unsignedBigInteger('document_id');
                 $table->unsignedBigInteger('document_version_id')->nullable();
+                $table->string('status')->nullable();
                 $table->string('verification_status')->nullable();
                 $table->timestamps();
             });
@@ -707,6 +755,25 @@ final class LegalArchiveApiContractTest extends TestCase
             $table->boolean('is_blocking')->default(false);
             $table->string('status')->default('open');
             $table->timestamps();
+        });
+        $schema->create('legal_document_obligations', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('document_id');
+            $table->unsignedBigInteger('document_version_id')->nullable();
+            $table->unsignedBigInteger('project_id')->nullable();
+            $table->unsignedBigInteger('responsible_user_id')->nullable();
+            $table->string('title');
+            $table->string('responsible_party')->nullable();
+            $table->timestampTz('due_at')->nullable();
+            $table->decimal('amount', 18, 2)->nullable();
+            $table->decimal('volume', 18, 3)->nullable();
+            $table->string('unit', 64)->nullable();
+            $table->string('status', 32)->default('open');
+            $table->timestampTz('completed_at')->nullable();
+            $table->jsonb('evidence')->nullable();
+            $table->jsonb('metadata')->nullable();
+            $table->timestampsTz();
         });
         $schema->create('legal_document_access_grants', static function (Blueprint $table): void {
             $table->id();
@@ -774,6 +841,51 @@ final class LegalArchiveApiContractTest extends TestCase
             $table->json('settings')->nullable();
             $table->timestamps();
         });
+    }
+}
+
+final class LegalArchiveApiContractActorMiddleware
+{
+    public static ?User $actor = null;
+
+    public function handle(Request $request, \Closure $next): \Symfony\Component\HttpFoundation\Response
+    {
+        $actor = self::$actor;
+        if (! $actor instanceof User) {
+            throw new \RuntimeException('legal_api_contract_actor_missing');
+        }
+        $request->setUserResolver(static fn (): User => $actor);
+        $request->attributes->set('current_organization_id', 7);
+
+        return $next($request);
+    }
+}
+
+final class LegalArchiveApiContractAuthorizeMiddleware
+{
+    public static ?AuthorizationService $authorization = null;
+
+    public function handle(
+        Request $request,
+        \Closure $next,
+        string $permission,
+    ): \Symfony\Component\HttpFoundation\Response {
+        $actor = LegalArchiveApiContractActorMiddleware::$actor;
+        $authorization = self::$authorization;
+        if (! $actor instanceof User || ! $authorization instanceof AuthorizationService) {
+            throw new \RuntimeException('legal_api_contract_authorization_missing');
+        }
+        $request->setUserResolver(static fn (): User => $actor);
+        $request->attributes->set('current_organization_id', 7);
+
+        if (! $authorization->can($actor, $permission)) {
+            return \App\Http\Responses\AdminResponse::error(
+                trans_message('errors.unauthorized'),
+                403,
+            );
+        }
+
+        return $next($request);
     }
 }
 

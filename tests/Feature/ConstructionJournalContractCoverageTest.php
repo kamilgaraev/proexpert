@@ -41,12 +41,17 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $this->setUpActingSchema();
     }
 
-    public function test_auto_attach_flag_creates_contract_coverage_but_schedule_missing_blocks_acting(): void
+    public function test_existing_contract_coverage_with_schedule_missing_blocks_acting(): void
     {
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $approver = User::factory()->create(['current_organization_id' => $organization->id]);
         $journal = $this->createJournal($organization, $project, $contract, $user);
+        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id]);
+        $this->allowPermissions();
+        Notification::fake();
+        \Illuminate\Support\Facades\Event::fake();
 
-        app(ConstructionJournalService::class)->createEntry($journal, [
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
             'estimate_id' => $estimate->id,
             'entry_date' => '2026-04-28',
             'work_description' => 'Бетонирование',
@@ -55,10 +60,16 @@ class ConstructionJournalContractCoverageTest extends TestCase
                 [
                     'estimate_item_id' => $estimateItem->id,
                     'quantity' => 15,
-                    'auto_attach_contract_coverage' => true,
                 ],
             ],
         ], $user);
+
+        $entry = app(JournalApprovalService::class)->submitForApproval($entry, $user);
+        app(JournalApprovalService::class)->approve($entry, $approver, [
+            'enabled' => true,
+            'target' => 'schedule_missing',
+            'reason' => 'Факт принят до детализации календарного графика',
+        ]);
 
         $this->assertDatabaseHas('contract_estimate_items', [
             'contract_id' => $contract->id,
@@ -74,7 +85,6 @@ class ConstructionJournalContractCoverageTest extends TestCase
         ]);
 
         $this->withoutMiddleware();
-        $this->allowPermissions();
         $this->actingAs($user, 'api_admin')
             ->postJson('/api/v1/admin/act-reports/preview', [
                 'contract_id' => $contract->id,
@@ -264,6 +274,12 @@ class ConstructionJournalContractCoverageTest extends TestCase
                 ],
             ],
         ], $user);
+        $entry->forceFill([
+            'status' => 'approved',
+            'approved_by_user_id' => $user->id,
+            'approved_at' => now(),
+        ])->saveQuietly();
+        app(CompletedWorkFactService::class)->syncFromJournalEntry($entry->fresh());
         $material = $entry->materials()->firstOrFail();
         $work = CompletedWork::query()
             ->where('journal_material_id', $material->id)
@@ -299,7 +315,6 @@ class ConstructionJournalContractCoverageTest extends TestCase
                 [
                     'estimate_item_id' => $estimateItem->id,
                     'quantity' => 15,
-                    'auto_attach_contract_coverage' => true,
                 ],
             ],
         ], $user);
@@ -437,7 +452,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('Для записи журнала нужно выбрать позицию сметы');
 
-        app(JournalApprovalService::class)->approve($entry, $approver);
+        app(JournalApprovalService::class)->submitForApproval($entry, $user);
     }
 
     public function test_schedule_missing_override_writes_audit_and_allows_approval(): void
@@ -445,9 +460,11 @@ class ConstructionJournalContractCoverageTest extends TestCase
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
         $approver = User::factory()->create(['current_organization_id' => $organization->id]);
         $journal = $this->createJournal($organization, $project, $contract, $user);
+        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id]);
 
         $this->allowPermissions();
         Notification::fake();
+        \Illuminate\Support\Facades\Event::fake();
 
         $this->mock(LoggingService::class, function ($mock): void {
             $mock->shouldReceive('audit')->zeroOrMoreTimes()->byDefault();
@@ -469,11 +486,11 @@ class ConstructionJournalContractCoverageTest extends TestCase
                 [
                     'estimate_item_id' => $estimateItem->id,
                     'quantity' => 15,
-                    'auto_attach_contract_coverage' => true,
                 ],
             ],
         ], $user);
 
+        $entry = app(JournalApprovalService::class)->submitForApproval($entry, $user);
         $approved = app(JournalApprovalService::class)->approve($entry, $approver, [
             'enabled' => true,
             'target' => 'schedule_missing',
@@ -518,6 +535,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
 
         $this->allowPermissions();
         Notification::fake();
+        \Illuminate\Support\Facades\Event::fake();
 
         $entry = app(ConstructionJournalService::class)->createEntry($journal, [
             'estimate_id' => $estimate->id,
@@ -532,6 +550,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
             ],
         ], $user);
 
+        $entry = app(JournalApprovalService::class)->submitForApproval($entry, $user);
         $approved = app(JournalApprovalService::class)->approve($entry, $approver);
         $work = CompletedWork::query()
             ->where('journal_entry_id', $entry->id)
@@ -620,11 +639,30 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'status' => 'approved',
             'total_amount' => 50000,
         ]);
+        $measurementUnitId = \Illuminate\Support\Facades\DB::table('measurement_units')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Кубический метр',
+            'short_name' => 'м³',
+            'type' => 'work',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $workTypeId = \Illuminate\Support\Facades\DB::table('work_types')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Бетонирование',
+            'measurement_unit_id' => $measurementUnitId,
+            'category' => 'construction',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $estimateItem = EstimateItem::create([
             'estimate_id' => $estimate->id,
             'position_number' => '5',
             'item_type' => EstimatePositionItemType::WORK->value,
             'name' => 'Бетонирование',
+            'work_type_id' => $workTypeId,
+            'measurement_unit_id' => $measurementUnitId,
             'quantity' => 50,
             'quantity_total' => 50,
             'unit_price' => 1000,

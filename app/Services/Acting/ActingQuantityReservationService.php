@@ -181,11 +181,21 @@ final readonly class ActingQuantityReservationService
     /** @param array<int, int|string|float> $requestedQuantities */
     public function assertAvailable(array $requestedQuantities, array $availableQuantities): void
     {
+        $requestedScaled = [];
         foreach ($requestedQuantities as $workId => $quantity) {
-            $requested = AcceptedProductionQuantity::scaled(
+            $requestedScaled[(int) $workId] = AcceptedProductionQuantity::scaled(
                 (string) $quantity,
                 'acting_quantity_requested_invalid',
             );
+        }
+
+        $this->assertScaledAvailable($requestedScaled, $availableQuantities);
+    }
+
+    /** @param array<int, int> $requestedQuantities */
+    public function assertScaledAvailable(array $requestedQuantities, array $availableQuantities): void
+    {
+        foreach ($requestedQuantities as $workId => $requested) {
             if ($requested <= 0 || $requested > ($availableQuantities[(int) $workId] ?? -1)) {
                 throw new BusinessLogicException(
                     trans_message('act_reports.invalid_acting_quantity'),

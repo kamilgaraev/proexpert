@@ -8,10 +8,14 @@ use App\Repositories\SpecificationRepository;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
 
 class SpecificationRepositoryProjectFilterTest extends TestCase
 {
+    /** @var array<string, mixed> */
+    private array $originalConnectionConfiguration;
+
     public function refreshDatabase(): void
     {
     }
@@ -20,7 +24,29 @@ class SpecificationRepositoryProjectFilterTest extends TestCase
     {
         parent::setUp();
 
+        $connectionName = DB::getDefaultConnection();
+        $this->originalConnectionConfiguration = config('database.connections.'.$connectionName);
+        config()->set(
+            'database.connections.'.$connectionName,
+            IsolatedPostgresTestDatabase::configuration(),
+        );
+        DB::purge($connectionName);
+        DB::connection($connectionName);
+
         $this->createSchema();
+    }
+
+    protected function tearDown(): void
+    {
+        $connectionName = DB::getDefaultConnection();
+        DB::purge($connectionName);
+        config()->set(
+            'database.connections.'.$connectionName,
+            $this->originalConnectionConfiguration,
+        );
+        DB::connection($connectionName);
+
+        parent::tearDown();
     }
 
     public function test_paginate_by_project_returns_only_specifications_linked_to_project_contracts(): void

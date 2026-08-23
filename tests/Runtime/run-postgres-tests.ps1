@@ -1,23 +1,42 @@
 param(
-    [string] $TestPath = 'tests/Feature/Infrastructure/PostgresDatabaseSmokeTest.php'
+    [string] $TestPath = '',
+    [string] $TestSuite = '',
+    [string] $Filter = ''
 )
 
 $ErrorActionPreference = 'Stop'
 
+if ([string]::IsNullOrWhiteSpace($TestPath) -and [string]::IsNullOrWhiteSpace($TestSuite)) {
+    $TestPath = 'tests/Feature/Infrastructure/PhpUnitPostgresProfileTest.php'
+}
+
+if (-not [string]::IsNullOrWhiteSpace($TestPath) -and -not [string]::IsNullOrWhiteSpace($TestSuite)) {
+    throw 'postgres_test_selection_conflict'
+}
+
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $testsRoot = [IO.Path]::GetFullPath((Join-Path $root 'tests') + [IO.Path]::DirectorySeparatorChar)
-
-if ([IO.Path]::IsPathRooted($TestPath)) {
-    throw 'postgres_test_path_must_be_relative'
-}
-
-$resolvedTestPath = [IO.Path]::GetFullPath((Join-Path $root $TestPath))
-if (-not $resolvedTestPath.StartsWith($testsRoot, [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $resolvedTestPath -PathType Leaf)) {
-    throw 'postgres_test_path_invalid'
-}
-
-$phpunitConfigurationPath = Join-Path $root 'phpunit.postgres.xml'
+$phpunitConfigurationPath = Join-Path $root 'phpunit.xml'
 [xml] $phpunitConfiguration = Get-Content -Raw -Encoding UTF8 $phpunitConfigurationPath
+
+if (-not [string]::IsNullOrWhiteSpace($TestPath)) {
+    if ([IO.Path]::IsPathRooted($TestPath)) {
+        throw 'postgres_test_path_must_be_relative'
+    }
+
+    $resolvedTestPath = [IO.Path]::GetFullPath((Join-Path $root $TestPath))
+    if (-not $resolvedTestPath.StartsWith($testsRoot, [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $resolvedTestPath -PathType Leaf)) {
+        throw 'postgres_test_path_invalid'
+    }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($TestSuite)) {
+    $knownSuites = @($phpunitConfiguration.phpunit.testsuites.testsuite | ForEach-Object { [string] $_.name })
+    if ($TestSuite -cnotin $knownSuites) {
+        throw 'postgres_test_suite_invalid'
+    }
+}
+
 $environment = @{}
 foreach ($node in $phpunitConfiguration.phpunit.php.env) {
     $environment[[string] $node.name] = [string] $node.value
@@ -56,12 +75,27 @@ $projectName = 'most-postgres-tests'
 
 Push-Location $root
 try {
+    & docker compose -p $projectName -f $composePath down --volumes --remove-orphans
+    if ($LASTEXITCODE -ne 0) {
+        throw 'postgres_test_container_reset_failed'
+    }
+
     & docker compose -p $projectName -f $composePath up -d --wait --wait-timeout 60
     if ($LASTEXITCODE -ne 0) {
         throw 'postgres_test_container_start_failed'
     }
 
-    & php vendor/bin/phpunit -c $phpunitConfigurationPath $TestPath
+    $phpunitArguments = @('vendor/bin/phpunit', '-c', $phpunitConfigurationPath)
+    if (-not [string]::IsNullOrWhiteSpace($TestSuite)) {
+        $phpunitArguments += @('--testsuite', $TestSuite)
+    } else {
+        $phpunitArguments += $TestPath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Filter)) {
+        $phpunitArguments += @('--filter', $Filter)
+    }
+
+    & php @phpunitArguments
     $testExitCode = $LASTEXITCODE
 } finally {
     Pop-Location

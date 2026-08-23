@@ -18,7 +18,6 @@ use App\BusinessModules\Features\Procurement\Reporting\Award\Services\Procuremen
 use App\BusinessModules\Features\Procurement\Reporting\Award\Services\ProcurementAwardOwnerEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementTransactionBoundary;
 use DateTimeImmutable;
-use DomainException;
 use LogicException;
 use PHPUnit\Framework\TestCase;
 
@@ -26,7 +25,7 @@ final class ProcurementAwardOwnerEventRecorderTest extends TestCase
 {
     public function test_supplier_request_owner_boundary_records_selection_and_direct_commit(): void
     {
-        $source = new AwardSelectionSource([$this->candidate(10, 11, '100'), $this->candidate(20, 21, '120')], [4]);
+        $source = new AwardSelectionSource([$this->candidate(10, 11, '100'), $this->candidate(20, 21, '120')]);
         $store = new OwnerAwardEvidenceStore;
         $owner = $this->owner($source, $store);
         $request = new SupplierRequest;
@@ -73,7 +72,7 @@ final class ProcurementAwardOwnerEventRecorderTest extends TestCase
 
     public function test_approval_owner_transition_records_exact_resolution_before_commit(): void
     {
-        $source = new AwardSelectionSource([$this->candidate(10, 11, '100'), $this->candidate(20, 21, '120')], [4]);
+        $source = new AwardSelectionSource([$this->candidate(10, 11, '100'), $this->candidate(20, 21, '120')]);
         $store = new OwnerAwardEvidenceStore;
         $owner = $this->owner($source, $store);
         $request = new SupplierRequest;
@@ -108,7 +107,7 @@ final class ProcurementAwardOwnerEventRecorderTest extends TestCase
 
     public function test_rejection_owner_transition_prevents_commit(): void
     {
-        $source = new AwardSelectionSource([$this->candidate(10, 11, '100'), $this->candidate(20, 21, '120')], [4]);
+        $source = new AwardSelectionSource([$this->candidate(10, 11, '100'), $this->candidate(20, 21, '120')]);
         $store = new OwnerAwardEvidenceStore;
         $owner = $this->owner($source, $store);
         $request = new SupplierRequest;
@@ -142,25 +141,30 @@ final class ProcurementAwardOwnerEventRecorderTest extends TestCase
         ], array_map(static fn (ProcurementAwardEvidenceEvent $event): ProcurementAwardEventType => $event->eventType, $store->eventsForDecision(60)));
     }
 
-    public function test_purchase_request_owner_boundary_rejects_multiple_supplier_requests(): void
+    public function test_purchase_request_owner_boundary_compares_proposals_from_multiple_supplier_requests(): void
     {
-        $source = new AwardSelectionSource([$this->candidate(10, 11, '100')], [4, 5]);
+        $firstCandidate = $this->candidate(10, 11, '120');
+        $secondCandidate = $this->candidate(20, 21, '100');
+        $secondCandidate['supplier_request_id'] = 5;
+        $secondCandidate['supplier_request_version_id'] = 6;
+        $source = new AwardSelectionSource([$firstCandidate, $secondCandidate]);
         $purchaseRequest = new PurchaseRequest;
         $purchaseRequest->forceFill(['id' => 3, 'organization_id' => 1]);
 
-        $this->expectException(DomainException::class);
-        $this->expectExceptionMessage('procurement_award_purchase_request_round_not_supported');
-
-        $this->owner($source, new OwnerAwardEvidenceStore)->prepareForPurchaseRequest(
+        $prepared = $this->owner($source, new OwnerAwardEvidenceStore)->prepareForPurchaseRequest(
             $purchaseRequest,
-            10,
+            20,
             new DateTimeImmutable('2026-08-01T10:00:00+00:00'),
         );
+
+        self::assertSame(5, $prepared->supplierRequestId);
+        self::assertSame(20, $prepared->manifest->cheapestProposalId);
+        self::assertSame(1, $prepared->manifest->selectedRank);
     }
 
     public function test_selection_rejects_winner_pair_that_differs_from_persisted_decision(): void
     {
-        $source = new AwardSelectionSource([$this->candidate(10, 11, '100')], [4]);
+        $source = new AwardSelectionSource([$this->candidate(10, 11, '100')]);
         $owner = $this->owner($source, new OwnerAwardEvidenceStore);
         $request = new SupplierRequest;
         $request->forceFill(['id' => 4, 'organization_id' => 1]);
@@ -266,7 +270,7 @@ final class ProcurementAwardOwnerEventRecorderTest extends TestCase
 
 final readonly class AwardSelectionSource implements ProcurementAwardSelectionSource
 {
-    public function __construct(private array $rows, private array $supplierRequestIds) {}
+    public function __construct(private array $rows) {}
 
     public function candidateRows(
         int $organizationId,
@@ -276,12 +280,12 @@ final readonly class AwardSelectionSource implements ProcurementAwardSelectionSo
         return $this->rows;
     }
 
-    public function supplierRequestIds(
+    public function candidateRowsForPurchaseRequest(
         int $organizationId,
         int $purchaseRequestId,
         DateTimeImmutable $occurredAt,
     ): array {
-        return $this->supplierRequestIds;
+        return $this->rows;
     }
 }
 

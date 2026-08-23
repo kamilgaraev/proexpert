@@ -30,13 +30,15 @@ final class AcceptedProductionOptionsServiceTest extends TestCase
 
     private ?ConnectionResolverInterface $previousResolver;
 
+    public function refreshDatabase(): void {}
+
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->previousResolver = Model::getConnectionResolver();
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->bootEloquent();
         $this->connection = $this->database->getConnection();

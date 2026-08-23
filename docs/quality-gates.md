@@ -2,6 +2,8 @@
 
 ## Quick Local Gate
 
+The canonical `phpunit.xml` profile uses the isolated PostgreSQL service. Start and verify it once with `composer test:postgres` before running focused database-dependent tests.
+
 Run after focused backend edits:
 
 ```powershell

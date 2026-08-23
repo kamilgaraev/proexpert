@@ -29,7 +29,7 @@ final class CustomerLegalArchiveAccessTest extends TestCase
         Container::setInstance($container);
         $container->instance(PermissionResolver::class, new CustomerLegalArchivePermissionResolver);
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->setEventDispatcher(new Dispatcher($container));
         $this->database->bootEloquent();

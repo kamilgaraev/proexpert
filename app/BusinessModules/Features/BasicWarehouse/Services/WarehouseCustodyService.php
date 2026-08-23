@@ -164,16 +164,17 @@ final class WarehouseCustodyService
             );
 
             $project = $this->findProject($organizationId, $projectId);
+            $this->lockProject($organizationId, $projectId);
             $this->findMaterial($organizationId, $materialId);
             $responsibleUser = $this->findResponsibleUser($organizationId, $responsibleUserId);
             $projectWarehouse = $this->findProjectWarehouse($organizationId, $projectId, $projectWarehouseId);
-            $this->lockWarehouse($organizationId, (int) $projectWarehouse->id);
             $custodyWarehouse = $this->getOrCreateCustodyWarehouse(
                 $organizationId,
                 $project,
                 $responsibleUser,
                 $actor
             );
+            $this->lockWarehouses($organizationId, [(int) $projectWarehouse->id, (int) $custodyWarehouse->id]);
 
             $replayed = $this->replayTransfer($organizationId, $idempotencyKey, $fingerprint);
             if ($replayed !== null) {
@@ -195,18 +196,12 @@ final class WarehouseCustodyService
                     'related_user_id' => $responsibleUserId,
                     'operation_category' => WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE,
                     'idempotency_key' => $idempotencyKey,
-                    'idempotency_fingerprint' => $fingerprint,
+                    'custody_idempotency_fingerprint' => $fingerprint,
                     'transfer_pair_key' => $idempotencyKey,
                     'batch_number' => WarehouseCustodyLineage::batchNumber($idempotencyKey),
                     'document_number' => $data['document_number'] ?? null,
                     'reason' => $data['reason'] ?? trans_message('basic_warehouse.custody.issued'),
                 ]
-            );
-
-            $this->markTransferMovements(
-                $result,
-                WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE,
-                $responsibleUserId
             );
 
             return array_merge($result, [
@@ -233,7 +228,6 @@ final class WarehouseCustodyService
             $quantity = (float) $data['quantity'];
             $projectId = (int) $custodyWarehouse->project_id;
             $responsibleUserId = (int) $custodyWarehouse->responsible_user_id;
-            $this->lockWarehouse($organizationId, (int) $custodyWarehouse->id);
             $idempotencyKey = (string) $data['idempotency_key'];
             $fingerprint = WarehouseCustodyIdempotency::fingerprint(
                 WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN,
@@ -241,11 +235,13 @@ final class WarehouseCustodyService
             );
 
             $this->findMaterial($organizationId, $materialId);
+            $this->lockProject($organizationId, $projectId);
             $projectWarehouse = $this->projectWarehouseService->getOrCreateProjectWarehouse(
                 $organizationId,
                 $projectId,
                 $actor
             );
+            $this->lockWarehouses($organizationId, [(int) $projectWarehouse->id, (int) $custodyWarehouse->id]);
 
             $replayed = $this->replayTransfer($organizationId, $idempotencyKey, $fingerprint);
             if ($replayed !== null) {
@@ -254,6 +250,13 @@ final class WarehouseCustodyService
                     'custody_warehouse' => $custodyWarehouse,
                 ]);
             }
+
+            $sourceIssueAllocations = $this->plannedSourceIssueAllocations(
+                $organizationId,
+                (int) $custodyWarehouse->id,
+                $materialId,
+                $quantity,
+            );
 
             $result = $this->warehouseService->transferAsset(
                 $organizationId,
@@ -267,18 +270,12 @@ final class WarehouseCustodyService
                     'related_user_id' => $responsibleUserId,
                     'operation_category' => WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN,
                     'idempotency_key' => $idempotencyKey,
-                    'idempotency_fingerprint' => $fingerprint,
+                    'custody_idempotency_fingerprint' => $fingerprint,
                     'transfer_pair_key' => $idempotencyKey,
+                    'source_issue_allocations' => $sourceIssueAllocations,
                     'document_number' => $data['document_number'] ?? null,
                     'reason' => $data['reason'] ?? trans_message('basic_warehouse.custody.returned'),
                 ]
-            );
-
-            $this->markTransferMovements(
-                $result,
-                WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN,
-                $responsibleUserId,
-                $this->sourceIssueAllocations($organizationId, $result['source_details'] ?? []),
             );
 
             return array_merge($result, [
@@ -344,7 +341,7 @@ final class WarehouseCustodyService
             return null;
         }
 
-        if (($movementOut->metadata['idempotency_fingerprint'] ?? null) !== $fingerprint) {
+        if (($movementOut->metadata['custody_idempotency_fingerprint'] ?? null) !== $fingerprint) {
             throw new WarehouseCustodyIdempotencyConflictException(
                 trans_message('basic_warehouse.custody.errors.idempotency_conflict'),
             );
@@ -364,13 +361,23 @@ final class WarehouseCustodyService
         ];
     }
 
-    private function lockWarehouse(int $organizationId, int $warehouseId): void
+    private function lockProject(int $organizationId, int $projectId): void
+    {
+        Project::query()
+            ->where('organization_id', $organizationId)
+            ->whereKey($projectId)
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    private function lockWarehouses(int $organizationId, array $warehouseIds): void
     {
         OrganizationWarehouse::query()
             ->where('organization_id', $organizationId)
-            ->whereKey($warehouseId)
+            ->whereIn('id', array_values(array_unique($warehouseIds)))
+            ->orderBy('id')
             ->lockForUpdate()
-            ->firstOrFail();
+            ->get();
     }
 
     private function sourceIssueAllocations(int $organizationId, array $sourceDetails): array
@@ -393,29 +400,37 @@ final class WarehouseCustodyService
         ], $allocations);
     }
 
-    private function markTransferMovements(
-        array $result,
-        string $category,
-        int $responsibleUserId,
-        array $sourceIssueAllocations = [],
-    ): void {
-        foreach (['movement_out', 'movement_in'] as $key) {
-            if (! isset($result[$key]) || ! $result[$key] instanceof WarehouseMovement) {
-                continue;
+    private function plannedSourceIssueAllocations(
+        int $organizationId,
+        int $warehouseId,
+        int $materialId,
+        float $quantity,
+    ): array {
+        $remaining = $quantity;
+        $sourceDetails = [];
+        $balances = WarehouseBalance::query()
+            ->where('organization_id', $organizationId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('material_id', $materialId)
+            ->where('available_quantity', '>', 0)
+            ->orderByRaw('CASE WHEN expiry_date IS NOT NULL THEN expiry_date ELSE created_at END ASC')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($balances as $balance) {
+            if ($remaining <= 0) {
+                break;
             }
 
-            $metadata = $result[$key]->metadata ?? [];
-            if ($sourceIssueAllocations !== []) {
-                $metadata['source_issue_allocations'] = $sourceIssueAllocations;
-            }
-
-            $result[$key]->forceFill([
-                'operation_category' => $category,
-                'related_user_id' => $responsibleUserId,
-                'metadata' => $metadata,
-            ])->save();
-            $result[$key]->refresh();
+            $allocated = min((float) $balance->available_quantity, $remaining);
+            $sourceDetails[] = [
+                'batch_number' => $balance->batch_number,
+                'quantity' => $allocated,
+            ];
+            $remaining -= $allocated;
         }
+
+        return $this->sourceIssueAllocations($organizationId, $sourceDetails);
     }
 
     private function findProject(int $organizationId, int $projectId): Project

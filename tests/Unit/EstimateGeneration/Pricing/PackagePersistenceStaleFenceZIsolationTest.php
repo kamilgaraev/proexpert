@@ -20,8 +20,8 @@ final class PackagePersistenceStaleFenceZIsolationTest extends TestCase
     }
 
     #[Test]
-    public function later_sqlite_consumer_does_not_receive_finalizer_tracking_connection(): void
+    public function later_postgres_consumer_does_not_receive_finalizer_tracking_connection(): void
     {
-        self::assertNotInstanceOf(FinalizerTrackingSqliteConnection::class, DB::connection());
+        self::assertNotInstanceOf(FinalizerTrackingPostgresConnection::class, DB::connection());
     }
 }

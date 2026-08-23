@@ -200,22 +200,28 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         $routes = file_get_contents($root.'routes/api/v1/admin/project-based.php');
         $documentController = file_get_contents($root.'app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveDocumentController.php');
         $fileController = file_get_contents($root.'app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveFileController.php');
+        $accessResolver = file_get_contents($root.'app/Services/LegalArchive/ContractLegalDocumentAccessResolver.php');
         $downloads = file_get_contents($root.'app/Services/LegalArchive/Files/LegalDocumentDownloadService.php');
 
         self::assertIsString($routes);
         self::assertIsString($documentController);
         self::assertIsString($fileController);
+        self::assertIsString($accessResolver);
         self::assertIsString($downloads);
         self::assertStringContainsString("Route::get('/{contract}/documents/{legalDocument}'", $routes);
         self::assertStringContainsString("Route::get('/{contract}/documents/{legalDocument}/versions/{documentVersion}/{purpose}'", $routes);
         self::assertStringContainsString("->middleware('authorize:contracts.view,project,project')", $routes);
         self::assertStringContainsString("->whereIn('purpose', ['preview', 'download'])", $routes);
-        self::assertStringContainsString("where('project_id', \$project)", $documentController);
-        self::assertStringContainsString('legal_archive_document_id !== (int) $legalDocument', $documentController);
-        self::assertStringContainsString('primary_project_id !== $project', $documentController);
-        self::assertStringContainsString('legal_archive_document_id !== (int) $legalDocument', $fileController);
-        self::assertStringContainsString('found->document_id !== (int) $legalDocument', $fileController);
-        self::assertStringContainsString("where('primary_project_id', \$project)", $fileController);
+        self::assertStringContainsString('resolveDocument($project, $contract, (int) $legalDocument)', $documentController);
+        self::assertStringContainsString("where('project_id', \$projectId)", $accessResolver);
+        self::assertStringContainsString("where('legal_archive_document_id', \$documentId)", $accessResolver);
+        self::assertStringContainsString("where('primary_project_id', \$projectId)", $accessResolver);
+        self::assertStringContainsString(
+            'resolveVersion($project, $contract, (int) $legalDocument, (int) $documentVersion)',
+            $fileController,
+        );
+        self::assertStringContainsString('$this->resolveDocument($projectId, $contractId, $documentId)', $accessResolver);
+        self::assertStringContainsString("where('document_id', (int) \$context->document->id)", $accessResolver);
         self::assertStringContainsString('temporaryUrlForContract', $fileController);
         self::assertStringContainsString('temporaryUrlForContract', $downloads);
         self::assertStringContainsString('version->document_id !== (int) $contract->legal_archive_document_id', $downloads);

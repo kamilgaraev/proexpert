@@ -45,7 +45,11 @@ final class WarehouseJournalConsumptionTest extends TestCase
             ],
         ], $context->user);
 
-        $journalMaterial = $entry->materials()->firstOrFail();
+        $service = app(ConstructionJournalService::class);
+        $service->commitMaterialConsumption($entry);
+        $service->commitMaterialConsumption($entry);
+
+        $journalMaterial = $entry->materials()->firstOrFail()->refresh();
 
         $this->assertDatabaseHas('warehouse_balances', [
             'warehouse_id' => $setup['custodyWarehouse']->id,
@@ -72,7 +76,8 @@ final class WarehouseJournalConsumptionTest extends TestCase
 
         $this->expectException(DomainException::class);
 
-        app(ConstructionJournalService::class)->createEntry($setup['journal'], [
+        $service = app(ConstructionJournalService::class);
+        $entry = $service->createEntry($setup['journal'], [
             'entry_date' => '2026-06-03',
             'work_description' => 'Монтаж крепежа',
             'materials' => [
@@ -85,6 +90,8 @@ final class WarehouseJournalConsumptionTest extends TestCase
                 ],
             ],
         ], $context->user);
+
+        $service->commitMaterialConsumption($entry);
     }
 
     public function test_direct_write_off_requires_non_production_category_without_journal_context(): void
@@ -132,6 +139,8 @@ final class WarehouseJournalConsumptionTest extends TestCase
                 ],
             ],
         ], $context->user);
+
+        $service->commitMaterialConsumption($entry);
 
         $this->expectException(DomainException::class);
 
@@ -206,19 +215,22 @@ final class WarehouseJournalConsumptionTest extends TestCase
             'unit_price' => 12,
         ]);
 
-        app(ConstructionJournalService::class)->createEntry($setup['journal'], [
+        $service = app(ConstructionJournalService::class);
+        $entry = $service->createEntry($setup['journal'], [
             'entry_date' => '2026-06-03',
-            'work_description' => 'РњРѕРЅС‚Р°Р¶ РєСЂРµРїРµР¶Р°',
+            'work_description' => 'Монтаж крепежа',
             'materials' => [
                 [
                     'material_id' => $setup['material']->id,
                     'project_material_delivery_id' => $setup['delivery']->id,
                     'material_name' => $setup['material']->name,
                     'quantity' => 2,
-                    'measurement_unit' => 'С€С‚',
+                    'measurement_unit' => 'шт',
                 ],
             ],
         ], $context->user);
+
+        $service->commitMaterialConsumption($entry);
 
         $stock = app(ProjectMaterialStockService::class)->getProjectStock(
             (int) $context->organization->id,

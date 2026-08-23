@@ -35,7 +35,7 @@ final class LegalDocumentStructuredFieldsContractTest extends TestCase
             2,
             substr_count($controller, '$this->actions->forMany($actor, collect([$found]))'),
         );
-        self::assertStringContainsString("'obligations',", $registry);
+        self::assertStringContainsString("'obligations.responsible:id,name',", $registry);
     }
 
     public function test_workflow_and_activation_enforce_profile_readiness_and_publish_obligations(): void

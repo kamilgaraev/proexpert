@@ -185,7 +185,54 @@ final class WarehouseCustodyFlowTest extends TestCase
             ->firstOrFail();
 
         self::assertSame($sourceIssue->id, $returnMovement->metadata['source_issue_allocations'][0]['movement_id']);
-        self::assertSame(7.0, $returnMovement->metadata['source_issue_allocations'][0]['quantity']);
+        self::assertSame(7.0, (float) $returnMovement->metadata['source_issue_allocations'][0]['quantity']);
+    }
+
+    public function test_admin_cannot_return_more_than_the_unconsumed_responsible_balance(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createProjectWarehouseContext($context);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'idempotency_key' => (string) Str::uuid(),
+                'project_id' => $setup['project']->id,
+                'project_warehouse_id' => $setup['projectWarehouse']->id,
+                'material_id' => $setup['material']->id,
+                'responsible_user_id' => $setup['responsibleUser']->id,
+                'quantity' => 20,
+            ])
+            ->assertOk();
+
+        $custodyWarehouse = OrganizationWarehouse::query()
+            ->where('warehouse_type', OrganizationWarehouse::TYPE_CUSTODY)
+            ->where('project_id', $setup['project']->id)
+            ->where('responsible_user_id', $setup['responsibleUser']->id)
+            ->firstOrFail();
+
+        $movementsBefore = WarehouseMovement::query()->count();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/custody/return', [
+                'idempotency_key' => (string) Str::uuid(),
+                'custody_warehouse_id' => $custodyWarehouse->id,
+                'material_id' => $setup['material']->id,
+                'quantity' => 20.01,
+            ])
+            ->assertStatus(422);
+
+        self::assertSame($movementsBefore, WarehouseMovement::query()->count());
+        $this->assertDatabaseHas('warehouse_balances', [
+            'warehouse_id' => $setup['projectWarehouse']->id,
+            'material_id' => $setup['material']->id,
+            'available_quantity' => 30,
+        ]);
+        $this->assertDatabaseHas('warehouse_balances', [
+            'warehouse_id' => $custodyWarehouse->id,
+            'material_id' => $setup['material']->id,
+            'available_quantity' => 20,
+        ]);
     }
 
     public function test_admin_can_list_responsible_custody_balances(): void

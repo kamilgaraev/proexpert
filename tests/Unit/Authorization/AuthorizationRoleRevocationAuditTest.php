@@ -34,12 +34,11 @@ class AuthorizationRoleRevocationAuditTest extends TestCase
             ->once()
             ->with('auth.role.revoked', Mockery::on(static fn (array $payload): bool => (
                 $payload['target_user_id'] === 10
-                && $payload['target_email'] === 'target@example.test'
                 && $payload['role_slug'] === 'customer_manager'
                 && $payload['assignment_id'] === 40
                 && $payload['revoked_by'] === 20
-                && $payload['revoked_by_email'] === 'actor@example.test'
                 && $payload['revoked_by_type'] === 'user'
+                && $payload['was_active'] === true
             )));
 
         $service = new AuthorizationService(
@@ -64,12 +63,11 @@ class AuthorizationRoleRevocationAuditTest extends TestCase
             ->once()
             ->with('auth.role.revoked', Mockery::on(static fn (array $payload): bool => (
                 $payload['target_user_id'] === 11
-                && $payload['target_email'] === 'target-system@example.test'
                 && $payload['role_slug'] === 'customer_viewer'
                 && $payload['assignment_id'] === 41
                 && $payload['revoked_by'] === null
-                && $payload['revoked_by_email'] === null
                 && $payload['revoked_by_type'] === 'system'
+                && $payload['was_active'] === false
             )));
 
         $service = new AuthorizationService(

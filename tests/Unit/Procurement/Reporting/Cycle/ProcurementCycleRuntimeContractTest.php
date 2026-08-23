@@ -50,7 +50,7 @@ final class ProcurementCycleRuntimeContractTest extends TestCase
             $scope,
             [
                 'organization_id' => (string) $scope->organizationId,
-                'project_id' => (string) $scope->projectIds[0],
+                'project_id' => '999999',
                 'period_start' => '2026-07-10',
                 'period_end' => '2026-08-09',
             ],

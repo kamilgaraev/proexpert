@@ -46,7 +46,7 @@ final class LookaheadReadinessMigrationContractTest extends TestCase
     public function test_authorization_uses_current_role_definitions_and_denies_conditional_or_expired_grants(): void
     {
         self::assertStringContainsString('lookahead_system_role_definition_version_unique', $this->migration);
-        self::assertStringContainsString('definition.canonical_definition = grant->\'role_definition\'', $this->migration);
+        self::assertStringContainsString('definition.canonical_definition = grant_item->\'role_definition\'', $this->migration);
         self::assertStringContainsString('assignment.expires_at > statement_timestamp()', $this->migration);
         self::assertStringContainsString('NOT EXISTS (', $this->migration);
         self::assertStringContainsString('FROM role_conditions condition', $this->migration);

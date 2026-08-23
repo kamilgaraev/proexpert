@@ -20,10 +20,11 @@ class ConstructionErpCoverageCatalogTest extends TestCase
     ];
 
     private const CONSTRUCTION_PACKAGES = [
-        'site-quality-handover',
-        'construction-safety',
-        'machinery-and-labor',
-        'change-control',
+        'quality-safety',
+        'pto-handover',
+        'machinery',
+        'workforce-output',
+        'finance-contracts',
     ];
 
     private string $basePath;
@@ -60,23 +61,22 @@ class ConstructionErpCoverageCatalogTest extends TestCase
             $this->assertSame(2, $packages[$packageSlug]['schema_version']);
         }
 
-        $this->assertTierContains($catalog, 'site-quality-handover', 'base', [
+        $this->assertTierContains($catalog, 'quality-safety', 'standard', [
             'quality-control',
-            'handover-acceptance',
+            'safety-management',
         ]);
-        $this->assertTierContains($catalog, 'site-quality-handover', 'pro', [
+        $this->assertTierContains($catalog, 'pto-handover', 'standard', [
             'quality-control',
             'executive-documentation',
             'handover-acceptance',
         ]);
-        $this->assertTierContains($catalog, 'construction-safety', 'base', [
-            'safety-management',
-        ]);
-        $this->assertTierContains($catalog, 'machinery-and-labor', 'base', [
+        $this->assertTierContains($catalog, 'machinery', 'standard', [
             'machinery-operations',
+        ]);
+        $this->assertTierContains($catalog, 'workforce-output', 'standard', [
             'production-labor',
         ]);
-        $this->assertTierContains($catalog, 'change-control', 'base', [
+        $this->assertTierContains($catalog, 'finance-contracts', 'standard', [
             'change-management',
         ]);
     }

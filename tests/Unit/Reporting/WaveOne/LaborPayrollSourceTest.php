@@ -36,14 +36,13 @@ use DateTimeImmutable;
 use DateTimeZone;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
-use Illuminate\Database\SQLiteConnection;
 use Illuminate\Support\Collection;
-use PDO;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 use Tests\Support\Reporting\FakeReportExecutionClock;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class LaborPayrollSourceTest extends TestCase
 {
@@ -957,9 +956,9 @@ final class LaborPayrollSourceTest extends TestCase
         };
     }
 
-    private function sourceRunConnection(): SQLiteConnection
+    private function sourceRunConnection(): ConnectionInterface
     {
-        $connection = new SQLiteConnection(new PDO('sqlite::memory:'));
+        $connection = IsolatedPostgresTestDatabase::connection();
         $connection->statement(
             'CREATE TABLE report_runs (
                 id TEXT PRIMARY KEY,
@@ -990,7 +989,7 @@ final class LaborPayrollSourceTest extends TestCase
     }
 
     private function insertSourceRun(
-        SQLiteConnection $connection,
+        ConnectionInterface $connection,
         string $id,
         string $snapshotId,
         string $canonical,

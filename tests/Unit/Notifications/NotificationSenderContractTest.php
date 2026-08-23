@@ -18,6 +18,7 @@ final class NotificationSenderContractTest extends TestCase
 {
     private const EXPECTED_CALLS_BY_FILE = [
         'app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationNotificationService.php' => 1,
+        'app/BusinessModules/Core/Reporting/Infrastructure/Notifications/PersistedInAppReportSubscriptionNotifier.php' => 1,
         'app/BusinessModules/Core/Payments/Services/PaymentValidationService.php' => 1,
         'app/BusinessModules/Features/Notifications/Integration/ContractEventIntegration.php' => 2,
         'app/BusinessModules/Features/Procurement/Listeners/SendProcurementNotifications.php' => 5,
@@ -39,7 +40,7 @@ final class NotificationSenderContractTest extends TestCase
     {
         $calls = $this->notificationCalls();
 
-        self::assertCount(16, $calls, 'The maintained sender inventory must stay non-empty and complete.');
+        self::assertCount(17, $calls, 'The maintained sender inventory must stay non-empty and complete.');
 
         foreach ($calls as $call) {
             $interfaces = $this->namedStringValues($call['node'], 'interfaces');
@@ -58,6 +59,7 @@ final class NotificationSenderContractTest extends TestCase
     {
         $expectedByFile = [
             'app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationNotificationService.php' => ['budget-estimates.view'],
+            'app/BusinessModules/Core/Reporting/Infrastructure/Notifications/PersistedInAppReportSubscriptionNotifier.php' => ['reports.view'],
             'app/BusinessModules/Features/SiteRequests/Services/SiteRequestNotificationService.php' => ['notifications.receive.site_requests'],
             'app/Services/OneCExchange/OneCExchangeIncidentNotificationService.php' => ['one_c_exchange.view'],
             'app/Services/OneCExchange/OneCExchangeIncidentService.php' => ['one_c_exchange.view'],

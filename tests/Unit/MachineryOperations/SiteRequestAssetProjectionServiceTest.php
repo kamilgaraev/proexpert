@@ -33,7 +33,7 @@ final class SiteRequestAssetProjectionServiceTest extends LaravelTestCase
         parent::setUp();
 
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->bootEloquent();
         $this->createSchema();

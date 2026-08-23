@@ -48,7 +48,7 @@ final readonly class HoldingPerformanceCandidateContract
 
     public const FORMULA_HASH = '59c4e2d23349656ae8948679fcea4dc59da5be20792b865afb17da2b9a667f20';
 
-    public const SOURCE_HASH = '91af250419c8cfc877973d00116ab698eb3ae39831d65e53fcf34fe5ff527d6b';
+    public const SOURCE_HASH = '9d8d2aea5588995be1334b95c5f695e3db11ee70f75e6ffc4f4eb2468fedbdfb';
 
     public function filters(): array
     {

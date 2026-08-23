@@ -97,7 +97,10 @@ final readonly class LegalSignatureCleanupDebtService
                 $reconciliationPending = $artifact !== null
                     && in_array((string) $artifact->state, ['uploading', 'uploaded', 'ambiguous'], true)
                     && ((int) $artifact->claim_count > 0
-                        || ($artifact->upload_lease_expires_at !== null && now()->lt($artifact->upload_lease_expires_at)));
+                        || ($artifact->upload_lease_expires_at !== null && now()->lt($artifact->upload_lease_expires_at))
+                        || ((string) $artifact->state === 'ambiguous'
+                            && $artifact->next_reconcile_at !== null
+                            && now()->lt($artifact->next_reconcile_at)));
                 if ($reconciliationPending) {
                     $this->connection->table('legal_archive_file_cleanup_debts')->where('id', $id)->update([
                         'last_error' => 'legal_signature_cleanup_reconciliation_pending',

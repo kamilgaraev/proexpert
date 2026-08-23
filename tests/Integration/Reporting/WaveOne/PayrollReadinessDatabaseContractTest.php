@@ -23,12 +23,11 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\Da
 use DateTimeImmutable;
 use DateTimeZone;
 use DomainException;
-use Illuminate\Database\SQLiteConnection;
 use InvalidArgumentException;
-use PDO;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
+use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class PayrollReadinessDatabaseContractTest extends TestCase
@@ -163,7 +162,7 @@ final class PayrollReadinessDatabaseContractTest extends TestCase
 
     private function fixture(): array
     {
-        $connection = new SQLiteConnection(new PDO('sqlite::memory:'));
+        $connection = IsolatedPostgresTestDatabase::connection();
         $connection->statement(
             'CREATE TABLE workforce_report_snapshots (
                 id TEXT PRIMARY KEY,
@@ -171,24 +170,24 @@ final class PayrollReadinessDatabaseContractTest extends TestCase
                 report_code TEXT NOT NULL,
                 query_hash TEXT NOT NULL,
                 source_hash TEXT NOT NULL,
-                totals TEXT NOT NULL,
+                totals JSONB NOT NULL,
                 freshness_status TEXT NOT NULL,
                 quality_status TEXT NOT NULL,
                 reconciliation_status TEXT NOT NULL,
-                row_schema TEXT NOT NULL,
-                warnings TEXT NOT NULL,
-                source_refs TEXT NOT NULL,
+                row_schema JSONB NOT NULL,
+                warnings JSONB NOT NULL,
+                source_refs JSONB NOT NULL,
                 row_count INTEGER NOT NULL
             )',
         );
         $connection->statement(
             'CREATE TABLE payroll_readiness_snapshot_rows (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 organization_id INTEGER NOT NULL,
                 snapshot_id TEXT NOT NULL,
                 row_key TEXT NOT NULL,
-                period_start TEXT,
-                row_payload TEXT NOT NULL
+                period_start DATE,
+                row_payload JSONB NOT NULL
             )',
         );
         $snapshotId = '01J00000000000000000000001';

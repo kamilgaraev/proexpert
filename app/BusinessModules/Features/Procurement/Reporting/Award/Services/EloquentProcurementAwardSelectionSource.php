@@ -17,9 +17,39 @@ final class EloquentProcurementAwardSelectionSource implements ProcurementAwardS
         int $supplierRequestId,
         DateTimeImmutable $occurredAt,
     ): array {
+        return $this->candidateRowsForSupplierRequestIds(
+            $organizationId,
+            [$supplierRequestId],
+            $occurredAt,
+        );
+    }
+
+    public function candidateRowsForPurchaseRequest(
+        int $organizationId,
+        int $purchaseRequestId,
+        DateTimeImmutable $occurredAt,
+    ): array {
+        $supplierRequestIds = DB::table('supplier_requests as supplier_request')
+            ->where('supplier_request.organization_id', $organizationId)
+            ->where('supplier_request.purchase_request_id', $purchaseRequestId)
+            ->whereNull('supplier_request.deleted_at')
+            ->orderBy('supplier_request.id')
+            ->lockForUpdate()
+            ->pluck('supplier_request.id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+
+        return $this->candidateRowsForSupplierRequestIds($organizationId, $supplierRequestIds, $occurredAt);
+    }
+
+    private function candidateRowsForSupplierRequestIds(
+        int $organizationId,
+        array $supplierRequestIds,
+        DateTimeImmutable $occurredAt,
+    ): array {
         $proposalIds = DB::table('supplier_proposals as proposal')
             ->where('proposal.organization_id', $organizationId)
-            ->where('proposal.supplier_request_id', $supplierRequestId)
+            ->whereIn('proposal.supplier_request_id', $supplierRequestIds)
             ->whereNull('proposal.deleted_at')
             ->orderBy('proposal.id')
             ->limit(ProcurementAwardManifestBuilder::CANDIDATE_LIMIT + 1)
@@ -92,28 +122,6 @@ final class EloquentProcurementAwardSelectionSource implements ProcurementAwardS
             'request_lines' => ProcurementAwardVersionProjection::requestLines(self::jsonArrayOrEmpty($row->request_lines)),
             'commercial_snapshot' => ProcurementAwardVersionProjection::proposal(self::jsonArrayOrEmpty($row->commercial_snapshot)),
         ])->all();
-    }
-
-    public function supplierRequestIds(
-        int $organizationId,
-        int $purchaseRequestId,
-        DateTimeImmutable $occurredAt,
-    ): array {
-        return DB::table('supplier_requests as supplier_request')
-            ->where('supplier_request.organization_id', $organizationId)
-            ->where('supplier_request.purchase_request_id', $purchaseRequestId)
-            ->whereNull('supplier_request.deleted_at')
-            ->whereExists(function ($query): void {
-                $query->selectRaw('1')
-                    ->from('supplier_proposals as proposal')
-                    ->whereColumn('proposal.supplier_request_id', 'supplier_request.id')
-                    ->whereNull('proposal.deleted_at');
-            })
-            ->orderBy('supplier_request.id')
-            ->lockForUpdate()
-            ->pluck('supplier_request.id')
-            ->map(static fn (mixed $id): int => (int) $id)
-            ->all();
     }
 
     private static function jsonArrayOrEmpty(mixed $value): array

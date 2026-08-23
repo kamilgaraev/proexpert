@@ -15,7 +15,6 @@ final class CommercialRenewalSchemaConstraintTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        DB::statement('PRAGMA foreign_keys = ON');
         foreach (['constraint_payments', 'constraint_cycles', 'constraint_orders', 'constraint_accounts'] as $table) {
             DB::statement("DROP TABLE IF EXISTS {$table}");
         }

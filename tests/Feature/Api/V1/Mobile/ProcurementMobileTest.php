@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Mobile;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
@@ -11,6 +16,7 @@ use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
@@ -21,7 +27,9 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
+use App\Models\MeasurementUnit;
 use App\Models\Project;
+use App\Models\Supplier;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -38,12 +46,13 @@ final class ProcurementMobileTest extends TestCase
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $purchaseRequest = $this->purchaseRequest($context, $project, ['status' => 'pending']);
-        $order = $this->purchaseOrder($purchaseRequest, ['status' => 'confirmed']);
+        $order = $this->purchaseOrder($purchaseRequest, ['status' => 'in_delivery']);
         $this->orderItem($context, $order, ['quantity' => 4]);
-        $approval = $this->approval($context, 'budget_exceeded');
+        $this->createPaidPaymentDocument($context, $order, 400);
         $this->allowAccess();
+        $approval = $this->summaryApproval($context, 'budget_exceeded');
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/procurement/summary?project_id='.$project->id);
 
         $response->assertOk()
@@ -59,7 +68,7 @@ final class ProcurementMobileTest extends TestCase
         $this->assertContains('comment', $response->json('data.purchase_orders.0.available_actions'));
         $this->assertContains('approve', $response->json('data.assigned_approvals.0.available_actions'));
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/procurement/purchase-orders/'.$order->id)
             ->assertOk()
             ->assertJsonPath('data.order.id', $order->id)
@@ -69,14 +78,14 @@ final class ProcurementMobileTest extends TestCase
     public function test_mobile_approval_action_updates_procurement_decision(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
-        $approval = $this->approval($context, 'non_lowest_price');
         $this->allowAccess();
+        $approval = $this->approval($context, 'budget_exceeded');
 
-        $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/procurement/approvals/'.$approval->id.'/approve', [
                 'comment' => 'Согласовано для срочной поставки.',
-            ])
-            ->assertOk()
+            ]);
+        $response->assertOk()
             ->assertJsonPath('data.id', $approval->id)
             ->assertJsonPath('data.status', 'approved')
             ->assertJsonPath('data.comment', 'Согласовано для срочной поставки.');
@@ -94,19 +103,20 @@ final class ProcurementMobileTest extends TestCase
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $purchaseRequest = $this->purchaseRequest($context, $project, ['status' => 'approved']);
-        $order = $this->purchaseOrder($purchaseRequest, ['status' => 'confirmed']);
+        $order = $this->purchaseOrder($purchaseRequest, ['status' => 'in_delivery']);
         $item = $this->orderItem($context, $order, ['quantity' => 5, 'unit_price' => 80]);
         $warehouse = $this->warehouse($context);
+        $this->createPaidPaymentDocument($context, $order, 400);
         $this->allowAccess();
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/procurement/purchase-orders/'.$order->id.'/comments', [
                 'comment' => 'Поставка ожидается до обеда.',
             ])
             ->assertOk()
             ->assertJsonPath('data.comments.0.comment', 'Поставка ожидается до обеда.');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/procurement/purchase-orders/'.$order->id.'/receive-materials', [
                 'warehouse_id' => $warehouse->id,
                 'idempotency_key' => '7cf38185-9807-45df-938e-ccdcf292ba26',
@@ -120,7 +130,7 @@ final class ProcurementMobileTest extends TestCase
             ])
             ->assertStatus(422);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/procurement/purchase-orders/'.$order->id.'/receive-materials', [
                 'warehouse_id' => $warehouse->id,
                 'idempotency_key' => '87b97088-bb36-43ce-850d-ff3985a5c77d',
@@ -161,9 +171,10 @@ final class ProcurementMobileTest extends TestCase
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $purchaseRequest = $this->purchaseRequest($context, $project, ['status' => 'approved']);
-        $order = $this->purchaseOrder($purchaseRequest, ['status' => 'confirmed']);
+        $order = $this->purchaseOrder($purchaseRequest, ['status' => 'in_delivery']);
         $item = $this->orderItem($context, $order, ['quantity' => 5, 'unit_price' => 80]);
         $warehouse = $this->warehouse($context);
+        $this->createPaidPaymentDocument($context, $order, 400);
         $this->allowAccess();
         $payload = [
             'warehouse_id' => $warehouse->id,
@@ -176,11 +187,11 @@ final class ProcurementMobileTest extends TestCase
             'idempotency_key' => '9e7f1838-9f28-4f46-9a67-e161d531af34',
         ];
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/procurement/purchase-orders/'.$order->id.'/receive-materials', $payload)
             ->assertOk();
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/procurement/purchase-orders/'.$order->id.'/receive-materials', $payload)
             ->assertOk();
 
@@ -205,7 +216,7 @@ final class ProcurementMobileTest extends TestCase
             'procurement.purchase_orders.view',
         ]);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/procurement/purchase-orders/'.$order->id.'/receive-materials', [
                 'warehouse_id' => $warehouse->id,
                 'items' => [
@@ -268,10 +279,21 @@ final class ProcurementMobileTest extends TestCase
 
     private function orderItem(AdminApiTestContext $context, PurchaseOrder $order, array $attributes = []): PurchaseOrderItem
     {
+        $unit = MeasurementUnit::query()->firstOrCreate(
+            [
+                'organization_id' => $context->organization->id,
+                'short_name' => 'м3',
+            ],
+            [
+                'name' => 'Кубический метр',
+                'type' => 'material',
+            ],
+        );
         $material = Material::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Бетон М300',
             'code' => 'CONCRETE-'.$order->id,
+            'measurement_unit_id' => $unit->id,
             'default_price' => 80,
             'is_active' => true,
         ]);
@@ -299,11 +321,127 @@ final class ProcurementMobileTest extends TestCase
         ]);
     }
 
+    private function createPaidPaymentDocument(
+        AdminApiTestContext $context,
+        PurchaseOrder $order,
+        float $amount,
+    ): void {
+        PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'document_number' => 'PAY-MOB-'.$order->id.'-'.uniqid(),
+            'document_date' => now()->toDateString(),
+            'direction' => InvoiceDirection::OUTGOING,
+            'invoice_type' => InvoiceType::MATERIAL_PURCHASE,
+            'payer_organization_id' => $context->organization->id,
+            'amount' => $amount,
+            'currency' => 'RUB',
+            'paid_amount' => $amount,
+            'remaining_amount' => 0,
+            'status' => PaymentDocumentStatus::PAID,
+            'paid_at' => now(),
+            'metadata' => [
+                'purchase_order_id' => $order->id,
+                'purchase_order_number' => $order->order_number,
+            ],
+        ]);
+    }
+
     private function approval(AdminApiTestContext $context, string $reasonCode): ProcurementApproval
+    {
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $purchaseRequest = $this->purchaseRequest($context, $project, [
+            'request_number' => 'PR-APR-MOB-'.$reasonCode,
+            'budget_amount' => 1000,
+        ]);
+        $unit = MeasurementUnit::query()->firstOrCreate(
+            [
+                'organization_id' => $context->organization->id,
+                'short_name' => 'шт',
+            ],
+            [
+                'name' => 'Штука',
+                'type' => 'material',
+            ],
+        );
+        $material = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Крепёж для согласования',
+            'code' => 'APPROVAL-MATERIAL-'.$reasonCode,
+            'measurement_unit_id' => $unit->id,
+            'is_active' => true,
+        ]);
+        PurchaseRequestLine::query()->create([
+            'purchase_request_id' => $purchaseRequest->id,
+            'material_id' => $material->id,
+            'name' => $material->name,
+            'quantity' => 1,
+            'unit' => $unit->short_name,
+            'estimated_price' => 1000,
+        ]);
+        $supplier = Supplier::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Поставщик для мобильного согласования',
+            'tax_number' => '7701'.str_pad((string) $purchaseRequest->id, 6, '0', STR_PAD_LEFT),
+            'is_active' => true,
+        ]);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/supplier-requests/bulk', [
+                'purchase_request_id' => $purchaseRequest->id,
+                'send_immediately' => true,
+                'suppliers' => [['supplier_id' => $supplier->id]],
+            ])
+            ->assertCreated();
+        $supplierRequest = SupplierRequest::query()
+            ->where('purchase_request_id', $purchaseRequest->id)
+            ->firstOrFail();
+        $line = $supplierRequest->lines()->firstOrFail();
+        $proposalResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/proposals', [
+                'supplier_request_id' => $supplierRequest->id,
+                'proposal_number' => 'KP-MOB-'.$reasonCode,
+                'proposal_date' => now()->toDateString(),
+                'subtotal_amount' => 1200,
+                'delivery_amount' => 0,
+                'vat_amount' => 0,
+                'total_amount' => 1200,
+                'currency' => 'RUB',
+                'vat_mode' => 'included',
+                'vat_rate' => 20,
+                'valid_until' => now()->addDays(10)->toDateString(),
+                'delivery_due_date' => now()->addDays(5)->toDateString(),
+                'payment_terms' => 'Оплата после поставки',
+                'delivery_terms' => 'Доставка на склад',
+                'items' => [[
+                    'supplier_request_line_id' => $line->id,
+                    'name' => $line->name,
+                    'quantity' => 1,
+                    'unit' => $line->unit,
+                    'unit_price' => 1200,
+                    'total_amount' => 1200,
+                ]],
+            ]);
+        $proposalResponse->assertCreated();
+        $proposal = SupplierProposal::query()->findOrFail($proposalResponse->json('data.id'));
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}/proposal-decision", [
+                'supplier_proposal_id' => $proposal->id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'approval_required');
+        $this->flushHeaders();
+
+        return ProcurementApproval::query()
+            ->where('reason_code', $reasonCode)
+            ->where('status', 'pending')
+            ->firstOrFail();
+    }
+
+    private function summaryApproval(AdminApiTestContext $context, string $reasonCode): ProcurementApproval
     {
         $purchaseRequest = PurchaseRequest::query()->create([
             'organization_id' => $context->organization->id,
-            'request_number' => 'PR-APR-MOB-'.$reasonCode,
+            'request_number' => 'PR-SUMMARY-MOB-'.$reasonCode,
             'status' => 'approved',
             'budget_amount' => 1000,
             'budget_currency' => 'RUB',
@@ -311,13 +449,13 @@ final class ProcurementMobileTest extends TestCase
         $supplierRequest = SupplierRequest::query()->create([
             'organization_id' => $context->organization->id,
             'purchase_request_id' => $purchaseRequest->id,
-            'request_number' => 'SR-APR-MOB-'.$reasonCode,
+            'request_number' => 'SR-SUMMARY-MOB-'.$reasonCode,
             'status' => 'responded',
         ]);
         $proposal = SupplierProposal::query()->create([
             'organization_id' => $context->organization->id,
             'supplier_request_id' => $supplierRequest->id,
-            'proposal_number' => 'KP-MOB-'.$reasonCode,
+            'proposal_number' => 'KP-SUMMARY-MOB-'.$reasonCode,
             'proposal_date' => now()->toDateString(),
             'status' => 'submitted',
             'supplier_snapshot' => ['display_name' => 'Поставщик материалов'],
@@ -335,7 +473,6 @@ final class ProcurementMobileTest extends TestCase
             'status' => 'approval_required',
             'is_lowest_price_selected' => true,
             'comparison_snapshot' => [],
-            'selected_by' => null,
             'selected_at' => now(),
         ]);
 
@@ -345,7 +482,6 @@ final class ProcurementMobileTest extends TestCase
             'approvable_id' => $decision->id,
             'reason_code' => $reasonCode,
             'status' => 'pending',
-            'requested_by' => null,
             'requested_at' => now(),
             'context' => [
                 'selected_total' => 1200,

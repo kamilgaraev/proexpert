@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Services\BudgetPlanFactPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\Budgeting\Services\BudgetPlanFactReportBindingFactory;
@@ -19,18 +20,16 @@ use App\BusinessModules\Features\Budgeting\Services\PlanFactReportSourceSnapshot
 use LogicException;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
-use Tests\Support\Reporting\ReportDefinitionBuilder;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 
 final class BudgetPlanFactPublishedRuntimeBindingRegistrarTest extends TestCase
 {
     public function test_registers_the_sealed_snapshot_provider_for_the_published_definition(): void
     {
-        $definition = $this->definition();
+        $definition = (new BudgetPlanFactBuiltinPublishedReport(new BudgetPlanFactCandidateContract))->definition();
         $adapter = (new ReflectionClass(PlanFactReportSourceSnapshotAdapter::class))->newInstanceWithoutConstructor();
         $assembler = new CapturingReportDefinitionBindingAssembler;
         $registrar = new BudgetPlanFactPublishedRuntimeBindingRegistrar(
-            new PublishedBudgetPlanFactRegistry(new PublishedReportDefinition($definition)),
+            new PublishedBudgetPlanFactRegistry($definition),
             new BudgetPlanFactReportBindingFactory($adapter, new BudgetPlanFactCandidateContract),
         );
 
@@ -60,22 +59,6 @@ final class BudgetPlanFactPublishedRuntimeBindingRegistrarTest extends TestCase
         self::assertSame([], $assembler->bindings);
     }
 
-    private function definition(): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition
-    {
-        $contract = new BudgetPlanFactCandidateContract;
-
-        return (new ReportDefinitionBuilder)
-            ->code(BudgetPlanFactCandidateContract::CODE)
-            ->contractVersion('1.0.0')
-            ->formulaVersion(BudgetPlanFactCandidateContract::FORMULA_VERSION)
-            ->sourceSchemaVersion($contract->sourceSchemaVersion)
-            ->filters($contract->filters())
-            ->columns($contract->columns())
-            ->sorts($contract->sorts())
-            ->formats($contract->formats())
-            ->permissionPolicy(new ReportPermissionPolicy(['budgeting.plan_fact.view'], ['budgeting.plan_fact.export'], [], []))
-            ->payload();
-    }
 }
 
 final class CapturingReportDefinitionBindingAssembler implements ReportDefinitionBindingAssembler

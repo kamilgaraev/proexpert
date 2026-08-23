@@ -55,6 +55,7 @@ final class CreateInvoiceFromPurchaseOrderTest extends TestCase
 
         $container = new Container();
         $container->instance('log', $logger);
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($container);
 
         (new CreateInvoiceFromPurchaseOrder($accessController))->handle(new PurchaseOrderCreated($order));

@@ -245,8 +245,8 @@ final class ContractLegalDossierService
         $escaped = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], mb_strtolower($search));
         $needle = '%'.$escaped.'%';
         $query->where(function (Builder $matching) use ($needle): void {
-            $matching->whereRaw("LOWER(legal_archive_documents.title) LIKE ? ESCAPE '\\\\'", [$needle])
-                ->orWhereRaw("LOWER(legal_archive_documents.document_number) LIKE ? ESCAPE '\\\\'", [$needle]);
+            $matching->whereRaw("LOWER(legal_archive_documents.title) LIKE ? ESCAPE E'\\\\'", [$needle])
+                ->orWhereRaw("LOWER(legal_archive_documents.document_number) LIKE ? ESCAPE E'\\\\'", [$needle]);
         });
     }
 

@@ -30,7 +30,7 @@ final class ProjectEvmControlOptionsServiceTest extends TestCase
         parent::setUp();
 
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->bootEloquent();
         $this->connection = $this->database->getConnection();
@@ -57,7 +57,7 @@ final class ProjectEvmControlOptionsServiceTest extends TestCase
             new DateTimeImmutable('2026-08-04T15:00:00+03:00'),
         );
 
-        self::assertTrue($options['available']);
+        self::assertTrue($options['available'], json_encode($options, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         self::assertNull($options['reason']);
         self::assertSame('2026-08-04T15:00:00+03:00', $options['as_of']);
         self::assertSame(2, $options['baseline']['version_number']);
@@ -99,7 +99,7 @@ final class ProjectEvmControlOptionsServiceTest extends TestCase
             new DateTimeImmutable('2026-08-04T15:00:00+03:00'),
         );
 
-        self::assertTrue($options['available']);
+        self::assertTrue($options['available'], json_encode($options, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         self::assertSame([['id' => 1001, 'name' => '1 — Фундамент']], $options['tasks']);
         self::assertSame([['id' => 'RUB', 'name' => 'RUB']], $options['currencies']);
     }
@@ -165,9 +165,9 @@ final class ProjectEvmControlOptionsServiceTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
-            'CREATE TABLE project_control_baseline_versions (id INTEGER PRIMARY KEY, organization_id INTEGER, project_id INTEGER, schedule_id INTEGER, version_number INTEGER, approved_at TEXT, approved_by INTEGER, source_hash TEXT, source_payload TEXT)',
-            'CREATE TABLE wip_forecast_versions (id INTEGER PRIMARY KEY, uuid TEXT, organization_id INTEGER, project_id INTEGER, version_number INTEGER, name TEXT, status TEXT, as_of_date TEXT, source_snapshot_hash TEXT, approved_by INTEGER NULL, activated_by INTEGER NULL, approved_at TEXT NULL, activated_at TEXT NULL, deleted_at TEXT NULL)',
-            'CREATE TABLE wip_forecast_lines (id INTEGER PRIMARY KEY, forecast_version_id INTEGER, organization_id INTEGER, project_id INTEGER, currency TEXT, percent_complete TEXT, ac TEXT, etc TEXT NULL, dimensions TEXT, group_values TEXT, source_row_refs TEXT)',
+            'CREATE TABLE project_control_baseline_versions (id BIGINT PRIMARY KEY, organization_id BIGINT, project_id BIGINT, schedule_id BIGINT, version_number INTEGER, approved_at TIMESTAMPTZ, approved_by BIGINT, source_hash CHAR(64), source_payload JSONB)',
+            'CREATE TABLE wip_forecast_versions (id BIGINT PRIMARY KEY, uuid UUID, organization_id BIGINT, project_id BIGINT, version_number INTEGER, name TEXT, status TEXT, as_of_date DATE, source_snapshot_hash TEXT, approved_by BIGINT NULL, activated_by BIGINT NULL, approved_at TIMESTAMPTZ NULL, activated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)',
+            'CREATE TABLE wip_forecast_lines (id BIGINT PRIMARY KEY, forecast_version_id BIGINT, organization_id BIGINT, project_id BIGINT, currency VARCHAR(3), percent_complete NUMERIC(15,4), ac NUMERIC(18,2), etc NUMERIC(18,2) NULL, dimensions JSONB, group_values JSONB, source_row_refs JSONB)',
             'CREATE TABLE project_schedules (id INTEGER PRIMARY KEY, organization_id INTEGER, project_id INTEGER)',
             'CREATE TABLE schedule_tasks (id INTEGER PRIMARY KEY, organization_id INTEGER, schedule_id INTEGER, name TEXT)',
             'CREATE TABLE contractors (id INTEGER PRIMARY KEY, organization_id INTEGER, name TEXT)',
@@ -198,21 +198,21 @@ final class ProjectEvmControlOptionsServiceTest extends TestCase
         ]);
 
         $this->connection->table('project_control_baseline_versions')->insert([
-            $this->baseline(1, 10, 50, 1, '2026-08-01 08:00:00', [
+            $this->baseline(1, 10, 50, 1, '2026-08-01T08:00:00+03:00', [
                 $this->baselineRow(1001, '1', 'RUB'),
             ]),
-            $this->baseline(2, 10, 50, 2, '2026-08-04 14:00:00', [
+            $this->baseline(2, 10, 50, 2, '2026-08-04T14:00:00+03:00', [
                 $this->baselineRow(1001, '1', 'RUB'),
                 $this->baselineRow(1002, '1.1', 'USD'),
             ]),
-            $this->baseline(3, 20, 60, 1, '2026-08-01 08:00:00', [
+            $this->baseline(3, 20, 60, 1, '2026-08-01T08:00:00+03:00', [
                 $this->baselineRow(2001, '9', 'RUB'),
             ]),
         ]);
         $this->connection->table('wip_forecast_versions')->insert([
-            $this->version(10, 'wip-10', 10, 1, 'Прогноз 1', '2026-08-01', '2026-08-01 09:00:00'),
-            $this->version(11, 'wip-11', 10, 2, 'Прогноз 2', '2026-08-04', '2026-08-04 14:00:00'),
-            $this->version(20, 'wip-20', 20, 1, 'Чужой прогноз', '2026-08-01', '2026-08-01 09:00:00'),
+            $this->version(10, '00000000-0000-4000-8000-000000000010', 10, 1, 'Прогноз 1', '2026-08-01', '2026-08-01T09:00:00+03:00'),
+            $this->version(11, '00000000-0000-4000-8000-000000000011', 10, 2, 'Прогноз 2', '2026-08-04', '2026-08-04T14:00:00+03:00'),
+            $this->version(20, '00000000-0000-4000-8000-000000000020', 20, 1, 'Чужой прогноз', '2026-08-01', '2026-08-01T09:00:00+03:00'),
         ]);
         $this->connection->table('wip_forecast_lines')->insert([
             $this->line(1, 10, 10, 1001, 'RUB', 301, 401),

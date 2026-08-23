@@ -23,7 +23,7 @@ class KnowledgeHubContentSanitizerTest extends TestCase
         self::assertStringContainsString('<p>Текст</p>', $clean);
         self::assertStringContainsString('<a>опасная ссылка</a>', $clean);
         self::assertStringContainsString(
-            '<a href="https://1мост.рф/help" target="_blank" rel="noopener noreferrer">безопасная ссылка</a>',
+            '<a href="https://1%D0%BC%D0%BE%D1%81%D1%82.%D1%80%D1%84/help" target="_blank" rel="noopener noreferrer">безопасная ссылка</a>',
             $clean,
         );
         self::assertStringNotContainsString('script', $clean);

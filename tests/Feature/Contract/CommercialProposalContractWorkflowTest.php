@@ -25,6 +25,7 @@ use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\Storage\FileService;
 use DomainException;
 use Illuminate\Container\Container;
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -32,7 +33,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Support\Facades\Facade;
 use Mockery;
-use PHPUnit\Framework\TestCase;
+use Illuminate\Foundation\Testing\TestCase;
 
 final class CommercialProposalContractWorkflowTest extends TestCase
 {
@@ -40,12 +41,20 @@ final class CommercialProposalContractWorkflowTest extends TestCase
 
     private Container $container;
 
+    public function createApplication()
+    {
+        $app = require dirname(__DIR__, 3).'/bootstrap/app.php';
+        $app->make(Kernel::class)->bootstrap();
+
+        return $app;
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
-        $this->container = new Container;
+        $this->container = $this->app;
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->setEventDispatcher(new Dispatcher($this->container));
         $this->database->bootEloquent();
@@ -75,6 +84,7 @@ final class CommercialProposalContractWorkflowTest extends TestCase
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('project_id')->nullable();
             $table->unsignedBigInteger('contract_id')->nullable();
+            $table->unsignedBigInteger('updated_by_user_id')->nullable();
             $table->string('number');
             $table->string('title');
             $table->string('status', 32);
@@ -100,8 +110,6 @@ final class CommercialProposalContractWorkflowTest extends TestCase
     {
         Mockery::close();
         Facade::clearResolvedInstances();
-        Facade::setFacadeApplication(null);
-        Container::setInstance(null);
         parent::tearDown();
     }
 
@@ -163,9 +171,12 @@ final class CommercialProposalContractWorkflowTest extends TestCase
         $authorization->shouldReceive('can')->once()->andReturnFalse();
         $dossiers = $this->dossiers();
 
-        $this->expectException(CommercialProposalWorkflowException::class);
-        $this->expectExceptionMessage('contract_create_forbidden');
-        $this->service($authorization, $dossiers)->createContract(7, $proposal->id, $this->actor(), $this->input(13));
+        try {
+            $this->service($authorization, $dossiers)->createContract(7, $proposal->id, $this->actor(), $this->input(13));
+            self::fail('Project-scoped contract permission was not enforced.');
+        } catch (CommercialProposalWorkflowException $exception) {
+            self::assertSame('contract_create_forbidden', $exception->blockers()[0]['code']);
+        }
     }
 
     public function test_contract_creation_rejects_a_different_project_before_dossier_creation(): void
@@ -175,9 +186,12 @@ final class CommercialProposalContractWorkflowTest extends TestCase
         $authorization->shouldNotReceive('can');
         $dossiers = $this->dossiers();
 
-        $this->expectException(CommercialProposalWorkflowException::class);
-        $this->expectExceptionMessage('contract_only_from_accepted_proposal');
-        $this->service($authorization, $dossiers)->createContract(7, $proposal->id, $this->actor(), $this->input(14));
+        try {
+            $this->service($authorization, $dossiers)->createContract(7, $proposal->id, $this->actor(), $this->input(14));
+            self::fail('A proposal from another project was accepted.');
+        } catch (CommercialProposalWorkflowException $exception) {
+            self::assertSame('contract_only_from_accepted_proposal', $exception->blockers()[0]['code']);
+        }
     }
 
     public function test_contract_creation_cannot_read_a_proposal_from_another_organization(): void

@@ -10,7 +10,7 @@ use App\Domain\Project\ValueObjects\ProjectRoleConfig;
 use App\Enums\ProjectOrganizationRole;
 use App\Models\Project;
 use DateTimeImmutable;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 final class ProjectCommandCenterDataTest extends TestCase
 {

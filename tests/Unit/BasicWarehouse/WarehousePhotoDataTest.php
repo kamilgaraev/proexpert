@@ -147,7 +147,7 @@ class WarehousePhotoDataTest extends TestCase
 
     public function test_warehouse_photo_upload_success_message_is_translated(): void
     {
-        $this->assertSame('Фотографии успешно загружены', trans_message('warehouse_basic.photo_upload_success'));
+        $this->assertSame('Фотографии успешно загружены.', trans_message('warehouse_basic.photo_upload_success'));
     }
 
     public function test_get_stock_data_returns_receipt_photos_when_balance_gallery_is_empty(): void

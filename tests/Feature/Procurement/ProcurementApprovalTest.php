@@ -6,24 +6,24 @@ namespace Tests\Feature\Procurement;
 
 use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
-use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalIntake;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
-use App\BusinessModules\Features\Procurement\Services\SupplierProposalVersionService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Organization;
-use App\Models\Supplier;
 use App\Models\User;
 use DomainException;
+use Tests\Support\CreatesCanonicalProcurementSelection;
 use Tests\TestCase;
 
 class ProcurementApprovalTest extends TestCase
 {
+    use CreatesCanonicalProcurementSelection;
+
     public function test_approval_required_when_selected_proposal_exceeds_purchase_request_budget_amount(): void
     {
         $organization = Organization::factory()->create();
@@ -270,19 +270,12 @@ class ProcurementApprovalTest extends TestCase
         string $purchaseRequestNumber = 'PR-APR-001',
         string $supplierRequestNumber = 'SR-APR-001'
     ): SupplierRequest {
-        $purchaseRequest = PurchaseRequest::query()->create([
-            'organization_id' => $organization->id,
-            'request_number' => $purchaseRequestNumber,
-            'status' => 'approved',
-            'budget_amount' => $budgetAmount,
-        ]);
-
-        return SupplierRequest::query()->create([
-            'organization_id' => $organization->id,
-            'purchase_request_id' => $purchaseRequest->id,
-            'request_number' => $supplierRequestNumber,
-            'status' => 'responded',
-        ]);
+        return $this->createCanonicalSelectionSupplierRequest(
+            $organization,
+            $budgetAmount,
+            $purchaseRequestNumber,
+            $supplierRequestNumber
+        );
     }
 
     private function createProposal(
@@ -295,35 +288,16 @@ class ProcurementApprovalTest extends TestCase
         float $deliveryAmount = 0,
         float $vatAmount = 0
     ): SupplierProposal {
-        $supplier = Supplier::query()->create([
-            'organization_id' => $organization->id,
-            'name' => "{$proposalNumber} supplier",
-            'tax_number' => $supplierSnapshot['tax_id'] ?? '7701000000',
-            'is_active' => true,
-        ]);
-
-        $proposal = SupplierProposal::query()->create([
-            'organization_id' => $organization->id,
-            'supplier_request_id' => $supplierRequest->id,
-            'supplier_id' => $supplier->id,
-            'supplier_snapshot' => $supplierSnapshot ?? [
-                'type' => 'registered',
-                'display_name' => "{$proposalNumber} supplier",
-                'tax_id' => '7701000000',
-            ],
-            'proposal_number' => $proposalNumber,
-            'proposal_date' => now()->toDateString(),
-            'status' => 'submitted',
-            'subtotal_amount' => $subtotalAmount ?? $totalAmount,
-            'delivery_amount' => $deliveryAmount,
-            'vat_amount' => $vatAmount,
-            'total_amount' => $totalAmount,
-            'currency' => 'RUB',
-        ]);
-
-        app(SupplierProposalVersionService::class)->createInitialVersion($proposal);
-
-        return $proposal->refresh();
+        return $this->createCanonicalSelectionProposal(
+            $organization,
+            $supplierRequest,
+            $proposalNumber,
+            $totalAmount,
+            $supplierSnapshot,
+            $subtotalAmount,
+            $deliveryAmount,
+            $vatAmount
+        );
     }
 
     private function createOrganizationOwner(Organization $organization): User

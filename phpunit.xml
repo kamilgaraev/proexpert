@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
-         bootstrap="vendor/autoload.php"
+         bootstrap="tests/bootstrap.php"
          colors="true"
+         cacheDirectory=".phpunit.cache/postgres"
 >
     <testsuites>
         <testsuite name="Unit">
@@ -14,6 +15,35 @@
         <testsuite name="Security">
             <directory>tests/Security</directory>
         </testsuite>
+        <testsuite name="MaterialSupply">
+            <file>tests/Feature/Infrastructure/PhpUnitPostgresProfileTest.php</file>
+            <file>tests/Feature/SiteRequests/SiteRequestWorkflowIntegrityTest.php</file>
+            <file>tests/Feature/Procurement/ProcurementApprovalTest.php</file>
+            <file>tests/Feature/Procurement/SupplierProposalDecisionTest.php</file>
+            <file>tests/Feature/Procurement/PurchaseRequestServiceTransactionTest.php</file>
+            <file>tests/Feature/Procurement/ProcurementLifecycleServiceTest.php</file>
+            <file>tests/Feature/Procurement/ProcurementAuditTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ProcurementSupplierFlowCoreExperienceControllerTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ProcurementChainControllerTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ProcurementContractConcurrencyTest.php</file>
+            <file>tests/Feature/Api/V1/Mobile/ProcurementMobileTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/WarehouseOperationsControllerTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/WarehouseAssetCatalogTest.php</file>
+            <file>tests/Feature/BasicWarehouse/WarehouseCustodyFlowTest.php</file>
+            <file>tests/Feature/BasicWarehouse/ProjectMaterialDeliveryMovementTest.php</file>
+            <file>tests/Feature/Api/V1/Mobile/ProjectMaterialDeliveryMobileSyncTest.php</file>
+            <file>tests/Feature/BasicWarehouse/WarehouseJournalConsumptionTest.php</file>
+            <file>tests/Unit/Procurement/Reporting/Award/ProcurementAwardOwnerEventRecorderTest.php</file>
+            <file>tests/Unit/Procurement/Reporting/Cycle/ProcurementCycleOwnerWorkflowContractTest.php</file>
+            <file>tests/Unit/Procurement/PurchaseReceiptIdempotencyTest.php</file>
+            <file>tests/Unit/Procurement/PurchaseOrderCreationConcurrencyContractTest.php</file>
+            <file>tests/Unit/Procurement/ProcurementUnitCompatibilityTest.php</file>
+            <file>tests/Unit/Procurement/SupplierProposalAmountCalculatorTest.php</file>
+            <file>tests/Unit/BasicWarehouse/WarehouseOperationIdempotencyTest.php</file>
+            <file>tests/Unit/BasicWarehouse/WarehouseCustodyIdempotencyTest.php</file>
+            <file>tests/Unit/BasicWarehouse/WarehouseCustodyLineageTest.php</file>
+            <file>tests/Unit/ConstructionJournal/JournalWarehouseContractTest.php</file>
+        </testsuite>
     </testsuites>
     <source>
         <include>
@@ -22,20 +52,32 @@
     </source>
     <php>
         <ini name="memory_limit" value="1G"/>
-        <env name="APP_ENV" value="testing"/>
-        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
-        <env name="BCRYPT_ROUNDS" value="4"/>
-        <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
-        <env name="MAIL_MAILER" value="array"/>
-        <env name="PULSE_ENABLED" value="false"/>
-        <env name="QUEUE_CONNECTION" value="sync"/>
-        <env name="SESSION_DRIVER" value="array"/>
-        <env name="TELESCOPE_ENABLED" value="false"/>
-        <env name="JWT_SECRET" value="testing-jwt-secret-key-for-tests-only-32chars"/>
-        <env name="REVERB_APP_KEY" value="test"/>
-        <env name="REVERB_APP_SECRET" value="test"/>
-        <env name="REVERB_APP_ID" value="1"/>
+        <env name="APP_ENV" value="testing" force="true"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file" force="true"/>
+        <env name="AUTH_SESSIONS_ENABLED" value="true" force="true"/>
+        <env name="AUTH_SESSIONS_NOTIFY_NEW_DEVICE" value="false" force="true"/>
+        <env name="BCRYPT_ROUNDS" value="4" force="true"/>
+        <env name="BROADCAST_CONNECTION" value="null" force="true"/>
+        <env name="CACHE_STORE" value="array" force="true"/>
+        <env name="DB_CONNECTION" value="pgsql" force="true"/>
+        <env name="DB_URL" value="" force="true"/>
+        <env name="DB_HOST" value="127.0.0.1" force="true"/>
+        <env name="DB_PORT" value="55433" force="true"/>
+        <env name="DB_DATABASE" value="most_backend_testing" force="true"/>
+        <env name="DB_USERNAME" value="most_testing" force="true"/>
+        <env name="DB_PASSWORD" value="most_testing_password" force="true"/>
+        <env name="DB_SCHEMA" value="public" force="true"/>
+        <env name="MAIL_MAILER" value="array" force="true"/>
+        <env name="PULSE_ENABLED" value="false" force="true"/>
+        <env name="QUEUE_CONNECTION" value="sync" force="true"/>
+        <env name="SESSION_DRIVER" value="array" force="true"/>
+        <env name="TELESCOPE_ENABLED" value="false" force="true"/>
+        <env name="JWT_SECRET" value="testing-jwt-secret-key-for-tests-only-32chars" force="true"/>
+        <env name="WEB_AUTH_ADMIN_SIGNING_KEY" value="testing-admin-web-auth-signing-key-32-chars" force="true"/>
+        <env name="WEB_AUTH_LK_SIGNING_KEY" value="testing-lk-web-auth-signing-key-32-characters" force="true"/>
+        <env name="LEGAL_ARCHIVE_AUDIT_WRITER_SECRET" value="test-immutable-audit-writer-token-2026-07-19" force="true"/>
+        <env name="REVERB_APP_KEY" value="test" force="true"/>
+        <env name="REVERB_APP_SECRET" value="test" force="true"/>
+        <env name="REVERB_APP_ID" value="1" force="true"/>
     </php>
 </phpunit>

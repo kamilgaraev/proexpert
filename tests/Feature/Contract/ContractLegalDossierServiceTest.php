@@ -23,6 +23,7 @@ use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
@@ -30,43 +31,28 @@ use Illuminate\Events\Dispatcher;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Facade;
 use Mockery;
-use PHPUnit\Framework\TestCase;
+use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Validation\ValidationException;
 
 final class ContractLegalDossierServiceTest extends TestCase
 {
     private Capsule $database;
 
+    public function createApplication()
+    {
+        $app = require dirname(__DIR__, 3).'/bootstrap/app.php';
+        $app->make(Kernel::class)->bootstrap();
+
+        return $app;
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
-        $container = new Container;
-        $container->instance('app', new class {
-            public function getLocale(): string
-            {
-                return 'ru';
-            }
-        });
-        $container->instance('config', new class {
-            public function get(string $key, mixed $default = null): mixed
-            {
-                return $default;
-            }
-        });
-        $container->instance('translator', new class {
-            public function get(string $key): string
-            {
-                return $key;
-            }
-        });
-        $container->instance('log', new class {
-            public function warning(string $message): void {}
-        });
-        Facade::setFacadeApplication($container);
-        $this->database->setEventDispatcher(new Dispatcher($container));
+        $this->database->setEventDispatcher(new Dispatcher($this->app));
         $this->database->bootEloquent();
         Model::clearBootedModels();
 
@@ -95,6 +81,7 @@ final class ContractLegalDossierServiceTest extends TestCase
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('primary_project_id')->nullable();
             $table->string('title');
+            $table->string('document_number')->nullable();
             $table->string('document_type');
             $table->string('type_profile_code')->nullable();
             $table->string('source_type')->nullable();
@@ -580,7 +567,9 @@ final class ContractLegalDossierServiceTest extends TestCase
             $request = ListContractLegalDossierCandidatesRequest::create('/api/v1/admin/projects/11/contracts/1/legal-dossier/candidates');
             $request->attributes->set('current_organization_id', 7);
             $request->setUserResolver(static fn (): User => $actor);
-            $request->setRouteResolver(static fn (): Route => new Route(['GET'], '/api/v1/admin/projects/{project}', ['project' => 11]));
+            $route = Mockery::mock(Route::class);
+            $route->shouldReceive('parameter')->with('project', null)->andReturn(11);
+            $request->setRouteResolver(static fn (): Route => $route);
 
             self::assertFalse($request->authorize());
         } finally {

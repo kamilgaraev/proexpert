@@ -43,6 +43,8 @@ use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\Storage\FileService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use Illuminate\Container\Container;
+use Illuminate\Config\Repository as ConfigRepository;
+use Illuminate\Contracts\Routing\ResponseFactory;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
@@ -51,6 +53,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Facade;
 use Mockery;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 
 final class ContractSourceIntegrationTest extends TestCase
 {
@@ -65,16 +68,68 @@ final class ContractSourceIntegrationTest extends TestCase
         parent::setUp();
         $this->container = new Container;
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->setEventDispatcher(new Dispatcher($this->container));
         $this->database->bootEloquent();
         $this->container->instance('db', $this->database->getDatabaseManager());
         $this->container->instance('events', new Dispatcher($this->container));
+        $this->container->instance('app', new class
+        {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+        $this->container->instance('config', new ConfigRepository([
+            'app' => ['fallback_locale' => 'ru'],
+        ]));
+        $this->container->instance('translator', new class
+        {
+            public function get(string $key, array $replace = [], ?string $locale = null): string
+            {
+                return $key;
+            }
+        });
+        $this->container->instance('log', new NullLogger);
+        $responseFactory = Mockery::mock(ResponseFactory::class);
+        $responseFactory->shouldReceive('json')->andReturnUsing(
+            static fn (mixed $data = [], int $status = 200, array $headers = [], int $options = 0): JsonResponse => new JsonResponse(
+                $data,
+                $status,
+                $headers,
+                $options,
+            ),
+        );
+        $this->container->instance(ResponseFactory::class, $responseFactory);
         Container::setInstance($this->container);
         Facade::setFacadeApplication($this->container);
         Model::clearBootedModels();
         $schema = $this->database->schema();
+        $schema->create('organizations', static function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->softDeletes();
+        });
+        $schema->create('projects', static function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->softDeletes();
+        });
+        $schema->create('project_organization', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->string('role')->nullable();
+            $table->string('role_new')->nullable();
+            $table->json('permissions')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->unsignedBigInteger('added_by_user_id')->nullable();
+            $table->timestamp('invited_at')->nullable();
+            $table->timestamp('accepted_at')->nullable();
+            $table->json('metadata')->nullable();
+            $table->timestamps();
+        });
         $schema->create('contracts', static function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');
@@ -102,6 +157,15 @@ final class ContractSourceIntegrationTest extends TestCase
             $table->unique(['organization_id', 'source_type', 'source_id'], 'contract_dossier_sources_source_unique');
             $table->unique(['organization_id', 'idempotency_key'], 'contract_dossier_sources_key_unique');
         });
+        $schema->create('contract_state_events', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('contract_id');
+        });
+        $schema->create('contract_parties', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('contract_id');
+            $table->string('side');
+        });
         $schema->create('estimate_items', static function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('estimate_id');
@@ -126,6 +190,8 @@ final class ContractSourceIntegrationTest extends TestCase
             $table->timestamps();
             $table->timestamp('deleted_at')->nullable();
         });
+        $this->database->table('organizations')->insert(['id' => 7, 'name' => 'Организация']);
+        $this->database->table('projects')->insert(['id' => 1, 'name' => 'Проект']);
     }
 
     protected function tearDown(): void

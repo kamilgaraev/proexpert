@@ -6,12 +6,12 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportS
 use App\Models\Estimate;
 use App\Models\EstimateSection;
 use App\Models\EstimateItem;
+use App\Models\ImportSession;
 use App\Models\Organization;
 use App\Models\User;
-use App\Jobs\ProcessEstimateImportJob;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportPipelineService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -36,10 +36,11 @@ class RealSmetaImportTest extends TestCase
         }
 
         // 1. Подготовка контекста (используем существующие или создаем новые)
+        Queue::fake();
         Storage::fake('s3');
 
-        $user = User::first() ?: User::factory()->create();
-        $organization = Organization::first() ?: Organization::factory()->create();
+        $user = User::factory()->create();
+        $organization = Organization::factory()->create();
         
         // Смете ТРЕБУЕТСЯ проект по ограничениям БД
         $project = \App\Models\Project::first() ?: \App\Models\Project::factory()->create([
@@ -50,9 +51,21 @@ class RealSmetaImportTest extends TestCase
         /** @var EstimateImportService $importService */
         $importService = app(EstimateImportService::class);
 
-        // 2. Имитация загрузки файла
-        $uploadedFile = new UploadedFile($filePath, basename($filePath), null, null, true);
-        $fileId = $importService->uploadFile($uploadedFile, $user->id, $organization->id);
+        // 2. Подготовка файла в изолированном S3-хранилище теста
+        $storedPath = "org-{$organization->id}/estimate-imports/real-smeta.xlsx";
+        Storage::disk('s3')->put($storedPath, (string) file_get_contents($filePath));
+        $session = ImportSession::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $organization->id,
+            'status' => 'uploading',
+            'file_path' => $storedPath,
+            'file_name' => basename($filePath),
+            'file_size' => filesize($filePath),
+            'file_format' => 'xlsx',
+            'options' => [],
+            'stats' => ['progress' => 0],
+        ]);
+        $fileId = $session->id;
 
         // 3. Детекция формата и маппинг
         $format = $importService->detectFormat($fileId);
@@ -68,11 +81,17 @@ class RealSmetaImportTest extends TestCase
 
         echo "\nНачинаю импорт файла: " . basename($filePath) . "\n";
         
-        $result = $importService->execute($fileId, $mapping, $settings);
+        $session->refresh();
+        $options = $session->options ?? [];
+        $options['matching_config'] = $mapping;
+        $options['estimate_settings'] = $settings;
+        $options['validate_only'] = false;
+        $session->update([
+            'options' => $options,
+            'status' => 'queued',
+        ]);
 
-        $this->assertEquals('queued', $result['status']);
-
-        (new ProcessEstimateImportJob($fileId))->handle(app(ImportPipelineService::class));
+        app(ImportPipelineService::class)->run($session->fresh());
 
         $session = \App\Models\ImportSession::query()->findOrFail($fileId);
         $this->assertEquals('completed', $session->status, $session->error_message ?? '');

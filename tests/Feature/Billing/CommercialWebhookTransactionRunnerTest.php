@@ -78,6 +78,6 @@ class CommercialWebhookTransactionRunnerTest extends TestCase
 
     private function queryException(string $message): QueryException
     {
-        return new QueryException('sqlite', 'insert into test values (?)', [], new PDOException($message, 23000));
+        return new QueryException('pgsql', 'insert into test values (?)', [], new PDOException($message, 23505));
     }
 }

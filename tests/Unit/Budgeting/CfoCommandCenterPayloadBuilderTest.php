@@ -37,6 +37,7 @@ final class CfoCommandCenterPayloadBuilderTest extends TestCase
             }
         });
 
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($container);
     }
 

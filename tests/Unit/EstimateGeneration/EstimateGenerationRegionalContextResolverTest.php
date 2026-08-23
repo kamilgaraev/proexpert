@@ -23,7 +23,7 @@ final class EstimateGenerationRegionalContextResolverTest extends TestCase
 
         $this->previousResolver = Model::getConnectionResolver();
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->bootEloquent();
 
@@ -31,6 +31,8 @@ final class EstimateGenerationRegionalContextResolverTest extends TestCase
         $schema->create('estimate_regions', static function ($table): void {
             $table->increments('id');
             $table->string('name');
+            $table->string('code');
+            $table->boolean('is_supported')->default(true);
         });
         $schema->create('estimate_price_zones', static function ($table): void {
             $table->increments('id');
@@ -94,6 +96,8 @@ final class EstimateGenerationRegionalContextResolverTest extends TestCase
         $this->database->table('estimate_regions')->insert([
             'id' => $regionId,
             'name' => 'Region '.$regionId,
+            'code' => 'region-'.$regionId,
+            'is_supported' => true,
         ]);
         $this->database->table('estimate_price_zones')->insert([
             'id' => $priceZoneId,

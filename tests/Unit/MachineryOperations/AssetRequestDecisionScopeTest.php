@@ -18,10 +18,7 @@ final class AssetRequestDecisionScopeTest extends TestCase
         parent::setUp();
 
         $this->database = new Capsule();
-        $this->database->addConnection([
-            'driver' => 'sqlite',
-            'database' => ':memory:',
-        ]);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->bootEloquent();
         $this->database->schema()->create('asset_requests', function (Blueprint $table): void {

@@ -14,8 +14,8 @@ use App\BusinessModules\Features\Notifications\Services\NotificationRequestInter
 use App\BusinessModules\Features\Notifications\Services\NotificationSnapshotTransactionRunner;
 use App\Models\User;
 use Illuminate\Database\ConnectionResolver;
-use Illuminate\Database\SQLiteConnection;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class NotificationQueryServiceTest extends TestCase
 {
@@ -24,7 +24,7 @@ final class NotificationQueryServiceTest extends TestCase
         parent::setUp();
 
         $resolver = new ConnectionResolver([
-            'testing' => new SQLiteConnection(null, ':memory:'),
+            'testing' => IsolatedPostgresTestDatabase::connection(),
         ]);
         $resolver->setDefaultConnection('testing');
         Notification::setConnectionResolver($resolver);

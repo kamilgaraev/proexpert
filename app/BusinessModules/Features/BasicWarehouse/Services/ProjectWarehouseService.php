@@ -93,14 +93,9 @@ final class ProjectWarehouseService
 
         /** @var WarehouseMovement $movement */
         $movement = $result['movement_out'];
-        $movement->forceFill([
-            'related_user_id' => $responsibleUserId,
-            'operation_category' => WarehouseMovement::CATEGORY_PROJECT_DELIVERY,
-            'project_material_delivery_id' => $delivery->id,
-        ])->save();
 
         return [
-            'movement' => $movement->refresh(),
+            'movement' => $movement,
             'project_warehouse' => $projectWarehouse,
         ];
     }

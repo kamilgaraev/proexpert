@@ -31,6 +31,7 @@ use App\Models\EstimateItem;
 use App\Models\EstimateSection;
 use App\Models\ImportSession;
 use App\Models\Organization;
+use App\Models\Project;
 use Generator;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -670,9 +671,13 @@ class ImportContractCleanupTest extends TestCase
     private function createEstimate(): Estimate
     {
         $organization = Organization::factory()->create();
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+        ]);
 
         return Estimate::query()->create([
             'organization_id' => $organization->id,
+            'project_id' => $project->id,
             'number' => 'IMP-' . uniqid(),
             'name' => 'Import cleanup test',
             'type' => 'local',

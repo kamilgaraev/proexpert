@@ -7,6 +7,7 @@ namespace Tests\Unit\ScheduleManagement\Reporting\LookaheadReadiness;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\DTO\ScheduleRevisionDraft;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\LookaheadReadiness\Services\ScheduleRevisionSourceMatcher;
 use LogicException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class ScheduleRevisionSourceMatcherTest extends TestCase
@@ -42,9 +43,7 @@ final class ScheduleRevisionSourceMatcherTest extends TestCase
         self::addToAssertionCount(1);
     }
 
-    /**
-     * @dataProvider policyDrivingPlanningFactProvider
-     */
+    #[DataProvider('policyDrivingPlanningFactProvider')]
     public function test_rejects_policy_driving_task_fact_that_differs_from_locked_source(
         array $taskOverrides,
         array $sourceOverrides,

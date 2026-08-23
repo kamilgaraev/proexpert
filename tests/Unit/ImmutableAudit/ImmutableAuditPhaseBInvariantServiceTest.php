@@ -116,8 +116,8 @@ final class ImmutableAuditPhaseBInvariantServiceTest extends TestCase
         self::assertStringContainsString("'kind' => 'f'", $definitions);
         self::assertStringContainsString("'owner_identity' => '\$database_owner'", $definitions);
         self::assertStringContainsString("'relation_owner_identity' => '\$database_owner'", $definitions);
-        self::assertStringContainsString("'acl' => []", $definitions);
-        self::assertStringContainsString("'public_execute' => false", $definitions);
+        self::assertStringContainsString("'acl' => ['0:EXECUTE:false:false']", $definitions);
+        self::assertStringContainsString("'public_execute' => true", $definitions);
         self::assertStringContainsString("'cost' => '100'", $definitions);
         self::assertStringContainsString("'rows' => '0'", $definitions);
         self::assertStringContainsString("'support' => '-'", $definitions);
@@ -130,7 +130,7 @@ final class ImmutableAuditPhaseBInvariantServiceTest extends TestCase
         self::assertStringContainsString("'function_oid_matches_expected' => true", $definitions);
     }
 
-    public function test_canonical_ddl_explicitly_resets_every_security_attribute_and_sequence_start_metadata(): void
+    public function test_canonical_ddl_pins_runtime_attributes_without_reassigning_database_ownership(): void
     {
         $definitions = file_get_contents(dirname(__DIR__, 3).'/app/BusinessModules/Core/ImmutableAudit/Support/ImmutableAuditInvariantDefinitions.php');
 
@@ -138,17 +138,12 @@ final class ImmutableAuditPhaseBInvariantServiceTest extends TestCase
         self::assertStringContainsString('SECURITY INVOKER', $definitions);
         self::assertStringContainsString('CALLED ON NULL INPUT', $definitions);
         self::assertStringContainsString('PARALLEL UNSAFE', $definitions);
-        self::assertStringContainsString('ALTER FUNCTION', $definitions);
-        self::assertStringContainsString('RESET ALL', $definitions);
+        self::assertStringContainsString('CREATE OR REPLACE FUNCTION', $definitions);
         self::assertStringContainsString('SET search_path = pg_catalog, public', $definitions);
-        self::assertStringContainsString('NOT LEAKPROOF', $definitions);
         self::assertStringContainsString('START WITH 1', $definitions);
-        self::assertStringContainsString('COST 100', $definitions);
-        self::assertStringContainsString('ALTER TABLE immutable_audit_events OWNER TO CURRENT_USER', $definitions);
-        self::assertStringContainsString('ALTER SEQUENCE immutable_audit_sequence OWNER TO CURRENT_USER', $definitions);
-        self::assertStringContainsString('FROM pg_proc proc', $definitions);
-        self::assertStringContainsString('REVOKE ALL PRIVILEGES ON FUNCTION', $definitions);
-        self::assertStringContainsString('FROM %%I CASCADE', $definitions);
+        self::assertStringNotContainsString('ALTER FUNCTION', $definitions);
+        self::assertStringNotContainsString('OWNER TO CURRENT_USER', $definitions);
+        self::assertStringNotContainsString('REVOKE ALL PRIVILEGES ON FUNCTION', $definitions);
     }
 
     public function test_repair_uses_global_lock_order_rechecks_marker_under_writer_fence_and_consumes_it_atomically(): void

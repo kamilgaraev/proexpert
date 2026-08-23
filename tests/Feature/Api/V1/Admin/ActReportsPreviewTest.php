@@ -632,7 +632,7 @@ class ActReportsPreviewTest extends TestCase
         $this->assertStringNotContainsString("\u{0420}\u{0459}", $ks6a);
     }
 
-    public function test_recalculate_repairs_existing_act_amount_to_include_estimate_vat(): void
+    public function test_recalculate_does_not_rewrite_approved_act_history(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('SHOW-VAT');
         $estimate = Estimate::create([
@@ -689,13 +689,18 @@ class ActReportsPreviewTest extends TestCase
             ],
         ]);
 
-        $updatedAct = app(\App\Services\ActReport\ActReportWorkflowService::class)->recalculatePricedLines($act);
+        try {
+            app(\App\Services\ActReport\ActReportWorkflowService::class)->recalculatePricedLines($act);
+            $this->fail('Утверждённый акт не должен допускать перерасчёт строк');
+        } catch (\App\Exceptions\BusinessLogicException $exception) {
+            $this->assertSame('Состав утверждённого акта нельзя изменить', $exception->getMessage());
+        }
 
-        $this->assertSame(360.0, (float) $updatedAct->amount);
+        $this->assertSame(300.0, (float) $act->fresh()->amount);
         $this->assertDatabaseHas('performance_act_lines', [
             'performance_act_id' => $act->id,
-            'unit_price' => 120,
-            'amount' => 360,
+            'unit_price' => 100,
+            'amount' => 300,
         ]);
     }
 
@@ -932,7 +937,7 @@ class ActReportsPreviewTest extends TestCase
         ]);
     }
 
-    public function test_status_workflow_requires_edit_permission(): void
+    public function test_status_workflow_requires_exact_transition_permissions(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('WORKFLOW-RBAC');
         $this->withoutMiddleware();
@@ -946,13 +951,15 @@ class ActReportsPreviewTest extends TestCase
             ->assertForbidden();
 
         $this->actingAs($user, 'api_admin')
-            ->postJson("/api/v1/admin/act-reports/{$act->id}/approve")
-            ->assertForbidden();
-
-        $this->actingAs($user, 'api_admin')
             ->postJson("/api/v1/admin/act-reports/{$act->id}/reject", [
                 'reason' => 'Недостаточно прав',
             ])
+            ->assertForbidden();
+
+        $this->allowPermissionsExcept('act_reports.approve');
+
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/approve")
             ->assertForbidden();
     }
 

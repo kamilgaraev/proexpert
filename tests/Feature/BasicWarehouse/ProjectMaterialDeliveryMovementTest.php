@@ -88,11 +88,17 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $this->assertNotNull($delivery->outbound_movement_id);
         $this->assertNotNull($delivery->project_warehouse_id);
         $this->assertSame('in_transit', $delivery->status->value);
+        $transitWarehouse = OrganizationWarehouse::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('project_id', $setup['project']->id)
+            ->where('warehouse_type', OrganizationWarehouse::TYPE_EXTERNAL)
+            ->where('settings->purpose', 'project_delivery_transit')
+            ->firstOrFail();
 
         $this->assertDatabaseHas('warehouse_movements', [
             'id' => $delivery->outbound_movement_id,
             'warehouse_id' => $setup['sourceWarehouse']->id,
-            'to_warehouse_id' => $delivery->project_warehouse_id,
+            'to_warehouse_id' => $transitWarehouse->id,
             'material_id' => $setup['material']->id,
             'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT,
             'quantity' => 30,
@@ -101,8 +107,8 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
             'related_user_id' => $context->user->id,
         ]);
 
-        $this->assertDatabaseMissing('warehouse_balances', [
-            'warehouse_id' => $delivery->project_warehouse_id,
+        $this->assertDatabaseHas('warehouse_balances', [
+            'warehouse_id' => $transitWarehouse->id,
             'material_id' => $setup['material']->id,
             'available_quantity' => 30,
         ]);
@@ -144,6 +150,12 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
             ->assertOk();
 
         $delivery = $delivery->fresh();
+        $transitWarehouse = OrganizationWarehouse::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('project_id', $setup['project']->id)
+            ->where('warehouse_type', OrganizationWarehouse::TYPE_EXTERNAL)
+            ->where('settings->purpose', 'project_delivery_transit')
+            ->firstOrFail();
 
         $this->assertSame('partially_delivered', $delivery->status->value);
         $this->assertSame(25.0, (float) $delivery->accepted_quantity);
@@ -158,7 +170,7 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $this->assertDatabaseHas('warehouse_movements', [
             'id' => $delivery->inbound_movement_id,
             'warehouse_id' => $delivery->project_warehouse_id,
-            'from_warehouse_id' => $setup['sourceWarehouse']->id,
+            'from_warehouse_id' => $transitWarehouse->id,
             'material_id' => $setup['material']->id,
             'movement_type' => WarehouseMovement::TYPE_TRANSFER_IN,
             'quantity' => 25,
@@ -168,6 +180,7 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $this->assertSame(1, WarehouseMovement::query()
             ->where('project_material_delivery_id', $delivery->id)
             ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_IN)
+            ->where('warehouse_id', $delivery->project_warehouse_id)
             ->count());
 
         $receivePayload['quantity'] = 24;

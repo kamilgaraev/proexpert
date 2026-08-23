@@ -29,6 +29,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSn
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotStream;
 use App\BusinessModules\Core\Reporting\Domain\DTO\SourceSnapshots\ReportSourceSnapshotWrite;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -284,6 +285,8 @@ final class BudgetingReportSourceSnapshotAdapterTest extends TestCase
             ->contractVersion('1.0.0')
             ->formulaVersion(BudgetPlanFactCandidateContract::FORMULA_VERSION)
             ->sourceSchemaVersion(PlanFactSourceSnapshotMaterializer::SCHEMA_VERSION)
+            ->sourceModule('budgeting')
+            ->coreAccessMode(ReportCoreAccessMode::SOURCE_MODULE_REPORT)
             ->filters($contract->filters())
             ->columns($contract->columns())
             ->sorts($contract->sorts())

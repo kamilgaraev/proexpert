@@ -64,7 +64,7 @@ final class ProjectPortfolioHealthLiquidityEvidenceFactoryTest extends TestCase
             amount: '100.00',
             remainingAmount: '100.00',
             currency: 'RUB',
-            probability: 100,
+            probability: '1',
             status: 'planned',
             sourceType: 'payment_document',
             sourceId: $sourceId,

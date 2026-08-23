@@ -16,6 +16,8 @@ use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAccessService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\CanonicalJson;
+use App\Services\LegalArchive\ContractLegalDocumentAccessResolver;
+use App\Services\LegalArchive\Editor\LegalDocumentEditorAvailability;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFilePolicy;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
@@ -27,6 +29,7 @@ use App\Services\LegalArchive\Files\VersionInput;
 use App\Services\LegalArchive\LegalArchiveLifecycleService;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
 use App\Services\LegalArchive\LegalDocumentCreateFailureReporter;
+use App\Services\LegalArchive\Obligations\LegalDocumentObligationExecutionService;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceResolver;
 use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
 use App\Services\Project\UserProjectAccessService;
@@ -65,12 +68,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         parent::setUp();
 
         $this->database = new Capsule;
-        $this->database->addConnection([
-            'driver' => 'sqlite',
-            'database' => ':memory:',
-            'prefix' => '',
-            'foreign_key_constraints' => true,
-        ]);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->setEventDispatcher(new Dispatcher(new Container));
         $this->database->bootEloquent();
@@ -120,6 +118,9 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $table->string('status')->nullable();
             $table->string('confidentiality_level')->nullable();
             $table->string('direction')->nullable();
+            $table->string('source_type')->nullable();
+            $table->string('source_id')->nullable();
+            $table->string('source_idempotency_key')->nullable();
             $table->string('source_system')->nullable();
             $table->string('legal_significance_status')->nullable();
             $table->string('source_create_status')->default('completed');
@@ -904,8 +905,12 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $registry,
             $access,
             (new \ReflectionClass(LegalWorkflowActionResolver::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(LegalDocumentEditorAvailability::class))->newInstanceWithoutConstructor(),
             (new \ReflectionClass(LegalArchiveLifecycleService::class))->newInstanceWithoutConstructor(),
             $failureReporter,
+            $authorization,
+            (new \ReflectionClass(LegalDocumentObligationExecutionService::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(ContractLegalDocumentAccessResolver::class))->newInstanceWithoutConstructor(),
         );
 
         $response = $controller->recoverCreate($request, 'create-operation');
@@ -999,8 +1004,12 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $registry,
             $access,
             (new \ReflectionClass(LegalWorkflowActionResolver::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(LegalDocumentEditorAvailability::class))->newInstanceWithoutConstructor(),
             (new \ReflectionClass(LegalArchiveLifecycleService::class))->newInstanceWithoutConstructor(),
             $failureReporter,
+            $authorization,
+            (new \ReflectionClass(LegalDocumentObligationExecutionService::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(ContractLegalDocumentAccessResolver::class))->newInstanceWithoutConstructor(),
         ))
             ->recoverCreate($request, (string) $document->create_operation_id);
 
@@ -1036,7 +1045,16 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $this->connection(),
         );
 
-        $this->connection()->statement("CREATE TRIGGER reject_version BEFORE INSERT ON legal_archive_document_versions BEGIN SELECT RAISE(FAIL, 'persistence failed'); END");
+        $this->connection()->unprepared(<<<'SQL'
+CREATE FUNCTION reject_version_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'persistence failed';
+END;
+$$;
+CREATE TRIGGER reject_version
+BEFORE INSERT ON legal_archive_document_versions
+FOR EACH ROW EXECUTE FUNCTION reject_version_insert();
+SQL);
 
         try {
             $service->addVersion($file, $this->pdf('failed.pdf'), new VersionInput(uploadedByUserId: 30));
@@ -1149,10 +1167,19 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         $storage->method('upload')->willReturn('org-20/legal-archive/files/1/rejected.pdf');
         $scanner = $this->createMock(LegalDocumentScanner::class);
         $scanner->method('assertClean')->willThrowException(new RuntimeException('malware'));
-        $this->connection()->statement(
-            'CREATE TRIGGER reject_failed_current_clear BEFORE UPDATE ON legal_archive_document_versions '
-            ."WHEN NEW.is_current = 0 BEGIN SELECT RAISE(FAIL, 'current reconciliation failed'); END"
-        );
+        $this->connection()->unprepared(<<<'SQL'
+CREATE FUNCTION reject_failed_current_clear_update() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.is_current = false THEN
+        RAISE EXCEPTION 'current reconciliation failed';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER reject_failed_current_clear
+BEFORE UPDATE ON legal_archive_document_versions
+FOR EACH ROW EXECUTE FUNCTION reject_failed_current_clear_update();
+SQL);
 
         try {
             $this->service($storage, $scanner)->addVersion($file, $this->pdf('rejected.pdf'), new VersionInput);
@@ -1179,10 +1206,16 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         $storage->method('upload')->willReturn($failedPath);
         $storage->expects(self::once())->method('delete')->willReturn(false);
         $scanner = $this->createMock(LegalDocumentScanner::class);
-        $this->connection()->statement(
-            'CREATE TRIGGER reject_version_for_cleanup BEFORE INSERT ON legal_archive_document_versions '
-            ."BEGIN SELECT RAISE(FAIL, 'persistence failed'); END"
-        );
+        $this->connection()->unprepared(<<<'SQL'
+CREATE FUNCTION reject_version_cleanup_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'persistence failed';
+END;
+$$;
+CREATE TRIGGER reject_version_for_cleanup
+BEFORE INSERT ON legal_archive_document_versions
+FOR EACH ROW EXECUTE FUNCTION reject_version_cleanup_insert();
+SQL);
 
         try {
             $this->service($storage, $scanner)->addVersion($file, $this->pdf('orphan.pdf'), new VersionInput);

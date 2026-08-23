@@ -308,7 +308,7 @@ class SupplierProposalComparisonService
             $this->approvalService->createPendingForDecision($decision, $risks, $actorId);
 
             if ($risks === []) {
-                $this->proposalService->accept($proposal, $actorId);
+                $this->proposalService->accept($proposal, $actorId, $selectionAt);
             }
 
             return $decision->fresh([
@@ -450,7 +450,7 @@ class SupplierProposalComparisonService
             $this->approvalService->createPendingForDecision($decision, $risks, $actorId);
 
             if ($risks === []) {
-                $this->proposalService->accept($proposal, $actorId);
+                $this->proposalService->accept($proposal, $actorId, $selectionAt);
             }
 
             return $decision->fresh([

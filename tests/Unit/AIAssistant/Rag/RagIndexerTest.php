@@ -19,6 +19,7 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
 class RagIndexerTest extends TestCase
@@ -72,7 +73,11 @@ class RagIndexerTest extends TestCase
         [$sql, $bindings] = $queries[0];
         $this->assertStringContainsString('embedding = ?', $sql);
         $this->assertStringNotContainsString('[0.1,0.2,0.3]', $sql);
-        $this->assertSame('[0.1,0.2,0.3]', $bindings[0]);
+        $boundEmbedding = json_decode((string) $bindings[0], true, flags: JSON_THROW_ON_ERROR);
+        $this->assertIsArray($boundEmbedding);
+        $this->assertCount(RagTestEmbedding::DIMENSIONS, $boundEmbedding);
+        $this->assertSame([0.1, 0.2, 0.3], array_slice($boundEmbedding, 0, 3));
+        $this->assertSame([0], array_values(array_unique(array_slice($boundEmbedding, 3))));
     }
 
     public function test_indexes_selected_enabled_source_type_for_organization(): void
@@ -360,7 +365,12 @@ final class RecordingEmbeddingProvider implements RagEmbeddingProviderInterface
     /**
      * @param  array<int, float>  $embedding
      */
-    public function __construct(private readonly array $embedding) {}
+    private readonly array $embedding;
+
+    public function __construct(array $embedding)
+    {
+        $this->embedding = RagTestEmbedding::fromLeadingValues($embedding);
+    }
 
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
@@ -382,6 +392,6 @@ final class RecordingEmbeddingProvider implements RagEmbeddingProviderInterface
 
     public function dimensions(): int
     {
-        return count($this->embedding);
+        return RagTestEmbedding::DIMENSIONS;
     }
 }

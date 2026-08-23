@@ -49,7 +49,7 @@ final class NotificationCommitSequenceContractTest extends TestCase
         self::assertLessThan($dispatchPosition, $persistencePosition);
     }
 
-    public function test_unsupported_production_databases_fail_closed_and_sqlite_is_test_only(): void
+    public function test_notification_sequence_supports_only_postgres_in_every_environment(): void
     {
         $sequencer = $this->source(
             'app/BusinessModules/Features/Notifications/Services/DatabaseNotificationCommitSequencer.php'
@@ -64,23 +64,22 @@ final class NotificationCommitSequenceContractTest extends TestCase
         self::assertStringContainsString('NotificationSequenceDriverGuard::assertSupported(', $sequencer);
         self::assertStringContainsString('NotificationSequenceDriverGuard::assertSupported(', $persistence);
         self::assertStringContainsString("\$driver === 'pgsql'", $guard);
-        self::assertStringContainsString("\$driver === 'sqlite' && \$testing", $guard);
+        self::assertStringNotContainsString("\$driver === 'sqlite'", $guard);
         self::assertStringContainsString('throw new LogicException(', $guard);
     }
 
-    public function test_driver_guard_accepts_postgres_and_test_sqlite(): void
+    public function test_driver_guard_accepts_postgres(): void
     {
-        NotificationSequenceDriverGuard::assertSupported('pgsql', false);
-        NotificationSequenceDriverGuard::assertSupported('sqlite', true);
+        NotificationSequenceDriverGuard::assertSupported('pgsql');
 
-        self::addToAssertionCount(2);
+        self::addToAssertionCount(1);
     }
 
-    public function test_driver_guard_rejects_non_postgres_production_and_non_sqlite_test_drivers(): void
+    public function test_driver_guard_rejects_every_non_postgres_driver(): void
     {
-        foreach ([['sqlite', false], ['mysql', true], ['mysql', false]] as [$driver, $testing]) {
+        foreach (['sqlite', 'mysql'] as $driver) {
             try {
-                NotificationSequenceDriverGuard::assertSupported($driver, $testing);
+                NotificationSequenceDriverGuard::assertSupported($driver);
                 self::fail("Driver {$driver} unexpectedly accepted");
             } catch (LogicException) {
                 self::addToAssertionCount(1);

@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Payments\Services\PurchaseOrderContractRequirementS
 use App\BusinessModules\Core\Payments\Services\PaymentValidationService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetLimitCheckService;
 use App\Domain\Authorization\Services\ModulePermissionChecker;
+use App\Modules\Core\AccessController;
 use DomainException;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Facade;
@@ -38,6 +39,7 @@ final class PaymentDocumentServiceTest extends TestCase
         $document->amount = 1000;
 
         $app = new Container();
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($app);
 
         $db = Mockery::mock();
@@ -73,10 +75,10 @@ final class PaymentDocumentServiceTest extends TestCase
             $validator,
             new PaymentBudgetLimitService(
                 new BudgetLimitCheckService(),
-                Mockery::mock(ModulePermissionChecker::class),
+                new ModulePermissionChecker(Mockery::mock(AccessController::class)),
             ),
             Mockery::mock(PaymentAuditService::class),
-            Mockery::mock(PurchaseOrderContractRequirementService::class),
+            new PurchaseOrderContractRequirementService(),
         );
 
         $this->expectException(DomainException::class);
