@@ -43,6 +43,18 @@ use ReflectionClass;
 final class HoldingPerformancePublishedContractTest extends TestCase
 {
     #[Test]
+    public function source_hash_canonicalizes_platform_line_endings(): void
+    {
+        $method = (new ReflectionClass(HoldingPerformanceCandidateContract::class))
+            ->getMethod('canonicalSourceContents');
+
+        self::assertSame(
+            "alpha\nbeta\ngamma\n",
+            $method->invoke(null, "alpha\r\nbeta\rgamma\n"),
+        );
+    }
+
+    #[Test]
     public function published_contract_keeps_holding_identity_server_owned(): void
     {
         $builtin = new HoldingPerformanceBuiltinPublishedReport(new HoldingPerformanceCandidateContract);
@@ -150,7 +162,10 @@ final class HoldingPerformancePublishedContractTest extends TestCase
         self::assertStringContainsString('->whereNotExists(function (QueryBuilder $newer)', $events);
         self::assertStringContainsString('sourceAccess->assertAccessible', $rows);
         self::assertStringContainsString("Route::post('/holding-performance/runs'", $routes);
-        self::assertStringContainsString("'admin.reports.holding-performance.runs.store'", $authorization);
+        self::assertStringContainsString(
+            "preg_match('/^admin\\.reports\\.[a-z0-9-]+\\.(?:options|runs\\.store)$/D'",
+            $authorization,
+        );
         self::assertStringContainsString('CurrencyCode::tryFrom($rawCurrency)?->value', $assembler);
         self::assertStringContainsString("'unknown_contract_dimension_checkpoint'", $assembler);
         self::assertStringContainsString('$this->sources->coverageStartedAt($query->asOf)', $materializer);
