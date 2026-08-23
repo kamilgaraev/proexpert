@@ -52,6 +52,8 @@ final readonly class PersistedInAppReportSubscriptionNotifier implements InAppRe
                 ],
                 channels: ['in_app'],
                 organizationId: $subscription->organizationId,
+                requiredPermissions: ['reports.view'],
+                interfaces: ['admin'],
             );
 
             $now = now();

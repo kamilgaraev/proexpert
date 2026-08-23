@@ -25,6 +25,8 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequestVersion;
+use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnAuthorizer;
+use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnUnitOfWork;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\ProcurementAwardOwnerEventWriter;
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardPreparedSelection;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementCycleSourceState;
@@ -39,6 +41,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementC
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementAwardTimeResolver;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementProcessEventRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
 use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalPolicyService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementAuditService;
@@ -47,6 +50,7 @@ use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleServic
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPdfService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderService;
+use App\BusinessModules\Features\Procurement\Services\PurchaseReceiptInventoryService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseRequestNumberGenerator;
 use App\BusinessModules\Features\Procurement\Services\PurchaseRequestService;
 use App\BusinessModules\Features\Procurement\Services\SupplierPartyService;
@@ -650,6 +654,10 @@ final class ProcurementCycleOwnerWorkflowContractTest extends TestCase
             (new ReflectionClass(ProjectMaterialDeliveryService::class))->newInstanceWithoutConstructor(),
             $recorder,
             $runtime,
+            (new ReflectionClass(ProcurementReportingLifecycleRecorder::class))->newInstanceWithoutConstructor(),
+            (new ReflectionClass(PurchaseReceiptInventoryService::class))->newInstanceWithoutConstructor(),
+            $this->createStub(PurchaseReceiptReturnAuthorizer::class),
+            $this->createStub(PurchaseReceiptReturnUnitOfWork::class),
         );
     }
 
@@ -1003,6 +1011,10 @@ final class PurchaseOrderOwnerContractHarness extends PurchaseOrderService
         ProjectMaterialDeliveryService $deliveryService,
         ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
         private readonly OwnerWorkflowTransactionJournal $runtime,
+        ProcurementReportingLifecycleRecorder $reportingLifecycle,
+        PurchaseReceiptInventoryService $receiptInventory,
+        PurchaseReceiptReturnAuthorizer $returnAuthorizer,
+        PurchaseReceiptReturnUnitOfWork $returnUnitOfWork,
     ) {
         parent::__construct(
             $pdfService,
@@ -1013,6 +1025,10 @@ final class PurchaseOrderOwnerContractHarness extends PurchaseOrderService
             $deliveryService,
             $cycleEventRecorder,
             $runtime,
+            $reportingLifecycle,
+            $receiptInventory,
+            $returnAuthorizer,
+            $returnUnitOfWork,
         );
     }
 
@@ -1156,12 +1172,13 @@ final class ProcurementApprovalOwnerContractHarness extends ProcurementApprovalS
             throw new LogicException('approval_decision_fixture_required');
         }
 
+        $resolvedAt = $this->runtime->occurredAt();
         $previousStatus = $approval->status;
         $previousResolvedAt = $approval->resolved_at;
         $approval->status = ProcurementApprovalStatusEnum::APPROVED;
         $approval->setRawAttributes([
             ...$approval->getAttributes(),
-            'resolved_at' => $this->runtime->occurredAt(),
+            'resolved_at' => $resolvedAt,
         ], true);
         $this->runtime->afterRollback(static function () use (
             $approval,
@@ -1178,6 +1195,7 @@ final class ProcurementApprovalOwnerContractHarness extends ProcurementApprovalS
         return [
             'approval' => $approval,
             'decision' => $this->decision,
+            'resolved_at' => $resolvedAt,
             'blocking_approvals_exist' => array_shift($this->blockingApprovals) ?? false,
         ];
     }

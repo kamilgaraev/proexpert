@@ -34,6 +34,7 @@ final class NotificationServiceTargetTest extends TestCase
 
         $application = new Container;
         $application->instance('log', new NullLogger);
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($application);
     }
 

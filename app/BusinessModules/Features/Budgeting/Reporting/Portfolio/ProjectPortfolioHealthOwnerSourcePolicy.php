@@ -116,8 +116,12 @@ final class ProjectPortfolioHealthOwnerSourcePolicy
             || $rowsCount === null || $rowsCount !== $rowCount
             || $this->positiveInt($source['organization_id']) !== $organizationId
             || $this->positiveInt($source['parent_organization_id']) !== $organizationId
-            || ! $this->allIdsEqual($source['row_organization_ids'], $organizationId)
-            || ! $this->allStringsEqual($source['row_report_codes'], $kind)
+            || ($rowCount === 0
+                ? $source['row_organization_ids'] !== []
+                : ! $this->allIdsEqual($source['row_organization_ids'], $organizationId))
+            || ($rowCount === 0
+                ? $source['row_report_codes'] !== []
+                : ! $this->allStringsEqual($source['row_report_codes'], $kind))
             || $source['report_code'] !== $kind
             || $source['scope_hash'] !== $request['scope_hash']
             || $source['formula'] !== $request['formula']

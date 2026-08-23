@@ -208,9 +208,7 @@ final class ReadinessPolicyEvaluatorTest extends TestCase
         self::assertContains('component_contradictory_or_duplicate', $evaluation->reasonCodes);
     }
 
-    /**
-     * @dataProvider malformedPolicyProvider
-     */
+    #[DataProvider('malformedPolicyProvider')]
     public function test_policy_schema_is_closed_and_rejects_malformed_calendar_rules(array $mutations): void
     {
         $canonical = ReadinessPolicyDefinition::v1(17)->canonicalDefinition();

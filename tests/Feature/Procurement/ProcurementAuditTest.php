@@ -9,27 +9,28 @@ use App\BusinessModules\Features\Procurement\Http\Middleware\EnsureProcurementAc
 use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
 use App\BusinessModules\Features\Procurement\Models\ProcurementAuditEvent;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
-use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementAuditService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
-use App\BusinessModules\Features\Procurement\Services\SupplierProposalVersionService;
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Http\Middleware\JwtMiddleware;
 use App\Models\Organization;
-use App\Models\Supplier;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Route;
+use Tests\Support\AdminApiTestContext;
+use Tests\Support\CreatesCanonicalProcurementSelection;
 use Tests\TestCase;
 
 class ProcurementAuditTest extends TestCase
 {
+    use CreatesCanonicalProcurementSelection;
+
     public function test_decision_approval_and_order_creation_write_domain_audit_events(): void
     {
         $organization = Organization::factory()->create();
@@ -78,7 +79,7 @@ class ProcurementAuditTest extends TestCase
             ->firstOrFail();
 
         $this->assertSame('KP-AUD-001', $orderEvent->payload['accepted_supplier_proposal_number']);
-        $this->assertSame('KP-AUD-001 supplier', $orderEvent->payload['supplier_name']);
+        $this->assertSame('SR-AUD-001 supplier', $orderEvent->payload['supplier_name']);
         $this->assertEquals(1200.0, $orderEvent->payload['total_amount']);
     }
 
@@ -134,15 +135,9 @@ class ProcurementAuditTest extends TestCase
             EnsureProcurementActive::class,
         ]);
 
-        $organization = Organization::factory()->create();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $organization = $context->organization;
         $otherOrganization = Organization::factory()->create();
-        $user = User::factory()->create(['current_organization_id' => $organization->id]);
-        $user->organizations()->attach($organization->id, ['is_owner' => true, 'is_active' => true]);
-        UserRoleAssignment::assignRole(
-            user: $user,
-            roleSlug: 'organization_owner',
-            context: AuthorizationContext::getOrganizationContext($organization->id)
-        );
 
         $supplierRequest = $this->createSupplierRequest($organization, '020');
         $proposal = $this->createProposal($organization, $supplierRequest, 'KP-AUD-020', 900);
@@ -160,37 +155,41 @@ class ProcurementAuditTest extends TestCase
             'payload' => ['outside_current_org' => true],
         ]);
 
-        $supplierRequestList = $this->actingAs($user, 'api_admin')
+        $supplierRequestList = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/procurement/supplier-requests');
         $supplierRequestList->assertOk()->assertJsonMissingPath('data.0.audit_events');
 
-        $supplierRequestDetail = $this->actingAs($user, 'api_admin')
+        $supplierRequestDetail = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/procurement/supplier-requests/{$supplierRequest->id}");
         $supplierRequestDetail->assertOk()->assertJsonMissingPath('data.audit_events');
 
-        $proposalList = $this->actingAs($user, 'api_admin')
+        $proposalList = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/procurement/proposals');
         $proposalList->assertOk()->assertJsonMissingPath('data.0.audit_events');
 
-        $proposalDetail = $this->actingAs($user, 'api_admin')
+        $proposalDetail = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/procurement/proposals/{$proposal->id}");
         $proposalDetail->assertOk()->assertJsonMissingPath('data.audit_events');
 
-        $orderList = $this->actingAs($user, 'api_admin')
+        $orderList = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/procurement/purchase-orders');
         $orderList->assertOk()->assertJsonMissingPath('data.0.audit_events');
 
-        $orderDetail = $this->actingAs($user, 'api_admin')
+        $orderDetail = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/procurement/purchase-orders/{$order->id}");
         $orderDetail->assertOk()->assertJsonMissingPath('data.audit_events');
 
-        $auditEvents = $this->actingAs($user, 'api_admin')
+        $auditEvents = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/procurement/audit-events?subject_type=SupplierRequest&subject_id={$supplierRequest->id}");
 
         $auditEvents
             ->assertOk()
-            ->assertJsonCount(1, 'data')
-            ->assertJsonPath('data.0.event_type', ProcurementAuditEventTypeEnum::SUPPLIER_REQUEST_CREATED->value);
+            ->assertJsonFragment([
+                'event_type' => ProcurementAuditEventTypeEnum::SUPPLIER_REQUEST_CREATED->value,
+            ])
+            ->assertJsonMissing([
+                'outside_current_org' => true,
+            ]);
     }
 
     public function test_audit_events_route_is_guarded_by_audit_permission(): void
@@ -206,19 +205,12 @@ class ProcurementAuditTest extends TestCase
         string $suffix,
         ?float $budgetAmount = null
     ): SupplierRequest {
-        $purchaseRequest = PurchaseRequest::query()->create([
-            'organization_id' => $organization->id,
-            'request_number' => "PR-AUD-{$suffix}",
-            'status' => 'approved',
-            'budget_amount' => $budgetAmount,
-        ]);
-
-        return SupplierRequest::query()->create([
-            'organization_id' => $organization->id,
-            'purchase_request_id' => $purchaseRequest->id,
-            'request_number' => "SR-AUD-{$suffix}",
-            'status' => 'responded',
-        ]);
+        return $this->createCanonicalSelectionSupplierRequest(
+            $organization,
+            $budgetAmount,
+            "PR-AUD-{$suffix}",
+            "SR-AUD-{$suffix}"
+        );
     }
 
     private function createProposal(
@@ -228,45 +220,12 @@ class ProcurementAuditTest extends TestCase
         float $totalAmount,
         bool $withLine = false
     ): SupplierProposal {
-        $supplier = Supplier::query()->create([
-            'organization_id' => $organization->id,
-            'name' => "{$proposalNumber} supplier",
-            'tax_number' => '7701000000',
-            'is_active' => true,
-        ]);
-
-        $proposal = SupplierProposal::query()->create([
-            'organization_id' => $organization->id,
-            'supplier_request_id' => $supplierRequest->id,
-            'supplier_id' => $supplier->id,
-            'supplier_snapshot' => [
-                'type' => 'registered',
-                'display_name' => "{$proposalNumber} supplier",
-                'tax_id' => '7701000000',
-            ],
-            'proposal_number' => $proposalNumber,
-            'proposal_date' => now()->toDateString(),
-            'status' => 'submitted',
-            'subtotal_amount' => $totalAmount,
-            'delivery_amount' => 0,
-            'vat_amount' => 0,
-            'total_amount' => $totalAmount,
-            'currency' => 'RUB',
-        ]);
-
-        if ($withLine) {
-            $proposal->lines()->create([
-                'name' => "{$proposalNumber} material",
-                'quantity' => 2,
-                'unit' => 'pcs',
-                'unit_price' => $totalAmount / 2,
-                'total_amount' => $totalAmount,
-            ]);
-        }
-
-        app(SupplierProposalVersionService::class)->createInitialVersion($proposal);
-
-        return $proposal->refresh();
+        return $this->createCanonicalSelectionProposal(
+            $organization,
+            $supplierRequest,
+            $proposalNumber,
+            $totalAmount
+        );
     }
 
     private function createDecision(

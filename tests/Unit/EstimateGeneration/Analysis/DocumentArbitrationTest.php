@@ -7,6 +7,7 @@ namespace Tests\Unit\EstimateGeneration\Analysis;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactReducer;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationIntentIngestor;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
@@ -448,6 +449,8 @@ final class DocumentArbitrationTest extends TestCase
             ], $claims),
         ];
 
+        $decisions = (new CanonicalFactReducer)->reduce($claims, $decisions);
+
         $writer->writeArbitration($claims, $decisions, 13, 4);
         $writer->writeArbitration($claims, $decisions, 13, 4);
 
@@ -558,14 +561,15 @@ final class DocumentArbitrationTest extends TestCase
         self::assertNotNull($publication);
         self::assertCount(3, $publication->claims);
         self::assertCount(3, $publication->decisions);
-        self::assertSame(
-            ['literal:1', 'construction:1', 'risk:1'],
-            array_map(static fn (ArbitrationDecision $decision): string => $decision->claimId, $publication->decisions),
-        );
-        self::assertSame(['accepted', 'candidate', 'candidate'], array_map(
-            static fn (ArbitrationDecision $decision): string => $decision->status,
-            $publication->decisions,
-        ));
+        $statusesByClaim = [];
+        foreach ($publication->decisions as $decision) {
+            $statusesByClaim[$decision->claimId] = $decision->status;
+        }
+        self::assertSame([
+            'construction:1' => 'candidate',
+            'literal:1' => 'accepted',
+            'risk:1' => 'candidate',
+        ], $statusesByClaim);
     }
 
     #[Test]

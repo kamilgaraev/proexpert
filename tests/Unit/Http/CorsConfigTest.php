@@ -10,11 +10,12 @@ use PHPUnit\Framework\TestCase;
 class CorsConfigTest extends TestCase
 {
     #[DataProvider('localDevOriginsProvider')]
-    public function test_local_dev_origins_are_allowed(string $origin): void
+    public function test_local_dev_origins_are_not_implicitly_allowed(string $origin): void
     {
         $config = require dirname(__DIR__, 3).'/config/cors.php';
 
-        $this->assertContains($origin, $config['allowed_origins']);
+        $this->assertNotContains($origin, $config['allowed_origins']);
+        $this->assertFalse($config['allow_any_origin_in_dev']);
     }
 
     public static function localDevOriginsProvider(): array

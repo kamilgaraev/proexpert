@@ -8,8 +8,8 @@ use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactReportFilters;
 use App\BusinessModules\Features\Budgeting\Http\Requests\CfoCommandCenterRequest;
 use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterService;
-use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use Tests\TestCase;
 
 final class CfoCommandCenterFiltersTest extends TestCase
 {

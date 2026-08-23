@@ -12,6 +12,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateGenerationLearningRagSource;
 use App\Models\Organization;
 use App\Models\Project;
+use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
 final class EstimateGenerationLearningRagSourceTest extends TestCase
@@ -276,7 +277,7 @@ final class LearningRagEmbeddingProvider implements RagEmbeddingProviderInterfac
 {
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
-        return [1.0, 0.0, 0.0];
+        return RagTestEmbedding::fromLeadingValues([1.0, 0.0, 0.0]);
     }
 
     public function provider(): string
@@ -291,6 +292,6 @@ final class LearningRagEmbeddingProvider implements RagEmbeddingProviderInterfac
 
     public function dimensions(): int
     {
-        return 3;
+        return RagTestEmbedding::DIMENSIONS;
     }
 }

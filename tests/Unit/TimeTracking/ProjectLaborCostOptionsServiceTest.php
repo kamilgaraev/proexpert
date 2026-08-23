@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace Tests\Unit\TimeTracking;
 
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostOptionsService;
-use Illuminate\Database\SQLiteConnection;
-use PDO;
+use Illuminate\Database\ConnectionInterface;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class ProjectLaborCostOptionsServiceTest extends TestCase
 {
-    private SQLiteConnection $connection;
+    private ConnectionInterface $connection;
 
     private ProjectLaborCostOptionsService $service;
 
@@ -19,11 +19,7 @@ final class ProjectLaborCostOptionsServiceTest extends TestCase
     {
         parent::setUp();
 
-        $pdo = new PDO('sqlite::memory:');
-        $pdo->sqliteCreateFunction('concat_ws', static function (string $separator, mixed ...$values): string {
-            return implode($separator, array_filter($values, static fn (mixed $value): bool => $value !== null && $value !== ''));
-        });
-        $this->connection = new SQLiteConnection($pdo);
+        $this->connection = IsolatedPostgresTestDatabase::connection();
         $this->createSchema();
         $this->seedBaseData();
         $this->service = new ProjectLaborCostOptionsService($this->connection);

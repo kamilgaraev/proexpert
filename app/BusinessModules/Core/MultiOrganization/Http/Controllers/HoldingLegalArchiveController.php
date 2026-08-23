@@ -57,7 +57,9 @@ final class HoldingLegalArchiveController extends Controller
             $document->setAttribute('holding_contract', [
                 'id' => (int) $contract->id,
                 'number' => (string) $contract->number,
-                'status' => (string) $contract->status,
+                'status' => $contract->status instanceof \BackedEnum
+                    ? (string) $contract->status->value
+                    : (string) $contract->status,
             ]);
             if ($this->authorization->can($actor, 'multi-organization.reports.financial', ['organization_id' => $holdingId])) {
                 $totalAmount = (float) $contract->total_amount;

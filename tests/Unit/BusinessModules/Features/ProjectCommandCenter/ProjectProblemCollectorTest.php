@@ -18,7 +18,7 @@ use App\Enums\ProjectOrganizationRole;
 use App\Models\Project;
 use App\Modules\Core\AccessController;
 use DateTimeImmutable;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 final class ProjectProblemCollectorTest extends TestCase
 {

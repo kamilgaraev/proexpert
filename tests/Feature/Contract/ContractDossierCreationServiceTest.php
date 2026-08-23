@@ -35,7 +35,7 @@ final class ContractDossierCreationServiceTest extends TestCase
     {
         parent::setUp();
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->setEventDispatcher(new Dispatcher(new Container));
         $this->database->bootEloquent();
@@ -70,6 +70,7 @@ final class ContractDossierCreationServiceTest extends TestCase
         $this->database->schema()->create('estimate_items', static function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('estimate_id');
+            $table->softDeletes();
         });
     }
 

@@ -1,6 +1,7 @@
 services:
   postgres-testing:
     image: pgvector/pgvector:0.8.5-pg16-bookworm
+    command: ["postgres", "-c", "max_locks_per_transaction=1024"]
     environment:
       POSTGRES_DB: most_backend_testing
       POSTGRES_USER: most_testing

@@ -49,7 +49,7 @@ final readonly class AcceptedProductionCandidateContract
     public const FORMULA_VERSION = 'accepted_production.v1';
     public const SOURCE_SCHEMA_VERSION = 'production_acceptance_events_v2';
     public const FORMULA_HASH = '839ea0b2787a0d73872bf5f7a63292437abaae05abb108ae92731abe3264f06b';
-    public const SOURCE_HASH = '6948977b0fa21f4c7964466911a5bcc72c78bb3f588bfc575941667aa4593c0b';
+    public const SOURCE_HASH = 'fe3f61f444324aa672f7355b5089d7f949a78ff905bf78cc173387bbf5a6fdf1';
 
     public function filters(): array
     {

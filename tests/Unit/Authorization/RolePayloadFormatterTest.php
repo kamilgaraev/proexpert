@@ -42,6 +42,7 @@ class RolePayloadFormatterTest extends TestCase
             }
         });
 
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($container);
     }
 

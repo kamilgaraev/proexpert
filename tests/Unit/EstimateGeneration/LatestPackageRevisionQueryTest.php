@@ -32,7 +32,7 @@ final class LatestPackageRevisionQueryTest extends TestCase
     public function limit_is_applied_after_latest_physical_revision_is_selected(): void
     {
         $db = new Capsule;
-        $db->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''], 'contract');
+        $db->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration(), 'contract');
         $db->setAsGlobal();
         $db->bootEloquent();
         $db->getConnection('contract')->getSchemaBuilder()->create('estimate_generation_package_items', function (Blueprint $table): void {

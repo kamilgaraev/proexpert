@@ -10,16 +10,17 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
-use App\BusinessModules\Features\Procurement\Services\SupplierProposalVersionService;
 use App\Models\Organization;
-use App\Models\Supplier;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Tests\Support\CreatesCanonicalProcurementSelection;
 use Tests\TestCase;
 
 class SupplierProposalDecisionTest extends TestCase
 {
+    use CreatesCanonicalProcurementSelection;
+
     public function test_comparison_lists_proposals_only_for_one_supplier_request(): void
     {
         $organization = Organization::factory()->create();
@@ -47,7 +48,7 @@ class SupplierProposalDecisionTest extends TestCase
         $this->assertNotContains($foreignOrganizationProposal->id, array_column($comparison['rows'], 'id'));
     }
 
-    public function test_cheapest_proposal_uses_components_and_falls_back_to_total_amount(): void
+    public function test_cheapest_proposal_uses_positive_total_and_falls_back_to_components(): void
     {
         $organization = Organization::factory()->create();
         $supplierRequest = $this->createSupplierRequest($organization);
@@ -66,8 +67,8 @@ class SupplierProposalDecisionTest extends TestCase
             $organization,
             $supplierRequest,
             'KP-DEC-005',
-            totalAmount: 90,
-            subtotalAmount: 0,
+            totalAmount: 0,
+            subtotalAmount: 90,
             deliveryAmount: 0,
             vatAmount: 0
         );
@@ -77,7 +78,7 @@ class SupplierProposalDecisionTest extends TestCase
         $rows = collect($comparison['rows'])->keyBy('id');
 
         $this->assertSame($fallbackProposal->id, $comparison['cheapest_supplier_proposal_id']);
-        $this->assertSame(100.0, $rows[$componentProposal->id]['comparison_total']);
+        $this->assertSame(999.0, $rows[$componentProposal->id]['comparison_total']);
         $this->assertSame(90.0, $rows[$fallbackProposal->id]['comparison_total']);
     }
 
@@ -275,18 +276,12 @@ class SupplierProposalDecisionTest extends TestCase
         string $purchaseRequestNumber = 'PR-DEC-001',
         string $supplierRequestNumber = 'SR-DEC-001'
     ): SupplierRequest {
-        $purchaseRequest = PurchaseRequest::query()->create([
-            'organization_id' => $organization->id,
-            'request_number' => $purchaseRequestNumber,
-            'status' => 'approved',
-        ]);
-
-        return SupplierRequest::query()->create([
-            'organization_id' => $organization->id,
-            'purchase_request_id' => $purchaseRequest->id,
-            'request_number' => $supplierRequestNumber,
-            'status' => 'responded',
-        ]);
+        return $this->createCanonicalSelectionSupplierRequest(
+            $organization,
+            null,
+            $purchaseRequestNumber,
+            $supplierRequestNumber
+        );
     }
 
     private function createProposal(
@@ -299,28 +294,16 @@ class SupplierProposalDecisionTest extends TestCase
         float $vatAmount = 0,
         string $status = 'submitted'
     ): SupplierProposal {
-        $supplier = Supplier::query()->create([
-            'organization_id' => $organization->id,
-            'name' => "{$proposalNumber} supplier",
-            'is_active' => true,
-        ]);
-
-        $proposal = SupplierProposal::query()->create([
-            'organization_id' => $organization->id,
-            'supplier_request_id' => $supplierRequest->id,
-            'supplier_id' => $supplier->id,
-            'proposal_number' => $proposalNumber,
-            'proposal_date' => now()->toDateString(),
-            'status' => $status,
-            'subtotal_amount' => $subtotalAmount ?? $totalAmount,
-            'delivery_amount' => $deliveryAmount,
-            'vat_amount' => $vatAmount,
-            'total_amount' => $totalAmount,
-            'currency' => 'RUB',
-        ]);
-
-        app(SupplierProposalVersionService::class)->createInitialVersion($proposal);
-
-        return $proposal->refresh();
+        return $this->createCanonicalSelectionProposal(
+            $organization,
+            $supplierRequest,
+            $proposalNumber,
+            $totalAmount,
+            null,
+            $subtotalAmount,
+            $deliveryAmount,
+            $vatAmount,
+            $status
+        );
     }
 }

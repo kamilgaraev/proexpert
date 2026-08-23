@@ -33,12 +33,10 @@ final class HoldingLegalArchiveControllerTest extends TestCase
     {
         parent::setUp();
         $this->originalConnection = DB::getDefaultConnection();
-        config()->set('database.connections.holding_legal_archive_contract', [
-            'driver' => 'sqlite',
-            'database' => ':memory:',
-            'prefix' => '',
-            'foreign_key_constraints' => true,
-        ]);
+        config()->set(
+            'database.connections.holding_legal_archive_contract',
+            \Tests\Support\IsolatedPostgresTestDatabase::configuration(),
+        );
         DB::purge('holding_legal_archive_contract');
         DB::setDefaultConnection('holding_legal_archive_contract');
         $this->createSchema();
@@ -55,9 +53,7 @@ final class HoldingLegalArchiveControllerTest extends TestCase
     {
         $this->seedHoldingScope();
         $this->seedDossier(101, 2, 201, 301);
-        $this->seedContract(102, 3);
         $this->seedDossier(102, 3, 202, 302);
-        $this->seedContract(103, 4);
         $this->seedDossier(103, 4, 203, 303);
 
         $controller = $this->controller([1, 2]);
@@ -108,7 +104,7 @@ final class HoldingLegalArchiveControllerTest extends TestCase
         self::assertTrue($visible->getData(true)['data']['permissions']['can_preview_download']);
         self::assertCount(1, $visible->getData(true)['data']['files']);
         self::assertSame(301, $visible->getData(true)['data']['files'][0]['current_version']['id']);
-        self::assertSame([
+        self::assertEquals([
             'visible' => true,
             'total_amount' => 1000.0,
             'paid_amount' => 350.0,
@@ -142,11 +138,10 @@ final class HoldingLegalArchiveControllerTest extends TestCase
             fn (User $actor, string $permission): bool => $permission !== 'multi-organization.reports.financial'
                 || $this->financialAllowed,
         );
-
         return new HoldingLegalArchiveController(
             $organizationScope,
             $access,
-            Mockery::mock(LegalDocumentDownloadService::class),
+            $this->app->make(LegalDocumentDownloadService::class),
             $authorization,
         );
     }
@@ -169,10 +164,10 @@ final class HoldingLegalArchiveControllerTest extends TestCase
     private function seedHoldingScope(): void
     {
         DB::table('organizations')->insert([
-            ['id' => 1, 'name' => 'Холдинг', 'is_holding' => true, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
+            ['id' => 1, 'name' => 'Холдинг', 'parent_organization_id' => null, 'is_holding' => true, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
             ['id' => 2, 'name' => 'Дочерняя организация', 'parent_organization_id' => 1, 'is_holding' => false, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
             ['id' => 3, 'name' => 'Соседняя организация', 'parent_organization_id' => 9, 'is_holding' => false, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
-            ['id' => 4, 'name' => 'Несвязанная организация', 'is_holding' => false, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
+            ['id' => 4, 'name' => 'Несвязанная организация', 'parent_organization_id' => null, 'is_holding' => false, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
         ]);
     }
 

@@ -9,6 +9,40 @@ use PHPUnit\Framework\TestCase;
 
 final class WarehouseCustodyIdempotencyTest extends TestCase
 {
+    public function test_issue_and_return_use_the_same_project_fence_and_canonical_warehouse_lock_order(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 3).'/app/BusinessModules/Features/BasicWarehouse/Services/WarehouseCustodyService.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString('private function lockProject(', $source);
+        self::assertStringContainsString('private function lockWarehouses(', $source);
+        self::assertStringContainsString("->orderBy('id')", $source);
+
+        $issueStart = strpos($source, 'public function issueToResponsible(');
+        $returnStart = strpos($source, 'public function returnFromResponsible(');
+        $getOrCreateStart = strpos($source, 'public function getOrCreateCustodyWarehouse(');
+
+        self::assertIsInt($issueStart);
+        self::assertIsInt($returnStart);
+        self::assertIsInt($getOrCreateStart);
+
+        $issue = substr($source, $issueStart, $returnStart - $issueStart);
+        $return = substr($source, $returnStart, $getOrCreateStart - $returnStart);
+
+        self::assertStringContainsString('$this->lockProject($organizationId, $projectId);', $issue);
+        self::assertStringContainsString(
+            '$this->lockWarehouses($organizationId, [(int) $projectWarehouse->id, (int) $custodyWarehouse->id]);',
+            $issue,
+        );
+        self::assertStringContainsString('$this->lockProject($organizationId, $projectId);', $return);
+        self::assertStringContainsString(
+            '$this->lockWarehouses($organizationId, [(int) $projectWarehouse->id, (int) $custodyWarehouse->id]);',
+            $return,
+        );
+    }
+
     public function test_fingerprint_is_stable_for_same_logical_operation(): void
     {
         $first = WarehouseCustodyIdempotency::fingerprint('responsible_issue', [

@@ -20,6 +20,7 @@ use App\Services\Logging\LoggingService;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
+use Tests\Support\RagTestEmbedding;
 
 final class AIAssistantRagContextTest extends TestCase
 {
@@ -382,7 +383,7 @@ final class FeatureRagEmbeddingProvider implements RagEmbeddingProviderInterface
 {
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
-        return [1.0, 0.0, 0.0];
+        return RagTestEmbedding::fromLeadingValues([1.0, 0.0, 0.0]);
     }
 
     public function provider(): string
@@ -397,6 +398,6 @@ final class FeatureRagEmbeddingProvider implements RagEmbeddingProviderInterface
 
     public function dimensions(): int
     {
-        return 3;
+        return RagTestEmbedding::DIMENSIONS;
     }
 }

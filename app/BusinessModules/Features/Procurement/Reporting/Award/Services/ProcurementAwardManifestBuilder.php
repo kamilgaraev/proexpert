@@ -36,11 +36,11 @@ final class ProcurementAwardManifestBuilder
             (int) ($right['proposal_version_id'] ?? 0),
         ]);
 
-        $supplierRequestIds = array_values(array_unique(array_map(
-            static fn (array $row): int => (int) ($row['supplier_request_id'] ?? 0),
+        $purchaseRequestIds = array_values(array_unique(array_map(
+            static fn (array $row): int => (int) ($row['purchase_request_id'] ?? 0),
             $rows,
         )));
-        if (count($supplierRequestIds) !== 1 || $supplierRequestIds[0] < 1) {
+        if (count($purchaseRequestIds) !== 1 || $purchaseRequestIds[0] < 1) {
             throw new DomainException('procurement_award_purchase_request_round_not_supported');
         }
 
@@ -60,12 +60,6 @@ final class ProcurementAwardManifestBuilder
             $vatBases,
         )));
 
-        $requestVersionIds = array_values(array_unique(array_map(
-            static fn (array $row): ?int => isset($row['supplier_request_version_id'])
-                ? (int) $row['supplier_request_version_id']
-                : null,
-            $rows,
-        )));
         $requestVersionHashes = array_values(array_unique(array_map(
             static fn (array $row): string => (string) ($row['supplier_request_version_hash'] ?? ''),
             $rows,
@@ -77,7 +71,7 @@ final class ProcurementAwardManifestBuilder
                 $row,
                 count($currencies) === 1,
                 count($vatBases) === 1,
-                count($requestVersionIds) === 1 && count($requestVersionHashes) === 1,
+                count($requestVersionHashes) === 1,
             );
         }
 

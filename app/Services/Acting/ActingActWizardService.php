@@ -121,7 +121,7 @@ class ActingActWizardService
             $availableQuantity = $availableQuantities[$workId] ?? 0;
             $unitPrice = $this->priceService->resolveCompletedWorkUnitPrice($work, $effectiveQuantity);
             $quantity = $this->sumRequestedQuantity($selectedWorks, $availableQuantity);
-            $this->quantityReservations->assertAvailable([$workId => $quantity], $availableQuantities);
+            $this->quantityReservations->assertScaledAvailable([$workId => $quantity], $availableQuantities);
             $quantityDecimal = AcceptedProductionQuantity::decimal($quantity);
 
             PerformanceActLine::create([

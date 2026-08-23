@@ -154,7 +154,7 @@ final class ProcurementAwardManifestBuilderTest extends TestCase
     public function test_manifest_rejects_unproved_purchase_request_round(): void
     {
         $foreignRound = $this->candidate(20, 201, '90.00');
-        $foreignRound['supplier_request_id'] = 501;
+        $foreignRound['purchase_request_id'] = 501;
 
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('procurement_award_purchase_request_round_not_supported');

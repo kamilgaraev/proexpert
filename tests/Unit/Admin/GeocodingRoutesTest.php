@@ -4,28 +4,36 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Admin;
 
-use PHPUnit\Framework\TestCase;
+use Illuminate\Routing\Route;
+use Tests\TestCase;
 
 class GeocodingRoutesTest extends TestCase
 {
+    public function refreshDatabase(): void
+    {
+    }
+
     public function test_admin_api_registers_geocoding_routes_before_projects_routes(): void
     {
-        $apiRoutes = file_get_contents(dirname(__DIR__, 3) . '/routes/api.php');
+        $routes = array_values(app('router')->getRoutes()->getRoutes());
+        $geocodingRoute = app('router')->getRoutes()->getByName('admin.projects.geocoding.status');
+        $projectRoute = app('router')->getRoutes()->getByName('admin.projects.show');
 
-        $this->assertIsString($apiRoutes);
-        $this->assertNotFalse(strpos($apiRoutes, "require __DIR__ . '/api/v1/admin/geocoding.php';"));
-        $this->assertNotFalse(strpos($apiRoutes, "require __DIR__ . '/api/v1/admin/projects.php';"));
+        $this->assertInstanceOf(Route::class, $geocodingRoute);
+        $this->assertInstanceOf(Route::class, $projectRoute);
         $this->assertLessThan(
-            strpos($apiRoutes, "require __DIR__ . '/api/v1/admin/projects.php';"),
-            strpos($apiRoutes, "require __DIR__ . '/api/v1/admin/geocoding.php';")
+            array_search($projectRoute, $routes, true),
+            array_search($geocodingRoute, $routes, true),
         );
     }
 
     public function test_project_detail_routes_are_limited_to_numeric_identifiers(): void
     {
-        $projectRoutes = file_get_contents(dirname(__DIR__, 3) . '/routes/api/v1/admin/projects.php');
+        foreach (['show', 'update', 'patch', 'destroy'] as $action) {
+            $route = app('router')->getRoutes()->getByName('admin.projects.'.$action);
 
-        $this->assertIsString($projectRoutes);
-        $this->assertSame(4, substr_count($projectRoutes, "->whereNumber('project')"));
+            $this->assertInstanceOf(Route::class, $route);
+            $this->assertSame('[0-9]+', $route->wheres['project'] ?? null);
+        }
     }
 }

@@ -8,9 +8,9 @@ use LogicException;
 
 final class NotificationSequenceDriverGuard
 {
-    public static function assertSupported(string $driver, bool $testing): void
+    public static function assertSupported(string $driver): void
     {
-        if ($driver === 'pgsql' || ($driver === 'sqlite' && $testing)) {
+        if ($driver === 'pgsql') {
             return;
         }
 

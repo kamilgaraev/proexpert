@@ -15,6 +15,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\Project\UserProjectAccessService;
 use RuntimeException;
+use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
 class RagRetrieverTest extends TestCase
@@ -367,7 +368,12 @@ final class RetrieverEmbeddingProvider implements RagEmbeddingProviderInterface
     /**
      * @param  array<int, float>  $embedding
      */
-    public function __construct(private readonly array $embedding) {}
+    private readonly array $embedding;
+
+    public function __construct(array $embedding)
+    {
+        $this->embedding = RagTestEmbedding::fromLeadingValues($embedding);
+    }
 
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
@@ -388,7 +394,7 @@ final class RetrieverEmbeddingProvider implements RagEmbeddingProviderInterface
 
     public function dimensions(): int
     {
-        return count($this->embedding);
+        return RagTestEmbedding::DIMENSIONS;
     }
 }
 
@@ -411,6 +417,6 @@ final class FailingRetrieverEmbeddingProvider implements RagEmbeddingProviderInt
 
     public function dimensions(): int
     {
-        return 3;
+        return RagTestEmbedding::DIMENSIONS;
     }
 }

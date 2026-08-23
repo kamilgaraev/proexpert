@@ -228,6 +228,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'project_id' => $metadata['project_id'] ?? null,
                 'project_material_delivery_id' => $metadata['project_material_delivery_id'] ?? null,
                 'user_id' => $metadata['user_id'] ?? null,
+                'related_user_id' => $metadata['related_user_id'] ?? null,
                 'document_number' => $metadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,
                 'operation_category' => $metadata['operation_category'] ?? null,
@@ -471,6 +472,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 ];
             }
             $transferPairKey = (string) ($metadata['transfer_pair_key'] ?? \Illuminate\Support\Str::ulid());
+            $metadata['transfer_pair_key'] = $transferPairKey;
             $sourceMetadata = $this->reportingMetadata(
                 $organizationId,
                 $fromWarehouseId,
@@ -2058,6 +2060,21 @@ class WarehouseService implements WarehouseReportDataProvider
                 );
             }
 
+            $remainingToRelease = $quantity;
+            $releasedReservationIds = [];
+            foreach ($activeReservations as $reservation) {
+                if ($remainingToRelease <= 0) {
+                    break;
+                }
+
+                $takeFromReservation = min((float) $reservation->quantity, $remainingToRelease);
+                if ((float) $reservation->quantity - $takeFromReservation <= 0.000001) {
+                    $releasedReservationIds[] = $reservation->id;
+                }
+                $remainingToRelease -= $takeFromReservation;
+            }
+            $metadata['released_reservation_ids'] = $releasedReservationIds;
+
             $movement = $this->unreserveQuantity(
                 $organizationId,
                 $warehouseId,
@@ -2067,7 +2084,6 @@ class WarehouseService implements WarehouseReportDataProvider
             );
 
             $remainingToRelease = $quantity;
-            $releasedReservationIds = [];
 
             foreach ($activeReservations as $reservation) {
                 if ($remainingToRelease <= 0) {
@@ -2098,20 +2114,12 @@ class WarehouseService implements WarehouseReportDataProvider
                     $updatePayload['quantity'] = 0;
                     $updatePayload['status'] = 'cancelled';
                     $updatePayload['cancelled_at'] = now();
-                    $releasedReservationIds[] = $reservation->id;
                 }
 
                 $reservation->update($updatePayload);
 
                 $remainingToRelease -= $takeFromReservation;
             }
-
-            $movementMetadata = is_array($movement->metadata) ? $movement->metadata : [];
-            $movement->update([
-                'metadata' => array_merge($movementMetadata, [
-                    'released_reservation_ids' => $releasedReservationIds,
-                ]),
-            ]);
 
             $balance = $this->getAssetBalance($organizationId, $warehouseId, $materialId);
 

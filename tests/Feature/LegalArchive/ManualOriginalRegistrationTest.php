@@ -43,6 +43,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
 
 final class ManualOriginalRegistrationTest extends TestCase
@@ -61,18 +62,23 @@ final class ManualOriginalRegistrationTest extends TestCase
 
     private bool $hadConfig = false;
 
+    private mixed $previousFacadeApplication = null;
+
     protected function setUp(): void
     {
         parent::setUp();
         TrustedExternalSignatureProvider::$status = 'verified';
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->setEventDispatcher(new Dispatcher(new Container));
         $this->database->bootEloquent();
         Model::clearBootedModels();
         $this->schema();
         $container = Container::getInstance();
+        $this->previousFacadeApplication = Facade::getFacadeApplication();
+        $container->instance('db', $this->database->getDatabaseManager());
+        Facade::setFacadeApplication($container);
         $this->hadConfig = $container->bound('config');
         $this->previousConfig = $this->hadConfig ? $container->make('config') : null;
         $container->instance('config', new class
@@ -142,6 +148,8 @@ final class ManualOriginalRegistrationTest extends TestCase
         } else {
             $container->forgetInstance('config');
         }
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($this->previousFacadeApplication);
         parent::tearDown();
     }
 
@@ -218,7 +226,8 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertSame(0, (int) $artifact->claim_count);
         self::assertNull($artifact->upload_lease_token_hash);
         self::assertSame((int) $signature->id, (int) $replay->id);
-        self::assertSame($path, $signature->signature_path);
+        self::assertNull($signature->signature_path);
+        self::assertSame($path, $signature->storage_location);
         self::assertSame('paper-etag', $signature->storage_etag);
         self::assertSame('image/png', $signature->detected_mime_type);
     }

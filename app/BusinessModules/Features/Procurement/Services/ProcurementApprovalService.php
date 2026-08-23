@@ -18,9 +18,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\Procureme
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use DateTimeImmutable;
-use DateTimeInterface;
 use Illuminate\Validation\ValidationException;
-use LogicException;
 
 use function trans_message;
 
@@ -225,7 +223,7 @@ class ProcurementApprovalService
 
             if (! $context['blocking_approvals_exist']) {
                 $this->markProposalDecisionApproved($decision);
-                $resolvedAt = $this->persistedApprovalResolutionAt($lockedApproval);
+                $resolvedAt = $context['resolved_at'];
                 $this->awardOwnerRecorder->approved($decision, $resolvedAt, $actorId);
                 $this->acceptApprovedWinningProposal(
                     $decision,
@@ -282,6 +280,7 @@ class ProcurementApprovalService
         return [
             'approval' => $lockedApproval,
             'decision' => $decision,
+            'resolved_at' => $resolvedAt,
             'blocking_approvals_exist' => $blockingApprovalsExist,
         ];
     }
@@ -471,16 +470,6 @@ class ProcurementApprovalService
         }
 
         $this->proposalService->accept($proposal, $actorId, $resolvedAt);
-    }
-
-    protected function persistedApprovalResolutionAt(ProcurementApproval $approval): DateTimeImmutable
-    {
-        $resolvedAt = $approval->resolved_at;
-        if (! $resolvedAt instanceof DateTimeInterface) {
-            throw new LogicException('procurement_approval_resolved_at_required');
-        }
-
-        return DateTimeImmutable::createFromInterface($resolvedAt);
     }
 
     private function expiredWinningProposalBlocker(SupplierProposalDecision $decision): ?array

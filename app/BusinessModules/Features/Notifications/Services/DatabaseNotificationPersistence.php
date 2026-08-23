@@ -25,7 +25,7 @@ final class DatabaseNotificationPersistence implements NotificationPersistence
         NotificationDeliveryOptions $options,
     ): Notification {
         $driver = DB::getDriverName();
-        NotificationSequenceDriverGuard::assertSupported($driver, app()->environment('testing'));
+        NotificationSequenceDriverGuard::assertSupported($driver);
 
         return DB::transaction(function () use ($user, $type, $data, $notificationType, $priority, $options, $driver): Notification {
             $notification = Notification::create([

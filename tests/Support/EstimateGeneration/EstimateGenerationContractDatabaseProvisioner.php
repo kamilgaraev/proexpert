@@ -252,7 +252,11 @@ final class EstimateGenerationContractDatabaseProvisioner
         $manifest = [];
         foreach ($entries as $entry) {
             $path = $root.DIRECTORY_SEPARATOR.$entry;
-            $manifest[] = $entry.':'.(is_file($path) ? hash_file('sha256', $path) : 'missing');
+            $contents = is_file($path) ? file_get_contents($path) : false;
+            $digest = is_string($contents)
+                ? hash('sha256', str_replace("\r\n", "\n", $contents))
+                : 'missing';
+            $manifest[] = $entry.':'.$digest;
         }
 
         return hash('sha256', implode("\n", $manifest));

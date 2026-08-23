@@ -44,6 +44,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
             }
         });
 
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($container);
 
         $this->service = new PaymentCalendarContractService(

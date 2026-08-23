@@ -654,24 +654,27 @@ class PurchaseOrderService
             'metadata' => $receiptMetadata,
         ]);
 
+        $receivedItems = [];
         foreach ($items as $item) {
             $quantity = (float) $item['quantity_received'];
             $price = (float) $item['price'];
 
-            $receipt->lines()->create([
+            $receiptLine = $receipt->lines()->create([
                 'purchase_order_item_id' => (int) $item['item_id'],
                 'quantity_received' => $quantity,
                 'price' => $price,
                 'total_amount' => round($quantity * $price, 2),
                 'metadata' => $item['metadata'] ?? null,
             ]);
+            $item['receipt_line_id'] = (int) $receiptLine->id;
+            $receivedItems[] = $item;
         }
 
         $order->update(['status' => $this->lifecycleService->resolveOrderReceiptStatus($order)]);
         event(new \App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier(
             $order,
             $warehouse->id,
-            $items,
+            $receivedItems,
             $userId,
         ));
 

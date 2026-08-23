@@ -51,6 +51,10 @@ final class HoldingAcceptedWorkEventVersion extends Model
         if ($contract === null) {
             throw new InvalidArgumentException('accepted_work_contract_missing');
         }
+        $status = trim((string) $act->status);
+        if ($status === '') {
+            $status = ContractPerformanceAct::STATUS_DRAFT;
+        }
         $payload = [
             'performance_act_id' => (int) $act->getKey(),
             'contract_id' => (int) $contract->getKey(),
@@ -58,7 +62,7 @@ final class HoldingAcceptedWorkEventVersion extends Model
             'organization_id' => (int) $contract->organization_id,
             'active' => $active,
             'amount' => (string) $act->amount,
-            'status' => (string) $act->status,
+            'status' => $status,
             'occurred_at' => $occurredAt->format(DateTimeInterface::ATOM),
             'history_complete' => $historyComplete,
         ];
@@ -70,7 +74,7 @@ final class HoldingAcceptedWorkEventVersion extends Model
             (int) $contract->organization_id,
             $active,
             (string) $act->amount,
-            (string) $act->status,
+            $status,
             $occurredAt->format(DateTimeInterface::ATOM),
             $historyComplete,
         );

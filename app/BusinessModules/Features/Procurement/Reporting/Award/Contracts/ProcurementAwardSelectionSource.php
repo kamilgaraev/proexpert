@@ -14,7 +14,7 @@ interface ProcurementAwardSelectionSource
         DateTimeImmutable $occurredAt,
     ): array;
 
-    public function supplierRequestIds(
+    public function candidateRowsForPurchaseRequest(
         int $organizationId,
         int $purchaseRequestId,
         DateTimeImmutable $occurredAt,

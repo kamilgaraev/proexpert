@@ -15,16 +15,22 @@ use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAuditService;
 use App\Services\LegalArchive\Audit\LegalDocumentOutbox;
 use DomainException;
+use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
+use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Tests\Support\EnablesImmutableAuditWriter;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class LegalDocumentAuditChainTest extends TestCase
 {
+    use EnablesImmutableAuditWriter;
+
     private Capsule $database;
 
     protected function setUp(): void
@@ -32,13 +38,19 @@ final class LegalDocumentAuditChainTest extends TestCase
         parent::setUp();
 
         $this->database = new Capsule;
-        $this->database->addConnection([
-            'driver' => 'sqlite',
-            'database' => ':memory:',
-            'prefix' => '',
-        ]);
+        $this->database->addConnection(IsolatedPostgresTestDatabase::databaseConfiguration());
         $this->database->setAsGlobal();
-        $this->database->setEventDispatcher(new Dispatcher(new Container));
+        $container = new Container;
+        $container->instance('db', $this->database->getDatabaseManager());
+        $container->instance('config', new Repository([
+            'legal_archive' => [
+                'audit_writer_secret' => (string) ($_ENV['LEGAL_ARCHIVE_AUDIT_WRITER_SECRET'] ?? ''),
+            ],
+        ]));
+        Container::setInstance($container);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($container);
+        $this->database->setEventDispatcher(new Dispatcher($container));
         $this->database->bootEloquent();
         Model::clearBootedModels();
 
@@ -115,6 +127,7 @@ final class LegalDocumentAuditChainTest extends TestCase
             $table->timestamps();
             $table->unique(['organization_id', 'aggregate_type', 'aggregate_id', 'idempotency_key']);
         });
+        $this->enableImmutableAuditWriter();
     }
 
     public function test_document_events_form_tenant_and_aggregate_safe_hash_chains(): void
@@ -323,9 +336,7 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertSame($eventId, (string) ImmutableAuditEvent::query()->value('id'));
         self::assertSame($outboxId, (string) LegalDocumentOutboxMessage::query()->value('id'));
 
-        $this->database->table('immutable_audit_events')->where('id', $eventId)->update([
-            'source_event_id' => 'legal_document:5:external:17',
-        ]);
+        $this->setPreCutoverSourceEventId($eventId, 'legal_document:5:external:17');
         $service->record('create', $document, $actor, $context);
         self::assertSame(1, ImmutableAuditEvent::query()->count());
         self::assertSame($outboxId, (string) LegalDocumentOutboxMessage::query()->value('id'));
@@ -342,9 +353,7 @@ final class LegalDocumentAuditChainTest extends TestCase
         $service->record('create', $document, $actor, $context);
         $eventId = (string) ImmutableAuditEvent::query()->value('id');
         $outboxId = (string) LegalDocumentOutboxMessage::query()->value('id');
-        $this->database->table('immutable_audit_events')->where('id', $eventId)->update([
-            'source_event_id' => $legacy191Characters,
-        ]);
+        $this->setPreCutoverSourceEventId($eventId, $legacy191Characters);
 
         $service->record('create', $document, $actor, $context);
 
@@ -365,9 +374,7 @@ final class LegalDocumentAuditChainTest extends TestCase
 
         $service->record('create', $document, $actor, $context);
         $eventId = (string) ImmutableAuditEvent::query()->value('id');
-        $this->database->table('immutable_audit_events')->where('id', $eventId)->update([
-            'source_event_id' => $legacy192Characters,
-        ]);
+        $this->setPreCutoverSourceEventId($eventId, $legacy192Characters);
 
         $service->record('create', $document, $actor, $context);
 
@@ -467,7 +474,7 @@ final class LegalDocumentAuditChainTest extends TestCase
 
     public function test_rollout_status_reports_overdue_phase_a_and_clears_after_cutover_marker(): void
     {
-        $connection = $this->database->getConnection();
+        $connection = IsolatedPostgresTestDatabase::connection();
         $rollout = new ImmutableAuditRolloutService;
         self::assertNull($rollout->status($connection)['phase']);
         $connection->getSchemaBuilder()->create('immutable_audit_rollout', function (Blueprint $table): void {
@@ -530,7 +537,7 @@ final class LegalDocumentAuditChainTest extends TestCase
     public function test_service_uses_only_injected_connection_for_audit_and_outbox(): void
     {
         $this->database->addConnection(
-            ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
+            IsolatedPostgresTestDatabase::databaseConfiguration(),
             'isolated',
         );
         $connection = $this->database->getConnection('isolated');
@@ -572,6 +579,10 @@ final class LegalDocumentAuditChainTest extends TestCase
                 }
             });
         }
+        $this->enableImmutableAuditWriterOn(
+            $connection,
+            (string) ($_ENV['LEGAL_ARCHIVE_AUDIT_WRITER_SECRET'] ?? ''),
+        );
 
         $service = $this->service(connection: $connection);
         $service->record('create', $this->document(55, 2), $this->actor(9, 2));
@@ -590,6 +601,17 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertIsString($source);
         self::assertStringContainsString('$sourceCreateIdentity?->sourceEventId()', $source);
         self::assertStringNotContainsString("\$data['idempotency_key']", $source);
+    }
+
+    private function setPreCutoverSourceEventId(string $eventId, string $sourceEventId): void
+    {
+        $this->database->getConnection()->statement(
+            'DROP TRIGGER immutable_audit_events_append_only ON immutable_audit_events',
+        );
+        $this->database->table('immutable_audit_events')->where('id', $eventId)->update([
+            'source_event_id' => $sourceEventId,
+        ]);
+        $this->enableImmutableAuditWriter();
     }
 
     private function service(?\Illuminate\Database\ConnectionInterface $connection = null): LegalDocumentAuditService

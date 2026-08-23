@@ -37,7 +37,7 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
     {
         parent::setUp();
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->setEventDispatcher(new Dispatcher(new Container));
         $this->database->bootEloquent();
@@ -381,6 +381,7 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('document_id');
+            $table->unsignedBigInteger('document_file_id')->nullable();
             $table->string('content_hash', 64);
             $table->timestamps();
         });

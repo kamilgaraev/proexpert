@@ -15,14 +15,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\AuthoritativePackagePricingGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use Illuminate\Contracts\Console\Kernel;
-use Illuminate\Database\Connectors\SQLiteConnector;
+use Illuminate\Database\Connectors\PostgresConnector;
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Database\PostgresConnection;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Database\SQLiteConnection;
 use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class PackagePersistenceStaleFenceTest extends TestCase
 {
@@ -43,11 +44,15 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         parent::setUp();
         $database = $this->app->make('db');
         $this->connectionName = $database->getDefaultConnection();
+        config()->set(
+            'database.connections.'.$this->connectionName,
+            IsolatedPostgresTestDatabase::configuration(),
+        );
         $database->purge($this->connectionName);
-        $database->extend($this->connectionName, static function (array $config): SQLiteConnection {
-            $connection = (new SQLiteConnector)->connect($config);
+        $database->extend($this->connectionName, static function (array $config): PostgresConnection {
+            $connection = (new PostgresConnector)->connect($config);
 
-            return new FinalizerTrackingSqliteConnection(
+            return new FinalizerTrackingPostgresConnection(
                 $connection,
                 (string) ($config['database'] ?? ''),
                 (string) ($config['prefix'] ?? ''),
@@ -55,9 +60,8 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             );
         });
         $database->connection($this->connectionName);
-        FinalizerTrackingSqliteConnection::$finalizerCalls = 0;
-        FinalizerTrackingSqliteConnection::$driverName = 'sqlite';
-        FinalizerTrackingSqliteConnection::$forceCardinalityMismatch = false;
+        FinalizerTrackingPostgresConnection::$finalizerCalls = 0;
+        FinalizerTrackingPostgresConnection::$forceCardinalityMismatch = false;
         Schema::create('estimate_generation_sessions', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');
@@ -142,6 +146,33 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             $table->unsignedBigInteger('estimate_norm_id');
             $table->decimal('quantity', 20, 6);
             $table->string('resource_type');
+            $table->string('resource_code');
+            $table->string('unit');
+        });
+        Schema::create('estimate_regional_price_versions', function (Blueprint $table): void {
+            $table->id();
+            $table->string('status');
+        });
+        Schema::create('estimate_resource_prices', function (Blueprint $table): void {
+            $table->id();
+            $table->string('resource_code');
+            $table->string('unit');
+            $table->unsignedBigInteger('region_id');
+            $table->unsignedBigInteger('price_zone_id');
+            $table->unsignedBigInteger('period_id');
+            $table->unsignedBigInteger('regional_price_version_id');
+            $table->decimal('base_price', 20, 6);
+        });
+        Schema::create('estimate_generation_unit_conversions', function (Blueprint $table): void {
+            $table->id();
+            $table->string('from_unit');
+            $table->string('to_unit');
+            $table->decimal('factor', 20, 12);
+        });
+        Schema::create('estimate_generation_pinned_abstract_resource_conversions', function (Blueprint $table): void {
+            $table->id();
+            $table->string('rule_key');
+            $table->string('version');
         });
         Schema::create('estimate_generation_project_material_rules', function (Blueprint $table): void {
             $table->id();
@@ -162,6 +193,40 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             $table->json('selection');
             $table->timestamps();
         });
+        DB::table('estimate_norm_resources')->insert([
+            'id' => 7001,
+            'estimate_norm_id' => 101,
+            'quantity' => '1.000000',
+            'resource_type' => 'material',
+            'resource_code' => 'MAT-001',
+            'unit' => 'm2',
+        ]);
+        DB::table('estimate_regional_price_versions')->insert([
+            'id' => 11,
+            'status' => 'active',
+        ]);
+        DB::table('estimate_resource_prices')->insert([
+            [
+                'id' => 9001,
+                'resource_code' => 'MAT-001',
+                'unit' => 'm2',
+                'region_id' => 16,
+                'price_zone_id' => 3,
+                'period_id' => 8,
+                'regional_price_version_id' => 11,
+                'base_price' => '100.000000',
+            ],
+            [
+                'id' => 9101,
+                'resource_code' => '59.1.20.03-0798',
+                'unit' => 'pcs',
+                'region_id' => 16,
+                'price_zone_id' => 3,
+                'period_id' => 8,
+                'regional_price_version_id' => 11,
+                'base_price' => '2925.000000',
+            ],
+        ]);
         DB::table('estimate_generation_project_material_rules')->insert([
             'id' => 501,
             'catalog_version' => 'residential_project_material:v3',
@@ -178,6 +243,10 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     {
         Schema::dropIfExists('estimate_generation_package_item_project_price_inputs');
         Schema::dropIfExists('estimate_generation_project_material_rules');
+        Schema::dropIfExists('estimate_generation_pinned_abstract_resource_conversions');
+        Schema::dropIfExists('estimate_generation_unit_conversions');
+        Schema::dropIfExists('estimate_resource_prices');
+        Schema::dropIfExists('estimate_regional_price_versions');
         Schema::dropIfExists('estimate_norm_resources');
         Schema::dropIfExists('estimate_generation_package_item_price_inputs');
         Schema::dropIfExists('estimate_generation_package_items');
@@ -206,7 +275,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         self::assertSame('blocked', $package->status);
         self::assertSame(['stale_input_version'], $package->quality_summary['critical_flags']);
         self::assertSame(0, $package->items()->count());
-        self::assertSame(0, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(0, FinalizerTrackingPostgresConnection::$finalizerCalls);
     }
 
     #[Test]
@@ -242,7 +311,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         self::assertNotSame('blocked', $package->status);
         self::assertNotContains('stale_input_version', $package->quality_summary['critical_flags']);
         self::assertSame(1, $package->items()->count());
-        self::assertSame(1, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(1, FinalizerTrackingPostgresConnection::$finalizerCalls);
         self::assertNotNull($package->items()->sole()->pricing_finalized_at);
         self::assertSame([7001], DB::table('estimate_generation_package_item_price_inputs')->pluck('norm_resource_id')->all());
         self::assertSame([9001], DB::table('estimate_generation_package_item_price_inputs')->pluck('resource_price_id')->all());
@@ -251,8 +320,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     #[Test]
     public function pricing_input_cardinality_mismatch_keeps_item_unfinalized_without_calling_finalizer(): void
     {
-        FinalizerTrackingSqliteConnection::$driverName = 'pgsql';
-        FinalizerTrackingSqliteConnection::$forceCardinalityMismatch = true;
+        FinalizerTrackingPostgresConnection::$forceCardinalityMismatch = true;
         $current = 'sha256:'.str_repeat('b', 64);
         [$session, , $service] = $this->fixture($current);
 
@@ -260,7 +328,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
 
         $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
         $item = $package->items()->sole();
-        self::assertSame(0, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(0, FinalizerTrackingPostgresConnection::$finalizerCalls);
         self::assertNull($item->pricing_finalized_at);
         self::assertSame('blocked', $package->fresh()->status);
         self::assertContains('missing_price_snapshot', $package->fresh()->quality_summary['critical_flags']);
@@ -276,10 +344,10 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $service->syncFromDraft($session, $draft);
         $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
         $package->items()->sole()->forceFill(['pricing_finalized_at' => null])->save();
-        FinalizerTrackingSqliteConnection::$finalizerCalls = 0;
+        FinalizerTrackingPostgresConnection::$finalizerCalls = 0;
         $service->syncFromDraft($session, $draft);
 
-        self::assertSame(1, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(1, FinalizerTrackingPostgresConnection::$finalizerCalls);
         self::assertNotNull($package->items()->sole()->pricing_finalized_at);
         self::assertNotSame('blocked', $package->fresh()->status);
         self::assertNotContains('missing_price_snapshot', $package->fresh()->quality_summary['critical_flags']);
@@ -298,7 +366,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $item = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole()->items()->sole();
         self::assertSame('persisted-work', $item->logical_key);
         self::assertNull($item->pricing_finalized_at);
-        self::assertSame(0, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(0, FinalizerTrackingPostgresConnection::$finalizerCalls);
         self::assertSame([], DB::table('estimate_generation_package_item_price_inputs')->pluck('norm_resource_id')->all());
     }
 
@@ -420,7 +488,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
 
         $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
         self::assertSame(1, $package->items()->count());
-        self::assertSame(1, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(1, FinalizerTrackingPostgresConnection::$finalizerCalls);
 
         $item = $package->items()->sole();
         $snapshot = $item->price_snapshot;
@@ -430,7 +498,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $service->syncFromDraft($session, $draft);
 
         self::assertSame(2, $package->items()->count());
-        self::assertSame(2, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(2, FinalizerTrackingPostgresConnection::$finalizerCalls);
         self::assertSame(
             ['1:norm_measurement:v1', '2:semantic_project_resource:v8'],
             $package->items()->orderBy('revision')->get()->map(
@@ -456,7 +524,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $service->syncFromDraft($session, $draft);
 
         self::assertSame(2, $package->items()->count());
-        self::assertSame(2, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(2, FinalizerTrackingPostgresConnection::$finalizerCalls);
         $currentRevision = $package->items()->reorder()->orderByDesc('revision')->firstOrFail();
         self::assertSame($current, data_get($currentRevision->metadata, 'source_input_version'));
         self::assertSame(
@@ -482,7 +550,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $service->syncFromDraft($session, $draft);
 
         self::assertSame(2, $package->items()->count());
-        self::assertSame(2, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(2, FinalizerTrackingPostgresConnection::$finalizerCalls);
     }
 
     #[Test]
@@ -511,7 +579,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $blocked = EstimateGenerationPackage::query()->where('session_id', $staleSession->id)->sole();
         self::assertSame('blocked', $blocked->status);
         self::assertSame(0, $blocked->items()->count());
-        self::assertSame(0, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(0, FinalizerTrackingPostgresConnection::$finalizerCalls);
 
         [$validSession, $validResolver, $validService] = $this->fixture($current);
         $valid = $this->draft($current, [$this->acceptedWorkItem($validSession, $current, 'target')]);
@@ -522,7 +590,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $persisted = EstimateGenerationPackage::query()->where('session_id', $validSession->id)->sole();
         self::assertNotSame('blocked', $persisted->status);
         self::assertSame(1, $persisted->items()->count());
-        self::assertSame(1, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(1, FinalizerTrackingPostgresConnection::$finalizerCalls);
     }
 
     private function fixture(string $current): array
@@ -598,18 +666,11 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     }
 }
 
-final class FinalizerTrackingSqliteConnection extends SQLiteConnection
+final class FinalizerTrackingPostgresConnection extends PostgresConnection
 {
     public static int $finalizerCalls = 0;
 
-    public static string $driverName = 'sqlite';
-
     public static bool $forceCardinalityMismatch = false;
-
-    public function getDriverName()
-    {
-        return self::$driverName;
-    }
 
     public function select($query, $bindings = [], $useReadPdo = true)
     {

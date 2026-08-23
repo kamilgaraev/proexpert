@@ -50,7 +50,7 @@ class BlogEditorialChecklistServiceTest extends TestCase
 
         $result = app(BlogEditorialChecklistService::class)->evaluate($article);
 
-        $this->assertTrue($result['can_publish']);
+        $this->assertTrue($result['can_publish'], implode(', ', $result['blocking_keys']));
         $this->assertSame($result['total'], $result['passed']);
     }
 

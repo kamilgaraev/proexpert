@@ -7,6 +7,8 @@ namespace Tests\Feature\Api\V1\Mobile;
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectWarehouseService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -26,6 +28,7 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
     public function test_mobile_receive_project_delivery_is_visible_in_admin_delivery_and_stock(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $mobileHeaders = $context->mobileAuthHeaders();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $project->users()->syncWithoutDetaching([
             $context->user->id => ['role' => 'foreman'],
@@ -64,16 +67,31 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
             'accepted_quantity' => 0,
             'planned_delivery_date' => now()->toDateString(),
         ]);
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'available_quantity' => 5,
+            'reserved_quantity' => 0,
+            'unit_price' => 100,
+        ]);
+        app(ProjectWarehouseService::class)->shipToProject(
+            $delivery,
+            $context->user,
+            5,
+            $context->user->id,
+            'Shipped to project for mobile acceptance',
+        );
         $this->allowAccess();
 
-        $mobileListResponse = $this->withHeaders($context->authHeaders())
+        $mobileListResponse = $this->withHeaders($mobileHeaders)
             ->getJson("/api/v1/mobile/warehouse/project-material-deliveries?project_id={$project->id}");
 
         $mobileListResponse->assertOk()
             ->assertJsonPath('data.items.0.id', $delivery->id)
             ->assertJsonPath('data.items.0.status', ProjectMaterialDeliveryStatusEnum::IN_TRANSIT->value);
 
-        $mobileReceiveResponse = $this->withHeaders($context->authHeaders())
+        $mobileReceiveResponse = $this->withHeaders($mobileHeaders)
             ->postJson(
                 "/api/v1/mobile/warehouse/project-material-deliveries/{$delivery->id}/receive",
                 [
@@ -118,7 +136,8 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
             ->assertJsonPath('data.summary.materials_count', 0)
             ->assertJsonPath('data.summary.accepted_quantity', 0);
 
-        $completeReceiveResponse = $this->withHeaders($context->authHeaders())
+        $this->flushHeaders();
+        $completeReceiveResponse = $this->withHeaders($mobileHeaders)
             ->postJson(
                 "/api/v1/mobile/warehouse/project-material-deliveries/{$delivery->id}/receive",
                 [
@@ -127,7 +146,8 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
                     'notes' => 'Remaining quantity accepted',
                 ]);
 
-        $completeReceiveResponse->assertOk()
+        self::assertSame(200, $completeReceiveResponse->status(), $completeReceiveResponse->getContent());
+        $completeReceiveResponse
             ->assertJsonPath('data.status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)
             ->assertJsonPath('data.accepted_quantity', 5);
 

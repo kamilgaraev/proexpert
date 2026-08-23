@@ -16,7 +16,6 @@ use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwar
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardPreparedSelection;
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardSelectionFact;
 use DateTimeImmutable;
-use DomainException;
 use LogicException;
 
 final class ProcurementAwardOwnerEventRecorder implements ProcurementAwardOwnerEventWriter
@@ -45,21 +44,15 @@ final class ProcurementAwardOwnerEventRecorder implements ProcurementAwardOwnerE
         int $selectedProposalId,
         DateTimeImmutable $occurredAt,
     ): ProcurementAwardPreparedSelection {
-        $supplierRequestIds = $this->selectionSource->supplierRequestIds(
+        $candidateRows = $this->selectionSource->candidateRowsForPurchaseRequest(
             (int) $purchaseRequest->organization_id,
             (int) $purchaseRequest->id,
             $occurredAt,
         );
 
-        if (count($supplierRequestIds) !== 1) {
-            throw new DomainException('procurement_award_purchase_request_round_not_supported');
-        }
-
-        return $this->prepare(
-            organizationId: (int) $purchaseRequest->organization_id,
-            supplierRequestId: $supplierRequestIds[0],
+        return $this->prepareFromRows(
+            candidateRows: $candidateRows,
             selectedProposalId: $selectedProposalId,
-            occurredAt: $occurredAt,
         );
     }
 
@@ -166,6 +159,11 @@ final class ProcurementAwardOwnerEventRecorder implements ProcurementAwardOwnerE
             $supplierRequestId,
             $occurredAt,
         );
+        return $this->prepareFromRows($candidateRows, $selectedProposalId);
+    }
+
+    private function prepareFromRows(array $candidateRows, int $selectedProposalId): ProcurementAwardPreparedSelection
+    {
         $manifest = $this->manifestBuilder->build($candidateRows, $selectedProposalId);
         $selected = null;
         foreach ($manifest->candidates as $candidate) {

@@ -39,6 +39,7 @@ final class BudgetLimitCheckServiceTest extends TestCase
             }
         });
 
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($container);
     }
 

@@ -264,10 +264,30 @@ class BlogEditorialChecklistService
 
     private function isHttpUrl(string $url): bool
     {
-        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+        $parts = parse_url($url);
+        if (! is_array($parts)) {
             return false;
         }
 
-        return in_array(parse_url($url, PHP_URL_SCHEME), ['http', 'https'], true);
+        $scheme = $parts['scheme'] ?? null;
+        $host = $parts['host'] ?? null;
+        if (! is_string($host) || ! in_array($scheme, ['http', 'https'], true)) {
+            return false;
+        }
+
+        $asciiHost = preg_match('/[^\x20-\x7E]/', $host) === 1
+            ? idn_to_ascii($host, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46)
+            : $host;
+        if (! is_string($asciiHost) || $asciiHost === '') {
+            return false;
+        }
+
+        $authorityStart = strlen((string) $scheme) + 3;
+        $authorityLength = strcspn($url, '/?#', $authorityStart);
+        $authority = substr($url, $authorityStart, $authorityLength);
+        $normalizedAuthority = str_replace($host, $asciiHost, $authority);
+        $normalizedUrl = substr_replace($url, $normalizedAuthority, $authorityStart, $authorityLength);
+
+        return filter_var($normalizedUrl, FILTER_VALIDATE_URL) !== false;
     }
 }

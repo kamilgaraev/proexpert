@@ -651,9 +651,15 @@ final class CrmRegistryService
         ]);
 
         $this->normalizeEmptyReferences($attributes, ['company_id', 'owner_user_id', 'source_id']);
-        $attributes['full_name'] = $this->normalizer->text($attributes['full_name'] ?? null) ?? ($attributes['full_name'] ?? null);
-        $attributes['phone'] = $this->normalizer->phone($attributes['phone'] ?? null);
-        $attributes['email'] = $this->normalizer->email($attributes['email'] ?? null);
+        if (array_key_exists('full_name', $attributes)) {
+            $attributes['full_name'] = $this->normalizer->text($attributes['full_name']) ?? $attributes['full_name'];
+        }
+        if (array_key_exists('phone', $attributes)) {
+            $attributes['phone'] = $this->normalizer->phone($attributes['phone']);
+        }
+        if (array_key_exists('email', $attributes)) {
+            $attributes['email'] = $this->normalizer->email($attributes['email']);
+        }
         $attributes['updated_by_user_id'] = $actorUserId;
 
         if ($creating) {

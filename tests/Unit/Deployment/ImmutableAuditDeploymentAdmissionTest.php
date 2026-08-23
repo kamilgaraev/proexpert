@@ -21,7 +21,7 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
             'docker pull "${IMAGE_REF}"',
             'ensure_immutable_audit_writer_secret',
             'systemctl stop nginx',
-            'docker compose stop --timeout 7200 ${BACKEND_SERVICES}',
+            'docker compose stop --timeout 30 ${BACKEND_SERVICES}',
             'assert_legacy_runtime_stopped',
             'php artisan migrate:safe --force',
             'assert_legacy_runtime_stopped',

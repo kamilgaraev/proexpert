@@ -22,6 +22,8 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Services\SupplierPartyService;
+use App\BusinessModules\Features\Procurement\Services\SupplierRequestVersionService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -36,11 +38,13 @@ use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
 
 class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
+    use EnablesImmutableAuditWriter;
 
     public function test_admin_can_run_supplier_flow_to_purchase_order_receipt_without_organization_leaks(): void
     {
@@ -259,7 +263,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'supplier_id' => $supplier->id,
             'order_number' => 'PO-RECEIPT-'.uniqid(),
             'order_date' => now()->toDateString(),
-            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'status' => PurchaseOrderStatusEnum::IN_DELIVERY,
             'total_amount' => 500,
             'currency' => 'RUB',
         ]);
@@ -369,7 +373,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'supplier_id' => $supplier->id,
             'order_number' => 'PO-UNPAID-'.uniqid(),
             'order_date' => now()->toDateString(),
-            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'status' => PurchaseOrderStatusEnum::IN_DELIVERY,
             'total_amount' => 500,
             'currency' => 'RUB',
         ]);
@@ -387,6 +391,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
                 'warehouse_id' => $warehouse->id,
+                'idempotency_key' => '78ac1a98-6a13-4d25-87da-d2aa5b81980f',
                 'receipt_date' => now()->toDateString(),
                 'items' => [
                     [
@@ -411,10 +416,10 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'warehouse_id' => $warehouse->id,
             'material_id' => $material->id,
         ]);
-
         $pdfResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-document/pdf", [
                 'warehouse_id' => $warehouse->id,
+                'idempotency_key' => 'df8b2dbb-4ec4-4c42-aad9-6e0a76e16433',
                 'receipt_date' => now()->toDateString(),
                 'items' => [
                     [
@@ -484,6 +489,38 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'public_token' => 'foreign-token',
             'public_token_expires_at' => now()->addDay(),
         ]);
+        $partyService = app(SupplierPartyService::class);
+        $supplierRequest->update([
+            'supplier_party_id' => $partyService
+                ->resolveRegisteredParty($context->organization->id, $supplier->id)
+                ->id,
+        ]);
+        $foreignSupplierRequest->update([
+            'supplier_party_id' => $partyService
+                ->resolveRegisteredParty($foreignContext->organization->id, $foreignSupplier->id)
+                ->id,
+        ]);
+        $purchaseRequestLine = $purchaseRequest->lines()->firstOrFail();
+        $supplierRequest->lines()->create([
+            'purchase_request_line_id' => $purchaseRequestLine->id,
+            'material_id' => $purchaseRequestLine->material_id,
+            'name' => $purchaseRequestLine->name,
+            'quantity' => $purchaseRequestLine->quantity,
+            'unit' => $purchaseRequestLine->unit,
+        ]);
+        $foreignPurchaseRequestLine = $foreignPurchaseRequest->lines()->firstOrFail();
+        $foreignSupplierRequest->lines()->create([
+            'purchase_request_line_id' => $foreignPurchaseRequestLine->id,
+            'material_id' => $foreignPurchaseRequestLine->material_id,
+            'name' => $foreignPurchaseRequestLine->name,
+            'quantity' => $foreignPurchaseRequestLine->quantity,
+            'unit' => $foreignPurchaseRequestLine->unit,
+        ]);
+        app(SupplierRequestVersionService::class)->createSentVersion($supplierRequest, $context->user->id);
+        app(SupplierRequestVersionService::class)->createSentVersion(
+            $foreignSupplierRequest,
+            $foreignContext->user->id,
+        );
 
         $foreignProposalResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/procurement/proposals', $this->proposalPayload($foreignSupplierRequest, 1000.0));
@@ -650,7 +687,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             ->with(['lines'])
             ->firstOrFail();
         $line = $supplierRequest->lines()->firstOrFail();
-        $publicProposalResponse = $this->postJson(
+        $publicProposalResponse = $this->withHeader('Origin', 'https://1мост.рф')->postJson(
             "/api/v1/procurement/supplier-requests/{$supplierRequest->public_token}/proposals",
             [
                 'subtotal_amount' => 900,
@@ -716,6 +753,8 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
                 ],
             ])
             ->assertOk();
+
+        $this->enableImmutableAuditWriter();
 
         $contractResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/create-contract");

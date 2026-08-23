@@ -72,7 +72,10 @@ class AdvancedWarehouseFeaturesTest extends TestCase
             $this->warehouse->id,
             $this->material->id,
             30,
-            ['reason' => 'Тестовое резервирование']
+            [
+                'user_id' => $this->user->id,
+                'reason' => 'Тестовое резервирование',
+            ]
         );
 
         $this->assertTrue($result['reserved']);
@@ -105,7 +108,8 @@ class AdvancedWarehouseFeaturesTest extends TestCase
             $this->organization->id,
             $this->warehouse->id,
             $this->material->id,
-            30
+            30,
+            ['user_id' => $this->user->id]
         );
 
         // Снимаем резервирование

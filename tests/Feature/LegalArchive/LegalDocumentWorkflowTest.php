@@ -50,7 +50,7 @@ final class LegalDocumentWorkflowTest extends TestCase
     {
         parent::setUp();
         $this->database = new Capsule;
-        $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
         $this->database->setEventDispatcher(new Dispatcher(new Container));
         $this->database->bootEloquent();

@@ -575,8 +575,8 @@ BEGIN
     IF decision->'role_slugs' IS DISTINCT FROM (
         SELECT COALESCE(jsonb_agg(role_slug ORDER BY role_slug), '[]'::jsonb)
         FROM (
-            SELECT DISTINCT grant->>'role_slug' AS role_slug
-            FROM jsonb_array_elements(grants) AS grant
+            SELECT DISTINCT grant_item->>'role_slug' AS role_slug
+            FROM jsonb_array_elements(grants) AS grant_item
         ) AS distinct_roles
     ) THEN
         RETURN false;
@@ -584,16 +584,16 @@ BEGIN
 
     IF EXISTS (
         SELECT 1
-        FROM jsonb_array_elements(grants) AS grant
+        FROM jsonb_array_elements(grants) AS grant_item
         WHERE NOT EXISTS (
             SELECT 1
             FROM user_role_assignments assignment
-            WHERE assignment.id::text = grant->>'assignment_id'
+            WHERE assignment.id::text = grant_item->>'assignment_id'
               AND assignment.user_id = expected_actor_id
-              AND assignment.context_id::text = grant->>'context_id'
-              AND assignment.role_slug = grant->>'role_slug'
-              AND assignment.role_type = grant->>'role_type'
-              AND to_char(assignment.updated_at, 'YYYY-MM-DD HH24:MI:SS') IS NOT DISTINCT FROM grant->>'assignment_updated_at'
+              AND assignment.context_id::text = grant_item->>'context_id'
+              AND assignment.role_slug = grant_item->>'role_slug'
+              AND assignment.role_type = grant_item->>'role_type'
+              AND to_char(assignment.updated_at, 'YYYY-MM-DD HH24:MI:SS') IS NOT DISTINCT FROM grant_item->>'assignment_updated_at'
               AND assignment.is_active = true
               AND (assignment.expires_at IS NULL OR assignment.expires_at > statement_timestamp())
               AND EXISTS (
@@ -611,37 +611,37 @@ BEGIN
                            )
                     )
               )
-              AND grant->>'role_definition_hash' IS NOT DISTINCT FROM lookahead_readiness_hash_json(grant->'role_definition')
-              AND grant->>'matched_permission' IS NOT NULL
+              AND grant_item->>'role_definition_hash' IS NOT DISTINCT FROM lookahead_readiness_hash_json(grant_item->'role_definition')
+              AND grant_item->>'matched_permission' IS NOT NULL
               AND (
-                  grant->>'matched_permission' = '*'
-                  OR grant->>'matched_permission' = expected_permission
-                  OR right(grant->>'matched_permission', 1) = '*'
-                     AND starts_with(expected_permission, left(grant->>'matched_permission', -1))
+                  grant_item->>'matched_permission' = '*'
+                  OR grant_item->>'matched_permission' = expected_permission
+                  OR right(grant_item->>'matched_permission', 1) = '*'
+                     AND starts_with(expected_permission, left(grant_item->>'matched_permission', -1))
               )
               AND (
-                  grant->'role_definition'->'system_permissions' ? (grant->>'matched_permission')
+                  grant_item->'role_definition'->'system_permissions' ? (grant_item->>'matched_permission')
                   OR EXISTS (
                       SELECT 1
-                      FROM jsonb_each(grant->'role_definition'->'module_permissions') AS module(module_slug, permissions),
+                      FROM jsonb_each(grant_item->'role_definition'->'module_permissions') AS module(module_slug, permissions),
                            jsonb_array_elements_text(module.permissions) AS module_permission(permission_slug)
-                      WHERE module_permission.permission_slug = grant->>'matched_permission'
-                         OR module.module_slug || '.' || module_permission.permission_slug = grant->>'matched_permission'
+                      WHERE module_permission.permission_slug = grant_item->>'matched_permission'
+                         OR module.module_slug || '.' || module_permission.permission_slug = grant_item->>'matched_permission'
                   )
               )
               AND (
                   assignment.role_type = 'system' AND EXISTS (
                       SELECT 1 FROM lookahead_readiness_system_role_definitions definition
                       WHERE definition.role_slug = assignment.role_slug
-                        AND definition.definition_hash = grant->>'role_definition_hash'
-                        AND definition.canonical_definition = grant->'role_definition'
+                        AND definition.definition_hash = grant_item->>'role_definition_hash'
+                        AND definition.canonical_definition = grant_item->'role_definition'
                   )
                   OR assignment.role_type = 'custom' AND EXISTS (
                       SELECT 1 FROM organization_custom_roles custom_role
                       WHERE custom_role.organization_id = expected_organization_id
                         AND custom_role.slug = assignment.role_slug
                         AND custom_role.is_active = true
-                        AND grant->'role_definition' = jsonb_build_object(
+                        AND grant_item->'role_definition' = jsonb_build_object(
                             'is_active', custom_role.is_active,
                             'module_permissions', custom_role.module_permissions::jsonb,
                             'organization_id', custom_role.organization_id::text,
@@ -651,7 +651,7 @@ BEGIN
                         )
                   )
               )
-              AND grant->>'conditions_hash' IS NOT DISTINCT FROM (
+              AND grant_item->>'conditions_hash' IS NOT DISTINCT FROM (
                   SELECT lookahead_readiness_hash_json(COALESCE(jsonb_agg(jsonb_build_object(
                       'condition_data', condition.condition_data::jsonb,
                       'condition_type', condition.condition_type::text,

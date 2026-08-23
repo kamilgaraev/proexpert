@@ -21,7 +21,7 @@ final class ImmutableAuditWriterReadinessTest extends TestCase
     {
         parent::setUp();
         $database = new Capsule;
-        $database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
+        $database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->connection = $database->getConnection();
         $this->connection->getSchemaBuilder()->create('immutable_audit_rollout', function (Blueprint $table): void {
             $table->boolean('singleton')->primary();

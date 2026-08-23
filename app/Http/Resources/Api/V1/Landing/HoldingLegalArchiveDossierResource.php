@@ -61,7 +61,7 @@ final class HoldingLegalArchiveDossierResource extends JsonResource
                 ...$financial,
             ],
             'files' => $canDownload ? $document->files->map(
-                static fn (LegalArchiveDocumentFile $file): array => [
+                fn (LegalArchiveDocumentFile $file): array => [
                     'id' => (int) $file->id,
                     'title' => (string) $file->title,
                     'role' => (string) $file->role,

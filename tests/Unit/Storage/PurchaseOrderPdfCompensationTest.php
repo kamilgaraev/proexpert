@@ -6,13 +6,17 @@ namespace Tests\Unit\Storage;
 
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnAuthorizer;
+use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnUnitOfWork;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
 use App\BusinessModules\Features\Procurement\Services\ProcurementAuditService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPdfService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderService;
+use App\BusinessModules\Features\Procurement\Services\PurchaseReceiptInventoryService;
 use App\BusinessModules\Features\Procurement\Services\SupplierPartyService;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -79,6 +83,10 @@ final class PurchaseOrderPdfCompensationTest extends TestCase
                     $deliveryService,
                     $cycleEventRecorder,
                     $ownerWorkflowRuntime,
+                    (new \ReflectionClass(ProcurementReportingLifecycleRecorder::class))->newInstanceWithoutConstructor(),
+                    (new \ReflectionClass(PurchaseReceiptInventoryService::class))->newInstanceWithoutConstructor(),
+                    Mockery::mock(PurchaseReceiptReturnAuthorizer::class),
+                    Mockery::mock(PurchaseReceiptReturnUnitOfWork::class),
                 );
             }
 

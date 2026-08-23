@@ -17,17 +17,32 @@ use App\Services\Billing\CommercialQuotaService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
 
 class CommercialQuotaServiceTest extends TestCase
 {
     private Organization $organization;
 
-    public function refreshDatabase(): void {}
+    /** @var array<string, mixed> */
+    private array $originalConnectionConfiguration;
+
+    public function refreshDatabase(): void
+    {
+    }
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        $connectionName = DB::getDefaultConnection();
+        $this->originalConnectionConfiguration = config('database.connections.'.$connectionName);
+        config()->set(
+            'database.connections.'.$connectionName,
+            IsolatedPostgresTestDatabase::configuration(),
+        );
+        DB::purge($connectionName);
+        DB::connection($connectionName);
 
         $this->createSchema();
         $this->organization = Organization::withoutEvents(fn (): Organization => Organization::query()->create([
@@ -36,6 +51,19 @@ class CommercialQuotaServiceTest extends TestCase
             'is_verified' => true,
             'storage_used_mb' => 1536,
         ]));
+    }
+
+    protected function tearDown(): void
+    {
+        $connectionName = DB::getDefaultConnection();
+        DB::purge($connectionName);
+        config()->set(
+            'database.connections.'.$connectionName,
+            $this->originalConnectionConfiguration,
+        );
+        DB::connection($connectionName);
+
+        parent::tearDown();
     }
 
     public function test_free_limits_include_usage_and_remaining_amounts(): void

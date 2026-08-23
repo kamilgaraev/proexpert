@@ -24,10 +24,10 @@ final class EstimateGenerationPackageRefreshCardinalityTest extends TestCase
     #[Test]
     public function refresh_aggregates_thousands_of_current_items_without_hydration_or_unbounded_queries(): void
     {
-        config()->set('database.connections.package_refresh_contract', [
-            'driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '',
-            'foreign_key_constraints' => true,
-        ]);
+        config()->set(
+            'database.connections.package_refresh_contract',
+            \Tests\Support\IsolatedPostgresTestDatabase::configuration(),
+        );
         DB::purge('package_refresh_contract');
         DB::setDefaultConnection('package_refresh_contract');
         Schema::create('estimate_generation_packages', function ($table): void {

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\Filament;
 
 use App\Filament\Widgets\SaaSIncomeStatsWidget;
-use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\Schema;
 use ReflectionMethod;
 use Tests\TestCase;
@@ -23,8 +22,10 @@ class SaaSIncomeStatsWidgetTest extends TestCase
 
     public function test_it_does_not_crash_when_payment_transactions_table_is_missing(): void
     {
-        Schema::dropIfExists('payment_transactions');
-        RefreshDatabaseState::$migrated = false;
+        Schema::shouldReceive('hasTable')
+            ->once()
+            ->with('payment_transactions')
+            ->andReturnFalse();
 
         $method = new ReflectionMethod(SaaSIncomeStatsWidget::class, 'getStats');
         $method->setAccessible(true);
