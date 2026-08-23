@@ -31,6 +31,7 @@ final class MachineryCostService
             ->orderBy('report_date')
             ->get();
         $fuel = MachineryFuelIssue::forOrganization($organizationId)
+            ->whereNull('cancelled_at')
             ->whereBetween('issued_at', [$dateFrom->startOfDay(), $dateTo->endOfDay()])
             ->when($projectId !== null, fn ($query) => $query->where('project_id', $projectId))
             ->get();

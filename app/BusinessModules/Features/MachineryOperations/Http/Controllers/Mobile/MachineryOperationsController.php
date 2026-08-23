@@ -99,6 +99,14 @@ final class MachineryOperationsController extends Controller
                 'meter_start' => ['nullable', 'numeric', 'min:0'],
                 'meter_end' => ['nullable', 'numeric', 'min:0'],
                 'work_description' => ['nullable', 'string', 'max:5000'],
+                'pre_shift_inspection' => ['required', 'array'],
+                'pre_shift_inspection.result' => ['required', 'in:serviceable,restricted,unavailable'],
+                'pre_shift_inspection.notes' => ['nullable', 'string', 'max:5000'],
+                'pre_shift_inspection.evidence' => ['nullable', 'array'],
+                'pre_shift_inspection.defects' => ['nullable', 'array', 'max:50'],
+                'pre_shift_inspection.defects.*.code' => ['required', 'string', 'max:80'],
+                'pre_shift_inspection.defects.*.severity' => ['required', 'in:low,medium,high,critical'],
+                'pre_shift_inspection.defects.*.description' => ['required', 'string', 'max:5000'],
             ]);
 
             $shift = $this->idempotency->execute(
@@ -191,6 +199,14 @@ final class MachineryOperationsController extends Controller
                 'fuel_consumed' => ['required', 'numeric', 'min:0'],
                 'meter_end' => ['nullable', 'numeric', 'min:0'],
                 'work_description' => ['nullable', 'string', 'max:5000'],
+                'post_shift_inspection' => ['required', 'array'],
+                'post_shift_inspection.result' => ['required', 'in:serviceable,restricted,unavailable'],
+                'post_shift_inspection.notes' => ['nullable', 'string', 'max:5000'],
+                'post_shift_inspection.evidence' => ['nullable', 'array'],
+                'post_shift_inspection.defects' => ['nullable', 'array', 'max:50'],
+                'post_shift_inspection.defects.*.code' => ['required', 'string', 'max:80'],
+                'post_shift_inspection.defects.*.severity' => ['required', 'in:low,medium,high,critical'],
+                'post_shift_inspection.defects.*.description' => ['required', 'string', 'max:5000'],
             ]);
             $shift = $this->service->findShift((int) $request->attributes->get('current_organization_id'), $id);
             if ($shift === null) {
@@ -204,7 +220,11 @@ final class MachineryOperationsController extends Controller
                 $request->header('Idempotency-Key'),
                 'shift.finish',
                 ['shift_id' => $id, ...$validated],
-                fn () => $this->service->finishShift($shift, $validated),
+                fn () => $this->service->finishShift(
+                    $shift,
+                    (int) $request->user()?->id,
+                    $validated,
+                ),
             );
 
             return MobileResponse::success(new MachineryShiftReportResource($finished));
@@ -267,23 +287,30 @@ final class MachineryOperationsController extends Controller
             $validated = $this->validated($request, [
                 'asset_id' => ['required', 'integer'],
                 'project_id' => ['required', 'integer'],
+                'shift_report_id' => ['required', 'integer'],
+                'warehouse_id' => ['required', 'integer'],
+                'material_id' => ['required', 'integer'],
                 'issued_at' => ['required', 'date', 'before_or_equal:'.now()->toDateTimeString()],
                 'fuel_type' => ['required', 'string', 'max:80'],
                 'quantity' => ['required', 'numeric', 'min:0.001'],
                 'unit' => ['required', 'string', 'max:20'],
-                'cost' => ['nullable', 'numeric', 'min:0'],
                 'comment' => ['nullable', 'string', 'max:2000'],
             ]);
+            $idempotencyKey = trim((string) $request->header('Idempotency-Key'));
+            if ($idempotencyKey === '') {
+                throw new DomainException(trans_message('machinery_operations.errors.idempotency_key_required'));
+            }
 
             $fuelIssue = $this->idempotency->execute(
                 (int) $request->attributes->get('current_organization_id'),
                 (int) $request->user()?->id,
-                $request->header('Idempotency-Key'),
+                $idempotencyKey,
                 'fuel.create',
                 $validated,
                 fn () => $this->service->createFuelIssue(
                     (int) $request->attributes->get('current_organization_id'),
                     (int) $request->user()?->id,
+                    $idempotencyKey,
                     $validated
                 ),
             );

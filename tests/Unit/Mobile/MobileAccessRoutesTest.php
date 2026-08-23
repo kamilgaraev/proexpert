@@ -55,8 +55,14 @@ class MobileAccessRoutesTest extends TestCase
         $this->assertContains('machinery-operations.shifts.create', $operator['module_permissions']['machinery-operations']);
         $this->assertNotContains('machinery-operations.shifts.approve', $operator['module_permissions']['machinery-operations']);
         $this->assertContains('machinery-operations.downtime.manage', $mechanic['module_permissions']['machinery-operations']);
+        $this->assertNotContains('machinery-operations.shifts.create', $mechanic['module_permissions']['machinery-operations']);
         $this->assertContains('warehouse.advanced.barcode', $storekeeper['module_permissions']['basic-warehouse']);
+        $this->assertContains('machinery-operations.fuel.manage', $storekeeper['module_permissions']['machinery-operations']);
+        $this->assertNotContains('machinery-operations.shifts.create', $storekeeper['module_permissions']['machinery-operations']);
+        $this->assertNotContains('machinery-operations.shifts.approve', $storekeeper['module_permissions']['machinery-operations']);
         $this->assertContains('machinery-operations.shifts.approve', $foreman['module_permissions']['machinery-operations']);
+        $this->assertNotContains('machinery-operations.shifts.create', $foreman['module_permissions']['machinery-operations']);
+        $this->assertNotContains('machinery-operations.fuel.manage', $foreman['module_permissions']['machinery-operations']);
     }
 
     private function role(string $slug): array

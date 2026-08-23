@@ -16,7 +16,10 @@
       "warehouse.transfers",
       "warehouse.advanced.barcode"
     ],
-    "machinery-operations": ["machinery-operations.view"],
+    "machinery-operations": [
+      "machinery-operations.view",
+      "machinery-operations.fuel.manage"
+    ],
     "notifications": ["notifications.view", "notifications.receive.system"]
   },
   "interface_access": ["mobile"],

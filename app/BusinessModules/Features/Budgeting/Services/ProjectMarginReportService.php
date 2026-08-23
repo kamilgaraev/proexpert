@@ -31,6 +31,7 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+
 use function trans_message;
 
 final class ProjectMarginReportService implements ProjectMarginSourceSnapshotReport
@@ -41,8 +42,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
         private readonly ProjectMarginCalculator $calculator,
         private readonly AuthorizationService $authorization,
         private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
-    ) {
-    }
+    ) {}
 
     public function report(array $input, ?User $user = null): array
     {
@@ -232,7 +232,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
 
     private function resolveScenario(int $organizationId, mixed $scenarioUuid): ?BudgetScenario
     {
-        if (!is_string($scenarioUuid) || trim($scenarioUuid) === '') {
+        if (! is_string($scenarioUuid) || trim($scenarioUuid) === '') {
             return null;
         }
 
@@ -241,7 +241,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             ->where('uuid', trim($scenarioUuid))
             ->first();
 
-        if (!$scenario instanceof BudgetScenario) {
+        if (! $scenario instanceof BudgetScenario) {
             throw new DomainException(trans_message('budgeting.scenarios.not_found'));
         }
 
@@ -263,7 +263,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
                 ->whereIn('budget_kind', ['bdr', 'consolidated'])
                 ->first();
 
-            if (!$version instanceof BudgetVersion) {
+            if (! $version instanceof BudgetVersion) {
                 throw new DomainException(trans_message('budgeting.versions.not_found'));
             }
 
@@ -282,7 +282,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             ->where('status', BudgetWorkflowService::STATUS_ACTIVE)
             ->whereIn('budget_kind', ['bdr', 'consolidated'])
             ->when($scenario instanceof BudgetScenario, fn (Builder $query): Builder => $query->where('scenario_id', $scenario->id))
-            ->when(!($scenario instanceof BudgetScenario), function (Builder $query): void {
+            ->when(! ($scenario instanceof BudgetScenario), function (Builder $query): void {
                 $query->whereHas('scenario', fn (Builder $scenarioQuery): Builder => $scenarioQuery
                     ->where('is_default', true)
                     ->where('is_active', true));
@@ -316,7 +316,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
     }
 
     /**
-     * @param class-string<BudgetArticle|ResponsibilityCenter> $modelClass
+     * @param  class-string<BudgetArticle|ResponsibilityCenter>  $modelClass
      * @return array{0:?int,1:?string}
      */
     private function resolveCatalogFilter(string $modelClass, int $organizationId, mixed $value, string $message): array
@@ -336,7 +336,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             })
             ->first();
 
-        if (!$model) {
+        if (! $model) {
             throw new DomainException($message);
         }
 
@@ -355,7 +355,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             ->accessibleByOrganization($organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('budgeting.lines.project_not_found'));
         }
 
@@ -366,7 +366,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
     {
         $normalized = [];
         foreach ($projectIds as $projectId) {
-            if (!is_int($projectId) || $projectId < 1 || isset($normalized[$projectId])) {
+            if (! is_int($projectId) || $projectId < 1 || isset($normalized[$projectId])) {
                 throw new InvalidArgumentException('project_margin_project_scope_invalid');
             }
 
@@ -402,7 +402,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             })
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('budgeting.project_margin.errors.contract_not_found'));
         }
 
@@ -421,7 +421,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             ->whereKey($counterpartyId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('budgeting.lines.counterparty_not_found'));
         }
 
@@ -440,12 +440,12 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
 
         $normalized = [];
         foreach ($groups as $group) {
-            if (!is_string($group) || trim($group) === '') {
+            if (! is_string($group) || trim($group) === '') {
                 continue;
             }
 
             $group = trim($group);
-            if (!in_array($group, ProjectMarginReportFilters::ALLOWED_GROUP_BY, true)) {
+            if (! in_array($group, ProjectMarginReportFilters::ALLOWED_GROUP_BY, true)) {
                 throw new DomainException(trans_message('budgeting.project_margin.errors.group_by_invalid'));
             }
 
@@ -456,7 +456,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             $normalized = ProjectMarginReportFilters::DEFAULT_GROUP_BY;
         }
 
-        if (!in_array(ProjectMarginReportFilters::GROUP_CURRENCY, $normalized, true)) {
+        if (! in_array(ProjectMarginReportFilters::GROUP_CURRENCY, $normalized, true)) {
             $normalized[] = ProjectMarginReportFilters::GROUP_CURRENCY;
         }
 
@@ -465,7 +465,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
 
     private function nullableCurrency(mixed $value): ?string
     {
-        if (!is_string($value) || trim($value) === '') {
+        if (! is_string($value) || trim($value) === '') {
             return null;
         }
 
@@ -513,6 +513,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
         $union->unionAll($this->paymentDocumentCostSourceQuery($filters));
         $union->unionAll($this->warehouseMovementSourceQuery($filters));
         $union->unionAll($this->timeEntrySourceQuery($filters));
+        $union->unionAll($this->machineryCostSourceQuery($filters));
 
         $query = DB::query()->fromSub($union, 'margin_sources');
         $this->applyNormalizedFilters($query, $filters);
@@ -805,7 +806,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
 
     private function warehouseMovementSourceQuery(ProjectMarginReportFilters $filters): QueryBuilder
     {
-        $amountExpression = 'GREATEST(COALESCE(warehouse_movements.quantity, 0) * COALESCE(warehouse_movements.price, 0), 0)';
+        $amountExpression = 'ROUND(GREATEST(COALESCE(warehouse_movements.quantity, 0) * COALESCE(warehouse_movements.price, 0), 0), 2)';
         $flags = $this->flagExpression([
             ['warehouse_movements.project_id IS NULL', ProjectMarginProblemFlag::MissingProject->value],
             ['warehouse_movements.id IS NOT NULL', ProjectMarginProblemFlag::MissingBudgetArticle->value],
@@ -820,6 +821,12 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
         return DB::table('warehouse_movements')
             ->where('warehouse_movements.organization_id', $filters->organizationId)
             ->whereIn('warehouse_movements.movement_type', ['write_off', 'transfer_out'])
+            ->whereNotExists(static function (QueryBuilder $query): void {
+                $query->selectRaw('1')
+                    ->from('machinery_fuel_issues')
+                    ->whereColumn('machinery_fuel_issues.warehouse_movement_id', 'warehouse_movements.id')
+                    ->whereNotNull('machinery_fuel_issues.cancelled_at');
+            })
             ->whereBetween(DB::raw('warehouse_movements.movement_date::date'), [$filters->periodStart, $filters->periodEnd])
             ->whereRaw("{$amountExpression} > 0")
             ->selectRaw("'warehouse_movement' AS source_type")
@@ -851,6 +858,103 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             ->selectRaw("CONCAT('/warehouse?movement_id=', warehouse_movements.id) AS href")
             ->selectRaw("'admin.warehouse.movements.show' AS route_name")
             ->selectRaw("'prohelper_management_warehouse' AS source_of_truth");
+    }
+
+    private function machineryCostSourceQuery(ProjectMarginReportFilters $filters): QueryBuilder
+    {
+        $shiftAmount = 'ROUND(GREATEST(COALESCE(machinery_shift_reports.actual_hours, 0) * COALESCE(machinery_shift_reports.hourly_rate_snapshot, 0), 0), 2)';
+        $shiftFlags = $this->flagExpression([
+            ['machinery_shift_reports.id IS NOT NULL', ProjectMarginProblemFlag::MissingBudgetArticle->value],
+            ['machinery_shift_reports.id IS NOT NULL', ProjectMarginProblemFlag::MissingResponsibilityCenter->value],
+            ['machinery_shift_reports.id IS NOT NULL', ProjectMarginProblemFlag::MissingContract->value],
+            ['machinery_shift_reports.id IS NOT NULL', ProjectMarginProblemFlag::MissingCounterparty->value],
+        ]);
+        $riskFlags = $this->flagExpression([
+            ['machinery_shift_reports.id IS NOT NULL', ProjectMarginRiskFlag::IndirectCostPolicySensitive->value],
+        ]);
+        $shifts = DB::table('machinery_shift_reports')
+            ->where('machinery_shift_reports.organization_id', $filters->organizationId)
+            ->where('machinery_shift_reports.status', 'approved')
+            ->whereNull('machinery_shift_reports.deleted_at')
+            ->whereBetween(DB::raw('machinery_shift_reports.approved_at::date'), [$filters->periodStart, $filters->periodEnd])
+            ->whereRaw("{$shiftAmount} > 0")
+            ->selectRaw("'machinery_shift' AS source_type")
+            ->selectRaw('machinery_shift_reports.id AS source_id')
+            ->selectRaw('machinery_shift_reports.id AS source_line_id')
+            ->selectRaw("'actual' AS component")
+            ->selectRaw("'cost' AS direction")
+            ->selectRaw("DATE_TRUNC('month', machinery_shift_reports.approved_at)::date AS period_month")
+            ->selectRaw('machinery_shift_reports.approved_at::date AS recognition_date')
+            ->selectRaw('NULL::bigint AS budget_article_id')
+            ->selectRaw('NULL::bigint AS responsibility_center_id')
+            ->selectRaw('machinery_shift_reports.project_id AS project_id')
+            ->selectRaw('NULL::bigint AS contract_id')
+            ->selectRaw('NULL::bigint AS counterparty_id')
+            ->selectRaw("'RUB' AS currency")
+            ->selectRaw("{$shiftAmount} AS amount_without_vat")
+            ->selectRaw('0::numeric AS vat_amount')
+            ->selectRaw("{$shiftAmount} AS management_amount")
+            ->selectRaw("CONCAT('SHIFT-', machinery_shift_reports.id) AS source_document_number")
+            ->selectRaw('machinery_shift_reports.approved_at::date AS document_date')
+            ->selectRaw("COALESCE(machinery_shift_reports.work_description, 'Эксплуатация техники') AS source_title")
+            ->selectRaw('machinery_shift_reports.status AS source_status')
+            ->selectRaw("'confirmed' AS confirmation_status")
+            ->selectRaw("'actual' AS freshness_status")
+            ->selectRaw("CASE WHEN machinery_shift_reports.construction_journal_entry_id IS NULL THEN 'attention' ELSE 'confirmed' END AS reconciliation_status")
+            ->selectRaw("CASE WHEN machinery_shift_reports.construction_journal_entry_id IS NULL THEN 'attention' ELSE 'confirmed' END AS quality_status")
+            ->selectRaw("{$shiftFlags} AS problem_flags")
+            ->selectRaw("{$riskFlags} AS risk_flags")
+            ->selectRaw("CONCAT('/machinery-operations?shift_report_id=', machinery_shift_reports.id) AS href")
+            ->selectRaw("'admin.machinery-operations.view' AS route_name")
+            ->selectRaw("'most_machinery_shift' AS source_of_truth");
+
+        $maintenanceFlags = $this->flagExpression([
+            ['machinery_maintenance_orders.project_id IS NULL', ProjectMarginProblemFlag::MissingProject->value],
+            ['machinery_maintenance_orders.id IS NOT NULL', ProjectMarginProblemFlag::MissingBudgetArticle->value],
+            ['machinery_maintenance_orders.id IS NOT NULL', ProjectMarginProblemFlag::MissingResponsibilityCenter->value],
+            ['machinery_maintenance_orders.id IS NOT NULL', ProjectMarginProblemFlag::MissingContract->value],
+            ['machinery_maintenance_orders.id IS NOT NULL', ProjectMarginProblemFlag::MissingCounterparty->value],
+        ]);
+        $maintenanceRiskFlags = $this->flagExpression([
+            ['machinery_maintenance_orders.id IS NOT NULL', ProjectMarginRiskFlag::IndirectCostPolicySensitive->value],
+        ]);
+        $maintenance = DB::table('machinery_maintenance_orders')
+            ->where('machinery_maintenance_orders.organization_id', $filters->organizationId)
+            ->where('machinery_maintenance_orders.status', 'completed')
+            ->whereNull('machinery_maintenance_orders.deleted_at')
+            ->whereBetween(DB::raw('machinery_maintenance_orders.completed_at::date'), [$filters->periodStart, $filters->periodEnd])
+            ->where('machinery_maintenance_orders.cost', '>', 0)
+            ->selectRaw("'machinery_maintenance' AS source_type")
+            ->selectRaw('machinery_maintenance_orders.id AS source_id')
+            ->selectRaw('machinery_maintenance_orders.id AS source_line_id')
+            ->selectRaw("'actual' AS component")
+            ->selectRaw("'cost' AS direction")
+            ->selectRaw("DATE_TRUNC('month', machinery_maintenance_orders.completed_at)::date AS period_month")
+            ->selectRaw('machinery_maintenance_orders.completed_at::date AS recognition_date')
+            ->selectRaw('NULL::bigint AS budget_article_id')
+            ->selectRaw('NULL::bigint AS responsibility_center_id')
+            ->selectRaw('machinery_maintenance_orders.project_id AS project_id')
+            ->selectRaw('NULL::bigint AS contract_id')
+            ->selectRaw('NULL::bigint AS counterparty_id')
+            ->selectRaw("'RUB' AS currency")
+            ->selectRaw('ROUND(machinery_maintenance_orders.cost, 2) AS amount_without_vat')
+            ->selectRaw('0::numeric AS vat_amount')
+            ->selectRaw('ROUND(machinery_maintenance_orders.cost, 2) AS management_amount')
+            ->selectRaw('machinery_maintenance_orders.order_number AS source_document_number')
+            ->selectRaw('machinery_maintenance_orders.completed_at::date AS document_date')
+            ->selectRaw('machinery_maintenance_orders.title AS source_title')
+            ->selectRaw('machinery_maintenance_orders.status AS source_status')
+            ->selectRaw("'confirmed' AS confirmation_status")
+            ->selectRaw("'actual' AS freshness_status")
+            ->selectRaw("'attention' AS reconciliation_status")
+            ->selectRaw("'attention' AS quality_status")
+            ->selectRaw("{$maintenanceFlags} AS problem_flags")
+            ->selectRaw("{$maintenanceRiskFlags} AS risk_flags")
+            ->selectRaw("CONCAT('/machinery-operations?maintenance_order_id=', machinery_maintenance_orders.id) AS href")
+            ->selectRaw("'admin.machinery-operations.view' AS route_name")
+            ->selectRaw("'most_machinery_maintenance' AS source_of_truth");
+
+        return $shifts->unionAll($maintenance);
     }
 
     private function timeEntrySourceQuery(ProjectMarginReportFilters $filters): QueryBuilder
@@ -925,7 +1029,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
     {
         if ($key->hasDimension(ProjectMarginReportFilters::GROUP_MONTH)) {
             $month = (string) $key->value(ProjectMarginReportFilters::GROUP_MONTH);
-            $query->where('period_month', CarbonImmutable::parse($month . '-01')->toDateString());
+            $query->where('period_month', CarbonImmutable::parse($month.'-01')->toDateString());
         }
 
         $this->applyNullableDrillDimension($query, $key, ProjectMarginReportFilters::GROUP_BUDGET_ARTICLE, 'budget_article_id');
@@ -945,7 +1049,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
         string $dimension,
         string $column,
     ): void {
-        if (!$key->hasDimension($dimension)) {
+        if (! $key->hasDimension($dimension)) {
             return;
         }
 
@@ -953,6 +1057,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
 
         if ($value === null || $value === '') {
             $query->whereNull($column);
+
             return;
         }
 
@@ -962,7 +1067,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
     private function assertDrillDownKeyMatchesFilters(ProjectMarginReportFilters $filters, ProjectMarginDrillDownKey $key): void
     {
         foreach ($key->groupBy as $group) {
-            if (!in_array($group, ProjectMarginReportFilters::ALLOWED_GROUP_BY, true)) {
+            if (! in_array($group, ProjectMarginReportFilters::ALLOWED_GROUP_BY, true)) {
                 throw new InvalidArgumentException(trans_message('budgeting.project_margin.errors.drill_down_key_invalid'));
             }
         }
@@ -977,7 +1082,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
     }
 
     /**
-     * @param list<ProjectMarginSourceAggregate> $aggregates
+     * @param  list<ProjectMarginSourceAggregate>  $aggregates
      */
     private function dimensionsForAggregates(ProjectMarginReportFilters $filters, array $aggregates): ProjectMarginDimensions
     {
@@ -1110,6 +1215,8 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             $this->coverageItem('payment_document', true, $counts, 'payment_documents'),
             $this->coverageItem('warehouse_movement', true, $counts, 'warehouse_movements'),
             $this->coverageItem('time_entry', true, $counts, 'time_entries'),
+            $this->coverageItem('machinery_shift', true, $counts, 'machinery_shifts'),
+            $this->coverageItem('machinery_maintenance', true, $counts, 'machinery_maintenance'),
         ], $warnings];
     }
 
@@ -1129,7 +1236,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
         $sourceType = (string) $row->source_type;
         $canViewSource = $this->canViewSource($sourceType, $permissions);
         $problemFlags = $this->csv((string) ($row->problem_flags ?? ''));
-        if (!$canViewSource) {
+        if (! $canViewSource) {
             $problemFlags[] = ProjectMarginProblemFlag::HiddenByPermissions->value;
         }
         $problemFlags = array_values(array_unique($problemFlags));
@@ -1139,7 +1246,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
         $qualityStatus = $canViewSource ? (string) $row->quality_status : self::QUALITY_PARTIAL;
 
         return new ProjectMarginAttributionLine(
-            lineId: $sourceType . ':' . (string) ($sourceId ?? 'hidden') . ':' . (string) ($sourceLineId ?? 'line'),
+            lineId: $sourceType.':'.(string) ($sourceId ?? 'hidden').':'.(string) ($sourceLineId ?? 'line'),
             component: (string) $row->component,
             direction: (string) $row->direction,
             organizationId: $filters->organizationId,
@@ -1198,7 +1305,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
     }
 
     /**
-     * @param list<ProjectMarginAttributionLine> $items
+     * @param  list<ProjectMarginAttributionLine>  $items
      */
     private function drillDownSummary(array $items): array
     {
@@ -1253,15 +1360,20 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             'payment_document' => $this->canAny($user, ['payments.invoice.view', 'payments.invoice.view_all'], $organizationId),
             'warehouse_movement' => $this->canAny($user, ['warehouse.view'], $organizationId),
             'time_entry' => $this->canAny($user, ['time_tracking.view'], $organizationId),
+            'machinery_shift', 'machinery_maintenance' => $this->canAny(
+                $user,
+                ['machinery-operations.view'],
+                $organizationId,
+            ),
         ];
     }
 
     /**
-     * @param list<string> $permissions
+     * @param  list<string>  $permissions
      */
     private function canAny(?User $user, array $permissions, int $organizationId): bool
     {
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             return false;
         }
 
@@ -1281,7 +1393,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
 
     private function drillDownRoute(object $row, bool $canViewSource): array
     {
-        if (!$canViewSource) {
+        if (! $canViewSource) {
             return [
                 'available' => false,
                 'message' => trans_message('budgeting.project_margin.sources.hidden_by_permission'),
@@ -1305,13 +1417,13 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
 
     private function safeHref(mixed $value): ?string
     {
-        if (!is_string($value) || trim($value) === '') {
+        if (! is_string($value) || trim($value) === '') {
             return null;
         }
 
         $href = trim($value);
 
-        return str_starts_with($href, '/') && !str_starts_with($href, '//') ? $href : null;
+        return str_starts_with($href, '/') && ! str_starts_with($href, '//') ? $href : null;
     }
 
     private function flagExpression(array $conditions): string
@@ -1321,7 +1433,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             $conditions,
         );
 
-        return "CONCAT_WS(',', " . implode(', ', $parts) . ')';
+        return "CONCAT_WS(',', ".implode(', ', $parts).')';
     }
 
     private function paymentDocumentContractExpression(): string
@@ -1423,6 +1535,8 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
             'payment_document' => 'approved_outgoing_document_without_vat',
             'warehouse_movement' => 'project_write_off_material_cost',
             'time_entry' => 'approved_hours_by_hourly_rate',
+            'machinery_shift' => 'approved_shift_hours_by_rate_snapshot',
+            'machinery_maintenance' => 'completed_maintenance_cost',
             default => 'management_source_line',
         };
     }
@@ -1438,7 +1552,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
 
     private function scenarioToArray(mixed $scenario): ?array
     {
-        if (!$scenario instanceof BudgetScenario) {
+        if (! $scenario instanceof BudgetScenario) {
             return null;
         }
 
@@ -1452,7 +1566,7 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
 
     private function versionToArray(mixed $version): ?array
     {
-        if (!$version instanceof BudgetVersion) {
+        if (! $version instanceof BudgetVersion) {
             return null;
         }
 

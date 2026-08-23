@@ -81,7 +81,7 @@ final readonly class ProjectFinanceQueryService implements ReportDrillDownProvid
     ];
 
     private const DRILL_TYPES = [
-        'project_margin' => ['budget_line', 'approved_act', 'completed_work', 'payment_transaction', 'warehouse_movement', 'approved_time_entry'],
+        'project_margin' => ['budget_line', 'approved_act', 'completed_work', 'payment_transaction', 'warehouse_movement', 'approved_time_entry', 'machinery_shift', 'machinery_maintenance'],
         'budget_plan_fact' => ['budget_amount', 'reservation', 'payment_document', 'completed_transaction'],
         'wip_completion_forecast' => ['earned_value', 'actual_cost', 'manual_adjustment', 'audit_event'],
     ];
@@ -450,6 +450,7 @@ final readonly class ProjectFinanceQueryService implements ReportDrillDownProvid
             'payment_transaction', 'payment_document', 'completed_transaction' => 'admin.payments.show',
             'warehouse_movement' => 'admin.warehouse.movements.show',
             'approved_time_entry' => 'admin.time_tracking.entries.show',
+            'machinery_shift', 'machinery_maintenance' => 'admin.machinery-operations.view',
             'reservation' => 'admin.budgeting.reservations.show',
             'earned_value', 'actual_cost' => 'admin.budgeting.wip.show',
             'manual_adjustment' => 'admin.budgeting.wip.adjustments.show',

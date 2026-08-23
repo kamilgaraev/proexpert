@@ -19,8 +19,10 @@ final class MachineryShiftReportResource extends JsonResource
         /** @var MachineryShiftReport $shift */
         $shift = $this->resource;
         $candidateActions = match ($shift->status) {
-            'draft' => ['submit'],
-            'submitted' => ['approve', 'reject'],
+            'draft', 'blocked' => ['cancel'],
+            'completed' => ['submit', 'cancel'],
+            'submitted' => ['approve', 'reject', 'cancel'],
+            'approved', 'rejected' => ['cancel'],
             default => [],
         };
         $actor = $request->user();
@@ -43,7 +45,11 @@ final class MachineryShiftReportResource extends JsonResource
             'organization_asset_id' => $shift->organization_asset_id,
             'project_id' => $shift->project_id,
             'assignment_id' => $shift->assignment_id,
+            'schedule_task_id' => $shift->schedule_task_id,
+            'construction_journal_entry_id' => $shift->construction_journal_entry_id,
             'reported_by_user_id' => $shift->reported_by_user_id,
+            'finished_by_user_id' => $shift->finished_by_user_id,
+            'cancelled_by_user_id' => $shift->cancelled_by_user_id,
             'approved_by_user_id' => $shift->approved_by_user_id,
             'report_date' => $shift->report_date?->toDateString(),
             'status' => $shift->status,
@@ -56,10 +62,15 @@ final class MachineryShiftReportResource extends JsonResource
             'meter_start' => $shift->meter_start,
             'meter_end' => $shift->meter_end,
             'work_description' => $shift->work_description,
+            'finish_evidence' => $shift->finish_evidence,
             'rejection_reason' => $shift->rejection_reason,
+            'cancellation_reason' => $shift->cancellation_reason,
             'submitted_at' => $shift->submitted_at?->toIso8601String(),
             'approved_at' => $shift->approved_at?->toIso8601String(),
             'rejected_at' => $shift->rejected_at?->toIso8601String(),
+            'started_at' => $shift->started_at?->toIso8601String(),
+            'finished_at' => $shift->finished_at?->toIso8601String(),
+            'cancelled_at' => $shift->cancelled_at?->toIso8601String(),
             'workflow_summary' => [
                 'stage' => $shift->status,
                 'status' => $shift->status,
@@ -70,13 +81,29 @@ final class MachineryShiftReportResource extends JsonResource
                 'blockers' => [],
                 'warnings' => [],
             ],
-            'problem_flags' => [],
+            'problem_flags' => $shift->status === 'blocked' ? [[
+                'code' => 'pre_shift_inspection_blocked',
+                'severity' => 'critical',
+                'message' => trans_message('machinery_operations.errors.pre_shift_inspection_blocked'),
+            ]] : [],
             'available_actions' => $actions,
+            'inspections' => $this->whenLoaded('inspections', fn () => $shift->inspections->map(static fn ($inspection): array => [
+                'id' => $inspection->id,
+                'inspection_type' => $inspection->inspection_type,
+                'result' => $inspection->result,
+                'notes' => $inspection->notes,
+                'evidence' => $inspection->evidence,
+                'defects' => $inspection->defects,
+                'inspected_by_user_id' => $inspection->inspected_by_user_id,
+                'inspected_at' => $inspection->inspected_at?->toIso8601String(),
+            ])->values()),
             'linked_entities' => [
                 'asset_id' => $shift->asset_id,
                 'organization_asset_id' => $shift->organization_asset_id,
                 'project_id' => $shift->project_id,
                 'assignment_id' => $shift->assignment_id,
+                'schedule_task_id' => $shift->schedule_task_id,
+                'construction_journal_entry_id' => $shift->construction_journal_entry_id,
             ],
             'asset' => $this->whenLoaded('asset', fn () => $shift->asset ? [
                 'id' => $shift->asset->id,
