@@ -18,6 +18,7 @@ use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryOpe
 use App\BusinessModules\Features\MachineryOperations\Http\Resources\MachineryShiftReportResource;
 use App\BusinessModules\Features\MachineryOperations\Models\AssetRequest;
 use App\BusinessModules\Features\MachineryOperations\Services\AssetDispatchService;
+use App\BusinessModules\Features\MachineryOperations\Services\MachineryIdempotencyService;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -34,6 +35,7 @@ final class MachineryOperationsController extends Controller
     public function __construct(
         private readonly MachineryOperationsService $service,
         private readonly AssetDispatchService $dispatch,
+        private readonly MachineryIdempotencyService $idempotency,
     ) {}
 
     public function storeRequest(CreateAssetRequest $request): JsonResponse
@@ -267,6 +269,25 @@ final class MachineryOperationsController extends Controller
         return $this->shiftAction($request, $id, fn ($shift) => $this->service->submitShift($shift));
     }
 
+    public function finishShift(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate($this->finishShiftRules());
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->shiftAction(
+            $request,
+            $id,
+            fn ($shift) => $this->service->finishShift(
+                $shift,
+                (int) $request->user()?->id,
+                $validated,
+            ),
+        );
+    }
+
     public function approveShift(Request $request, int $id): JsonResponse
     {
         return $this->shiftAction($request, $id, fn ($shift) => $this->service->approveShift($shift, (int) $request->user()?->id));
@@ -281,6 +302,21 @@ final class MachineryOperationsController extends Controller
         }
 
         return $this->shiftAction($request, $id, fn ($shift) => $this->service->rejectShift($shift, (int) $request->user()?->id, $validated['reason']));
+    }
+
+    public function cancelShift(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('machinery_operations.errors.validation_failed'), 422, $exception->errors());
+        }
+
+        return $this->shiftAction(
+            $request,
+            $id,
+            fn ($shift) => $this->service->cancelShift($shift, (int) $request->user()?->id, $validated['reason']),
+        );
     }
 
     public function storeDowntime(Request $request): JsonResponse
@@ -318,12 +354,24 @@ final class MachineryOperationsController extends Controller
     {
         try {
             $validated = $request->validate($this->fuelRules());
+            $idempotencyKey = trim((string) $request->header('Idempotency-Key'));
+            if ($idempotencyKey === '') {
+                throw new DomainException(trans_message('machinery_operations.errors.idempotency_key_required'));
+            }
 
             return AdminResponse::success(
-                new MachineryOperationRecordResource($this->service->createFuelIssue(
+                new MachineryOperationRecordResource($this->idempotency->execute(
                     (int) $request->attributes->get('current_organization_id'),
                     (int) $request->user()?->id,
-                    $validated
+                    $idempotencyKey,
+                    'fuel.create',
+                    $validated,
+                    fn () => $this->service->createFuelIssue(
+                        (int) $request->attributes->get('current_organization_id'),
+                        (int) $request->user()?->id,
+                        $idempotencyKey,
+                        $validated,
+                    ),
                 )),
                 trans_message('machinery_operations.messages.fuel_created'),
                 201
@@ -581,6 +629,14 @@ final class MachineryOperationsController extends Controller
             'meter_start' => ['nullable', 'numeric', 'min:0'],
             'meter_end' => ['nullable', 'numeric', 'min:0'],
             'work_description' => ['nullable', 'string', 'max:5000'],
+            'pre_shift_inspection' => ['required', 'array'],
+            'pre_shift_inspection.result' => ['required', 'in:serviceable,restricted,unavailable'],
+            'pre_shift_inspection.notes' => ['nullable', 'string', 'max:5000'],
+            'pre_shift_inspection.evidence' => ['nullable', 'array'],
+            'pre_shift_inspection.defects' => ['nullable', 'array', 'max:50'],
+            'pre_shift_inspection.defects.*.code' => ['required', 'string', 'max:80'],
+            'pre_shift_inspection.defects.*.severity' => ['required', 'in:low,medium,high,critical'],
+            'pre_shift_inspection.defects.*.description' => ['required', 'string', 'max:5000'],
         ];
     }
 
@@ -589,12 +645,32 @@ final class MachineryOperationsController extends Controller
         return [
             'asset_id' => ['required', 'integer'],
             'project_id' => ['required', 'integer'],
+            'shift_report_id' => ['required', 'integer'],
+            'warehouse_id' => ['required', 'integer'],
+            'material_id' => ['required', 'integer'],
             'issued_at' => ['required', 'date'],
             'fuel_type' => ['required', 'string', 'max:80'],
             'quantity' => ['required', 'numeric', 'min:0.001'],
             'unit' => ['required', 'string', 'max:20'],
-            'cost' => ['nullable', 'numeric', 'min:0'],
             'comment' => ['nullable', 'string', 'max:2000'],
+        ];
+    }
+
+    private function finishShiftRules(): array
+    {
+        return [
+            'actual_hours' => ['required', 'numeric', 'min:0', 'max:24'],
+            'fuel_consumed' => ['required', 'numeric', 'min:0'],
+            'meter_end' => ['nullable', 'numeric', 'min:0'],
+            'work_description' => ['nullable', 'string', 'max:5000'],
+            'post_shift_inspection' => ['required', 'array'],
+            'post_shift_inspection.result' => ['required', 'in:serviceable,restricted,unavailable'],
+            'post_shift_inspection.notes' => ['nullable', 'string', 'max:5000'],
+            'post_shift_inspection.evidence' => ['nullable', 'array'],
+            'post_shift_inspection.defects' => ['nullable', 'array', 'max:50'],
+            'post_shift_inspection.defects.*.code' => ['required', 'string', 'max:80'],
+            'post_shift_inspection.defects.*.severity' => ['required', 'in:low,medium,high,critical'],
+            'post_shift_inspection.defects.*.description' => ['required', 'string', 'max:5000'],
         ];
     }
 }

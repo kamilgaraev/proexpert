@@ -96,8 +96,16 @@ final class MachineryOperationRecordResource extends JsonResource
             'asset_id' => $fuelIssue->asset_id,
             'organization_asset_id' => $fuelIssue->organization_asset_id,
             'project_id' => $fuelIssue->project_id,
+            'shift_report_id' => $fuelIssue->shift_report_id,
             'issued_by_user_id' => $fuelIssue->issued_by_user_id,
+            'operator_user_id' => $fuelIssue->operator_user_id,
+            'warehouse_id' => $fuelIssue->warehouse_id,
+            'material_id' => $fuelIssue->material_id,
+            'warehouse_movement_id' => $fuelIssue->warehouse_movement_id,
+            'reversal_movement_id' => $fuelIssue->reversal_movement_id,
             'issued_at' => $fuelIssue->issued_at?->toIso8601String(),
+            'cancelled_at' => $fuelIssue->cancelled_at?->toIso8601String(),
+            'cancelled_by_user_id' => $fuelIssue->cancelled_by_user_id,
             'fuel_type' => $fuelIssue->fuel_type,
             'fuel_type_code' => $fuelIssue->fuel_type_code ?? $fuelIssue->fuel_type,
             'fuel_type_label' => trans_message('machinery_operations.fuel_types.'.($fuelIssue->fuel_type_code ?? $fuelIssue->fuel_type)),
@@ -107,6 +115,7 @@ final class MachineryOperationRecordResource extends JsonResource
             'unit_label' => trans_message('machinery_operations.fuel_units.'.($fuelIssue->unit_code ?? $fuelIssue->unit)),
             'cost' => $fuelIssue->cost,
             'comment' => $fuelIssue->comment,
+            'cancellation_reason' => $fuelIssue->cancellation_reason,
         ];
     }
 

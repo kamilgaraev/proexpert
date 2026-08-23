@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\MachineryOperations\Models;
 
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
+use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
+use App\Models\ScheduleTask;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -23,7 +25,11 @@ final class MachineryShiftReport extends Model
         'asset_id',
         'project_id',
         'assignment_id',
+        'schedule_task_id',
+        'construction_journal_entry_id',
         'reported_by_user_id',
+        'finished_by_user_id',
+        'cancelled_by_user_id',
         'approved_by_user_id',
         'report_date',
         'status',
@@ -35,10 +41,15 @@ final class MachineryShiftReport extends Model
         'meter_start',
         'meter_end',
         'work_description',
+        'finish_evidence',
         'rejection_reason',
+        'cancellation_reason',
         'submitted_at',
         'approved_at',
         'rejected_at',
+        'started_at',
+        'finished_at',
+        'cancelled_at',
     ];
 
     protected $casts = [
@@ -46,6 +57,10 @@ final class MachineryShiftReport extends Model
         'submitted_at' => 'datetime',
         'approved_at' => 'datetime',
         'rejected_at' => 'datetime',
+        'started_at' => 'datetime',
+        'finished_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'finish_evidence' => 'array',
         'cost_evidence' => 'array',
     ];
 
@@ -64,9 +79,24 @@ final class MachineryShiftReport extends Model
         return $this->belongsTo(Project::class);
     }
 
+    public function inspections(): HasMany
+    {
+        return $this->hasMany(MachineryShiftInspection::class, 'shift_report_id');
+    }
+
     public function assignment(): BelongsTo
     {
         return $this->belongsTo(MachineryAssignment::class, 'assignment_id');
+    }
+
+    public function scheduleTask(): BelongsTo
+    {
+        return $this->belongsTo(ScheduleTask::class);
+    }
+
+    public function constructionJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(ConstructionJournalEntry::class);
     }
 
     public function reportedBy(): BelongsTo

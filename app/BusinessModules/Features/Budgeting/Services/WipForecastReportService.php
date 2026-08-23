@@ -30,6 +30,7 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+
 use function trans_message;
 
 final class WipForecastReportService
@@ -38,8 +39,7 @@ final class WipForecastReportService
         private readonly WipForecastCalculator $calculator,
         private readonly AuthorizationService $authorization,
         private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
-    ) {
-    }
+    ) {}
 
     public function report(array $input, ?User $user = null): array
     {
@@ -267,7 +267,7 @@ final class WipForecastReportService
 
     private function resolveScenario(int $organizationId, mixed $scenarioUuid): ?BudgetScenario
     {
-        if (!is_string($scenarioUuid) || trim($scenarioUuid) === '') {
+        if (! is_string($scenarioUuid) || trim($scenarioUuid) === '') {
             return null;
         }
 
@@ -276,7 +276,7 @@ final class WipForecastReportService
             ->where('uuid', trim($scenarioUuid))
             ->first();
 
-        if (!$scenario instanceof BudgetScenario) {
+        if (! $scenario instanceof BudgetScenario) {
             throw new DomainException(trans_message('budgeting.scenarios.not_found'));
         }
 
@@ -298,7 +298,7 @@ final class WipForecastReportService
                 ->whereIn('budget_kind', ['bdr', 'consolidated'])
                 ->first();
 
-            if (!$version instanceof BudgetVersion) {
+            if (! $version instanceof BudgetVersion) {
                 throw new DomainException(trans_message('budgeting.versions.not_found'));
             }
 
@@ -311,7 +311,7 @@ final class WipForecastReportService
             ->where('status', BudgetWorkflowService::STATUS_ACTIVE)
             ->whereIn('budget_kind', ['bdr', 'consolidated'])
             ->when($scenario instanceof BudgetScenario, fn (Builder $query): Builder => $query->where('scenario_id', $scenario->id))
-            ->when(!($scenario instanceof BudgetScenario), function (Builder $query): void {
+            ->when(! ($scenario instanceof BudgetScenario), function (Builder $query): void {
                 $query->whereHas('scenario', fn (Builder $scenarioQuery): Builder => $scenarioQuery
                     ->where('is_default', true)
                     ->where('is_active', true));
@@ -390,6 +390,7 @@ final class WipForecastReportService
         $union->unionAll($this->paymentDocumentSourceQuery($filters));
         $union->unionAll($this->warehouseMovementSourceQuery($filters));
         $union->unionAll($this->timeEntrySourceQuery($filters));
+        $union->unionAll($this->machineryCostSourceQuery($filters));
 
         $query = DB::query()->fromSub($union, 'wip_sources');
         $this->applyNormalizedFilters($query, $filters);
@@ -611,11 +612,17 @@ final class WipForecastReportService
 
     private function warehouseMovementSourceQuery(WipForecastReportFilters $filters): QueryBuilder
     {
-        $amountExpression = 'GREATEST(COALESCE(warehouse_movements.quantity, 0) * COALESCE(warehouse_movements.price, 0), 0)';
+        $amountExpression = 'ROUND(GREATEST(COALESCE(warehouse_movements.quantity, 0) * COALESCE(warehouse_movements.price, 0), 0), 2)';
 
         return DB::table('warehouse_movements')
             ->where('warehouse_movements.organization_id', $filters->organizationId)
             ->whereIn('warehouse_movements.movement_type', ['write_off', 'transfer_out'])
+            ->whereNotExists(static function (QueryBuilder $query): void {
+                $query->selectRaw('1')
+                    ->from('machinery_fuel_issues')
+                    ->whereColumn('machinery_fuel_issues.warehouse_movement_id', 'warehouse_movements.id')
+                    ->whereNotNull('machinery_fuel_issues.cancelled_at');
+            })
             ->whereBetween(DB::raw('warehouse_movements.movement_date::date'), [$filters->periodStart, $filters->periodEnd])
             ->whereRaw("{$amountExpression} > 0")
             ->selectRaw("'warehouse_movement' AS source_type")
@@ -643,6 +650,76 @@ final class WipForecastReportService
             ->selectRaw("CASE WHEN warehouse_movements.project_id IS NULL THEN 'missing_project' ELSE '' END AS problem_flags")
             ->selectRaw("'indirect_cost_policy_sensitive' AS risk_flags")
             ->selectRaw("'prohelper_management_warehouse' AS source_of_truth");
+    }
+
+    private function machineryCostSourceQuery(WipForecastReportFilters $filters): QueryBuilder
+    {
+        $shiftAmount = 'ROUND(GREATEST(COALESCE(machinery_shift_reports.actual_hours, 0) * COALESCE(machinery_shift_reports.hourly_rate_snapshot, 0), 0), 2)';
+        $shifts = DB::table('machinery_shift_reports')
+            ->where('machinery_shift_reports.organization_id', $filters->organizationId)
+            ->where('machinery_shift_reports.status', 'approved')
+            ->whereNull('machinery_shift_reports.deleted_at')
+            ->whereBetween(DB::raw('machinery_shift_reports.approved_at::date'), [$filters->periodStart, $filters->periodEnd])
+            ->whereRaw("{$shiftAmount} > 0")
+            ->selectRaw("'machinery_shift' AS source_type")
+            ->selectRaw('machinery_shift_reports.id AS source_id')
+            ->selectRaw('machinery_shift_reports.id AS source_line_id')
+            ->selectRaw("DATE_TRUNC('month', machinery_shift_reports.approved_at)::date AS period_month")
+            ->selectRaw('machinery_shift_reports.approved_at::date AS recognition_date')
+            ->selectRaw('machinery_shift_reports.project_id AS project_id')
+            ->selectRaw('NULL::bigint AS stage_id')
+            ->selectRaw('NULL::bigint AS contract_id')
+            ->selectRaw('NULL::bigint AS estimate_item_id')
+            ->selectRaw("'RUB' AS currency")
+            ->selectRaw('0::numeric AS bac')
+            ->selectRaw('0::numeric AS pv')
+            ->selectRaw('NULL::numeric AS percent_complete')
+            ->selectRaw('0::numeric AS ev')
+            ->selectRaw('0::numeric AS approved_act_value')
+            ->selectRaw("{$shiftAmount} AS actual_cost_accrual")
+            ->selectRaw('0::numeric AS cash_only_payments')
+            ->selectRaw('0::numeric AS bottom_up_etc')
+            ->selectRaw('0::numeric AS forecast_revenue')
+            ->selectRaw("CONCAT('SHIFT-', machinery_shift_reports.id) AS source_document_number")
+            ->selectRaw("COALESCE(machinery_shift_reports.work_description, 'Эксплуатация техники') AS source_title")
+            ->selectRaw("CASE WHEN machinery_shift_reports.construction_journal_entry_id IS NULL THEN 'attention' ELSE 'confirmed' END AS quality_status")
+            ->selectRaw("CASE WHEN machinery_shift_reports.construction_journal_entry_id IS NULL THEN 'missing_work_journal_link' ELSE '' END AS problem_flags")
+            ->selectRaw("'indirect_cost_policy_sensitive' AS risk_flags")
+            ->selectRaw("'most_machinery_shift' AS source_of_truth");
+
+        $maintenance = DB::table('machinery_maintenance_orders')
+            ->where('machinery_maintenance_orders.organization_id', $filters->organizationId)
+            ->where('machinery_maintenance_orders.status', 'completed')
+            ->whereNull('machinery_maintenance_orders.deleted_at')
+            ->whereBetween(DB::raw('machinery_maintenance_orders.completed_at::date'), [$filters->periodStart, $filters->periodEnd])
+            ->where('machinery_maintenance_orders.cost', '>', 0)
+            ->selectRaw("'machinery_maintenance' AS source_type")
+            ->selectRaw('machinery_maintenance_orders.id AS source_id')
+            ->selectRaw('machinery_maintenance_orders.id AS source_line_id')
+            ->selectRaw("DATE_TRUNC('month', machinery_maintenance_orders.completed_at)::date AS period_month")
+            ->selectRaw('machinery_maintenance_orders.completed_at::date AS recognition_date')
+            ->selectRaw('machinery_maintenance_orders.project_id AS project_id')
+            ->selectRaw('NULL::bigint AS stage_id')
+            ->selectRaw('NULL::bigint AS contract_id')
+            ->selectRaw('NULL::bigint AS estimate_item_id')
+            ->selectRaw("'RUB' AS currency")
+            ->selectRaw('0::numeric AS bac')
+            ->selectRaw('0::numeric AS pv')
+            ->selectRaw('NULL::numeric AS percent_complete')
+            ->selectRaw('0::numeric AS ev')
+            ->selectRaw('0::numeric AS approved_act_value')
+            ->selectRaw('ROUND(machinery_maintenance_orders.cost, 2) AS actual_cost_accrual')
+            ->selectRaw('0::numeric AS cash_only_payments')
+            ->selectRaw('0::numeric AS bottom_up_etc')
+            ->selectRaw('0::numeric AS forecast_revenue')
+            ->selectRaw('machinery_maintenance_orders.order_number AS source_document_number')
+            ->selectRaw('machinery_maintenance_orders.title AS source_title')
+            ->selectRaw("'confirmed' AS quality_status")
+            ->selectRaw("CASE WHEN machinery_maintenance_orders.project_id IS NULL THEN 'missing_project' ELSE '' END AS problem_flags")
+            ->selectRaw("'indirect_cost_policy_sensitive' AS risk_flags")
+            ->selectRaw("'most_machinery_maintenance' AS source_of_truth");
+
+        return $shifts->unionAll($maintenance);
     }
 
     private function timeEntrySourceQuery(WipForecastReportFilters $filters): QueryBuilder
@@ -696,7 +773,7 @@ final class WipForecastReportService
     {
         if ($key->hasDimension(WipForecastReportFilters::GROUP_PERIOD)) {
             $period = (string) $key->value(WipForecastReportFilters::GROUP_PERIOD);
-            $query->where('period_month', CarbonImmutable::parse($period . '-01')->toDateString());
+            $query->where('period_month', CarbonImmutable::parse($period.'-01')->toDateString());
         }
 
         $this->applyNullableDrillDimension($query, $key, WipForecastReportFilters::GROUP_PROJECT, 'project_id');
@@ -715,13 +792,14 @@ final class WipForecastReportService
         string $dimension,
         string $column,
     ): void {
-        if (!$key->hasDimension($dimension)) {
+        if (! $key->hasDimension($dimension)) {
             return;
         }
 
         $value = $key->value($dimension);
         if ($value === null || $value === '') {
             $query->whereNull($column);
+
             return;
         }
 
@@ -771,7 +849,7 @@ final class WipForecastReportService
     }
 
     /**
-     * @param list<WipForecastSourceAggregate> $aggregates
+     * @param  list<WipForecastSourceAggregate>  $aggregates
      */
     private function dimensionsForAggregates(WipForecastReportFilters $filters, array $aggregates): WipForecastDimensions
     {
@@ -943,6 +1021,8 @@ final class WipForecastReportService
             $this->coverageItem('cash_only_payment', true, $counts, 'payment_documents'),
             $this->coverageItem('warehouse_movement', true, $counts, 'warehouse_movements'),
             $this->coverageItem('time_entry', true, $counts, 'time_entries'),
+            $this->coverageItem('machinery_shift', true, $counts, 'machinery_shifts'),
+            $this->coverageItem('machinery_maintenance', true, $counts, 'machinery_maintenance'),
         ];
     }
 
@@ -1017,7 +1097,7 @@ final class WipForecastReportService
 
     private function forecastVersionPayload(mixed $version): ?array
     {
-        if (!$version instanceof WipForecastVersion) {
+        if (! $version instanceof WipForecastVersion) {
             return null;
         }
 
@@ -1036,7 +1116,7 @@ final class WipForecastReportService
 
     private function budgetVersionPayload(mixed $version): ?array
     {
-        if (!$version instanceof BudgetVersion) {
+        if (! $version instanceof BudgetVersion) {
             return null;
         }
 
@@ -1052,7 +1132,7 @@ final class WipForecastReportService
 
     private function scenarioPayload(mixed $scenario): ?array
     {
-        if (!$scenario instanceof BudgetScenario) {
+        if (! $scenario instanceof BudgetScenario) {
             return null;
         }
 
@@ -1096,14 +1176,14 @@ final class WipForecastReportService
         $stages = [];
 
         foreach ($stageIds as $stageId) {
-            if (!is_numeric($stageId)) {
+            if (! is_numeric($stageId)) {
                 continue;
             }
 
             $id = (int) $stageId;
             $stages[$id] = [
                 'id' => $id,
-                'name' => 'Этап ' . $id,
+                'name' => 'Этап '.$id,
             ];
         }
 
@@ -1124,7 +1204,7 @@ final class WipForecastReportService
             $groups = WipForecastReportFilters::DEFAULT_GROUP_BY;
         }
 
-        if (!in_array(WipForecastReportFilters::GROUP_CURRENCY, $groups, true)) {
+        if (! in_array(WipForecastReportFilters::GROUP_CURRENCY, $groups, true)) {
             $groups[] = WipForecastReportFilters::GROUP_CURRENCY;
         }
 
@@ -1191,7 +1271,7 @@ final class WipForecastReportService
 
     private function nullableCurrency(mixed $value): ?string
     {
-        if (!is_string($value) || trim($value) === '') {
+        if (! is_string($value) || trim($value) === '') {
             return null;
         }
 

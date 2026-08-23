@@ -193,10 +193,8 @@
       "machinery-operations.view",
       "machinery-operations.requests.create",
       "machinery-operations.requests.approve",
-      "machinery-operations.shifts.create",
       "machinery-operations.shifts.approve",
-      "machinery-operations.downtime.manage",
-      "machinery-operations.fuel.manage"
+      "machinery-operations.downtime.manage"
     ],
     "production-labor": [
       "production-labor.view",

@@ -14,7 +14,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 final class MachineryDefect extends Model
 {
     protected $fillable = [
-        'organization_id', 'organization_asset_id', 'asset_id', 'project_id',
+        'organization_id', 'organization_asset_id', 'asset_id', 'project_id', 'shift_report_id', 'shift_inspection_id',
         'reported_by_user_id', 'defect_code', 'severity', 'status', 'description',
         'reported_at', 'resolved_at',
     ];

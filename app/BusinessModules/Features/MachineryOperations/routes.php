@@ -75,6 +75,10 @@ Route::prefix('api/v1/admin/machinery-operations')
             ->whereNumber('id')
             ->middleware('authorize:machinery-operations.shifts.create')
             ->name('shift_reports.submit');
+        Route::post('/shift-reports/{id}/finish', [MachineryOperationsController::class, 'finishShift'])
+            ->whereNumber('id')
+            ->middleware('authorize:machinery-operations.shifts.create')
+            ->name('shift_reports.finish');
         Route::post('/shift-reports/{id}/approve', [MachineryOperationsController::class, 'approveShift'])
             ->whereNumber('id')
             ->middleware('authorize:machinery-operations.shifts.approve')
@@ -83,6 +87,10 @@ Route::prefix('api/v1/admin/machinery-operations')
             ->whereNumber('id')
             ->middleware('authorize:machinery-operations.shifts.approve')
             ->name('shift_reports.reject');
+        Route::post('/shift-reports/{id}/cancel', [MachineryOperationsController::class, 'cancelShift'])
+            ->whereNumber('id')
+            ->middleware('authorize:machinery-operations.shifts.approve')
+            ->name('shift_reports.cancel');
 
         Route::post('/downtimes', [MachineryOperationsController::class, 'storeDowntime'])
             ->middleware('authorize:machinery-operations.downtime.manage')
