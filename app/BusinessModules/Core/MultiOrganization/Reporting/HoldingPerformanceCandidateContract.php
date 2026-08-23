@@ -48,7 +48,7 @@ final readonly class HoldingPerformanceCandidateContract
 
     public const FORMULA_HASH = '59c4e2d23349656ae8948679fcea4dc59da5be20792b865afb17da2b9a667f20';
 
-    public const SOURCE_HASH = '9d8d2aea5588995be1334b95c5f695e3db11ee70f75e6ffc4f4eb2468fedbdfb';
+    public const SOURCE_HASH = 'a1c28820e7d82b318fdb246197420f7f81f08e269663e89aa5156875e4f5d853';
 
     public function filters(): array
     {
@@ -160,12 +160,20 @@ final readonly class HoldingPerformanceCandidateContract
         $hash = hash_init('sha256');
         foreach ($classes as $class) {
             $file = (new ReflectionClass($class))->getFileName();
-            if (! is_string($file) || ! hash_update_file($hash, $file)) {
+            $contents = is_string($file) ? file_get_contents($file) : false;
+            if (! is_string($contents)) {
                 throw new InvalidArgumentException('holding_performance_candidate_source_unreadable');
             }
+
+            hash_update($hash, self::canonicalSourceContents($contents));
         }
 
         return hash_final($hash);
+    }
+
+    private static function canonicalSourceContents(string $contents): string
+    {
+        return str_replace(["\r\n", "\r"], "\n", $contents);
     }
 
     private static function canonicalItems(array $items): array
