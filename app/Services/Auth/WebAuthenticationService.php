@@ -28,12 +28,18 @@ final class WebAuthenticationService
     {
         $result = $this->legacyAuthentication->authenticate($credentials, $guard);
 
+        return $this->establishFromAuthenticationResult($result, $audience, $remembered);
+    }
+
+    public function establishFromAuthenticationResult(array $result, string $audience, bool $remembered): array
+    {
+
         if (! ($result['success'] ?? false)) {
             return $result;
         }
 
         try {
-            $user = $result['user'] ?? null;
+            $user = $result['auth_user'] ?? $result['user'] ?? null;
             $legacyToken = $result['token'] ?? null;
 
             if (! $user instanceof User || ! is_string($legacyToken) || $legacyToken === '') {
@@ -59,7 +65,12 @@ final class WebAuthenticationService
 
             return [
                 'success' => true,
-                'user' => $user,
+                'user' => $result['user'],
+                'auth_user' => $user,
+                'organization' => $result['organization'] ?? null,
+                'email_verified' => $result['email_verified'] ?? true,
+                'available_interfaces' => $result['available_interfaces'] ?? [],
+                'invitation' => $result['invitation'] ?? null,
                 'session_uuid' => $sessionUuid,
                 'tokens' => $this->tokens->issue($user, $audience, $sessionUuid, $organizationId, $remembered),
                 'status_code' => 200,

@@ -6,13 +6,16 @@ namespace App\Http\Controllers\Api\V1\Customer\Auth;
 
 use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
+use App\DTOs\Auth\WebAuthTokenPair;
+use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Customer\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Api\V1\Customer\Auth\LoginRequest;
 use App\Http\Requests\Api\V1\Customer\Auth\RegisterRequest;
 use App\Http\Requests\Api\V1\Customer\Auth\ResetPasswordRequest;
 use App\Http\Responses\CustomerResponse;
-use App\Services\Auth\JwtCookieService;
+use App\Services\Auth\WebAuthenticationService;
+use App\Services\Auth\WebRefreshCookieService;
 use App\Services\Customer\Auth\CustomerAuthService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -27,7 +30,8 @@ class AuthController extends Controller
 
     public function __construct(
         private readonly CustomerAuthService $authService,
-        private readonly JwtCookieService $jwtCookieService
+        private readonly WebAuthenticationService $webAuthentication,
+        private readonly WebRefreshCookieService $refreshCookies,
     ) {
     }
 
@@ -35,7 +39,11 @@ class AuthController extends Controller
     {
         try {
             $loginDTO = LoginDTO::fromRequest($request->validated());
-            $result = $this->authService->authenticate($loginDTO, self::GUARD);
+            $result = $this->webAuthentication->establishFromAuthenticationResult(
+                $this->authService->authenticate($loginDTO, self::GUARD),
+                'customer',
+                $request->boolean('remember_me'),
+            );
 
             if (!$result['success']) {
                 return CustomerResponse::error(
@@ -46,21 +54,30 @@ class AuthController extends Controller
                 );
             }
 
-            return CustomerResponse::success(
-                [
-                    'token' => $result['token'],
-                    'user' => $result['user'],
-                    'organization' => $result['organization'],
-                    'email_verified' => $result['email_verified'],
-                    'available_interfaces' => $result['available_interfaces'],
-                ],
-                trans_message('customer.auth.login_success')
-            )->withCookie($this->jwtCookieService->makeTokenCookie($result['token']));
+            $tokens = $result['tokens'] ?? null;
+
+            if (!$tokens instanceof WebAuthTokenPair) {
+                return CustomerResponse::error(trans_message('customer.auth.login_error'), 500);
+            }
+
+            return CustomerResponse::success([
+                'token' => $tokens->accessToken,
+                'token_type' => 'bearer',
+                'expires_in' => max(0, $tokens->accessExpiresAt->getTimestamp() - time()),
+                'csrf_token' => $tokens->csrfToken,
+                'user' => $result['user'],
+                'organization' => $result['organization'],
+                'email_verified' => $result['email_verified'],
+                'available_interfaces' => $result['available_interfaces'],
+            ], trans_message('customer.auth.login_success'))
+                ->withCookie($this->refreshCookies->make(
+                    'customer',
+                    $tokens->refreshToken,
+                    $tokens->refreshExpiresAt,
+                ));
         } catch (Throwable $exception) {
             Log::error('customer.auth.login.failed', [
-                'email' => $request->input('email'),
-                'ip' => $request->ip(),
-                'error' => $exception->getMessage(),
+                'exception_class' => $exception::class,
             ]);
 
             return CustomerResponse::error(trans_message('customer.auth.login_error'), 500);
@@ -90,10 +107,7 @@ class AuthController extends Controller
             );
         } catch (Throwable $exception) {
             Log::error('customer.auth.register.failed', [
-                'email' => $request->input('email'),
-                'organization_name' => $request->input('organization_name'),
-                'ip' => $request->ip(),
-                'error' => $exception->getMessage(),
+                'exception_class' => $exception::class,
             ]);
 
             return CustomerResponse::error(trans_message('customer.auth.register_error'), 500);
@@ -102,52 +116,71 @@ class AuthController extends Controller
 
     public function refresh(Request $request): JsonResponse
     {
+        $payload = $request->attributes->get('web_refresh_payload');
+        $refreshToken = $request->attributes->get('web_refresh_token');
+
+        if (!$payload instanceof WebAuthTokenPayload || !is_string($refreshToken) || $request->user() === null) {
+            return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401)
+                ->withCookie($this->refreshCookies->clear('customer'));
+        }
+
         try {
-            $result = $this->authService->refresh(self::GUARD);
+            $tokens = $this->webAuthentication->refresh($request->user(), $payload, $refreshToken);
 
-            if (!$result['success']) {
-                return CustomerResponse::error(
-                    $result['message'] ?? trans_message('customer.auth.refresh_error'),
-                    $result['status_code'] ?? 401
-                );
-            }
-
-            return CustomerResponse::success(
-                ['token' => $result['token']],
-                trans_message('customer.auth.refresh_success')
-            )->withCookie($this->jwtCookieService->makeTokenCookie($result['token']));
+            return CustomerResponse::success([
+                'token' => $tokens->accessToken,
+                'token_type' => 'bearer',
+                'expires_in' => max(0, $tokens->accessExpiresAt->getTimestamp() - time()),
+                'csrf_token' => $tokens->csrfToken,
+            ], trans_message('customer.auth.refresh_success'))
+                ->withCookie($this->refreshCookies->make(
+                    'customer',
+                    $tokens->refreshToken,
+                    $tokens->refreshExpiresAt,
+                ));
         } catch (Throwable $exception) {
             Log::error('customer.auth.refresh.failed', [
                 'user_id' => $request->user()?->id,
-                'ip' => $request->ip(),
-                'error' => $exception->getMessage(),
+                'exception_class' => $exception::class,
             ]);
 
-            return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 500);
+            return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401)
+                ->withCookie($this->refreshCookies->clear('customer'));
         }
+    }
+
+    public function csrf(Request $request): JsonResponse
+    {
+        $payload = $request->attributes->get('web_refresh_payload');
+
+        if (!$payload instanceof WebAuthTokenPayload || !is_string($payload->csrfToken)) {
+            return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401);
+        }
+
+        return CustomerResponse::success(['csrf_token' => $payload->csrfToken]);
     }
 
     public function logout(Request $request): JsonResponse
     {
         try {
-            $result = $this->authService->logout(self::GUARD);
+            $payload = $request->attributes->get('web_auth_payload');
+            $user = $request->user();
 
-            if (!$result['success']) {
-                return CustomerResponse::error(
-                    $result['message'] ?? trans_message('customer.auth.logout_error'),
-                    $result['status_code'] ?? 400
-                );
+            if (!$payload instanceof WebAuthTokenPayload || $user === null) {
+                return CustomerResponse::error(trans_message('customer.auth.logout_error'), 401)
+                    ->withCookie($this->refreshCookies->clear('customer'));
             }
+
+            $this->webAuthentication->logout($user, 'customer', $payload->sessionUuid);
 
             return CustomerResponse::success(
                 null,
                 trans_message('customer.auth.logout_success')
-            )->withCookie($this->jwtCookieService->makeClearCookie());
+            )->withCookie($this->refreshCookies->clear('customer'));
         } catch (Throwable $exception) {
             Log::error('customer.auth.logout.failed', [
                 'user_id' => $request->user()?->id,
-                'ip' => $request->ip(),
-                'error' => $exception->getMessage(),
+                'exception_class' => $exception::class,
             ]);
 
             return CustomerResponse::error(trans_message('customer.auth.logout_error'), 500);
@@ -172,9 +205,7 @@ class AuthController extends Controller
             );
         } catch (Throwable $exception) {
             Log::error('customer.auth.forgot_password.failed', [
-                'email' => $request->input('email'),
-                'ip' => $request->ip(),
-                'error' => $exception->getMessage(),
+                'exception_class' => $exception::class,
             ]);
 
             return CustomerResponse::error(trans_message('customer.auth.forgot_password_error'), 500);
@@ -199,9 +230,7 @@ class AuthController extends Controller
             );
         } catch (Throwable $exception) {
             Log::error('customer.auth.reset_password.failed', [
-                'email' => $request->input('email'),
-                'ip' => $request->ip(),
-                'error' => $exception->getMessage(),
+                'exception_class' => $exception::class,
             ]);
 
             return CustomerResponse::error(trans_message('customer.auth.reset_password_error'), 500);

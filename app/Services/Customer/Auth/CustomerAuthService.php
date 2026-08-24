@@ -105,6 +105,7 @@ class CustomerAuthService
             'success' => true,
             'status_code' => 200,
             'token' => $token,
+            'auth_user' => $user,
             'user' => $profile['user'],
             'organization' => [
                 'id' => $organization->id,

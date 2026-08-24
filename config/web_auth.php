@@ -41,6 +41,7 @@ return [
     'keys' => [
         'lk' => env('WEB_AUTH_LK_SIGNING_KEY'),
         'admin' => env('WEB_AUTH_ADMIN_SIGNING_KEY'),
+        'customer' => env('WEB_AUTH_CUSTOMER_SIGNING_KEY', env('WEB_AUTH_LK_SIGNING_KEY')),
     ],
     'cookies' => [
         'lk' => [
@@ -48,6 +49,9 @@ return [
         ],
         'admin' => [
             'name' => '__Host-most-admin-refresh',
+        ],
+        'customer' => [
+            'name' => '__Host-most-customer-refresh',
         ],
     ],
 ];

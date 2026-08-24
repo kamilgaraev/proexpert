@@ -18,7 +18,7 @@ use App\Http\Controllers\Api\V1\Customer\TeamController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->name('auth.')->group(function (): void {
-    Route::middleware('throttle:auth')->group(function (): void {
+    Route::middleware(['origin.web:customer', 'throttle:auth'])->group(function (): void {
         Route::post('register', [CustomerAuthController::class, 'register'])->name('register');
         Route::post('login', [CustomerAuthController::class, 'login'])->name('login');
         Route::post('forgot-password', [CustomerAuthController::class, 'forgotPassword'])->name('forgot-password');
@@ -28,25 +28,30 @@ Route::prefix('auth')->name('auth.')->group(function (): void {
     });
     Route::get('email/verify/{id}/{hash}', [CustomerEmailVerificationController::class, 'verify'])
         ->name('verification.verify');
-    Route::middleware(['auth.jwt:api_landing', 'auth.session', 'throttle:dashboard'])
+    Route::middleware(['auth.web-refresh:customer', 'origin.web:customer', 'csrf.web:customer', 'throttle:web-refresh'])
         ->post('refresh', [CustomerAuthController::class, 'refresh'])
         ->name('refresh');
+    Route::middleware(['auth.web-refresh:customer', 'origin.web:customer,true', 'throttle:web-refresh'])
+        ->get('csrf', [CustomerAuthController::class, 'csrf'])
+        ->name('csrf');
 
-    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'auth.session'])->group(function (): void {
-        Route::post('logout', [CustomerAuthController::class, 'logout'])->name('logout');
+    Route::middleware(['auth.web:customer'])->group(function (): void {
+        Route::post('logout', [CustomerAuthController::class, 'logout'])
+            ->middleware(['origin.web:customer', 'csrf.web:customer'])
+            ->name('logout');
         Route::get('email/check', [CustomerEmailVerificationController::class, 'check'])
             ->name('verification.check');
     });
 });
 
 Route::get('/invitations/{token}', [InvitationController::class, 'resolve'])->name('invitations.resolve');
-Route::middleware('throttle:auth')->group(function (): void {
+Route::middleware(['origin.web:customer', 'throttle:auth'])->group(function (): void {
     Route::post('/invitations/{token}/login', [InvitationController::class, 'login'])->name('invitations.login');
     Route::post('/invitations/{token}/register', [InvitationController::class, 'register'])->name('invitations.register');
     Route::post('/invitations/{token}/decline', [InvitationController::class, 'decline'])->name('invitations.decline');
 });
 
-Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'organization.context'])
+Route::middleware(['auth.web:customer', 'verified'])
     ->group(function (): void {
         Route::get('/dashboard', [PortalController::class, 'dashboard'])->name('dashboard');
         Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');

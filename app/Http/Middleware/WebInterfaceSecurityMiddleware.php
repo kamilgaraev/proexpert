@@ -8,6 +8,7 @@ use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Responses\AdminResponse;
+use App\Http\Responses\CustomerResponse;
 use App\Http\Responses\LandingResponse;
 use App\Models\User;
 use App\Services\Auth\UserAuthSessionService;
@@ -104,6 +105,10 @@ final class WebInterfaceSecurityMiddleware
             return 'lk';
         }
 
+        if ($request->is('api/v1/customer/*') || $request->is('api/customer/*')) {
+            return 'customer';
+        }
+
         return null;
     }
 
@@ -112,6 +117,22 @@ final class WebInterfaceSecurityMiddleware
         if ($request->is('api/v1/admin/auth/login')
             || $request->is('api/v1/admin/auth/refresh')
             || $request->is('api/v1/admin/auth/csrf')
+        ) {
+            return true;
+        }
+
+        if ($request->is('api/v1/customer/auth/register')
+            || $request->is('api/v1/customer/auth/login')
+            || $request->is('api/v1/customer/auth/forgot-password')
+            || $request->is('api/v1/customer/auth/reset-password')
+            || $request->is('api/v1/customer/auth/email/resend')
+            || $request->is('api/v1/customer/auth/email/verify/*')
+            || $request->is('api/v1/customer/auth/refresh')
+            || $request->is('api/v1/customer/auth/csrf')
+            || $request->is('api/v1/customer/invitations/*/login')
+            || $request->is('api/v1/customer/invitations/*/register')
+            || $request->is('api/v1/customer/invitations/*/decline')
+            || ($request->isMethod('GET') && $request->is('api/v1/customer/invitations/*'))
         ) {
             return true;
         }
@@ -195,8 +216,10 @@ final class WebInterfaceSecurityMiddleware
             ? trans_message('errors.unauthenticated')
             : trans_message('auth.access_denied');
 
-        return $audience === 'admin'
-            ? AdminResponse::error($message, $status)
-            : LandingResponse::error($message, $status);
+        return match ($audience) {
+            'admin' => AdminResponse::error($message, $status),
+            'customer' => CustomerResponse::error($message, $status),
+            default => LandingResponse::error($message, $status),
+        };
     }
 }

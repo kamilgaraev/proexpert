@@ -63,8 +63,10 @@ final class AuthenticateWebRefreshToken
     {
         $message = trans_message('errors.unauthenticated');
 
-        return $audience === 'admin'
-            ? \App\Http\Responses\AdminResponse::error($message, 401)
-            : \App\Http\Responses\LandingResponse::error($message, 401);
+        return match ($audience) {
+            'admin' => \App\Http\Responses\AdminResponse::error($message, 401),
+            'customer' => \App\Http\Responses\CustomerResponse::error($message, 401),
+            default => \App\Http\Responses\LandingResponse::error($message, 401),
+        };
     }
 }

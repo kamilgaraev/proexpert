@@ -6,11 +6,13 @@ namespace App\Http\Controllers\Api\V1\Customer;
 
 use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
+use App\DTOs\Auth\WebAuthTokenPair;
 use App\Http\Requests\Api\V1\Customer\Auth\LoginRequest;
 use App\Http\Requests\Api\V1\Customer\Auth\RegisterRequest;
 use App\Http\Responses\CustomerResponse;
 use App\Models\Organization;
-use App\Services\Auth\JwtCookieService;
+use App\Services\Auth\WebAuthenticationService;
+use App\Services\Auth\WebRefreshCookieService;
 use App\Services\Customer\Auth\CustomerAuthService;
 use App\Services\Project\ProjectParticipantInvitationService;
 use Illuminate\Http\JsonResponse;
@@ -27,7 +29,8 @@ class InvitationController extends CustomerController
     public function __construct(
         private readonly ProjectParticipantInvitationService $invitationService,
         private readonly CustomerAuthService $customerAuthService,
-        private readonly JwtCookieService $jwtCookieService,
+        private readonly WebAuthenticationService $webAuthentication,
+        private readonly WebRefreshCookieService $refreshCookies,
     ) {
     }
 
@@ -57,10 +60,14 @@ class InvitationController extends CustomerController
     public function login(LoginRequest $request, string $token): JsonResponse
     {
         try {
-            $result = $this->customerAuthService->loginByInvitation(
-                $token,
-                LoginDTO::fromRequest($request->validated()),
-                self::GUARD
+            $result = $this->webAuthentication->establishFromAuthenticationResult(
+                $this->customerAuthService->loginByInvitation(
+                    $token,
+                    LoginDTO::fromRequest($request->validated()),
+                    self::GUARD,
+                ),
+                'customer',
+                $request->boolean('remember_me'),
             );
 
             if (!$result['success']) {
@@ -72,17 +79,28 @@ class InvitationController extends CustomerController
                 );
             }
 
-            return CustomerResponse::success(
-                [
-                    'token' => $result['token'],
-                    'user' => $result['user'],
-                    'organization' => $result['organization'],
-                    'email_verified' => $result['email_verified'],
-                    'available_interfaces' => $result['available_interfaces'],
-                    'invitation' => $result['invitation'] ?? null,
-                ],
-                trans_message('customer.auth.invitation_login_success')
-            )->withCookie($this->jwtCookieService->makeTokenCookie($result['token']));
+            $tokens = $result['tokens'] ?? null;
+
+            if (!$tokens instanceof WebAuthTokenPair) {
+                return CustomerResponse::error(trans_message('customer.auth.invitation_login_error'), 500);
+            }
+
+            return CustomerResponse::success([
+                'token' => $tokens->accessToken,
+                'token_type' => 'bearer',
+                'expires_in' => max(0, $tokens->accessExpiresAt->getTimestamp() - time()),
+                'csrf_token' => $tokens->csrfToken,
+                'user' => $result['user'],
+                'organization' => $result['organization'],
+                'email_verified' => $result['email_verified'],
+                'available_interfaces' => $result['available_interfaces'],
+                'invitation' => $result['invitation'] ?? null,
+            ], trans_message('customer.auth.invitation_login_success'))
+                ->withCookie($this->refreshCookies->make(
+                    'customer',
+                    $tokens->refreshToken,
+                    $tokens->refreshExpiresAt,
+                ));
         } catch (Throwable $exception) {
             $this->logFailure('customer.invitation.login.failed', $token, $exception);
 
