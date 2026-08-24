@@ -8,6 +8,11 @@ use Illuminate\Foundation\Http\FormRequest;
 
 final class RegisterPaymentDocumentPaymentRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        $this->merge(['idempotency_key' => $this->header('Idempotency-Key')]);
+    }
+
     public function authorize(): bool
     {
         $organizationId = (int) $this->attributes->get('current_organization_id', 0);
@@ -28,6 +33,7 @@ final class RegisterPaymentDocumentPaymentRequest extends FormRequest
             'notes' => ['nullable', 'string'],
             'metadata' => ['nullable', 'array'],
             'budget_override_reason' => ['nullable', 'string', 'max:1000'],
+            'idempotency_key' => ['required', 'string', 'min:16', 'max:128'],
         ];
     }
 }

@@ -1,16 +1,13 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Log;
-use App\Http\Controllers\Api\V1\Admin\EstimateController;
-use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
-use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
-use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
-use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
-use App\Http\Controllers\Api\V1\Admin\EstimateTemplateController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\BudgetEstimatesSettingsController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateRegionalPriceController;
+use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
+use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
+use App\Http\Controllers\Api\V1\Admin\EstimateTemplateController;
+use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
 use App\Support\Routing\AdminRouteStack;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -32,7 +29,7 @@ Route::prefix('api/v1/admin')
     ->name('admin.')
     ->middleware(AdminRouteStack::middleware(['budget-estimates.active']))
     ->group(function () {
-        
+
         // ============================================
         // ОПЕРАЦИИ НАД РАЗДЕЛАМИ
         // ============================================
@@ -62,7 +59,11 @@ Route::prefix('api/v1/admin')
             ->group(function () {
                 Route::get('/', [EstimateVersionController::class, 'index'])->name('index');
                 Route::post('/', [EstimateVersionController::class, 'store'])->name('store');
+                Route::post('/revisions', [EstimateVersionController::class, 'startRevision'])->name('revision.store');
                 Route::post('/compare', [EstimateVersionController::class, 'compare'])->name('compare');
+                Route::get('/{versionId}', [EstimateVersionController::class, 'show'])
+                    ->whereNumber('versionId')
+                    ->name('show');
                 Route::post('/{versionId}/rollback', [EstimateVersionController::class, 'rollback'])
                     ->whereNumber('versionId')
                     ->name('rollback');

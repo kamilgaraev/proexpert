@@ -21,8 +21,8 @@ final class BudgetLimitCheckServiceTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
 
         $container->instance('translator', $translator);
@@ -32,7 +32,8 @@ final class BudgetLimitCheckServiceTest extends TestCase
                 'fallback_locale' => 'ru',
             ],
         ]));
-        $container->instance('app', new class {
+        $container->instance('app', new class
+        {
             public function getLocale(): string
             {
                 return 'ru';
@@ -53,7 +54,7 @@ final class BudgetLimitCheckServiceTest extends TestCase
 
     public function test_available_limit_allows_payment_request(): void
     {
-        $result = (new BudgetLimitCheckService())->check(
+        $result = (new BudgetLimitCheckService)->check(
             $this->context(),
             new BudgetLimitAmounts(
                 approvedBudgetAmount: 1_000_000.0,
@@ -70,13 +71,13 @@ final class BudgetLimitCheckServiceTest extends TestCase
         $this->assertSame(BudgetLimitCheckService::STATUS_AVAILABLE, $result->status);
         $this->assertSame(BudgetLimitCheckService::DECISION_ALLOW, $result->decision);
         $this->assertSame('Лимит доступен.', $result->message);
-        $this->assertSame(550_000.0, $result->amounts->projectedAmount());
-        $this->assertSame(450_000.0, $result->amounts->availableAfterRequest());
+        $this->assertSame('550000.00', $result->amounts->projectedAmount());
+        $this->assertSame('450000.00', $result->amounts->availableAfterRequest());
     }
 
     public function test_warning_status_is_returned_near_limit(): void
     {
-        $result = (new BudgetLimitCheckService())->check(
+        $result = (new BudgetLimitCheckService)->check(
             $this->context(warningThresholdRatio: 0.9),
             new BudgetLimitAmounts(
                 approvedBudgetAmount: 1_000_000.0,
@@ -98,7 +99,7 @@ final class BudgetLimitCheckServiceTest extends TestCase
 
     public function test_soft_block_requires_override_permission(): void
     {
-        $result = (new BudgetLimitCheckService())->check(
+        $result = (new BudgetLimitCheckService)->check(
             $this->context(enforcementMode: BudgetLimitCheckContext::ENFORCEMENT_SOFT_BLOCK),
             new BudgetLimitAmounts(
                 approvedBudgetAmount: 1_000_000.0,
@@ -115,12 +116,12 @@ final class BudgetLimitCheckServiceTest extends TestCase
         $this->assertSame(BudgetLimitCheckService::STATUS_REQUIRES_EXCEPTION, $result->status);
         $this->assertSame(BudgetLimitCheckService::DECISION_REQUIRE_EXCEPTION, $result->decision);
         $this->assertSame(BudgetLimitCheckService::OVERRIDE_PERMISSION, $result->requiredPermission);
-        $this->assertSame(50_000.0, $result->amounts->excessAmount());
+        $this->assertSame('50000.00', $result->amounts->excessAmount());
     }
 
     public function test_hard_block_blocks_payment_without_override(): void
     {
-        $result = (new BudgetLimitCheckService())->check(
+        $result = (new BudgetLimitCheckService)->check(
             $this->context(enforcementMode: BudgetLimitCheckContext::ENFORCEMENT_HARD_BLOCK),
             new BudgetLimitAmounts(
                 approvedBudgetAmount: 1_000_000.0,
@@ -141,7 +142,7 @@ final class BudgetLimitCheckServiceTest extends TestCase
 
     public function test_missing_approved_budget_blocks_payment_request(): void
     {
-        $result = (new BudgetLimitCheckService())->check(
+        $result = (new BudgetLimitCheckService)->check(
             $this->context(hasApprovedBudget: false),
             new BudgetLimitAmounts(
                 approvedBudgetAmount: 0.0,
@@ -163,7 +164,7 @@ final class BudgetLimitCheckServiceTest extends TestCase
 
     public function test_carryovers_adjustments_and_exceptions_increase_total_limit(): void
     {
-        $result = (new BudgetLimitCheckService())->check(
+        $result = (new BudgetLimitCheckService)->check(
             $this->context(),
             new BudgetLimitAmounts(
                 approvedBudgetAmount: 1_000_000.0,
@@ -180,12 +181,34 @@ final class BudgetLimitCheckServiceTest extends TestCase
         $payload = $result->toArray();
 
         $this->assertSame(BudgetLimitCheckService::STATUS_WARNING, $result->status);
-        $this->assertSame(1_175_000.0, $payload['summary']['total_limit_amount']);
-        $this->assertSame(1_150_000.0, $payload['summary']['projected_amount']);
-        $this->assertSame(25_000.0, $payload['summary']['available_after_request']);
-        $this->assertSame(100_000.0, $payload['sources']['carryovers']);
-        $this->assertSame(50_000.0, $payload['sources']['adjustments']);
-        $this->assertSame(25_000.0, $payload['sources']['exceptions']);
+        $this->assertSame('1175000.00', $payload['summary']['total_limit_amount']);
+        $this->assertSame('1150000.00', $payload['summary']['projected_amount']);
+        $this->assertSame('25000.00', $payload['summary']['available_after_request']);
+        $this->assertSame('100000.00', $payload['sources']['carryovers']);
+        $this->assertSame('50000.00', $payload['sources']['adjustments']);
+        $this->assertSame('25000.00', $payload['sources']['exceptions']);
+    }
+
+    public function test_large_decimal_budget_decision_preserves_cents_without_float_conversion(): void
+    {
+        $result = (new BudgetLimitCheckService)->check(
+            $this->context(enforcementMode: BudgetLimitCheckContext::ENFORCEMENT_HARD_BLOCK),
+            new BudgetLimitAmounts(
+                approvedBudgetAmount: '9999999999999.99',
+                actualPaymentsAmount: '9999999999999.98',
+                pendingApprovalAmount: '0.00',
+                reservedAmount: '0.00',
+                carryoverAmount: '0.00',
+                adjustmentAmount: '0.00',
+                exceptionAmount: '0.00',
+                requestedAmount: '0.02',
+            )
+        );
+
+        $this->assertSame(BudgetLimitCheckService::STATUS_BLOCKED, $result->status);
+        $this->assertSame('0.01', $result->amounts->excessAmount());
+        $this->assertSame('-0.01', $result->amounts->availableAfterRequest());
+        $this->assertSame('10000000000000.00', $result->amounts->projectedAmount());
     }
 
     private function context(

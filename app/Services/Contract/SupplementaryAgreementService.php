@@ -4,18 +4,29 @@ declare(strict_types=1);
 
 namespace App\Services\Contract;
 
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\DTOs\SupplementaryAgreementDTO;
 use App\Enums\Contract\ContractStateEventTypeEnum;
+use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
 use App\Models\ContractStateEvent;
 use App\Models\SupplementaryAgreement;
 use App\Repositories\Interfaces\SupplementaryAgreementRepositoryInterface;
 use App\Services\Logging\LoggingService;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
+use DomainException;
 use Exception;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+use function trans_message;
 
 class SupplementaryAgreementService
 {
@@ -36,7 +47,24 @@ class SupplementaryAgreementService
 
     public function update(int $id, SupplementaryAgreementDTO $dto): bool
     {
-        $agreement = $this->getById($id);
+        return DB::transaction(function () use ($id, $dto): bool {
+            $agreement = SupplementaryAgreement::query()->whereKey($id)->lockForUpdate()->first();
+            if (! $agreement instanceof SupplementaryAgreement) {
+                return false;
+            }
+
+            $this->assertMutable($agreement);
+
+            return $this->updateMutable($id, $dto, $agreement);
+        });
+    }
+
+    private function updateMutable(
+        int $id,
+        SupplementaryAgreementDTO $dto,
+        ?SupplementaryAgreement $agreement = null
+    ): bool {
+        $agreement ??= $this->getById($id);
         if (! $agreement) {
             return false;
         }
@@ -99,7 +127,21 @@ class SupplementaryAgreementService
 
     public function delete(int $id): bool
     {
-        $agreement = $this->getById($id);
+        return DB::transaction(function () use ($id): bool {
+            $agreement = SupplementaryAgreement::query()->whereKey($id)->lockForUpdate()->first();
+            if (! $agreement instanceof SupplementaryAgreement) {
+                return false;
+            }
+
+            $this->assertMutable($agreement);
+
+            return $this->deleteMutable($id, $agreement);
+        });
+    }
+
+    private function deleteMutable(int $id, ?SupplementaryAgreement $agreement = null): bool
+    {
+        $agreement ??= $this->getById($id);
         if (! $agreement) {
             return false;
         }
@@ -183,6 +225,13 @@ class SupplementaryAgreementService
         return $this->repository->delete($id);
     }
 
+    private function assertMutable(SupplementaryAgreement $agreement): void
+    {
+        if ($agreement->financial_applied_at !== null || $agreement->applied_at !== null) {
+            throw new DomainException(trans_message('agreements.applied_is_immutable'));
+        }
+    }
+
     public function getById(int $id): ?SupplementaryAgreement
     {
         return $this->repository->find($id);
@@ -235,6 +284,14 @@ class SupplementaryAgreementService
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            $contractStatus = $contract->status instanceof ContractStatusEnum
+                ? $contract->status->value
+                : (string) $contract->status;
+            if ($lockedAgreement->financial_applied_at === null
+                && in_array($contractStatus, ['completed', 'terminated', 'archived'], true)) {
+                throw new DomainException(trans_message('agreements.contract_terminal_change_forbidden'));
+            }
+
             $existingFinancialEvent = ContractStateEvent::query()
                 ->where('contract_id', $contract->id)
                 ->where('triggered_by_type', SupplementaryAgreement::class)
@@ -257,22 +314,31 @@ class SupplementaryAgreementService
                 ])->save();
             }
 
-            $changeAmount = (float) ($lockedAgreement->change_amount ?? 0);
-            $oldTotalAmount = (float) ($contract->total_amount ?? 0);
+            $changeAmount = BigDecimal::of((string) ($lockedAgreement->change_amount ?? 0))
+                ->toScale(2, RoundingMode::HalfUp);
+            $oldTotalAmount = BigDecimal::of((string) ($contract->total_amount ?? 0))
+                ->toScale(2, RoundingMode::HalfUp);
             $newTotalAmount = $financialAlreadyApplied
                 ? $oldTotalAmount
-                : round($oldTotalAmount + $changeAmount, 2);
+                : $oldTotalAmount->plus($changeAmount)->toScale(2, RoundingMode::HalfUp);
 
-            if (! $financialAlreadyApplied && $newTotalAmount < 0) {
-                throw new Exception('Невозможно применить изменения: новая сумма договора будет отрицательной.');
+            if (! $financialAlreadyApplied && $newTotalAmount->isNegative()) {
+                throw new DomainException(trans_message('agreements.contract_total_negative'));
             }
 
-            if (! $financialAlreadyApplied && abs($changeAmount) > 0.001) {
+            if (! $financialAlreadyApplied && $changeAmount->isNegative()) {
+                $commitmentFloor = $this->contractCommitmentFloor($contract);
+                if ($newTotalAmount->isLessThan($commitmentFloor)) {
+                    throw new DomainException(trans_message('agreements.contract_total_below_commitments'));
+                }
+            }
+
+            if (! $financialAlreadyApplied && ! $changeAmount->isZero()) {
                 if (! $contract->usesEventSourcing()) {
                     $this->getStateEventService()->createContractCreatedEvent($contract, null, $actorId);
                 }
 
-                $contract->total_amount = $newTotalAmount;
+                $contract->total_amount = (string) $newTotalAmount;
             }
 
             if (! $financialAlreadyApplied) {
@@ -290,12 +356,12 @@ class SupplementaryAgreementService
                 );
             }
 
-            if (! $financialAlreadyApplied && abs($changeAmount) > 0.001 && ! empty($lockedAgreement->supersede_agreement_ids)) {
+            if (! $financialAlreadyApplied && ! $changeAmount->isZero() && ! empty($lockedAgreement->supersede_agreement_ids)) {
                 $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
                 $this->getStateEventService()->createAmendedEvent(
                     $contract,
                     $activeSpecification?->id,
-                    $changeAmount,
+                    (float) (string) $changeAmount,
                     $lockedAgreement,
                     $lockedAgreement->agreement_date ?? now(),
                     [
@@ -304,7 +370,7 @@ class SupplementaryAgreementService
                     ],
                     $actorId
                 );
-            } elseif (! $financialAlreadyApplied && abs($changeAmount) > 0.001) {
+            } elseif (! $financialAlreadyApplied && ! $changeAmount->isZero()) {
                 $this->getStateEventService()->createSupplementaryAgreementEvent(
                     $contract,
                     $lockedAgreement,
@@ -328,7 +394,12 @@ class SupplementaryAgreementService
             }
 
             if (is_array($lockedAgreement->advance_changes)) {
-                $this->applyAdvanceChanges($contract, $lockedAgreement->advance_changes);
+                $this->applyAdvanceChanges(
+                    $contract,
+                    $lockedAgreement,
+                    $lockedAgreement->advance_changes,
+                    $actorId
+                );
             }
 
             if ($contract->isDirty()) {
@@ -344,25 +415,89 @@ class SupplementaryAgreementService
                 'application_key' => "supplementary-agreement:{$lockedAgreement->id}",
             ])->save();
 
-            $this->logging->business('agreement.apply_changes.success', [
-                'agreement_id' => $lockedAgreement->id,
-                'contract_id' => $contract->id,
-                'organization_id' => $contract->organization_id,
-                'user_id' => $actorId,
-            ]);
+            DB::afterCommit(function () use (
+                $lockedAgreement,
+                $contract,
+                $actorId,
+                $newTotalAmount,
+                $oldTotalAmount
+            ): void {
+                $this->logging->business('agreement.apply_changes.success', [
+                    'agreement_id' => $lockedAgreement->id,
+                    'contract_id' => $contract->id,
+                    'organization_id' => $contract->organization_id,
+                    'user_id' => $actorId,
+                ]);
 
-            $this->logging->audit('agreement.applied_to_contract', [
-                'agreement_id' => $lockedAgreement->id,
-                'agreement_number' => $lockedAgreement->number,
-                'contract_id' => $contract->id,
-                'contract_number' => $contract->number,
-                'organization_id' => $contract->organization_id,
-                'user_id' => $actorId,
-                'total_amount_delta' => $newTotalAmount - $oldTotalAmount,
-            ]);
+                $this->logging->audit('agreement.applied_to_contract', [
+                    'agreement_id' => $lockedAgreement->id,
+                    'agreement_number' => $lockedAgreement->number,
+                    'contract_id' => $contract->id,
+                    'contract_number' => $contract->number,
+                    'organization_id' => $contract->organization_id,
+                    'user_id' => $actorId,
+                    'total_amount_delta' => (string) $newTotalAmount->minus($oldTotalAmount),
+                ]);
+            });
 
             return $contract->refresh();
         });
+    }
+
+    private function contractCommitmentFloor(Contract $contract): BigDecimal
+    {
+        if (! Schema::hasTable('contract_performance_acts')
+            || ! Schema::hasTable('payment_documents')
+            || ! Schema::hasTable('payment_transactions')) {
+            return BigDecimal::zero()->toScale(2);
+        }
+
+        $actIds = ContractPerformanceAct::query()
+            ->where('contract_id', $contract->id)
+            ->whereIn('status', [
+                ContractPerformanceAct::STATUS_APPROVED,
+                ContractPerformanceAct::STATUS_SIGNED,
+            ])
+            ->pluck('id');
+        $acted = BigDecimal::of((string) ContractPerformanceAct::query()
+            ->whereIn('id', $actIds)
+            ->sum('amount'))
+            ->toScale(2, RoundingMode::HalfUp);
+
+        $documents = PaymentDocument::query()
+            ->where('organization_id', $contract->organization_id)
+            ->where('status', '<>', PaymentDocumentStatus::CANCELLED->value)
+            ->where(function ($query) use ($contract, $actIds): void {
+                $query->where(function ($contractQuery) use ($contract): void {
+                    $contractQuery
+                        ->where('invoiceable_type', Contract::class)
+                        ->where('invoiceable_id', $contract->id);
+                })->orWhere(function ($sourceQuery) use ($contract): void {
+                    $sourceQuery
+                        ->where('source_type', Contract::class)
+                        ->where('source_id', $contract->id);
+                })->when($actIds->isNotEmpty(), function ($actQuery) use ($actIds): void {
+                    $actQuery->orWhere(function ($morphQuery) use ($actIds): void {
+                        $morphQuery
+                            ->where('invoiceable_type', ContractPerformanceAct::class)
+                            ->whereIn('invoiceable_id', $actIds);
+                    });
+                });
+            });
+        $documentIds = (clone $documents)->pluck('id');
+        $invoiced = BigDecimal::of((string) (clone $documents)->sum('amount'))
+            ->toScale(2, RoundingMode::HalfUp);
+        $netPaid = BigDecimal::of((string) PaymentTransaction::query()
+            ->whereIn('payment_document_id', $documentIds)
+            ->where('status', PaymentTransactionStatus::COMPLETED->value)
+            ->sum('amount'))
+            ->toScale(2, RoundingMode::HalfUp);
+
+        return array_reduce(
+            [$acted, $invoiced, $netPaid],
+            static fn (BigDecimal $max, BigDecimal $amount): BigDecimal => $amount->isGreaterThan($max) ? $amount : $max,
+            BigDecimal::zero()->toScale(2)
+        );
     }
 
     public function applyChangesToContract(int $agreementId): bool
@@ -370,7 +505,7 @@ class SupplementaryAgreementService
         $agreement = $this->getById($agreementId);
 
         if (! $agreement instanceof SupplementaryAgreement) {
-            throw new Exception('Дополнительное соглашение не найдено');
+            throw new DomainException(trans_message('agreements.not_found'));
         }
 
         $this->applyOnce($agreement, (int) (Auth::id() ?? 0));
@@ -383,9 +518,7 @@ class SupplementaryAgreementService
         if (isset($changes['amount'])) {
             // Валидация: сумма субподряда не может быть отрицательной
             if ($changes['amount'] < 0) {
-                throw new Exception(
-                    "Невозможно применить изменения: сумма субподряда не может быть отрицательной ({$changes['amount']})"
-                );
+                throw new DomainException(trans_message('agreements.subcontract_amount_negative'));
             }
 
             $oldAmount = $contract->subcontract_amount;
@@ -418,9 +551,7 @@ class SupplementaryAgreementService
         if (isset($changes['coefficient'])) {
             // Валидация: коэффициент должен быть положительным
             if ($changes['coefficient'] <= 0) {
-                throw new Exception(
-                    "Невозможно применить изменения: коэффициент ГП должен быть положительным ({$changes['coefficient']})"
-                );
+                throw new DomainException(trans_message('agreements.gp_coefficient_positive'));
             }
             $contract->gp_coefficient = $changes['coefficient'];
             $contract->gp_calculation_type = GpCalculationTypeEnum::COEFFICIENT;
@@ -443,56 +574,74 @@ class SupplementaryAgreementService
         ]);
     }
 
-    private function applyAdvanceChanges(Contract $contract, array $changes): void
-    {
+    private function applyAdvanceChanges(
+        Contract $contract,
+        SupplementaryAgreement $agreement,
+        array $changes,
+        int $actorId
+    ): void {
         foreach ($changes as $change) {
             if (! isset($change['payment_id']) || ! isset($change['new_amount'])) {
                 continue;
             }
 
-            // Валидация: сумма платежа не может быть отрицательной
-            if ($change['new_amount'] < 0) {
-                throw new Exception(
-                    'Невозможно применить изменения: сумма авансового платежа не может быть отрицательной '.
-                    "(платеж ID: {$change['payment_id']}, сумма: {$change['new_amount']})"
-                );
+            $adjustedAmount = BigDecimal::of((string) $change['new_amount'])
+                ->toScale(2, RoundingMode::HalfUp);
+            if ($adjustedAmount->isNegative()) {
+                throw new DomainException(trans_message('agreements.advance_amount_negative'));
             }
 
             $payment = PaymentDocument::query()
                 ->whereKey($change['payment_id'])
+                ->where('organization_id', $contract->organization_id)
                 ->where('invoiceable_type', Contract::class)
                 ->where('invoiceable_id', $contract->id)
                 ->where(function ($query): void {
                     $query->where('invoice_type', 'advance')
                         ->orWhere('metadata->contract_payment_type', 'advance');
                 })
+                ->lockForUpdate()
                 ->first();
 
-            if ($payment) {
-                $oldAmount = $payment->paid_amount;
-                $payment->update([
-                    'amount' => $change['new_amount'],
-                    'paid_amount' => $change['new_amount'],
-                    'remaining_amount' => 0,
-                ]);
-
-                // TECHNICAL: Изменение суммы авансового платежа
-                $this->logging->technical('agreement.advance_payment_changed', [
-                    'contract_id' => $contract->id,
-                    'payment_id' => $payment->id,
-                    'old_amount' => $oldAmount,
-                    'new_amount' => $change['new_amount'],
-                    'delta' => $change['new_amount'] - $oldAmount,
-                    'user_id' => Auth::id(),
-                ]);
-            } else {
-                // WARNING: Попытка изменить несуществующий платеж
-                $this->logging->technical('agreement.advance_payment_not_found', [
-                    'contract_id' => $contract->id,
-                    'payment_id' => $change['payment_id'],
-                    'user_id' => Auth::id(),
-                ]);
+            if (! $payment instanceof PaymentDocument) {
+                throw new DomainException(trans_message('agreements.advance_payment_not_found'));
             }
+
+            $previousAdjustment = DB::table('supplementary_agreement_advance_adjustments')
+                ->where('contract_id', $contract->id)
+                ->where('payment_document_id', $payment->id)
+                ->latest('id')
+                ->first();
+            $previousAmount = BigDecimal::of((string) ($previousAdjustment->adjusted_amount ?? $payment->amount))
+                ->toScale(2, RoundingMode::HalfUp);
+            $delta = $adjustedAmount->minus($previousAmount)->toScale(2, RoundingMode::HalfUp);
+
+            DB::table('supplementary_agreement_advance_adjustments')->insert([
+                'organization_id' => $contract->organization_id,
+                'contract_id' => $contract->id,
+                'supplementary_agreement_id' => $agreement->id,
+                'payment_document_id' => $payment->id,
+                'previous_amount' => (string) $previousAmount,
+                'adjusted_amount' => (string) $adjustedAmount,
+                'amount_delta' => (string) $delta,
+                'created_by_user_id' => $actorId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $plannedAdvance = BigDecimal::of((string) ($contract->planned_advance_amount ?? 0))
+                ->plus($delta)
+                ->toScale(2, RoundingMode::HalfUp);
+            if ($plannedAdvance->isNegative()) {
+                throw new DomainException(trans_message('agreements.advance_total_negative'));
+            }
+            Contract::query()
+                ->whereKey($contract->id)
+                ->where('organization_id', $contract->organization_id)
+                ->update(['planned_advance_amount' => (string) $plannedAdvance]);
+            $contract->setAttribute('planned_advance_amount', (string) $plannedAdvance);
+            $contract->syncOriginalAttribute('planned_advance_amount');
+
         }
     }
 

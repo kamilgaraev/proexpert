@@ -172,7 +172,7 @@ final class ChangeManagementController extends Controller
     {
         try {
             $validated = $request->validate([
-                'variation_number' => ['nullable', 'string', 'max:80'],
+                'variation_number' => ['required', 'string', 'max:80'],
                 'amount' => ['nullable', 'numeric'],
                 'schedule_delta_days' => ['nullable', 'integer'],
                 'description' => ['nullable', 'string', 'max:5000'],

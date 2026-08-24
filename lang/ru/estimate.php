@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'version_item_not_found' => 'Позиция не найдена в утверждённой версии сметы.',
     'validation_error' => 'Данные сметы не прошли проверку.',
     'project_context_required' => 'Выберите проект для работы со сметами.',
     'created' => 'Смета создана.',
@@ -49,6 +50,10 @@ return [
     'status_cannot_change_cancelled' => 'Отмененную смету нельзя изменить.',
     'status_can_approve_only_in_review' => 'Утвердить можно только смету на проверке.',
     'status_invalid_transition' => 'Такое изменение статуса сметы недоступно.',
+    'status_required' => 'Укажите новый статус сметы.',
+    'status_invalid' => 'Выбран недоступный статус сметы.',
+    'status_comment_too_long' => 'Комментарий к изменению статуса слишком длинный.',
+    'status_rejection_reason_required' => 'Укажите причину отклонения сметы.',
 
     'template_created' => 'Шаблон сметы создан.',
     'template_deleted' => 'Шаблон сметы удален.',
@@ -61,6 +66,10 @@ return [
     'version_restore_not_available' => 'Восстановление из версии будет доступно после обновления механизма версий.',
     'version_compare_failed' => 'Не удалось сравнить версии сметы.',
     'version_not_found' => 'Версия сметы не найдена.',
+    'version_immutable' => 'Сохранённую версию сметы нельзя изменить или удалить.',
+    'revision_requires_approved_estimate' => 'Новую редакцию можно начать только для утверждённой сметы.',
+    'revision_started' => 'Новая редакция сметы создана.',
+    'idempotency_key_required' => 'Повторите операцию: не удалось определить идентификатор запроса.',
 
     'import_no_file' => 'Выберите файл сметы.',
     'import_file_id_empty' => 'Файл сметы не найден.',

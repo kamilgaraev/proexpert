@@ -25,6 +25,8 @@ use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Models\Contract;
 use App\Models\User;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -35,11 +37,17 @@ use function trans_message;
 final class PaymentBudgetLimitService
 {
     public const OPERATION_CREATE = 'payment_document_create';
+
     public const OPERATION_UPDATE = 'payment_document_update';
+
     public const OPERATION_SUBMIT = 'payment_document_submit';
+
     public const OPERATION_APPROVAL = 'payment_document_approval';
+
     public const OPERATION_PAYMENT_REGISTER = 'payment_register';
+
     public const OPERATION_SCHEDULE = 'payment_document_schedule';
+
     public const OPERATION_VIEW = 'payment_document_view';
 
     private const MODULE_SLUG = 'budgeting';
@@ -63,8 +71,7 @@ final class PaymentBudgetLimitService
     public function __construct(
         private readonly BudgetLimitCheckService $limitCheckService,
         private readonly ModulePermissionChecker $modulePermissionChecker,
-    ) {
-    }
+    ) {}
 
     public function normalizeDocumentData(array $data, int $organizationId): array
     {
@@ -93,7 +100,7 @@ final class PaymentBudgetLimitService
     {
         $calculation = $this->calculate($document, self::OPERATION_VIEW, $this->requestedAmount($document));
 
-        if (!$calculation['controlled']) {
+        if (! $calculation['controlled']) {
             return $this->neutralPayload((string) $calculation['message']);
         }
 
@@ -103,7 +110,7 @@ final class PaymentBudgetLimitService
     public function assertAllowed(
         PaymentDocument $document,
         string $operationType,
-        ?float $requestedAmount = null,
+        string|int|float|null $requestedAmount = null,
         ?User $user = null,
         ?string $overrideReason = null,
         ?Carbon $operationDate = null,
@@ -124,8 +131,7 @@ final class PaymentBudgetLimitService
         PaymentDocument $document,
         ?User $user = null,
         ?string $overrideReason = null
-    ): void
-    {
+    ): void {
         DB::transaction(function () use ($document, $user, $overrideReason): void {
             $this->syncReservationInTransaction($document, $user, $overrideReason);
         });
@@ -137,7 +143,7 @@ final class PaymentBudgetLimitService
         ?User $user,
         ?string $overrideReason,
     ): ?BudgetLimitCheckResult {
-        if (!$calculation['controlled']) {
+        if (! $calculation['controlled']) {
             return null;
         }
 
@@ -152,7 +158,7 @@ final class PaymentBudgetLimitService
         }
 
         if ($result->decision === BudgetLimitCheckService::DECISION_REQUIRE_EXCEPTION) {
-            if (!$this->canOverride($user, $result->requiredPermission, (int) $document->organization_id)) {
+            if (! $this->canOverride($user, $result->requiredPermission, (int) $document->organization_id)) {
                 $this->storeResult($document, $calculation, false, $user, null);
 
                 throw new \DomainException($result->message);
@@ -177,8 +183,9 @@ final class PaymentBudgetLimitService
 
     private function syncReservationInTransaction(PaymentDocument $document, ?User $user, ?string $overrideReason): void
     {
-        if (!$this->isReservable($document)) {
+        if (! $this->isReservable($document)) {
             $this->release($document, trans_message('budgeting.limits.reserve_not_required'));
+
             return;
         }
 
@@ -190,8 +197,9 @@ final class PaymentBudgetLimitService
             true
         );
 
-        if (!$calculation['controlled'] || !$calculation['line'] instanceof BudgetLine) {
+        if (! $calculation['controlled'] || ! $calculation['line'] instanceof BudgetLine) {
             $this->release($document, trans_message('budgeting.limits.reserve_not_required'));
+
             return;
         }
 
@@ -203,6 +211,7 @@ final class PaymentBudgetLimitService
 
         if ($amount <= 0.0) {
             $this->release($document, trans_message('budgeting.limits.reserve_not_required'));
+
             return;
         }
 
@@ -250,6 +259,7 @@ final class PaymentBudgetLimitService
 
         if ($reservation instanceof BudgetLimitReservation) {
             $reservation->update($attributes);
+
             return;
         }
 
@@ -281,7 +291,7 @@ final class PaymentBudgetLimitService
             ->lockForUpdate()
             ->first();
 
-        if (!$reservation instanceof BudgetLimitReservation) {
+        if (! $reservation instanceof BudgetLimitReservation) {
             return;
         }
 
@@ -309,21 +319,52 @@ final class PaymentBudgetLimitService
         ]);
     }
 
+    public function reconcileAfterLedgerChange(PaymentDocument $document, PaymentTransaction $transaction): void
+    {
+        $reservation = BudgetLimitReservation::query()
+            ->where('payment_document_id', $document->id)
+            ->lockForUpdate()
+            ->latest('id')
+            ->first();
+
+        if (! $reservation instanceof BudgetLimitReservation) {
+            return;
+        }
+
+        $remainingAmount = $this->reservationAmount($document);
+        if (BigDecimal::of($remainingAmount)->isPositive()) {
+            $reservation->forceFill([
+                'status' => BudgetLimitReservation::STATUS_RESERVED,
+                'amount' => $remainingAmount,
+                'converted_at' => null,
+                'released_at' => null,
+                'release_reason' => null,
+                'metadata' => array_merge($reservation->metadata ?? [], [
+                    'last_ledger_transaction_id' => $transaction->id,
+                ]),
+            ])->save();
+
+            return;
+        }
+
+        $this->convertAfterPayment($document, $transaction);
+    }
+
     private function calculate(
         PaymentDocument $document,
         string $operationType,
-        ?float $requestedAmount = null,
+        string|int|float|null $requestedAmount = null,
         ?Carbon $operationDate = null,
         bool $lockBudgetLine = false,
     ): array {
-        if (!$this->isBudgetingActive((int) $document->organization_id)) {
+        if (! $this->isBudgetingActive((int) $document->organization_id)) {
             return [
                 'controlled' => false,
                 'message' => trans_message('budgeting.limits.inactive'),
             ];
         }
 
-        if (!$this->isBudgetControlledDocument($document)) {
+        if (! $this->isBudgetControlledDocument($document)) {
             return [
                 'controlled' => false,
                 'message' => trans_message('budgeting.limits.not_applicable'),
@@ -335,9 +376,9 @@ final class PaymentBudgetLimitService
         $budgetArticle = $this->budgetArticle($document);
         $responsibilityCenter = $this->responsibilityCenter($document);
 
-        if (!$budgetArticle instanceof BudgetArticle || !$responsibilityCenter instanceof ResponsibilityCenter) {
+        if (! $budgetArticle instanceof BudgetArticle || ! $responsibilityCenter instanceof ResponsibilityCenter) {
             $context = $this->buildContext($document, $operationType, $month, null, $budgetArticle, $responsibilityCenter);
-            $amounts = new BudgetLimitAmounts(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, $requested);
+            $amounts = new BudgetLimitAmounts('0', '0', '0', '0', '0', '0', '0', $requested);
 
             return [
                 'controlled' => true,
@@ -521,10 +562,10 @@ final class PaymentBudgetLimitService
         PaymentDocument $document,
         Carbon $month,
         ?BudgetLine $line,
-        float $requestedAmount,
+        string|int|float $requestedAmount,
     ): BudgetLimitAmounts {
-        if (!$line instanceof BudgetLine) {
-            return new BudgetLimitAmounts(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, $requestedAmount);
+        if (! $line instanceof BudgetLine) {
+            return new BudgetLimitAmounts('0', '0', '0', '0', '0', '0', '0', $requestedAmount);
         }
 
         return new BudgetLimitAmounts(
@@ -532,39 +573,42 @@ final class PaymentBudgetLimitService
             actualPaymentsAmount: $this->actualPaymentsAmount($document, $line, $month),
             pendingApprovalAmount: $this->legacyCommittedAmount($document, $line, $month),
             reservedAmount: $this->reservedAmount($document, $line, $month),
-            carryoverAmount: (float) ($line->metadata['carryover_amount'] ?? 0),
-            adjustmentAmount: (float) ($line->metadata['adjustment_amount'] ?? 0),
-            exceptionAmount: (float) ($line->metadata['exception_amount'] ?? 0),
-            requestedAmount: round($requestedAmount, 2),
+            carryoverAmount: (string) ($line->metadata['carryover_amount'] ?? 0),
+            adjustmentAmount: (string) ($line->metadata['adjustment_amount'] ?? 0),
+            exceptionAmount: (string) ($line->metadata['exception_amount'] ?? 0),
+            requestedAmount: $this->money($requestedAmount),
         );
     }
 
-    private function approvedBudgetAmount(BudgetLine $line, Carbon $month, string $currency): float
+    private function approvedBudgetAmount(BudgetLine $line, Carbon $month, string $currency): string
     {
-        return (float) BudgetAmount::query()
+        return (string) BudgetAmount::query()
             ->where('budget_line_id', $line->id)
             ->whereDate('month', $month->toDateString())
             ->where('currency', $currency)
             ->sum('plan_amount');
     }
 
-    private function actualPaymentsAmount(PaymentDocument $document, BudgetLine $line, Carbon $month): float
+    private function actualPaymentsAmount(PaymentDocument $document, BudgetLine $line, Carbon $month): string
     {
-        return (float) PaymentTransaction::query()
+        $netAmount = (string) PaymentTransaction::query()
             ->where('payment_transactions.organization_id', $document->organization_id)
             ->where('payment_transactions.status', PaymentTransactionStatus::COMPLETED->value)
-            ->where('payment_transactions.amount', '>', 0)
             ->whereDate('payment_transactions.transaction_date', '>=', $month->toDateString())
             ->whereDate('payment_transactions.transaction_date', '<=', $month->copy()->endOfMonth()->toDateString())
             ->whereHas('paymentDocument', function (Builder $query) use ($document, $line): void {
                 $this->applyDocumentDimensionFilter($query, $document, $line);
             })
             ->sum('payment_transactions.amount');
+
+        $net = BigDecimal::of($netAmount)->toScale(2, RoundingMode::HalfUp);
+
+        return (string) ($net->isPositive() ? $net : BigDecimal::zero()->toScale(2));
     }
 
-    private function reservedAmount(PaymentDocument $document, BudgetLine $line, Carbon $month): float
+    private function reservedAmount(PaymentDocument $document, BudgetLine $line, Carbon $month): string
     {
-        return (float) BudgetLimitReservation::query()
+        return (string) BudgetLimitReservation::query()
             ->where('organization_id', $document->organization_id)
             ->where('status', BudgetLimitReservation::STATUS_RESERVED)
             ->where('currency', $document->currency ?: 'RUB')
@@ -581,14 +625,14 @@ final class PaymentBudgetLimitService
             ->sum('amount');
     }
 
-    private function legacyCommittedAmount(PaymentDocument $document, BudgetLine $line, Carbon $month): float
+    private function legacyCommittedAmount(PaymentDocument $document, BudgetLine $line, Carbon $month): string
     {
         $statuses = array_map(
             static fn (PaymentDocumentStatus $status): string => $status->value,
             self::LEGACY_COMMITTED_STATUSES
         );
 
-        return (float) PaymentDocument::query()
+        return (string) PaymentDocument::query()
             ->whereKeyNot($document->getKey())
             ->whereIn('status', $statuses)
             ->where(function (Builder $query) use ($month): void {
@@ -729,7 +773,7 @@ final class PaymentBudgetLimitService
 
     private function isBudgetControlledDocument(PaymentDocument $document): bool
     {
-        if ((float) $document->amount <= 0.0) {
+        if (! BigDecimal::of((string) $document->amount)->isPositive()) {
             return false;
         }
 
@@ -748,7 +792,7 @@ final class PaymentBudgetLimitService
     private function isReservable(PaymentDocument $document): bool
     {
         return in_array($document->status, self::RESERVABLE_STATUSES, true)
-            && $this->reservationAmount($document) > 0.0
+            && BigDecimal::of($this->reservationAmount($document))->isPositive()
             && $this->isBudgetControlledDocument($document);
     }
 
@@ -763,24 +807,31 @@ final class PaymentBudgetLimitService
         return Carbon::parse($date)->startOfMonth();
     }
 
-    private function requestedAmount(PaymentDocument $document): float
+    private function requestedAmount(PaymentDocument $document): string
     {
         if ($document->status === PaymentDocumentStatus::PARTIALLY_PAID) {
             return $this->reservationAmount($document);
         }
 
-        return round((float) $document->amount, 2);
+        return $this->money($document->amount);
     }
 
-    private function reservationAmount(PaymentDocument $document): float
+    private function reservationAmount(PaymentDocument $document): string
     {
         $remaining = $document->remaining_amount;
 
         if ($remaining === null) {
-            return round((float) $document->amount, 2);
+            return $this->money($document->amount);
         }
 
-        return round(max(0.0, (float) $remaining), 2);
+        $amount = BigDecimal::of((string) $remaining);
+
+        return $this->money($amount->isPositive() ? (string) $amount : '0');
+    }
+
+    private function money(string|int|float $amount): string
+    {
+        return (string) BigDecimal::of((string) $amount)->toScale(2, RoundingMode::HalfUp);
     }
 
     private function budgetArticle(PaymentDocument $document): ?BudgetArticle
@@ -876,7 +927,7 @@ final class PaymentBudgetLimitService
             })
             ->first();
 
-        if (!$model) {
+        if (! $model) {
             throw new \DomainException(trans_message($messageKey));
         }
 

@@ -6,16 +6,18 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentCreated;
 use App\BusinessModules\Core\Payments\Events\PaymentRequestReceived;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
-use App\Models\Project;
 use App\Models\User;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -55,11 +57,25 @@ class PaymentDocumentService
             DB::beginTransaction();
 
             try {
+                $data = $this->canonicalizeActInvoiceData($data);
+                if (isset($data['origin_key'])) {
+                    $existingDocument = PaymentDocument::query()
+                        ->where('organization_id', $data['organization_id'])
+                        ->where('origin_key', $data['origin_key'])
+                        ->first();
+
+                    if ($existingDocument instanceof PaymentDocument) {
+                        DB::commit();
+
+                        return $existingDocument;
+                    }
+                }
+
                 // Валидация
                 $this->validator->validate($data);
 
                 // Генерация номера документа
-                if (!isset($data['document_number'])) {
+                if (! isset($data['document_number'])) {
                     $data['document_number'] = $this->generateDocumentNumber(
                         $data['organization_id'],
                         PaymentDocumentType::from($data['document_type'])
@@ -73,7 +89,7 @@ class PaymentDocumentService
                 $document = PaymentDocument::create($data);
 
                 // Обрабатываем сплиты по позициям сметы
-                if (!empty($data['estimate_splits'])) {
+                if (! empty($data['estimate_splits'])) {
                     $this->processEstimateSplits($document, $data['estimate_splits']);
                 }
 
@@ -86,7 +102,7 @@ class PaymentDocumentService
                 $this->budgetLimitService->assertAllowed(
                     $document,
                     PaymentBudgetLimitService::OPERATION_CREATE,
-                    (float) $document->amount,
+                    (string) $document->amount,
                     $createdBy,
                     is_string($budgetOverrideReason) ? $budgetOverrideReason : null
                 );
@@ -106,13 +122,14 @@ class PaymentDocumentService
 
                 // Генерируем событие
                 event(new PaymentDocumentCreated($document));
-                
+
                 // Для платежных требований - дополнительное событие
                 if ($document->document_type === PaymentDocumentType::PAYMENT_REQUEST && $document->payee_contractor_id) {
                     event(new PaymentRequestReceived($document, $document->payee_contractor_id));
                 }
 
                 DB::commit();
+
                 return $document;
 
             } catch (QueryException $e) {
@@ -122,35 +139,51 @@ class PaymentDocumentService
                 // Проверяем, что ошибка связана именно с номером документа
                 // Поддержка старого и нового имени ограничения
                 $isUniqueViolation = $e->getCode() == '23505';
-                $isDocumentNumberConstraint = str_contains($e->getMessage(), 'payment_documents_document_number_unique') || 
+                if ($isUniqueViolation
+                    && str_contains($e->getMessage(), 'payment_documents_org_origin_unique')
+                    && isset($data['origin_key'], $data['organization_id'])) {
+                    $existingDocument = PaymentDocument::query()
+                        ->where('organization_id', $data['organization_id'])
+                        ->where('origin_key', $data['origin_key'])
+                        ->first();
+                    if ($existingDocument instanceof PaymentDocument
+                        && BigDecimal::of((string) $existingDocument->amount)
+                            ->isEqualTo(BigDecimal::of((string) $data['amount']))) {
+                        return $existingDocument;
+                    }
+
+                    throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+                }
+                $isDocumentNumberConstraint = str_contains($e->getMessage(), 'payment_documents_document_number_unique') ||
                                             str_contains($e->getMessage(), 'payment_documents_org_id_doc_num_unique');
 
                 if ($isUniqueViolation && $isDocumentNumberConstraint) {
-                    if (!$wasNumberProvided) {
+                    if (! $wasNumberProvided) {
                         $attempts++;
                         unset($data['document_number']); // Сброс номера для новой генерации
-                        
+
                         if ($attempts < $maxAttempts) {
                             // Небольшая задержка перед повтором (100ms, 200ms)
-                            usleep(100000 * $attempts); 
+                            usleep(100000 * $attempts);
+
                             continue;
                         }
                     }
                 }
-                
+
                 Log::error('payment_document.create_failed', [
-                    'data' => $data,
-                    'error' => $e->getMessage(),
+                    ...$this->paymentDocumentFailureContext($data),
+                    'exception' => $e::class,
+                    'sql_state' => (string) $e->getCode(),
                 ]);
 
                 throw $e;
-
             } catch (\Exception $e) {
                 DB::rollBack();
-                
+
                 Log::error('payment_document.create_failed', [
-                    'data' => $data,
-                    'error' => $e->getMessage(),
+                    ...$this->paymentDocumentFailureContext($data),
+                    'exception' => $e::class,
                 ]);
 
                 throw $e;
@@ -168,7 +201,7 @@ class PaymentDocumentService
      */
     public function update(PaymentDocument $document, array $data): PaymentDocument
     {
-        if (!$document->canBeEdited()) {
+        if (! $document->canBeEdited()) {
             throw new \DomainException(trans_message('payments.validation.document_edit_forbidden'));
         }
 
@@ -194,7 +227,7 @@ class PaymentDocumentService
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_UPDATE,
-                (float) $document->amount,
+                (string) $document->amount,
                 $user instanceof User ? $user : null,
                 is_string($budgetOverrideReason) ? $budgetOverrideReason : null
             );
@@ -211,11 +244,12 @@ class PaymentDocumentService
             ]);
 
             DB::commit();
+
             return $document->fresh();
 
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             Log::error('payment_document.update_failed', [
                 'document_id' => $document->id,
                 'error' => $e->getMessage(),
@@ -238,7 +272,7 @@ class PaymentDocumentService
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_SUBMIT,
-                (float) $document->amount,
+                (string) $document->amount,
                 $user,
                 $overrideReason
             );
@@ -256,6 +290,7 @@ class PaymentDocumentService
             ]);
 
             DB::commit();
+
             return $document->fresh();
 
         } catch (\DomainException $e) {
@@ -270,7 +305,7 @@ class PaymentDocumentService
             throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             Log::error('payment_document.submit_failed', [
                 'document_id' => $document->id,
                 'error' => $e->getMessage(),
@@ -287,8 +322,7 @@ class PaymentDocumentService
         PaymentDocument $document,
         ?int $approvedByUserId = null,
         ?string $budgetOverrideReason = null
-    ): PaymentDocument
-    {
+    ): PaymentDocument {
         DB::beginTransaction();
 
         try {
@@ -298,7 +332,7 @@ class PaymentDocumentService
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_APPROVAL,
-                (float) $document->amount,
+                (string) $document->amount,
                 $approvedBy,
                 $budgetOverrideReason
             );
@@ -317,11 +351,12 @@ class PaymentDocumentService
             ]);
 
             DB::commit();
+
             return $document->fresh();
 
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             Log::error('payment_document.approve_failed', [
                 'document_id' => $document->id,
                 'error' => $e->getMessage(),
@@ -339,11 +374,10 @@ class PaymentDocumentService
         ?\DateTime $scheduledAt = null,
         ?User $user = null,
         ?string $overrideReason = null
-    ): PaymentDocument
-    {
+    ): PaymentDocument {
         $oldScheduledAt = $document->scheduled_at?->format('Y-m-d');
 
-        if (!in_array($document->status, [
+        if (! in_array($document->status, [
             PaymentDocumentStatus::APPROVED,
             PaymentDocumentStatus::SCHEDULED,
             PaymentDocumentStatus::PARTIALLY_PAID,
@@ -358,7 +392,7 @@ class PaymentDocumentService
         $this->budgetLimitService->assertAllowed(
             $document,
             PaymentBudgetLimitService::OPERATION_SCHEDULE,
-            (float) $document->remaining_amount,
+            (string) $document->remaining_amount,
             $user,
             $overrideReason,
             $scheduledCarbon
@@ -389,12 +423,16 @@ class PaymentDocumentService
     /**
      * Зарегистрировать платеж
      */
-    public function registerPayment(PaymentDocument $document, float $amount, array $paymentData): PaymentDocument
-    {
+    public function registerPayment(
+        PaymentDocument $document,
+        string|int|float $amount,
+        array $paymentData
+    ): PaymentDocument {
+        $paymentAmount = BigDecimal::of((string) $amount)->toScale(2, RoundingMode::HalfUp);
+
         Log::info('payment_document.register_payment.started', [
             'document_id' => $document->id,
-            'amount' => $amount,
-            'payment_data' => $paymentData,
+            'amount' => (string) $paymentAmount,
         ]);
 
         DB::beginTransaction();
@@ -404,8 +442,63 @@ class PaymentDocumentService
                 ->whereKey($document->id)
                 ->lockForUpdate()
                 ->firstOrFail();
+            $idempotencyKey = $paymentData['idempotency_key']
+                ?? (isset($paymentData['bank_transaction_id'])
+                    ? 'bank:'.(string) $paymentData['bank_transaction_id']
+                    : null);
+            $bankTransactionId = trim((string) ($paymentData['bank_transaction_id'] ?? ''));
+
+            if ($bankTransactionId !== '') {
+                if (DB::getDriverName() === 'pgsql') {
+                    DB::select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [
+                        "payment-bank:{$document->organization_id}:{$bankTransactionId}",
+                    ]);
+                }
+
+                $existingBankTransaction = PaymentTransaction::query()
+                    ->where('organization_id', $document->organization_id)
+                    ->where('bank_transaction_id', $bankTransactionId)
+                    ->first();
+
+                if ($existingBankTransaction instanceof PaymentTransaction) {
+                    $this->assertPaymentRetryMatches(
+                        $existingBankTransaction,
+                        $document,
+                        $paymentAmount,
+                        $paymentData
+                    );
+                    DB::commit();
+
+                    return $document->fresh();
+                }
+            }
+
+            if (is_string($idempotencyKey) && $idempotencyKey !== '') {
+                if (DB::getDriverName() === 'pgsql') {
+                    DB::select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [
+                        "payment:{$document->organization_id}:{$idempotencyKey}",
+                    ]);
+                }
+
+                $existingTransaction = PaymentTransaction::query()
+                    ->where('organization_id', $document->organization_id)
+                    ->where('idempotency_key', $idempotencyKey)
+                    ->first();
+
+                if ($existingTransaction instanceof PaymentTransaction) {
+                    $this->assertPaymentRetryMatches($existingTransaction, $document, $paymentAmount, $paymentData);
+
+                    DB::commit();
+
+                    return $document->fresh();
+                }
+            }
+
             if (! $document->canBePaid()) {
                 throw new \DomainException(trans_message('payments.validation.document_pay_forbidden'));
+            }
+            if (! $paymentAmount->isPositive()) {
+                throw new \InvalidArgumentException(trans_message('payments.validation.payment_amount_positive'));
             }
             $this->contractRequirement->assertPaymentAllowed($document);
             Log::info('payment_document.register_payment.transaction_started', [
@@ -413,10 +506,12 @@ class PaymentDocumentService
             ]);
 
             // Проверка суммы
-            if ($amount > $document->remaining_amount) {
+            $remainingBeforePayment = BigDecimal::of((string) $document->remaining_amount)
+                ->toScale(2, RoundingMode::HalfUp);
+            if ($paymentAmount->isGreaterThan($remainingBeforePayment)) {
                 Log::warning('payment_document.register_payment.amount_exceeds', [
                     'document_id' => $document->id,
-                    'amount' => $amount,
+                    'amount' => (string) $paymentAmount,
                     'remaining_amount' => $document->remaining_amount,
                 ]);
                 throw new \DomainException(trans_message('payments.validation.payment_amount_exceeds_remaining'));
@@ -426,7 +521,7 @@ class PaymentDocumentService
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_PAYMENT_REGISTER,
-                $amount,
+                (string) $paymentAmount,
                 isset($paymentData['created_by_user_id']) ? User::find((int) $paymentData['created_by_user_id']) : null,
                 $paymentData['budget_override_reason'] ?? null,
                 $operationDate,
@@ -446,11 +541,12 @@ class PaymentDocumentService
                 'payee_organization_id' => $document->payee_organization_id,
                 'payer_contractor_id' => $document->payer_contractor_id,
                 'payee_contractor_id' => $document->payee_contractor_id,
-                'amount' => $amount,
+                'amount' => (string) $paymentAmount,
                 'currency' => $document->currency,
                 'payment_method' => $paymentData['payment_method'] ?? 'bank_transfer',
                 'reference_number' => $paymentData['reference_number'] ?? null,
                 'bank_transaction_id' => $paymentData['bank_transaction_id'] ?? null,
+                'idempotency_key' => $idempotencyKey,
                 'transaction_date' => $paymentData['transaction_date'] ?? now(),
                 'value_date' => $paymentData['value_date'] ?? now(),
                 'status' => 'completed',
@@ -488,13 +584,17 @@ class PaymentDocumentService
                 'document_id' => $document->id,
             ]);
 
-            $newPaidAmount = (float) $document->paid_amount + $amount;
-            $newRemainingAmount = (float) $document->amount - $newPaidAmount;
+            $newPaidAmount = BigDecimal::of((string) $document->paid_amount)
+                ->plus($paymentAmount)
+                ->toScale(2, RoundingMode::HalfUp);
+            $newRemainingAmount = BigDecimal::of((string) $document->amount)
+                ->minus($newPaidAmount)
+                ->toScale(2, RoundingMode::HalfUp);
 
             Log::info('payment_document.register_payment.amounts_updated', [
                 'document_id' => $document->id,
-                'new_paid_amount' => $newPaidAmount,
-                'remaining_amount' => $newRemainingAmount,
+                'new_paid_amount' => (string) $newPaidAmount,
+                'remaining_amount' => (string) $newRemainingAmount,
             ]);
 
             Log::info('payment_document.register_payment.transaction_loaded', [
@@ -502,50 +602,32 @@ class PaymentDocumentService
                 'transaction_model_exists' => true,
             ]);
 
-            // Отправляем уведомление получателю (если зарегистрирован)
-            if ($transactionModel) {
-                try {
-                    Log::info('payment_document.register_payment.sending_notification', [
-                        'document_id' => $document->id,
-                    ]);
-                    $notificationService = app(\App\BusinessModules\Core\Payments\Services\PaymentRecipientNotificationService::class);
-                    $notificationService->notifyRecipientAboutPayment($document, $transactionModel);
-                } catch (\Exception $e) {
-                    // Не бросаем исключение - отсутствие уведомления не должно ломать регистрацию платежа
-                    Log::warning('payment_document.notify_recipient_failed', [
-                        'document_id' => $document->id,
-                        'transaction_id' => $transaction,
-                        'error' => $e->getMessage(),
-                        'trace' => $e->getTraceAsString(),
-                    ]);
-                }
-            }
-
             Log::info('payment_document.register_payment.updating_status', [
                 'document_id' => $document->id,
                 'remaining_amount' => $newRemainingAmount,
             ]);
 
             // Определяем новый статус
-            if ($newRemainingAmount <= 0.01) { // учитываем погрешность
+            if (! $newRemainingAmount->isPositive()) {
                 Log::info('payment_document.register_payment.marking_paid', [
                     'document_id' => $document->id,
                 ]);
-                $this->stateMachine->markPaid($document, $newPaidAmount, $transaction);
+                $this->stateMachine->markPaid($document, (string) $newPaidAmount, $transaction);
             } else {
                 Log::info('payment_document.register_payment.marking_partially_paid', [
                     'document_id' => $document->id,
                 ]);
-                $this->stateMachine->markPartiallyPaid($document, $amount, $transaction);
+                $this->stateMachine->markPartiallyPaid($document, (string) $paymentAmount, $transaction);
             }
 
             $this->budgetLimitService->convertAfterPayment($document->fresh(), $transactionModel);
             $this->synchronizeEstimateItemsPaymentProgress($document);
+            DB::afterCommit(fn () => $this->notifyPaymentRecipientAfterCommit($document->id, $transaction));
 
             Log::info('payment_document.payment_registered', [
                 'document_id' => $document->id,
                 'transaction_id' => $transaction,
-                'amount' => $amount,
+                'amount' => (string) $paymentAmount,
                 'remaining' => $document->remaining_amount,
             ]);
 
@@ -554,7 +636,7 @@ class PaymentDocumentService
             ]);
 
             DB::commit();
-            
+
             Log::info('payment_document.register_payment.committed', [
                 'document_id' => $document->id,
             ]);
@@ -563,7 +645,7 @@ class PaymentDocumentService
 
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             Log::error('payment_document.payment_failed', [
                 'document_id' => $document->id,
                 'error' => $e->getMessage(),
@@ -573,6 +655,52 @@ class PaymentDocumentService
             ]);
 
             throw $e;
+        }
+    }
+
+    private function assertPaymentRetryMatches(
+        PaymentTransaction $existing,
+        PaymentDocument $document,
+        BigDecimal $amount,
+        array $paymentData
+    ): void {
+        $existingMethod = $existing->payment_method instanceof \BackedEnum
+            ? $existing->payment_method->value
+            : (string) $existing->payment_method;
+        $expectedMethod = (string) ($paymentData['payment_method'] ?? 'bank_transfer');
+        $expectedTransactionDate = $this->normalizedPaymentDate($paymentData['transaction_date'] ?? now());
+        $expectedValueDate = $this->normalizedPaymentDate($paymentData['value_date'] ?? now());
+
+        $matches = (int) $existing->payment_document_id === (int) $document->id
+            && BigDecimal::of((string) $existing->amount)->toScale(2, RoundingMode::HalfUp)->isEqualTo($amount)
+            && (string) $existing->currency === (string) $document->currency
+            && $existingMethod === $expectedMethod
+            && (string) ($existing->reference_number ?? '') === (string) ($paymentData['reference_number'] ?? '')
+            && $this->normalizedPaymentDate($existing->transaction_date) === $expectedTransactionDate
+            && $this->normalizedPaymentDate($existing->value_date) === $expectedValueDate;
+
+        if (! $matches) {
+            throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+        }
+    }
+
+    private function normalizedPaymentDate(mixed $value): string
+    {
+        return Carbon::parse($value)->toDateString();
+    }
+
+    private function notifyPaymentRecipientAfterCommit(int $documentId, int $transactionId): void
+    {
+        try {
+            $document = PaymentDocument::query()->findOrFail($documentId);
+            $transaction = PaymentTransaction::query()->findOrFail($transactionId);
+            app(PaymentRecipientNotificationService::class)->notifyRecipientAboutPayment($document, $transaction);
+        } catch (\Exception $e) {
+            Log::warning('payment_document.notify_recipient_failed', [
+                'document_id' => $documentId,
+                'transaction_id' => $transactionId,
+                'error_class' => $e::class,
+            ]);
         }
     }
 
@@ -587,7 +715,7 @@ class PaymentDocumentService
             $isOrganizationOwner = $user->isOrganizationOwner($document->organization_id);
         }
 
-        if (!$isOrganizationOwner && !$document->canBeCancelled()) {
+        if (! $isOrganizationOwner && ! $document->canBeCancelled()) {
             throw new \DomainException(trans_message('payments.validation.document_cancel_forbidden'));
         }
 
@@ -671,22 +799,22 @@ class PaymentDocumentService
         if (isset($filters['contract_id'])) {
             $contractId = $filters['contract_id'];
             // Ищем документы, связанные с контрактом напрямую или через акт
-            $query->where(function($q) use ($contractId) {
+            $query->where(function ($q) use ($contractId) {
                 // Прямая связь с контрактом
-                $q->where(function($subQ) use ($contractId) {
+                $q->where(function ($subQ) use ($contractId) {
                     $subQ->where('invoiceable_type', 'App\\Models\\Contract')
-                         ->where('invoiceable_id', $contractId);
+                        ->where('invoiceable_id', $contractId);
                 })
                 // Или связь через акт этого контракта
-                ->orWhere(function($subQ) use ($contractId) {
-                    $subQ->where('invoiceable_type', 'App\\Models\\ContractPerformanceAct')
-                         ->whereExists(function($existsQuery) use ($contractId) {
-                             $existsQuery->select(DB::raw(1))
-                                 ->from('contract_performance_acts')
-                                 ->whereColumn('contract_performance_acts.id', 'payment_documents.invoiceable_id')
-                                 ->where('contract_performance_acts.contract_id', $contractId);
-                         });
-                });
+                    ->orWhere(function ($subQ) use ($contractId) {
+                        $subQ->where('invoiceable_type', 'App\\Models\\ContractPerformanceAct')
+                            ->whereExists(function ($existsQuery) use ($contractId) {
+                                $existsQuery->select(DB::raw(1))
+                                    ->from('contract_performance_acts')
+                                    ->whereColumn('contract_performance_acts.id', 'payment_documents.invoiceable_id')
+                                    ->where('contract_performance_acts.contract_id', $contractId);
+                            });
+                    });
             });
         }
 
@@ -716,10 +844,10 @@ class PaymentDocumentService
 
         if (isset($filters['search'])) {
             $search = $filters['search'];
-            $query->where(function($q) use ($search) {
+            $query->where(function ($q) use ($search) {
                 $q->where('document_number', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%")
-                  ->orWhere('payment_purpose', 'like', "%{$search}%");
+                    ->orWhere('description', 'like', "%{$search}%")
+                    ->orWhere('payment_purpose', 'like', "%{$search}%");
             });
         }
 
@@ -859,16 +987,26 @@ class PaymentDocumentService
      */
     private function calculateAmounts(array $data, ?PaymentDocument $existingDocument = null): array
     {
-        $amount = $data['amount'] ?? $existingDocument?->amount ?? 0;
-        $vatRate = $data['vat_rate'] ?? $existingDocument?->vat_rate ?? 20;
+        $amount = BigDecimal::of((string) ($data['amount'] ?? $existingDocument?->amount ?? 0))
+            ->toScale(2, RoundingMode::HalfUp);
+        $vatRate = BigDecimal::of((string) ($data['vat_rate'] ?? $existingDocument?->vat_rate ?? 20));
 
-        // Сумма содержит НДС
-        $amountWithoutVat = $amount / (1 + $vatRate / 100);
-        $vatAmount = $amount - $amountWithoutVat;
+        if (isset($data['amount_without_vat'], $data['vat_amount'])) {
+            $amountWithoutVat = BigDecimal::of((string) $data['amount_without_vat'])
+                ->toScale(2, RoundingMode::HalfUp);
+            $vatAmount = $amount->minus($amountWithoutVat)->toScale(2, RoundingMode::HalfUp);
+        } else {
+            $divisor = BigDecimal::one()->plus($vatRate->dividedBy(100, 8, RoundingMode::HalfUp));
+            $amountWithoutVat = $amount->dividedBy($divisor, 2, RoundingMode::HalfUp);
+            $vatAmount = $amount->minus($amountWithoutVat)->toScale(2, RoundingMode::HalfUp);
+        }
 
-        $data['amount_without_vat'] = round($amountWithoutVat, 2);
-        $data['vat_amount'] = round($vatAmount, 2);
-        $data['remaining_amount'] = $amount - ($data['paid_amount'] ?? $existingDocument?->paid_amount ?? 0);
+        $paidAmount = BigDecimal::of((string) ($data['paid_amount'] ?? $existingDocument?->paid_amount ?? 0))
+            ->toScale(2, RoundingMode::HalfUp);
+        $data['amount'] = (string) $amount;
+        $data['amount_without_vat'] = (string) $amountWithoutVat;
+        $data['vat_amount'] = (string) $vatAmount;
+        $data['remaining_amount'] = (string) $amount->minus($paidAmount)->toScale(2, RoundingMode::HalfUp);
 
         return $data;
     }
@@ -903,8 +1041,8 @@ class PaymentDocumentService
                 'expense' => $documents->where('document_type', PaymentDocumentType::EXPENSE)->count(),
                 'offset_act' => $documents->where('document_type', PaymentDocumentType::OFFSET_ACT)->count(),
             ],
-            'overdue_count' => $documents->filter(fn($d) => $d->isOverdue())->count(),
-            'overdue_amount' => $documents->filter(fn($d) => $d->isOverdue())->sum('remaining_amount'),
+            'overdue_count' => $documents->filter(fn ($d) => $d->isOverdue())->count(),
+            'overdue_amount' => $documents->filter(fn ($d) => $d->isOverdue())->sum('remaining_amount'),
         ];
     }
 
@@ -930,7 +1068,7 @@ class PaymentDocumentService
     public function updateStatus(PaymentDocument $document): void
     {
         $oldStatus = $document->status;
-        
+
         // Определяем новый статус на основе оплаченной суммы
         if ($document->remaining_amount <= 0) {
             $newStatus = PaymentDocumentStatus::PAID;
@@ -946,7 +1084,7 @@ class PaymentDocumentService
 
         if ($oldStatus !== $newStatus) {
             $document->update(['status' => $newStatus]);
-            
+
             Log::info('payment_document.status_updated', [
                 'document_id' => $document->id,
                 'old_status' => $oldStatus->value,
@@ -960,8 +1098,12 @@ class PaymentDocumentService
     /**
      * Создать документ из акта выполненных работ
      */
-    public function createFromAct(\App\Models\ContractPerformanceAct $act, InvoiceDirection $direction): PaymentDocument
-    {
+    public function createFromAct(
+        \App\Models\ContractPerformanceAct $act,
+        InvoiceDirection $direction,
+        string|float|int|null $amount = null,
+        ?string $idempotencyKey = null
+    ): PaymentDocument {
         $contract = $act->contract;
 
         $data = [
@@ -969,16 +1111,17 @@ class PaymentDocumentService
             'project_id' => $contract->project_id,
             'document_type' => PaymentDocumentType::INVOICE,
             'document_date' => $act->act_date ?? now(),
-            'due_date' => ($act->act_date ?? now())->addDays(30),
+            'due_date' => ($act->act_date ?? now())->copy()->addDays(30),
             'direction' => $direction,
             'invoice_type' => InvoiceType::ACT,
             'invoiceable_type' => \App\Models\ContractPerformanceAct::class,
             'invoiceable_id' => $act->id,
-            'amount' => $act->amount ?? 0,
+            'amount' => $amount ?? $act->amount ?? 0,
             'description' => "Счёт по акту №{$act->act_document_number}",
             'status' => PaymentDocumentStatus::SUBMITTED,
             'issued_at' => now(),
-            'vat_rate' => 20,
+            'vat_rate' => $act->vat_rate ?? 0,
+            'idempotency_key' => $idempotencyKey ?? 'full',
         ];
 
         // Определить контрагента
@@ -989,13 +1132,142 @@ class PaymentDocumentService
             $data['payer_organization_id'] = $contract->organization_id;
         } else {
             // Нам должны оплатить
-            $data['counterparty_organization_id'] = $contract->contractor_id ? 
+            $data['counterparty_organization_id'] = $contract->contractor_id ?
                 \App\Models\Contractor::find($contract->contractor_id)?->source_organization_id : null;
             $data['payer_organization_id'] = $data['counterparty_organization_id'];
             $data['payee_organization_id'] = $contract->organization_id;
         }
 
         return $this->create($data);
+    }
+
+    private function canonicalizeActInvoiceData(array $data): array
+    {
+        if (($data['invoiceable_type'] ?? null) !== \App\Models\ContractPerformanceAct::class
+            || empty($data['invoiceable_id'])) {
+            return $data;
+        }
+
+        $act = \App\Models\ContractPerformanceAct::query()
+            ->with('contract')
+            ->whereKey((int) $data['invoiceable_id'])
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        if (! $act->isReadyForPayment()) {
+            throw new \DomainException(trans_message('payments.validation.act_not_ready_for_invoice'));
+        }
+
+        $contract = $act->contract;
+        if (! $contract instanceof Contract
+            || (int) ($data['organization_id'] ?? 0) !== (int) $contract->organization_id
+            || (isset($data['project_id']) && (int) $data['project_id'] !== (int) $act->project_id)) {
+            throw new \DomainException(trans_message('payments.validation.invoice_basis_scope_mismatch'));
+        }
+
+        $direction = (string) ($data['direction'] ?? InvoiceDirection::INCOMING->value);
+        $idempotencyKey = trim((string) ($data['idempotency_key'] ?? ''));
+        if ($idempotencyKey === '' || mb_strlen($idempotencyKey) > 128) {
+            throw new \DomainException(trans_message('payments.validation.invoice_idempotency_key_required'));
+        }
+
+        $originKey = sprintf(
+            'performance-act:%d:%s:%s',
+            $act->id,
+            $direction,
+            hash('sha256', $idempotencyKey)
+        );
+        $requestedAmount = BigDecimal::of((string) ($data['amount'] ?? $act->amount))
+            ->toScale(2, RoundingMode::HalfUp);
+        $existing = PaymentDocument::query()
+            ->where('organization_id', $contract->organization_id)
+            ->where('origin_key', $originKey)
+            ->first();
+
+        if ($existing instanceof PaymentDocument) {
+            if (! BigDecimal::of((string) $existing->amount)->isEqualTo($requestedAmount)) {
+                throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+            }
+
+            unset($data['idempotency_key']);
+
+            return array_merge($data, [
+                'amount' => $existing->amount,
+                'vat_rate' => $existing->vat_rate,
+                'amount_without_vat' => $existing->amount_without_vat,
+                'vat_amount' => $existing->vat_amount,
+                'origin_key' => $originKey,
+            ]);
+        }
+
+        if (! $requestedAmount->isPositive()) {
+            throw new \DomainException(trans_message('payments.validation.amount_positive'));
+        }
+
+        $allocationQuery = PaymentDocument::query()
+            ->where('organization_id', $contract->organization_id)
+            ->where('invoiceable_type', \App\Models\ContractPerformanceAct::class)
+            ->where('invoiceable_id', $act->id)
+            ->where('direction', $direction)
+            ->whereIn('status', [
+                PaymentDocumentStatus::SUBMITTED->value,
+                PaymentDocumentStatus::PENDING_APPROVAL->value,
+                PaymentDocumentStatus::APPROVED->value,
+                PaymentDocumentStatus::SCHEDULED->value,
+                PaymentDocumentStatus::PARTIALLY_PAID->value,
+                PaymentDocumentStatus::PAID->value,
+            ]);
+        $allocatedAmount = BigDecimal::of((string) (clone $allocationQuery)->sum('amount'))
+            ->toScale(2, RoundingMode::HalfUp);
+        $allocatedAmountWithoutVat = BigDecimal::of((string) (clone $allocationQuery)->sum('amount_without_vat'))
+            ->toScale(2, RoundingMode::HalfUp);
+        $allocatedVatAmount = BigDecimal::of((string) (clone $allocationQuery)->sum('vat_amount'))
+            ->toScale(2, RoundingMode::HalfUp);
+        $actAmount = BigDecimal::of((string) $act->amount)->toScale(2, RoundingMode::HalfUp);
+        $availableAmount = $actAmount->minus($allocatedAmount)->toScale(2, RoundingMode::HalfUp);
+        if ($requestedAmount->isGreaterThan($availableAmount)) {
+            throw new \DomainException(trans_message('payments.validation.invoice_amount_exceeds_act_balance'));
+        }
+
+        $ratio = $requestedAmount->dividedBy($actAmount, 8, RoundingMode::HalfUp);
+        $actAmountWithoutVat = BigDecimal::of((string) ($act->amount_without_vat ?? 0));
+        if (! $actAmountWithoutVat->isPositive() && $actAmount->isPositive()) {
+            $vatRate = BigDecimal::of((string) ($act->vat_rate ?? 0));
+            $actAmountWithoutVat = $actAmount->dividedBy(
+                BigDecimal::one()->plus($vatRate->dividedBy(100, 8, RoundingMode::HalfUp)),
+                2,
+                RoundingMode::HalfUp
+            );
+        }
+        $actVatAmount = $act->vat_amount === null
+            ? $actAmount->minus($actAmountWithoutVat)->toScale(2, RoundingMode::HalfUp)
+            : BigDecimal::of((string) $act->vat_amount)->toScale(2, RoundingMode::HalfUp);
+        if ($requestedAmount->isEqualTo($availableAmount)) {
+            $amountWithoutVat = $actAmountWithoutVat
+                ->minus($allocatedAmountWithoutVat)
+                ->toScale(2, RoundingMode::HalfUp);
+            $vatAmount = $actVatAmount
+                ->minus($allocatedVatAmount)
+                ->toScale(2, RoundingMode::HalfUp);
+        } else {
+            $amountWithoutVat = $actAmountWithoutVat->multipliedBy($ratio)->toScale(2, RoundingMode::HalfUp);
+            $vatAmount = $requestedAmount->minus($amountWithoutVat)->toScale(2, RoundingMode::HalfUp);
+        }
+        unset($data['idempotency_key']);
+
+        return array_merge($data, [
+            'document_type' => PaymentDocumentType::INVOICE->value,
+            'project_id' => $act->project_id,
+            'invoice_type' => InvoiceType::ACT->value,
+            'amount' => (string) $requestedAmount,
+            'currency' => $act->currency ?: 'RUB',
+            'vat_rate' => $act->vat_rate ?? 0,
+            'amount_without_vat' => (string) $amountWithoutVat,
+            'vat_amount' => (string) $vatAmount,
+            'status' => PaymentDocumentStatus::SUBMITTED->value,
+            'issued_at' => now(),
+            'origin_key' => $originKey,
+        ]);
     }
 
     /**
@@ -1023,10 +1295,10 @@ class PaymentDocumentService
         ], $additionalData);
 
         $document = $this->create($data);
-        
+
         // Автоматически определяем получателя при создании из договора
         $this->detectAndSetRecipientOrganization($document);
-        
+
         return $document;
     }
 
@@ -1045,6 +1317,23 @@ class PaymentDocumentService
         return $data;
     }
 
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, int|string|null>
+     */
+    private function paymentDocumentFailureContext(array $data): array
+    {
+        return [
+            'organization_id' => isset($data['organization_id']) ? (int) $data['organization_id'] : null,
+            'project_id' => isset($data['project_id']) ? (int) $data['project_id'] : null,
+            'document_type' => isset($data['document_type']) ? (string) $data['document_type'] : null,
+            'source_type' => isset($data['source_type']) ? (string) $data['source_type'] : null,
+            'source_id' => isset($data['source_id']) ? (int) $data['source_id'] : null,
+            'invoiceable_type' => isset($data['invoiceable_type']) ? (string) $data['invoiceable_type'] : null,
+            'invoiceable_id' => isset($data['invoiceable_id']) ? (int) $data['invoiceable_id'] : null,
+        ];
+    }
+
     private function paymentOperationDate(array $paymentData): \Illuminate\Support\Carbon
     {
         $date = $paymentData['transaction_date'] ?? $paymentData['payment_date'] ?? now();
@@ -1058,22 +1347,21 @@ class PaymentDocumentService
 
     /**
      * Определить и установить получателя-организацию для документа
-     * 
+     *
      * Проверяет прямую связь через payee_organization_id или через подрядчика
      * Кэширует результат в recipient_organization_id для быстрого поиска
-     * 
-     * @param PaymentDocument $document Документ
-     * @return void
+     *
+     * @param  PaymentDocument  $document  Документ
      */
     public function detectAndSetRecipientOrganization(PaymentDocument $document): void
     {
         try {
             $recipientOrgId = $document->getRecipientOrganizationId();
-            
+
             if ($recipientOrgId && $document->recipient_organization_id !== $recipientOrgId) {
                 $document->recipient_organization_id = $recipientOrgId;
                 $document->saveQuietly();
-                
+
                 Log::debug('payment_document.recipient_detected', [
                     'document_id' => $document->id,
                     'recipient_org_id' => $recipientOrgId,
@@ -1097,7 +1385,7 @@ class PaymentDocumentService
             $estimateItemId = (int) ($splitData['estimate_item_id'] ?? 0);
             $estimateItem = $this->resolveEstimateItemForDocument($document, $estimateItemId);
 
-            if (!$estimateItem) {
+            if (! $estimateItem) {
                 throw new \DomainException(sprintf(
                     trans_message('payments.validation.estimate_item_not_found'),
                     $estimateItemId
@@ -1183,6 +1471,11 @@ class PaymentDocumentService
         return app(PriceDeviationAnalyzer::class)->analyze($splits);
     }
 
+    public function synchronizeFinancialProjections(PaymentDocument $document): void
+    {
+        $this->synchronizeEstimateItemsPaymentProgress($document->fresh());
+    }
+
     private function synchronizeEstimateItemsPaymentProgress(PaymentDocument $document): void
     {
         $document->loadMissing('estimateSplits');
@@ -1204,7 +1497,7 @@ class PaymentDocumentService
                 ->whereKey($estimateItemId)
                 ->first();
 
-            if (!$estimateItem) {
+            if (! $estimateItem) {
                 continue;
             }
 
@@ -1219,30 +1512,46 @@ class PaymentDocumentService
                 ->with('document')
                 ->get();
 
-            $paidQuantity = 0.0;
-            $paidAmount = 0.0;
+            $paidQuantity = BigDecimal::zero();
+            $paidAmount = BigDecimal::zero();
 
             foreach ($splits as $split) {
                 $splitDocument = $split->document;
 
-                if (!$splitDocument || (float) $splitDocument->amount <= 0 || (float) $splitDocument->paid_amount <= 0) {
+                if (! $splitDocument) {
                     continue;
                 }
 
-                $paymentRatio = min(1.0, (float) $splitDocument->paid_amount / (float) $splitDocument->amount);
-                $splitQuantity = (float) ($split->quantity ?? 0);
-                $splitPaidQuantity = $splitQuantity * $paymentRatio;
+                $documentAmount = BigDecimal::of((string) $splitDocument->amount);
+                $documentPaidAmount = BigDecimal::of((string) $splitDocument->paid_amount);
+                if ($documentAmount->isLessThanOrEqualTo(0) || $documentPaidAmount->isLessThanOrEqualTo(0)) {
+                    continue;
+                }
 
-                $paidQuantity += $splitPaidQuantity;
-                $paidAmount += (float) ($split->amount ?? 0) * $paymentRatio;
+                $paymentRatio = $documentPaidAmount->dividedBy($documentAmount, 18, RoundingMode::HALF_UP);
+                if ($paymentRatio->isGreaterThan(1)) {
+                    $paymentRatio = BigDecimal::one();
+                }
+                $splitPaidQuantity = BigDecimal::of((string) ($split->quantity ?? 0))
+                    ->multipliedBy($paymentRatio);
+
+                $paidQuantity = $paidQuantity->plus($splitPaidQuantity);
+                $paidAmount = $paidAmount->plus(
+                    BigDecimal::of((string) ($split->amount ?? 0))->multipliedBy($paymentRatio)
+                );
             }
 
-            $plannedQuantity = (float) ($estimateItem->quantity_total ?? $estimateItem->quantity ?? 0);
-            $actualUnitPrice = $paidQuantity > 0 ? round($paidAmount / $paidQuantity, 4) : null;
+            $plannedQuantity = BigDecimal::of((string) ($estimateItem->quantity_total ?? $estimateItem->quantity ?? 0));
+            $hasPaidQuantity = $paidQuantity->isGreaterThan(0);
+            $actualUnitPrice = $hasPaidQuantity
+                ? (string) $paidAmount->dividedBy($paidQuantity, 4, RoundingMode::HALF_UP)
+                : null;
 
             $estimateItem->update([
                 'actual_unit_price' => $actualUnitPrice,
-                'actual_quantity' => $paidQuantity > 0 ? round($paidQuantity, 8) : null,
+                'actual_quantity' => $hasPaidQuantity
+                    ? (string) $paidQuantity->toScale(8, RoundingMode::HALF_UP)
+                    : null,
                 'procurement_status' => $this->resolveEstimateItemPaymentStatus($paidQuantity, $plannedQuantity),
             ]);
 
@@ -1256,13 +1565,16 @@ class PaymentDocumentService
         }
     }
 
-    private function resolveEstimateItemPaymentStatus(float $paidQuantity, float $plannedQuantity): string
+    private function resolveEstimateItemPaymentStatus(BigDecimal $paidQuantity, BigDecimal $plannedQuantity): string
     {
-        if ($paidQuantity <= 0.00000001) {
+        $epsilon = BigDecimal::of('0.00000001');
+
+        if ($paidQuantity->isLessThanOrEqualTo($epsilon)) {
             return 'pending';
         }
 
-        if ($plannedQuantity > 0 && $paidQuantity + 0.00000001 >= $plannedQuantity) {
+        if ($plannedQuantity->isGreaterThan(0)
+            && $paidQuantity->plus($epsilon)->isGreaterThanOrEqualTo($plannedQuantity)) {
             return 'paid';
         }
 

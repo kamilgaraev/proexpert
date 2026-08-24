@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Customer;
 
+use App\BusinessModules\Core\Payments\DTOs\FinancialBalance;
+use App\BusinessModules\Core\Payments\Services\FinancialBalanceQuery;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\NotificationQueryService;
@@ -25,6 +27,8 @@ use App\Services\Contract\ContractSideResolverService;
 use App\Services\Customer\Reporting\Sla\Enums\CustomerWorkflowEventType;
 use App\Services\Customer\Reporting\Sla\Services\CustomerWorkflowEventRecorder;
 use App\Services\Project\ProjectCustomerResolverService;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -40,6 +44,7 @@ class CustomerPortalService
         private readonly ContractSideResolverService $contractSideResolverService,
         private readonly NotificationQueryService $notificationQueryService,
         private readonly CustomerWorkflowEventRecorder $workflowEventRecorder,
+        private readonly FinancialBalanceQuery $financialBalances,
     ) {}
 
     public function getDashboard(User $user, int $organizationId): array
@@ -159,18 +164,25 @@ class CustomerPortalService
                 'projects.organizations',
                 'contractor:id,name',
                 'performanceActs:id,contract_id,amount,is_approved',
-                'payments:id,contract_id,amount',
             ])
             ->latest('date')
             ->paginate($perPage, ['*'], 'page', $page);
 
+        $accessibleContracts = collect($contracts->items())
+            ->filter(fn (Contract $contract): bool => $this->canAccessContract($organizationId, $contract))
+            ->values();
+        $balances = $this->financialBalances->forContracts(
+            $organizationId,
+            $accessibleContracts->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+        );
+
         return [
-            'items' => collect($contracts->items())
-                ->filter(fn (Contract $contract): bool => $this->canAccessContract($organizationId, $contract))
-                ->values()
-                ->map(
-                    fn (Contract $contract): array => $this->mapCustomerContract($contract)
-                )->all(),
+            'items' => $accessibleContracts
+                ->map(fn (Contract $contract): array => $this->mapCustomerContract(
+                    $contract,
+                    $balances[(int) $contract->id]
+                ))
+                ->all(),
             'meta' => $this->buildContractsMeta($contracts, $appliedFilters),
         ];
     }
@@ -186,8 +198,8 @@ class CustomerPortalService
             'supplier:id,name',
             'agreements:id,contract_id,number,agreement_date,change_amount',
             'performanceActs:id,contract_id,amount,is_approved',
-            'payments:id,contract_id,amount',
-            'stateEvents:id,contract_id,event_type,event_data,created_at',
+            'payments:id,invoiceable_id,invoiceable_type,amount,paid_amount,document_date,invoice_type,metadata,document_number',
+            'stateEvents:id,contract_id,event_type,metadata,created_at',
         ]);
 
         if (! $this->canAccessContract($organizationId, $contract, $user)) {
@@ -195,7 +207,10 @@ class CustomerPortalService
         }
 
         return [
-            'contract' => $this->mapCustomerContractDetails($contract),
+            'contract' => $this->mapCustomerContractDetails(
+                $contract,
+                $this->financialBalances->forContract($contract),
+            ),
         ];
     }
 
@@ -1161,18 +1176,18 @@ class CustomerPortalService
         ];
     }
 
-    private function mapCustomerContract(Contract $contract): array
+    private function mapCustomerContract(Contract $contract, FinancialBalance $balance): array
     {
         $project = $contract->project;
         $contractSide = $this->contractSideResolverService->resolve($contract);
         $performedAmount = $contract->relationLoaded('performanceActs')
-            ? (float) $contract->performanceActs->where('is_approved', true)->sum('amount')
-            : 0.0;
-        $paidAmount = $contract->relationLoaded('payments')
-            ? (float) $contract->payments->sum('paid_amount')
-            : 0.0;
-        $totalAmount = $contract->total_amount !== null ? (float) $contract->total_amount : null;
-        $remainingAmount = $totalAmount !== null ? max(0.0, $totalAmount - $performedAmount) : null;
+            ? $this->sumMoney($contract->performanceActs->where('is_approved', true)->pluck('amount'))
+            : BigDecimal::zero()->toScale(2);
+        $totalAmount = $contract->total_amount !== null ? $this->money($contract->total_amount) : null;
+        $remainingAmount = $totalAmount?->minus($performedAmount);
+        if ($remainingAmount?->isNegative()) {
+            $remainingAmount = BigDecimal::zero()->toScale(2);
+        }
 
         return [
             'id' => $contract->id,
@@ -1198,10 +1213,14 @@ class CustomerPortalService
             'date' => optional($contract->date)?->format('Y-m-d'),
             'start_date' => optional($contract->start_date)?->format('Y-m-d'),
             'end_date' => optional($contract->end_date)?->format('Y-m-d'),
-            'total_amount' => $totalAmount,
-            'performed_amount' => round($performedAmount, 2),
-            'paid_amount' => round($paidAmount, 2),
-            'remaining_amount' => $remainingAmount !== null ? round($remainingAmount, 2) : null,
+            'total_amount' => $totalAmount !== null ? (string) $totalAmount : null,
+            'performed_amount' => (string) $performedAmount,
+            'invoiced_amount' => $balance->invoicedAmount,
+            'paid_amount' => $balance->paidAmount,
+            'refunded_amount' => $balance->refundedAmount,
+            'debt_amount' => $balance->debtAmount,
+            'overpayment_amount' => $balance->overpaymentAmount,
+            'remaining_amount' => $remainingAmount !== null ? (string) $remainingAmount : null,
             'is_self_execution' => (bool) $contract->is_self_execution,
             'contract_category' => $contract->contract_category,
             'customer' => $contractSide['customer_organization'],
@@ -1210,9 +1229,9 @@ class CustomerPortalService
         ];
     }
 
-    private function mapCustomerContractDetails(Contract $contract): array
+    private function mapCustomerContractDetails(Contract $contract, FinancialBalance $balance): array
     {
-        $base = $this->mapCustomerContract($contract);
+        $base = $this->mapCustomerContract($contract, $balance);
         $agreements = $contract->relationLoaded('agreements') ? $contract->agreements : collect();
         $acts = $contract->relationLoaded('performanceActs') ? $contract->performanceActs : collect();
         $payments = $contract->relationLoaded('payments') ? $contract->payments : collect();
@@ -1222,11 +1241,19 @@ class CustomerPortalService
             'financial_summary' => [
                 'total_amount' => $base['total_amount'],
                 'performed_amount' => $base['performed_amount'],
+                'invoiced_amount' => $base['invoiced_amount'],
                 'paid_amount' => $base['paid_amount'],
+                'refunded_amount' => $base['refunded_amount'],
+                'debt_amount' => $base['debt_amount'],
+                'overpayment_amount' => $base['overpayment_amount'],
                 'remaining_amount' => $base['remaining_amount'],
-                'advance_amount' => $contract->actual_advance_amount !== null ? (float) $contract->actual_advance_amount : null,
-                'planned_advance_amount' => $contract->planned_advance_amount !== null ? (float) $contract->planned_advance_amount : null,
-                'warranty_retention_amount' => (float) $contract->warranty_retention_amount,
+                'advance_amount' => $contract->actual_advance_amount !== null
+                    ? (string) $this->money($contract->actual_advance_amount)
+                    : null,
+                'planned_advance_amount' => $contract->planned_advance_amount !== null
+                    ? (string) $this->money($contract->planned_advance_amount)
+                    : null,
+                'warranty_retention_amount' => (string) $this->money($contract->warranty_retention_amount),
             ],
             'agreements_summary' => [
                 'count' => $agreements->count(),
@@ -1810,10 +1837,14 @@ class CustomerPortalService
     private function buildProjectFinancePayload(int $organizationId, Project $project, ?User $user = null): array
     {
         $contracts = $this->baseCustomerContractQuery($organizationId, ['project_id' => $project->id], $project, $user)
-            ->with(['performanceActs:id,contract_id,amount,is_approved', 'payments:id,contract_id,amount'])
+            ->with(['performanceActs:id,contract_id,amount,is_approved'])
             ->get();
 
         $totals = $this->calculateContractsTotals($contracts);
+        $paymentDelayAmount = BigDecimal::of($totals['performed_amount'])->minus($totals['paid_amount']);
+        if ($paymentDelayAmount->isNegative()) {
+            $paymentDelayAmount = BigDecimal::zero()->toScale(2);
+        }
 
         return [
             'project' => [
@@ -1822,13 +1853,16 @@ class CustomerPortalService
             ],
             'totals' => $totals,
             'deviation' => [
-                'planned_budget' => $project->budget_amount !== null ? (float) $project->budget_amount : null,
+                'planned_budget' => $project->budget_amount !== null
+                    ? (string) $this->money($project->budget_amount)
+                    : null,
                 'contracts_total' => $totals['total_amount'],
                 'delta' => $project->budget_amount !== null
-                    ? round((float) $project->budget_amount - (float) $totals['total_amount'], 2)
+                    ? (string) $this->money($project->budget_amount)->minus($totals['total_amount'])
                     : null,
-                'performed_vs_paid_delta' => round((float) $totals['performed_amount'] - (float) $totals['paid_amount'], 2),
-                'payment_delay_amount' => round(max(0, (float) $totals['performed_amount'] - (float) $totals['paid_amount']), 2),
+                'performed_vs_paid_delta' => (string) BigDecimal::of($totals['performed_amount'])
+                    ->minus($totals['paid_amount']),
+                'payment_delay_amount' => (string) $paymentDelayAmount,
                 'problem_flags' => $this->resolveFinanceDeviationFlags($project, $totals),
             ],
         ];
@@ -1836,28 +1870,68 @@ class CustomerPortalService
 
     private function calculateContractsTotals(Collection $contracts): array
     {
-        $totalAmount = 0.0;
-        $performedAmount = 0.0;
-        $paidAmount = 0.0;
-        $advanceAmount = 0.0;
-        $retentionAmount = 0.0;
+        $totalAmount = BigDecimal::zero()->toScale(2);
+        $performedAmount = BigDecimal::zero()->toScale(2);
+        $paidAmount = BigDecimal::zero()->toScale(2);
+        $advanceAmount = BigDecimal::zero()->toScale(2);
+        $retentionAmount = BigDecimal::zero()->toScale(2);
+        $refundedAmount = BigDecimal::zero()->toScale(2);
+        $invoicedAmount = BigDecimal::zero()->toScale(2);
+        $debtAmount = BigDecimal::zero()->toScale(2);
+        $overpaymentAmount = BigDecimal::zero()->toScale(2);
+        $contractIds = $contracts->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+        $organizationId = (int) ($contracts->first()?->organization_id ?? 0);
+        $balances = $organizationId > 0
+            ? $this->financialBalances->forContracts($organizationId, $contractIds)
+            : [];
 
         foreach ($contracts as $contract) {
-            $totalAmount += (float) ($contract->total_amount ?? 0);
-            $performedAmount += (float) $contract->performanceActs->where('is_approved', true)->sum('amount');
-            $paidAmount += (float) $contract->payments->sum('paid_amount');
-            $advanceAmount += (float) ($contract->actual_advance_amount ?? 0);
-            $retentionAmount += (float) $contract->warranty_retention_amount;
+            $balance = $balances[(int) $contract->id] ?? null;
+            $totalAmount = $totalAmount->plus((string) ($contract->total_amount ?? 0));
+            $performedAmount = $performedAmount->plus(
+                $this->sumMoney($contract->performanceActs->where('is_approved', true)->pluck('amount'))
+            );
+            $paidAmount = $paidAmount->plus($balance?->paidAmount ?? '0');
+            $refundedAmount = $refundedAmount->plus($balance?->refundedAmount ?? '0');
+            $invoicedAmount = $invoicedAmount->plus($balance?->invoicedAmount ?? '0');
+            $debtAmount = $debtAmount->plus($balance?->debtAmount ?? '0');
+            $overpaymentAmount = $overpaymentAmount->plus($balance?->overpaymentAmount ?? '0');
+            $advanceAmount = $advanceAmount->plus($balance?->advanceAmount ?? '0');
+            $retentionAmount = $retentionAmount->plus((string) $contract->warranty_retention_amount);
+        }
+
+        $remainingAmount = $totalAmount->minus($performedAmount);
+        if ($remainingAmount->isNegative()) {
+            $remainingAmount = BigDecimal::zero()->toScale(2);
         }
 
         return [
-            'total_amount' => round($totalAmount, 2),
-            'performed_amount' => round($performedAmount, 2),
-            'paid_amount' => round($paidAmount, 2),
-            'remaining_amount' => round(max(0, $totalAmount - $performedAmount), 2),
-            'advance_amount' => round($advanceAmount, 2),
-            'retention_amount' => round($retentionAmount, 2),
+            'total_amount' => (string) $totalAmount,
+            'performed_amount' => (string) $performedAmount,
+            'paid_amount' => (string) $paidAmount,
+            'refunded_amount' => (string) $refundedAmount,
+            'invoiced_amount' => (string) $invoicedAmount,
+            'debt_amount' => (string) $debtAmount,
+            'overpayment_amount' => (string) $overpaymentAmount,
+            'remaining_amount' => (string) $remainingAmount,
+            'advance_amount' => (string) $advanceAmount,
+            'retention_amount' => (string) $retentionAmount,
         ];
+    }
+
+    private function money(mixed $amount): BigDecimal
+    {
+        return BigDecimal::of((string) ($amount ?? 0))->toScale(2, RoundingMode::HalfUp);
+    }
+
+    private function sumMoney(iterable $amounts): BigDecimal
+    {
+        $total = BigDecimal::zero()->toScale(2);
+        foreach ($amounts as $amount) {
+            $total = $total->plus((string) ($amount ?? 0));
+        }
+
+        return $total->toScale(2, RoundingMode::HalfUp);
     }
 
     private function buildProjectRisks(int $organizationId, ?User $user = null): array

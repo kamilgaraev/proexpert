@@ -10,20 +10,20 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Enums\CurrencyCode;
-use App\Services\ActReport\ActReportAccessService;
-use App\Services\ActReport\ActReportFileService;
-use App\Services\ActReport\ActReportWorkflowService;
 use App\Services\Acting\ActingActWizardService;
 use App\Services\Acting\ActingQuantityReservationService;
 use App\Services\Acting\ActingQuantityStatus;
+use App\Services\ActReport\ActReportAccessService;
+use App\Services\ActReport\ActReportFileService;
+use App\Services\ActReport\ActReportWorkflowService;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\DrillDown\AcceptedProductionDrillDownProvider;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\DrillDown\AcceptedProductionDrillDownSource;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\DrillDown\EloquentAcceptedProductionDrillDownSource;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionHistoryBoundary;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionMetric;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionUniverseStream;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ApprovedAcceptanceRate;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ProductionAcceptanceFact;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\DrillDown\AcceptedProductionDrillDownProvider;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\DrillDown\AcceptedProductionDrillDownSource;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\DrillDown\EloquentAcceptedProductionDrillDownSource;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionEventReducer;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionEventUniverse;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionFilterValidator;
@@ -46,10 +46,14 @@ use ReflectionClass;
 final readonly class AcceptedProductionCandidateContract
 {
     public const CODE = 'accepted_production_progress';
+
     public const FORMULA_VERSION = 'accepted_production.v1';
+
     public const SOURCE_SCHEMA_VERSION = 'production_acceptance_events_v2';
+
     public const FORMULA_HASH = '839ea0b2787a0d73872bf5f7a63292437abaae05abb108ae92731abe3264f06b';
-    public const SOURCE_HASH = 'fe3f61f444324aa672f7355b5089d7f949a78ff905bf78cc173387bbf5a6fdf1';
+
+    public const SOURCE_HASH = '5f4987e6796e921d86e7e4d05ec9775d4d00ed96aa10a4d55003b74a544b4268';
 
     public function filters(): array
     {

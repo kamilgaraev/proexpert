@@ -162,12 +162,18 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
 
     // === AGREEMENTS (в контексте проекта) ===
     Route::prefix('agreements')->group(function () {
-        Route::get('/', [AgreementController::class, 'index']);
-        Route::post('/', [AgreementController::class, 'store']);
-        Route::get('/{agreement}', [AgreementController::class, 'show']);
-        Route::put('/{agreement}', [AgreementController::class, 'update']);
-        Route::delete('/{agreement}', [AgreementController::class, 'destroy']);
-        Route::post('/{agreement}/apply-changes', [AgreementController::class, 'applyChanges']);
+        Route::get('/', [AgreementController::class, 'index'])
+            ->middleware('authorize:agreements.view,project,project');
+        Route::post('/', [AgreementController::class, 'store'])
+            ->middleware('authorize:agreements.create,project,project');
+        Route::get('/{agreement}', [AgreementController::class, 'show'])
+            ->middleware('authorize:agreements.view,project,project');
+        Route::put('/{agreement}', [AgreementController::class, 'update'])
+            ->middleware('authorize:agreements.edit,project,project');
+        Route::delete('/{agreement}', [AgreementController::class, 'destroy'])
+            ->middleware('authorize:agreements.delete,project,project');
+        Route::post('/{agreement}/apply-changes', [AgreementController::class, 'applyChanges'])
+            ->middleware('authorize:agreements.edit,project,project');
     });
 
     // === SCHEDULES ===

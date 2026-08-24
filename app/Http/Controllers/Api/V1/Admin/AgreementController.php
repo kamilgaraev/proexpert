@@ -11,6 +11,7 @@ use App\Http\Resources\Api\V1\Admin\Contract\Agreement\SupplementaryAgreementRes
 use App\Http\Responses\AdminResponse;
 use App\Services\Contract\ContractService;
 use App\Services\Contract\SupplementaryAgreementService;
+use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,21 +33,21 @@ class AgreementController extends Controller
         $projectId = $this->resolveProjectId($request);
         $organizationId = (int) ($request->user()?->current_organization_id ?? 0);
 
-        if (!$agreement) {
+        if (! $agreement) {
             return ['valid' => false, 'message' => trans_message('agreements.not_found')];
         }
 
-        if (!$agreement->relationLoaded('contract')) {
+        if (! $agreement->relationLoaded('contract')) {
             $agreement->load('contract');
         }
 
         $contract = $agreement->contract;
-        if (!$contract) {
+        if (! $contract) {
             return ['valid' => false, 'message' => trans_message('agreements.contract_not_found')];
         }
 
         $accessibleContract = $this->contractService->getContractById((int) $contract->id, $organizationId, $projectId);
-        if (!$accessibleContract) {
+        if (! $accessibleContract) {
             return ['valid' => false, 'message' => trans_message('agreements.access_denied')];
         }
 
@@ -59,7 +60,7 @@ class AgreementController extends Controller
                 $belongsToProject = (int) $contract->project_id === $projectId;
             }
 
-            if (!$belongsToProject) {
+            if (! $belongsToProject) {
                 return ['valid' => false, 'message' => trans_message('agreements.contract_not_in_project')];
             }
         }
@@ -80,7 +81,7 @@ class AgreementController extends Controller
         try {
             if ($contractId !== null) {
                 $contractModel = $this->contractService->getContractById($contractId, $organizationId, $projectId);
-                if (!$contractModel) {
+                if (! $contractModel) {
                     return AdminResponse::error(trans_message('agreements.contract_not_found_or_denied'), Response::HTTP_NOT_FOUND);
                 }
 
@@ -128,7 +129,7 @@ class AgreementController extends Controller
             $contractId = (int) $request->validated('contract_id');
             $contract = $this->contractService->getContractById($contractId, $organizationId, $project);
 
-            if (!$contract) {
+            if (! $contract) {
                 return AdminResponse::error(trans_message('agreements.contract_not_found_or_denied'), Response::HTTP_NOT_FOUND);
             }
 
@@ -158,7 +159,7 @@ class AgreementController extends Controller
             $agreementModel = $this->service->getById($agreement);
             $validation = $this->validateAgreementAccess($request, $agreementModel);
 
-            if (!$validation['valid']) {
+            if (! $validation['valid']) {
                 return AdminResponse::error($validation['message'], Response::HTTP_NOT_FOUND);
             }
 
@@ -181,14 +182,14 @@ class AgreementController extends Controller
             $agreementModel = $this->service->getById($agreement);
             $validation = $this->validateAgreementAccess($request, $agreementModel);
 
-            if (!$validation['valid']) {
+            if (! $validation['valid']) {
                 return AdminResponse::error($validation['message'], Response::HTTP_NOT_FOUND);
             }
 
             $dto = $request->toDto((int) $agreementModel->contract_id);
             $updated = $this->service->update($agreement, $dto);
 
-            if (!$updated) {
+            if (! $updated) {
                 return AdminResponse::error(trans_message('agreements.not_found'), Response::HTTP_NOT_FOUND);
             }
 
@@ -196,6 +197,8 @@ class AgreementController extends Controller
                 new SupplementaryAgreementResource($this->service->getById($agreement)),
                 trans_message('agreements.updated')
             );
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_CONFLICT);
         } catch (Throwable $e) {
             Log::error('agreements.update.failed', [
                 'user_id' => $request->user()?->id,
@@ -215,16 +218,18 @@ class AgreementController extends Controller
             $agreementModel = $this->service->getById($agreement);
             $validation = $this->validateAgreementAccess($request, $agreementModel);
 
-            if (!$validation['valid']) {
+            if (! $validation['valid']) {
                 return AdminResponse::error($validation['message'], Response::HTTP_NOT_FOUND);
             }
 
             $deleted = $this->service->delete($agreement);
-            if (!$deleted) {
+            if (! $deleted) {
                 return AdminResponse::error(trans_message('agreements.not_found'), Response::HTTP_NOT_FOUND);
             }
 
             return AdminResponse::success(null, trans_message('agreements.deleted'));
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_CONFLICT);
         } catch (Throwable $e) {
             Log::error('agreements.destroy.failed', [
                 'user_id' => $request->user()?->id,
@@ -243,7 +248,7 @@ class AgreementController extends Controller
             $agreementModel = $this->service->getById($agreement);
             $validation = $this->validateAgreementAccess($request, $agreementModel);
 
-            if (!$validation['valid']) {
+            if (! $validation['valid']) {
                 return AdminResponse::error($validation['message'], Response::HTTP_NOT_FOUND);
             }
 
@@ -261,9 +266,7 @@ class AgreementController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('agreements.apply_error'), Response::HTTP_BAD_REQUEST, [
-                'details' => [$e->getMessage()],
-            ]);
+            return AdminResponse::error(trans_message('agreements.apply_error'), Response::HTTP_BAD_REQUEST);
         }
     }
 

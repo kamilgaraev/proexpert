@@ -171,13 +171,64 @@ class EstimateVersionComparisonServiceTest extends TestCase
         $this->assertSame('2', $result['changed'][0]['changes']['position_number']['after']);
     }
 
+    public function test_compare_includes_vat_resources_section_totals_and_total_with_vat(): void
+    {
+        $estimate = $this->createEstimate(['total_amount' => 1000, 'total_amount_with_vat' => 1200]);
+        $itemA = [
+            ...$this->item('work-1', 'struct-work-1', '1', 'Work', 'm3', '2.00000000', '500.00', '1000.00'),
+            'resources' => [[
+                'resource_type' => 'material',
+                'name' => 'Concrete',
+                'total_quantity' => '2.0000',
+                'unit_price' => '500.00',
+                'total_amount' => '1000.00',
+            ]],
+        ];
+        $itemB = [
+            ...$this->item('work-1', 'struct-work-1', '1', 'Work', 'm3', '2.00000000', '600.00', '1200.00'),
+            'resources' => [[
+                'resource_type' => 'material',
+                'name' => 'Concrete B25',
+                'total_quantity' => '2.0000',
+                'unit_price' => '600.00',
+                'total_amount' => '1200.00',
+            ]],
+        ];
+        $snapshotA = $this->snapshot([$itemA], totalAmount: '1000.00');
+        $snapshotA['rates'] = ['vat_rate' => '20.00'];
+        $snapshotA['totals']['total_amount_with_vat'] = '1200.00';
+        $snapshotA['sections'][0]['section_total_amount'] = '1000.00';
+        $snapshotB = $this->snapshot([$itemB], totalAmount: '1200.00');
+        $snapshotB['rates'] = ['vat_rate' => '22.50'];
+        $snapshotB['totals']['total_amount_with_vat'] = '1470.00';
+        $snapshotB['sections'][0]['section_total_amount'] = '1200.00';
+
+        $versionA = $this->createVersion($estimate, 1, $snapshotA, totalAmount: '1000.00');
+        $versionB = $this->createVersion($estimate, 2, $snapshotB, totalAmount: '1200.00');
+
+        $result = app(EstimateVersionComparisonService::class)->compare($versionA, $versionB);
+
+        $this->assertSame(270.0, $result['summary']['total_delta_amount_with_vat']);
+        $this->assertSame('20.00', $result['version_a']['vat_rate']);
+        $this->assertSame('22.50', $result['version_b']['vat_rate']);
+        $this->assertSame(1200.0, $result['version_a']['total_amount_with_vat']);
+        $this->assertSame(1470.0, $result['version_b']['total_amount_with_vat']);
+        $this->assertCount(1, $result['section_changes']);
+        $this->assertSame('section', $result['section_changes'][0]['stable_key']);
+        $this->assertSame('1000.00', $result['section_changes'][0]['changes']['section_total_amount']['before']);
+        $this->assertSame('1200.00', $result['section_changes'][0]['changes']['section_total_amount']['after']);
+        $this->assertArrayHasKey('resources', $result['changed'][0]['changes']);
+        $this->assertSame($itemA['resources'], $result['changed'][0]['changes']['resources']['before']);
+        $this->assertSame($itemB['resources'], $result['changed'][0]['changes']['resources']['after']);
+    }
+
     private function createVersion(Estimate $estimate, int $versionNumber, array $snapshot, string $totalAmount = '0.00'): EstimateVersion
     {
         return EstimateVersion::query()->create([
             'estimate_id' => $estimate->id,
             'organization_id' => $estimate->organization_id,
             'version_number' => $versionNumber,
-            'label' => 'Version ' . $versionNumber,
+            'label' => 'Version '.$versionNumber,
             'snapshot_type' => 'manual',
             'estimate_status' => 'draft',
             'snapshot' => $snapshot,
@@ -243,7 +294,7 @@ class EstimateVersionComparisonServiceTest extends TestCase
         return Estimate::query()->create(array_merge([
             'organization_id' => $organization->id,
             'project_id' => $project->id,
-            'number' => 'EST-' . (DB::table('estimates')->count() + 1),
+            'number' => 'EST-'.(DB::table('estimates')->count() + 1),
             'name' => 'Test estimate',
             'type' => 'local',
             'status' => 'draft',

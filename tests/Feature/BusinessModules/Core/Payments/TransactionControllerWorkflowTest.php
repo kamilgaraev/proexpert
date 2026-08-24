@@ -104,7 +104,10 @@ class TransactionControllerWorkflowTest extends TestCase
         ]);
         $transaction = $this->createTransaction($document, PaymentTransactionStatus::COMPLETED, 300);
 
-        $response = $this->withHeaders($context->authHeaders())
+        $firstHeaders = array_merge($context->authHeaders(), [
+            'Idempotency-Key' => 'refund-payment-20260823-0001',
+        ]);
+        $response = $this->withHeaders($firstHeaders)
             ->postJson("/api/v1/admin/payments/transactions/{$transaction->id}/refund", [
                 'amount' => 200,
                 'reason' => 'Частичный возврат',
@@ -112,12 +115,47 @@ class TransactionControllerWorkflowTest extends TestCase
             ]);
 
         $response->assertOk();
-        $response->assertJsonPath('data.original_transaction.status', PaymentTransactionStatus::REFUNDED->value);
+        $response->assertJsonPath('data.original_transaction.status', PaymentTransactionStatus::COMPLETED->value);
         $response->assertJsonPath('data.refund_transaction.amount', -200);
 
         $document->refresh();
         $this->assertEquals(300.0, (float) $document->paid_amount);
         $this->assertEquals(700.0, (float) $document->remaining_amount);
+
+        $conflictingRetry = $this->withHeaders($firstHeaders)
+            ->postJson("/api/v1/admin/payments/transactions/{$transaction->id}/refund", [
+                'amount' => 200,
+                'reason' => 'Возврат переплаты',
+                'refund_date' => now()->toDateString(),
+            ]);
+        $conflictingRetry->assertStatus(422);
+
+        $retryResponse = $this->withHeaders($firstHeaders)
+            ->postJson("/api/v1/admin/payments/transactions/{$transaction->id}/refund", [
+                'amount' => 200,
+                'reason' => 'Частичный возврат',
+                'refund_date' => now()->toDateString(),
+            ]);
+        $retryResponse->assertOk();
+        self::assertSame(1, PaymentTransaction::query()
+            ->where('reverses_transaction_id', $transaction->id)
+            ->count());
+        self::assertSame('300.00', $document->fresh()->paid_amount);
+
+        $secondResponse = $this->withHeaders(array_merge($context->authHeaders(), [
+            'Idempotency-Key' => 'refund-payment-20260823-0002',
+        ]))
+            ->postJson("/api/v1/admin/payments/transactions/{$transaction->id}/refund", [
+                'amount' => 100,
+                'reason' => 'Окончательный возврат',
+                'refund_date' => now()->toDateString(),
+            ]);
+
+        $secondResponse->assertOk();
+        $secondResponse->assertJsonPath('data.original_transaction.status', PaymentTransactionStatus::COMPLETED->value);
+        $document->refresh();
+        $this->assertEquals(200.0, (float) $document->paid_amount);
+        $this->assertEquals(800.0, (float) $document->remaining_amount);
     }
 
     public function test_transaction_index_filters_by_current_organization_document_and_preserves_meta(): void
@@ -149,7 +187,7 @@ class TransactionControllerWorkflowTest extends TestCase
         return PaymentDocument::query()->create(array_merge([
             'organization_id' => $context->organization->id,
             'document_type' => PaymentDocumentType::INVOICE,
-            'document_number' => 'PAY-' . uniqid(),
+            'document_number' => 'PAY-'.uniqid(),
             'document_date' => now()->toDateString(),
             'direction' => InvoiceDirection::OUTGOING,
             'amount' => 1000,

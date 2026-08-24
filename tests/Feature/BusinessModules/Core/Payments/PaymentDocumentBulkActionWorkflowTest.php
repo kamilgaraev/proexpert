@@ -96,6 +96,7 @@ class PaymentDocumentBulkActionWorkflowTest extends TestCase
         ]);
 
         $response = $this->withHeaders($context->authHeaders())
+            ->withHeader('Idempotency-Key', 'payment-numeric-string-1000')
             ->postJson("/api/v1/admin/payments/documents/{$document->id}/register-payment", [
                 'amount' => '1000.00',
                 'payment_method' => 'bank_transfer',
@@ -115,12 +116,40 @@ class PaymentDocumentBulkActionWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_register_payment_preserves_cents_for_large_decimal_amount(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $document = $this->createDocument($context, [
+            'status' => PaymentDocumentStatus::APPROVED,
+            'amount' => '9999999999999.99',
+            'paid_amount' => '0.00',
+            'remaining_amount' => '9999999999999.99',
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->withHeader('Idempotency-Key', 'payment-large-decimal-exact')
+            ->postJson("/api/v1/admin/payments/documents/{$document->id}/register-payment", [
+                'amount' => '9999999999999.99',
+                'payment_method' => 'bank_transfer',
+            ]);
+
+        $response->assertOk();
+        $document->refresh();
+        $this->assertSame('9999999999999.99', (string) $document->paid_amount);
+        $this->assertSame('0.00', (string) $document->remaining_amount);
+        $this->assertDatabaseHas('payment_transactions', [
+            'payment_document_id' => $document->id,
+            'amount' => '9999999999999.99',
+        ]);
+    }
+
     private function createDocument(AdminApiTestContext $context, array $overrides = []): PaymentDocument
     {
         return PaymentDocument::query()->create(array_merge([
             'organization_id' => $context->organization->id,
             'document_type' => PaymentDocumentType::PAYMENT_ORDER,
-            'document_number' => 'BULK-' . uniqid(),
+            'document_number' => 'BULK-'.uniqid(),
             'document_date' => now()->toDateString(),
             'direction' => InvoiceDirection::OUTGOING,
             'amount' => 1000,

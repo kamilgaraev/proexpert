@@ -46,6 +46,9 @@ Route::prefix('act-reports')->group(function () {
     Route::post('{act}/reject', [ActReportsController::class, 'reject'])
         ->name('act-reports.reject');
 
+    Route::post('{act}/annul', [ActReportsController::class, 'annul'])
+        ->name('act-reports.annul');
+
     Route::get('{act}/export/ks3', [ActReportsController::class, 'exportKS3'])
         ->name('act-reports.export.ks3');
 

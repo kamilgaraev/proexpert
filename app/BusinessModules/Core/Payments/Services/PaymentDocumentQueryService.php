@@ -11,8 +11,8 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Contract;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -50,10 +50,10 @@ final class PaymentDocumentQueryService
     ];
 
     /**
-     * @param array<string, mixed> $filters
+     * @param  array<string, mixed>  $filters
      * @return Collection<int, PaymentDocument>
      */
-    public function listForOrganization(int $organizationId, array $filters): Collection
+    public function listForOrganization(int $organizationId, array $filters): LengthAwarePaginator
     {
         $query = PaymentDocument::forOrganization($organizationId)
             ->with([
@@ -76,7 +76,12 @@ final class PaymentDocumentQueryService
         $sortOrder = ($filters['sort_order'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
         $perPage = min(100, max(1, (int) ($filters['per_page'] ?? 100)));
 
-        return $query->orderBy($sortBy, $sortOrder)->limit($perPage)->get();
+        return $query->orderBy($sortBy, $sortOrder)->paginate(
+            $perPage,
+            ['*'],
+            'page',
+            max(1, (int) ($filters['page'] ?? 1))
+        );
     }
 
     public function findDetailed(int $organizationId, int|string $id): PaymentDocument
@@ -174,7 +179,7 @@ final class PaymentDocumentQueryService
     }
 
     /**
-     * @param Collection<int, PaymentDocument>|EloquentCollection<int, PaymentDocument> $documents
+     * @param  Collection<int, PaymentDocument>|EloquentCollection<int, PaymentDocument>  $documents
      * @return array<string, mixed>
      */
     public function summary(Collection|EloquentCollection $documents): array
@@ -194,7 +199,7 @@ final class PaymentDocumentQueryService
     }
 
     /**
-     * @param array<string, mixed> $filters
+     * @param  array<string, mixed>  $filters
      */
     private function applyFilters(Builder $query, array $filters): void
     {
@@ -300,7 +305,7 @@ final class PaymentDocumentQueryService
 
     private function loadSafeMorphRelation(PaymentDocument $document, string $relation, mixed $type): void
     {
-        if (!is_string($type) || $this->resolveMorphClass($type) === null) {
+        if (! is_string($type) || $this->resolveMorphClass($type) === null) {
             return;
         }
 

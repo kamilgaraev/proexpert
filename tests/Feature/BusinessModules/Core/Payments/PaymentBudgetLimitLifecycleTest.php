@@ -20,6 +20,7 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetPeriod;
 use App\BusinessModules\Features\Budgeting\Models\BudgetScenario;
 use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
+use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\User;
@@ -43,7 +44,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
 
         $this->assertSame('available', $check['status']);
         $this->assertSame('allow', $check['decision']);
-        $this->assertSame(600.0, $check['summary']['available_after_request']);
+        $this->assertSame('600.00', $check['summary']['available_after_request']);
     }
 
     public function test_exceeded_limit_is_blocked_without_override_permission(): void
@@ -183,6 +184,32 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'status' => BudgetLimitReservation::STATUS_CONVERTED,
             'amount' => 0.0,
         ]);
+
+        $refund = PaymentTransaction::query()->create([
+            'payment_document_id' => $document->id,
+            'organization_id' => $context->organization->id,
+            'project_id' => $document->project_id,
+            'amount' => -100.0,
+            'currency' => 'RUB',
+            'payment_method' => PaymentMethod::BANK_TRANSFER,
+            'transaction_date' => now()->toDateString(),
+            'status' => PaymentTransactionStatus::COMPLETED,
+            'reverses_transaction_id' => $transaction->id,
+            'created_by_user_id' => $context->user->id,
+        ]);
+        $document->forceFill([
+            'status' => PaymentDocumentStatus::PARTIALLY_PAID,
+            'paid_amount' => 200.0,
+            'remaining_amount' => 100.0,
+        ])->save();
+
+        $this->service()->reconcileAfterLedgerChange($document->fresh(), $refund);
+
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $document->id,
+            'status' => BudgetLimitReservation::STATUS_RESERVED,
+            'amount' => 100.0,
+        ]);
     }
 
     public function test_budgeting_inactive_does_not_block_payment_lifecycle(): void
@@ -209,7 +236,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
     }
 
     /**
-     * @param array{article: BudgetArticle, center: ResponsibilityCenter, line: BudgetLine}|null $budget
+     * @param  array{article: BudgetArticle, center: ResponsibilityCenter, line: BudgetLine}|null  $budget
      */
     private function createDocument(AdminApiTestContext $context, ?array $budget, float $amount): PaymentDocument
     {
@@ -218,7 +245,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'budget_article_id' => $budget['article']->id ?? null,
             'responsibility_center_id' => $budget['center']->id ?? null,
             'document_type' => PaymentDocumentType::INVOICE,
-            'document_number' => 'LIMIT-' . uniqid(),
+            'document_number' => 'LIMIT-'.uniqid(),
             'document_date' => now()->toDateString(),
             'direction' => InvoiceDirection::OUTGOING,
             'amount' => $amount,
@@ -245,6 +272,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
                 'is_system_module' => false,
             ]
         );
+        $module->forceFill(['is_system_module' => true])->save();
 
         OrganizationModuleActivation::query()->create([
             'organization_id' => $organizationId,
@@ -252,6 +280,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'status' => 'active',
             'activated_at' => now(),
         ]);
+        app(ModulePermissionChecker::class)->clearModuleCache($organizationId, 'budgeting');
     }
 
     /**
@@ -261,7 +290,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
     {
         $period = BudgetPeriod::query()->create([
             'organization_id' => $organizationId,
-            'code' => 'PER-' . uniqid(),
+            'code' => 'PER-'.uniqid(),
             'name' => 'Текущий месяц',
             'period_type' => 'month',
             'starts_at' => now()->startOfMonth()->toDateString(),
@@ -271,7 +300,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
 
         $scenario = BudgetScenario::query()->create([
             'organization_id' => $organizationId,
-            'code' => 'BASE-' . uniqid(),
+            'code' => 'BASE-'.uniqid(),
             'name' => 'Базовый',
             'scenario_type' => 'base',
             'is_default' => true,
@@ -280,7 +309,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
 
         $article = BudgetArticle::query()->create([
             'organization_id' => $organizationId,
-            'code' => 'PAY-' . uniqid(),
+            'code' => 'PAY-'.uniqid(),
             'name' => 'Платежи подрядчикам',
             'budget_kind' => 'bdds',
             'flow_direction' => 'outflow',
@@ -291,7 +320,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $center = ResponsibilityCenter::query()->create([
             'organization_id' => $organizationId,
             'center_type' => 'project',
-            'code' => 'CFO-' . uniqid(),
+            'code' => 'CFO-'.uniqid(),
             'name' => 'ЦФО проекта',
             'is_active' => true,
         ]);

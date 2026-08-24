@@ -2,13 +2,18 @@
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
-use App\Http\Controllers\Controller;
+use App\BusinessModules\Features\BudgetEstimates\Services\AutoSchedulingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\MemoryLayerService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateRevisionService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionComparisonService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionRestoreService;
 use App\BusinessModules\Features\BudgetEstimates\Services\WhatIfSimulatorService;
-use App\BusinessModules\Features\BudgetEstimates\Services\AutoSchedulingService;
-use App\BusinessModules\Features\BudgetEstimates\Services\Import\MemoryLayerService;
+use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Estimate\CompareEstimateVersionsRequest;
+use App\Http\Requests\Admin\Estimate\CreateEstimateVersionRequest;
+use App\Http\Requests\Admin\Estimate\EstimateVersionIndexRequest;
+use App\Http\Requests\Admin\Estimate\StartEstimateRevisionRequest;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
@@ -31,36 +36,44 @@ class EstimateVersionController extends Controller
         protected EstimateVersionRestoreService $versionRestoreService,
         protected WhatIfSimulatorService $whatIfService,
         protected AutoSchedulingService $schedulerService,
-        protected MemoryLayerService $memoryLayer
+        protected MemoryLayerService $memoryLayer,
+        private readonly EstimateRevisionService $revisionService
     ) {}
 
-    public function index(int $estimateId): JsonResponse
+    public function index(EstimateVersionIndexRequest $request, int $estimateId): JsonResponse
     {
         $estimate = $this->findEstimateOrFail($estimateId);
         $this->authorize('view', $estimate);
-        
-        $history = $this->versioningService->listVersions($estimate);
-        
-        return AdminResponse::success($history);
+
+        $history = $this->versioningService->paginateVersions(
+            $estimate,
+            (int) $request->validated('page', 1),
+            (int) $request->validated('per_page', 20)
+        );
+
+        return AdminResponse::paginated($history->items(), [
+            'current_page' => $history->currentPage(),
+            'per_page' => $history->perPage(),
+            'total' => $history->total(),
+            'last_page' => $history->lastPage(),
+        ]);
     }
 
-    public function store(Request $request, int $estimateId): JsonResponse
+    public function store(CreateEstimateVersionRequest $request, int $estimateId): JsonResponse
     {
         $estimate = $this->findEstimateOrFail($estimateId);
         $this->authorizeVersionCreation($estimate);
-        
-        $validated = $request->validate([
-            'label' => 'required|string|max:255',
-            'comment' => 'nullable|string|max:1000',
-        ]);
-        
+
+        $validated = $request->validated();
+
         $version = $this->versioningService->createSnapshot(
             estimate: $estimate,
             actorId: (int) $request->user()->id,
             label: $validated['label'],
-            comment: $validated['comment'] ?? null
+            comment: $validated['comment'] ?? null,
+            idempotencyKey: $validated['idempotency_key']
         );
-        
+
         return AdminResponse::success(
             $this->versioningService->resourcePayload($version),
             trans_message('estimate.version_created'),
@@ -68,12 +81,18 @@ class EstimateVersionController extends Controller
         );
     }
 
-    public function compare(Request $request, int $estimateId): JsonResponse
+    public function show(int $estimateId, int $versionId): JsonResponse
     {
-        $validated = $request->validate([
-            'version_a_id' => ['required', 'integer'],
-            'version_b_id' => ['required', 'integer'],
-        ]);
+        $estimate = $this->findEstimateOrFail($estimateId);
+        $this->authorize('view', $estimate);
+        $version = $this->findVersionForEstimate($estimate, $versionId);
+
+        return AdminResponse::success($this->versioningService->resourcePayload($version));
+    }
+
+    public function compare(CompareEstimateVersionsRequest $request, int $estimateId): JsonResponse
+    {
+        $validated = $request->validated();
 
         try {
             $estimate = $this->findEstimateOrFail($estimateId);
@@ -89,8 +108,28 @@ class EstimateVersionController extends Controller
         } catch (ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('estimate.version_not_found'), Response::HTTP_NOT_FOUND);
         }
-        
+
         return AdminResponse::success($comparison);
+    }
+
+    public function startRevision(StartEstimateRevisionRequest $request, int $estimateId): JsonResponse
+    {
+        $estimate = $this->findEstimateOrFail($estimateId);
+        $this->authorizeVersionCreation($estimate);
+        $this->authorize('update', $estimate);
+        $validated = $request->validated();
+        $revision = $this->revisionService->start(
+            estimate: $estimate,
+            actorId: (int) $request->user()->id,
+            reason: $validated['reason'],
+            idempotencyKey: $validated['idempotency_key']
+        );
+
+        return AdminResponse::success(
+            new EstimateResource($revision),
+            trans_message('estimate.revision_started'),
+            Response::HTTP_CREATED
+        );
     }
 
     public function rollback(Request $request, int $estimateId, int $versionId): JsonResponse
@@ -117,7 +156,6 @@ class EstimateVersionController extends Controller
         );
     }
 
-
     public function whatIf(Request $request, int $estimateId): JsonResponse
     {
         return $this->runWhatIfSimulation($request, $estimateId);
@@ -135,11 +173,11 @@ class EstimateVersionController extends Controller
         $request->validate([
             'materials_index' => ['nullable', 'numeric', 'min:0'],
             'machinery_index' => ['nullable', 'numeric', 'min:0'],
-            'labor_index'     => ['nullable', 'numeric', 'min:0'],
-            'global_index'    => ['nullable', 'numeric', 'min:0'],
-            'vat_rate'        => ['nullable', 'numeric', 'min:0', 'max:100'],
-            'overhead_rate'   => ['nullable', 'numeric', 'min:0', 'max:100'],
-            'profit_rate'     => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'labor_index' => ['nullable', 'numeric', 'min:0'],
+            'global_index' => ['nullable', 'numeric', 'min:0'],
+            'vat_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'overhead_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'profit_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
 
         try {
@@ -147,9 +185,11 @@ class EstimateVersionController extends Controller
                 'materials_index', 'machinery_index', 'labor_index', 'global_index',
                 'vat_rate', 'overhead_rate', 'profit_rate',
             ]));
+
             return AdminResponse::success($result);
         } catch (\Throwable $e) {
             Log::error('[EstimateVersion] WhatIf failed', ['error' => $e->getMessage()]);
+
             return AdminResponse::error(
                 trans_message('estimate.what_if_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
@@ -162,7 +202,7 @@ class EstimateVersionController extends Controller
         $estimate = $this->findEstimateOrFail($estimateId);
         $this->authorize('view', $estimate);
         $request->validate([
-            'start_date'        => ['nullable', 'date'],
+            'start_date' => ['nullable', 'date'],
             'workdays_per_week' => ['nullable', 'integer', 'min:1', 'max:7'],
         ]);
 
@@ -170,9 +210,11 @@ class EstimateVersionController extends Controller
             $schedule = $this->schedulerService->generateSchedule($estimate->id, $request->only([
                 'start_date', 'workdays_per_week',
             ]));
+
             return AdminResponse::success($schedule);
         } catch (\Throwable $e) {
             Log::error('[EstimateVersion] Schedule generation failed', ['error' => $e->getMessage()]);
+
             return AdminResponse::error(
                 trans_message('estimate.schedule_generation_error'),
                 Response::HTTP_INTERNAL_SERVER_ERROR
@@ -184,7 +226,7 @@ class EstimateVersionController extends Controller
     {
         $organizationId = Auth::user()?->currentOrganization?->id;
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return AdminResponse::error(
                 trans_message('estimate.organization_not_found'),
                 Response::HTTP_BAD_REQUEST
@@ -192,19 +234,20 @@ class EstimateVersionController extends Controller
         }
 
         $list = $this->memoryLayer->listForOrganization($organizationId);
+
         return AdminResponse::success(['memories' => $list, 'total' => count($list)]);
     }
 
     public function memoryFeedback(Request $request): JsonResponse
     {
         $request->validate([
-            'memory_id'   => ['required', 'integer'],
+            'memory_id' => ['required', 'integer'],
             'was_correct' => ['required', 'boolean'],
         ]);
 
         $this->memoryLayer->feedback(
-            (int)$request->input('memory_id'),
-            (bool)$request->input('was_correct')
+            (int) $request->input('memory_id'),
+            (bool) $request->input('was_correct')
         );
 
         return AdminResponse::success([
@@ -218,7 +261,7 @@ class EstimateVersionController extends Controller
     private function findEstimateOrFail(int $estimateId): Estimate
     {
         $organizationId = request()->attributes->get('current_organization_id');
-        
+
         return Estimate::where('id', $estimateId)
             ->where('organization_id', $organizationId)
             ->firstOrFail();
@@ -240,6 +283,7 @@ class EstimateVersionController extends Controller
 
         if ($policy !== null && method_exists($policy, 'createVersion')) {
             $this->authorize('createVersion', $estimate);
+
             return;
         }
 

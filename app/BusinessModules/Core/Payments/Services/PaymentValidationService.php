@@ -3,12 +3,15 @@
 namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\User;
+use Brick\Math\BigDecimal;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -36,7 +39,7 @@ class PaymentValidationService
         $this->validateBankDetails($data);
 
         if (isset($data['source_type']) && isset($data['source_id'])) {
-            $this->validateSource($data['source_type'], $data['source_id'], $data);
+            $this->validateSource($data['source_type'], $data['source_id'], $data, $existingDocument);
         }
 
         if ($existingDocument && isset($data['amount'])) {
@@ -277,8 +280,12 @@ class PaymentValidationService
     /**
      * Валидация источника документа
      */
-    private function validateSource(string $sourceType, int $sourceId, array $data): void
-    {
+    private function validateSource(
+        string $sourceType,
+        int $sourceId,
+        array $data,
+        ?PaymentDocument $existingDocument = null
+    ): void {
         $organizationId = (int) ($data['organization_id'] ?? 0);
 
         if (! in_array($sourceType, [
@@ -309,9 +316,7 @@ class PaymentValidationService
                     'amount' => $data['amount'],
                 ]);
 
-                // Базовый запрос для подсчета платежей
-                $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
-                    ->where('source_id', $sourceId);
+                $paymentsQuery = $this->effectiveContractDocumentsQuery($source, $existingDocument);
 
                 // Для мультипроектных договоров фильтруем по проекту
                 if ($isMultiProject && $projectId) {
@@ -324,28 +329,27 @@ class PaymentValidationService
                 $invoiceTypeValue = $this->invoiceTypeValue($data['invoice_type'] ?? null);
 
                 $isAdvancePayment = $invoiceTypeValue === 'advance';
-                $isFinalPayment = $invoiceTypeValue === 'final';
-
                 if ($isAdvancePayment) {
                     // Для авансовых платежей проверяем плановую сумму аванса
                     if ($source->planned_advance_amount > 0) {
-                        $advanceQuery = PaymentDocument::where('source_type', Contract::class)
-                            ->where('source_id', $sourceId)
+                        $advanceQuery = $this->effectiveContractDocumentsQuery($source, $existingDocument)
                             ->where('invoice_type', 'advance');
 
                         if ($isMultiProject && $projectId) {
                             $advanceQuery->where('project_id', $projectId);
                         }
 
-                        $existingAdvancePayments = $advanceQuery->sum('amount');
-                        $totalAdvanceWithCurrent = $existingAdvancePayments + $data['amount'];
+                        $existingAdvancePayments = BigDecimal::of((string) $advanceQuery->sum('amount'));
+                        $requestedAmount = BigDecimal::of((string) $data['amount']);
+                        $plannedAdvanceAmount = BigDecimal::of((string) $source->planned_advance_amount);
+                        $totalAdvanceWithCurrent = $existingAdvancePayments->plus($requestedAmount);
 
-                        if ($totalAdvanceWithCurrent > $source->planned_advance_amount) {
+                        if ($totalAdvanceWithCurrent->isGreaterThan($plannedAdvanceAmount)) {
                             throw new \DomainException(
                                 sprintf(
                                     'Сумма авансовых платежей превышает плановый аванс. Доступно: %.2f, запрошено: %.2f',
-                                    $source->planned_advance_amount - $existingAdvancePayments,
-                                    $data['amount']
+                                    (float) (string) $plannedAdvanceAmount->minus($existingAdvancePayments),
+                                    (float) (string) $requestedAmount
                                 )
                             );
                         }
@@ -367,8 +371,7 @@ class PaymentValidationService
                     }
 
                     // Получаем сумму неавансовых платежей (исключая финальные расчеты)
-                    $regularPaymentsQuery = PaymentDocument::where('source_type', Contract::class)
-                        ->where('source_id', $sourceId);
+                    $regularPaymentsQuery = $this->effectiveContractDocumentsQuery($source, $existingDocument);
                     $this->scopePerformedWorkPayments($regularPaymentsQuery);
 
                     if ($isMultiProject && $projectId) {
@@ -401,53 +404,23 @@ class PaymentValidationService
                         );
                     }
                 }
-                // Для финального расчета проверка по общей сумме договора - мягкая (только логирование)
+                $existingTotal = BigDecimal::of((string) $existingPaymentsSum);
+                $requestedAmount = BigDecimal::of((string) $data['amount']);
+                $contractLimit = BigDecimal::of((string) $source->total_amount);
+                $totalWithCurrent = $existingTotal->plus($requestedAmount);
 
-                // Общая проверка: сумма всех платежей не должна превышать общую сумму договора
-                // ИСКЛЮЧЕНИЕ: для финального расчета разрешаем превышение (реальный бизнес-процесс)
-                $totalWithCurrent = $existingPaymentsSum + $data['amount'];
-
-                if (! $isFinalPayment && $totalWithCurrent > $source->total_amount) {
+                if ($totalWithCurrent->isGreaterThan($contractLimit)) {
                     $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
                     throw new \DomainException(
                         sprintf(
                             'Сумма всех платежей превышает общую сумму договора%s. Договор: %.2f, уже оплачено: %.2f, доступно: %.2f, запрошено: %.2f',
                             $projectInfo,
-                            $source->total_amount,
-                            $existingPaymentsSum,
-                            $source->total_amount - $existingPaymentsSum,
-                            $data['amount']
+                            (float) (string) $contractLimit,
+                            (float) (string) $existingTotal,
+                            (float) (string) $contractLimit->minus($existingTotal),
+                            (float) (string) $requestedAmount
                         )
                     );
-                }
-
-                // Для финального расчета - логируем превышение и отправляем уведомление
-                if ($isFinalPayment && $totalWithCurrent > $source->total_amount) {
-                    $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
-                    $excess = $totalWithCurrent - $source->total_amount;
-
-                    Log::info('payment_validation.final_payment_exceeds_contract', [
-                        'contract_id' => $sourceId,
-                        'project_id' => $projectId,
-                        'is_multi_project' => $isMultiProject,
-                        'contract_amount' => $source->total_amount,
-                        'existing_payments' => $existingPaymentsSum,
-                        'new_payment' => $data['amount'],
-                        'total_with_current' => $totalWithCurrent,
-                        'excess_amount' => $excess,
-                        'message' => "Финальный расчет{$projectInfo} превышает сумму договора на ".number_format($excess, 2, '.', ' ').' ₽',
-                    ]);
-
-                    // Создаем уведомление для администраторов организации
-                    if (isset($data['organization_id'])) {
-                        $this->notifyContractExcess(
-                            $data['organization_id'],
-                            $source,
-                            $projectId,
-                            $excess,
-                            $data['amount']
-                        );
-                    }
                 }
             }
 
@@ -727,6 +700,35 @@ class PaymentValidationService
                     InvoiceType::PROGRESS->value,
                 ]);
         });
+    }
+
+    private function effectiveContractDocumentsQuery(
+        Contract $contract,
+        ?PaymentDocument $existingDocument = null
+    ): Builder {
+        return PaymentDocument::query()
+            ->where('organization_id', $contract->organization_id)
+            ->where(function (Builder $query) use ($contract): void {
+                $query->where(function (Builder $legacy) use ($contract): void {
+                    $legacy->where('source_type', Contract::class)
+                        ->where('source_id', $contract->id);
+                })->orWhere(function (Builder $canonical) use ($contract): void {
+                    $canonical->where('invoiceable_type', Contract::class)
+                        ->where('invoiceable_id', $contract->id);
+                });
+            })
+            ->whereIn('status', [
+                PaymentDocumentStatus::SUBMITTED->value,
+                PaymentDocumentStatus::PENDING_APPROVAL->value,
+                PaymentDocumentStatus::APPROVED->value,
+                PaymentDocumentStatus::SCHEDULED->value,
+                PaymentDocumentStatus::PARTIALLY_PAID->value,
+                PaymentDocumentStatus::PAID->value,
+            ])
+            ->when(
+                $existingDocument instanceof PaymentDocument,
+                static fn (Builder $query): Builder => $query->where('id', '!=', $existingDocument->id)
+            );
     }
 
     private function contractorExistsForOrganization(int $contractorId, int $organizationId): bool

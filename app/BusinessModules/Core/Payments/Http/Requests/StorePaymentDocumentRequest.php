@@ -34,6 +34,8 @@ class StorePaymentDocumentRequest extends FormRequest
                 || ($this->input('invoiceable_type') === 'App\\Models\\Contract' && $this->input('invoiceable_id'))
                 || $this->input('contract_id')
             );
+        $isActInvoice = $this->input('invoiceable_type') === ContractPerformanceAct::class
+            && $this->input('invoiceable_id');
 
         return [
             'document_type' => 'required|string|in:payment_request,invoice,payment_order,incoming_payment,expense,offset_act',
@@ -129,6 +131,13 @@ class StorePaymentDocumentRequest extends FormRequest
             'bank_name' => 'nullable|string',
             'attached_documents' => 'nullable|array',
             'metadata' => 'nullable|array',
+            'idempotency_key' => [
+                Rule::requiredIf((bool) $isActInvoice),
+                'nullable',
+                'string',
+                'min:16',
+                'max:128',
+            ],
         ];
     }
 
@@ -145,22 +154,27 @@ class StorePaymentDocumentRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'document_type.required' => 'Тип документа обязателен',
-            'document_type.in' => 'Недопустимый тип документа',
-            'amount.required' => 'Сумма обязательна',
-            'amount.numeric' => 'Сумма должна быть числом',
-            'amount.min' => 'Сумма должна быть не менее 0.01',
-            'vat_rate.min' => 'Ставка НДС не может быть отрицательной',
-            'vat_rate.max' => 'Ставка НДС не может превышать 100%',
-            'currency.size' => 'Код валюты должен состоять из 3 символов',
-            'bank_account.size' => 'Банковский счет должен состоять из 20 символов',
-            'bank_bik.size' => 'БИК должен состоять из 9 символов',
-            'bank_correspondent_account.size' => 'Корреспондентский счет должен состоять из 20 символов',
+            'document_type.required' => trans_message('payments.validation.document_type_required'),
+            'document_type.in' => trans_message('payments.validation.document_type_invalid'),
+            'amount.required' => trans_message('payments.validation.amount_required'),
+            'amount.numeric' => trans_message('payments.validation.amount_numeric'),
+            'amount.min' => trans_message('payments.validation.amount_minimum'),
+            'vat_rate.min' => trans_message('payments.validation.vat_rate_minimum'),
+            'vat_rate.max' => trans_message('payments.validation.vat_rate_maximum'),
+            'currency.size' => trans_message('payments.validation.currency_size'),
+            'bank_account.size' => trans_message('payments.validation.bank_account_size'),
+            'bank_bik.size' => trans_message('payments.validation.bank_bik_size'),
+            'bank_correspondent_account.size' => trans_message('payments.validation.bank_correspondent_account_size'),
         ];
     }
 
     protected function prepareForValidation(): void
     {
+        $idempotencyKey = trim((string) $this->header('Idempotency-Key'));
+        if ($idempotencyKey !== '') {
+            $this->merge(['idempotency_key' => $idempotencyKey]);
+        }
+
         if ($this->has('amount')) {
             $this->merge([
                 'amount' => $this->convertToNumber($this->amount),
@@ -184,11 +198,11 @@ class StorePaymentDocumentRequest extends FormRequest
         $type = $this->input($typeField);
         $id = $this->input($idField);
 
-        if (!is_string($type) || $type === '' || $id === null || $id === '') {
+        if (! is_string($type) || $type === '' || $id === null || $id === '') {
             return;
         }
 
-        if (!is_numeric($id) || !$this->morphReferenceExists($type, (int) $id)) {
+        if (! is_numeric($id) || ! $this->morphReferenceExists($type, (int) $id)) {
             $validator->errors()->add($idField, trans_message('payments.validation.source_not_found'));
         }
     }
@@ -216,11 +230,11 @@ class StorePaymentDocumentRequest extends FormRequest
 
     private function convertToNumber(mixed $value): mixed
     {
-        if (is_numeric($value)) {
-            return $value;
+        if (is_int($value) || is_float($value)) {
+            return (string) $value;
         }
 
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return $value;
         }
 
@@ -240,6 +254,6 @@ class StorePaymentDocumentRequest extends FormRequest
             $value = str_replace(',', '.', $value);
         }
 
-        return is_numeric($value) ? (float) $value : $value;
+        return $value;
     }
 }

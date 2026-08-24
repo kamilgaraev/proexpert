@@ -1,12 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
-use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -49,7 +52,7 @@ class PaymentTransactionService
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_PAYMENT_REGISTER,
-                (float) $data['amount'],
+                (string) $data['amount'],
                 auth()->user(),
                 $data['budget_override_reason'] ?? null,
                 $this->paymentOperationDate($data),
@@ -93,7 +96,7 @@ class PaymentTransactionService
         ]);
 
         // Здесь может быть логика обработки через gateway
-        
+
         $transaction->update([
             'status' => PaymentTransactionStatus::COMPLETED,
         ]);
@@ -127,56 +130,137 @@ class PaymentTransactionService
     /**
      * Возврат платежа
      */
-    public function refundPayment(PaymentTransaction $transaction, float $amount, string $reason): PaymentTransaction
-    {
-        if (!$transaction->canBeRefunded()) {
-            throw new \DomainException(trans_message('payments.validation.transaction_refund_forbidden'));
-        }
+    public function refundPayment(
+        int $transactionId,
+        int $organizationId,
+        int $actorId,
+        string|float|int|null $amount,
+        string $reason,
+        string|\DateTimeInterface|null $refundDate,
+        string $idempotencyKey
+    ): array {
+        return DB::transaction(function () use (
+            $transactionId,
+            $organizationId,
+            $actorId,
+            $amount,
+            $reason,
+            $refundDate,
+            $idempotencyKey
+        ): array {
+            $transaction = PaymentTransaction::query()
+                ->where('organization_id', $organizationId)
+                ->whereKey($transactionId)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        if ($amount > $transaction->amount) {
-            throw new \DomainException(trans_message('payments.validation.transaction_refund_amount_exceeds'));
-        }
+            if (DB::getDriverName() === 'pgsql') {
+                DB::select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [
+                    "refund:{$organizationId}:{$idempotencyKey}",
+                ]);
+            }
 
-        return DB::transaction(function () use ($transaction, $amount, $reason) {
-            // Создать обратную транзакцию
-            $refund = PaymentTransaction::create([
+            $existingRefund = PaymentTransaction::query()
+                ->where('organization_id', $organizationId)
+                ->where('idempotency_key', $idempotencyKey)
+                ->first();
+            if ($existingRefund instanceof PaymentTransaction) {
+                $requestedAmount = $amount === null
+                    ? BigDecimal::of((string) $existingRefund->amount)->abs()
+                    : BigDecimal::of((string) $amount)->toScale(2, RoundingMode::HalfUp);
+                if ((int) $existingRefund->reverses_transaction_id !== $transactionId
+                    || ! BigDecimal::of((string) $existingRefund->amount)->abs()->isEqualTo($requestedAmount)
+                    || (string) data_get($existingRefund->metadata, 'refund_reason') !== $reason
+                    || ($refundDate !== null
+                        && $existingRefund->transaction_date?->toDateString()
+                            !== \Illuminate\Support\Carbon::parse($refundDate)->toDateString())) {
+                    throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+                }
+
+                return [
+                    'original_transaction' => $transaction->fresh(),
+                    'refund_transaction' => $existingRefund,
+                ];
+            }
+
+            if ($transaction->status !== PaymentTransactionStatus::COMPLETED) {
+                throw new \DomainException(trans_message('payments.transactions.completed_only'));
+            }
+
+            $alreadyRefunded = BigDecimal::of((string) PaymentTransaction::query()
+                ->where('reverses_transaction_id', $transaction->id)
+                ->where('status', PaymentTransactionStatus::COMPLETED->value)
+                ->sum('amount'))->abs();
+            $availableToRefund = BigDecimal::of((string) $transaction->amount)
+                ->minus($alreadyRefunded)
+                ->toScale(2, RoundingMode::HalfUp);
+            $refundAmount = $amount === null
+                ? $availableToRefund
+                : BigDecimal::of((string) $amount)->toScale(2, RoundingMode::HalfUp);
+            if (! $refundAmount->isPositive() || $refundAmount->isGreaterThan($availableToRefund)) {
+                throw new \DomainException(trans_message('payments.transactions.refund_amount_invalid'));
+            }
+
+            $document = PaymentDocument::query()
+                ->where('organization_id', $organizationId)
+                ->whereKey($transaction->payment_document_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if ($refundAmount->isGreaterThan(BigDecimal::of((string) $document->paid_amount))) {
+                throw new \DomainException(trans_message('payments.transactions.refund_amount_invalid'));
+            }
+
+            $refund = PaymentTransaction::query()->create([
                 'payment_document_id' => $transaction->payment_document_id,
-                'organization_id' => $transaction->organization_id,
+                'organization_id' => $organizationId,
                 'project_id' => $transaction->project_id,
-                'amount' => -$amount, // Отрицательная сумма
+                'amount' => (string) $refundAmount->negated(),
                 'currency' => $transaction->currency,
                 'payment_method' => $transaction->payment_method,
-                'transaction_date' => now(),
-                'status' => PaymentTransactionStatus::REFUNDED,
-                'notes' => "Возврат платежа #{$transaction->id}. Причина: {$reason}",
-                'created_by_user_id' => auth()->id(),
+                'transaction_date' => $refundDate ?? now()->toDateString(),
+                'status' => PaymentTransactionStatus::COMPLETED->value,
+                'notes' => trans_message('payments.transactions.refund_note', ['reason' => $reason]),
+                'created_by_user_id' => $actorId,
+                'approved_by_user_id' => $actorId,
+                'reverses_transaction_id' => $transaction->id,
+                'idempotency_key' => $idempotencyKey,
+                'metadata' => [
+                    'original_transaction_id' => $transaction->id,
+                    'refund_reason' => $reason,
+                ],
             ]);
 
-            // Обновить статус оригинальной транзакции
-            $transaction->update([
-                'status' => PaymentTransactionStatus::REFUNDED,
-            ]);
+            $paidAmount = BigDecimal::of((string) $document->paid_amount)
+                ->minus($refundAmount)
+                ->toScale(2, RoundingMode::HalfUp);
+            $remainingAmount = BigDecimal::of((string) $document->amount)
+                ->minus($paidAmount)
+                ->toScale(2, RoundingMode::HalfUp);
+            $document->forceFill([
+                'paid_amount' => (string) $paidAmount,
+                'remaining_amount' => (string) $remainingAmount,
+                'status' => $paidAmount->isPositive()
+                    ? PaymentDocumentStatus::PARTIALLY_PAID
+                    : PaymentDocumentStatus::APPROVED,
+                'paid_at' => null,
+            ])->save();
 
-            // Обновить документ
-            $document = $transaction->paymentDocument;
-            $document->paid_amount -= $amount;
-            $document->remaining_amount += $amount;
-            
-            if ($document->status === PaymentDocumentStatus::PAID) {
-                $document->status = PaymentDocumentStatus::PARTIALLY_PAID;
-                $document->paid_at = null;
-            }
-            
-            $document->save();
+            $this->budgetLimitService->reconcileAfterLedgerChange($document->fresh(), $refund);
+            $this->paymentDocumentService->synchronizeFinancialProjections($document);
 
-            \Log::info('payments.transaction.refunded', [
-                'original_transaction_id' => $transaction->id,
-                'refund_transaction_id' => $refund->id,
-                'amount' => $amount,
-            ]);
+            DB::afterCommit(static function () use ($transaction, $refund, $refundAmount): void {
+                \Log::info('payments.transaction.refunded', [
+                    'original_transaction_id' => $transaction->id,
+                    'refund_transaction_id' => $refund->id,
+                    'amount' => (string) $refundAmount,
+                ]);
+            });
 
-            return $refund;
-        });
+            return [
+                'original_transaction' => $transaction->fresh(),
+                'refund_transaction' => $refund,
+            ];
+        }, 3);
     }
 
     /**

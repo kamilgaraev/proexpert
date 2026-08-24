@@ -31,6 +31,7 @@ class StoreActFromWizardRequest extends FormRequest
             'selected_works.*.quantity' => ['nullable', 'numeric', 'decimal:0,4', 'min:0.0001'],
             'manual_lines' => ['nullable', 'array'],
             'manual_lines.*.title' => ['required', 'string', 'max:255'],
+            'manual_lines.*.variation_order_id' => ['required', 'integer', 'min:1'],
             'manual_lines.*.unit' => ['nullable', 'string', 'max:64'],
             'manual_lines.*.quantity' => ['required', 'numeric', 'min:0.0001'],
             'manual_lines.*.unit_price' => ['nullable', 'numeric', 'min:0'],

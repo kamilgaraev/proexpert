@@ -4,12 +4,17 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
+use App\BusinessModules\Features\ChangeManagement\Services\ChangeManagementService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Contract;
+use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -22,6 +27,30 @@ final class ChangeManagementWorkflowTest extends TestCase
     {
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Подрядчик допработ',
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $contractor->id,
+            'number' => 'CHG-CONTRACT-001',
+            'date' => '2026-08-01',
+            'subject' => 'Работы по проекту',
+            'total_amount' => 500000,
+            'currency' => 'RUB',
+            'status' => 'active',
+        ]);
+        $allocationId = DB::table('contract_project_allocations')->insertGetId([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'allocation_type' => 'fixed',
+            'allocated_amount' => 500000,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $this->allowAccess();
 
         $rfi = $this->withHeaders($context->authHeaders())
@@ -65,6 +94,13 @@ final class ChangeManagementWorkflowTest extends TestCase
                 'related_rfi_id' => $rfiId,
                 'affected_schedule_task_ids' => [101],
                 'affected_estimate_item_ids' => [201],
+                'monetary_context' => [
+                    'currency' => 'RUB',
+                    'contract_project_allocation_id' => $allocationId,
+                    'contingency_opening_amount' => '125000.00',
+                    'contingency_allocation_amount' => '0.00',
+                    'contingency_release_amount' => '0.00',
+                ],
             ]);
 
         $change->assertCreated()
@@ -106,14 +142,14 @@ final class ChangeManagementWorkflowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.status', 'customer_review');
 
-        $customerApproval = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/customer/change-management/changes/{$changeId}/approve", [
-                'comment' => 'Согласовано заказчиком.',
-            ]);
-
-        $customerApproval->assertOk()
-            ->assertJsonPath('data.status', 'approved')
-            ->assertJsonPath('data.customer_approval.status', 'approved');
+        $approvedChange = app(ChangeManagementService::class)->customerApprove(
+            ChangeRequest::query()->findOrFail($changeId),
+            $context->user->id,
+            '125000.00',
+            'Согласовано заказчиком.',
+        );
+        self::assertSame('approved', $approvedChange->status);
+        self::assertSame('approved', $approvedChange->approvals->last()?->status);
 
         $closeWithoutImplementation = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/change-management/changes/{$changeId}/close");
@@ -129,6 +165,23 @@ final class ChangeManagementWorkflowTest extends TestCase
 
         $variation->assertCreated()
             ->assertJsonPath('data.variation_number', 'VO-001');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/change-management/changes/{$changeId}/variation-orders", [
+                'variation_number' => 'VO-001',
+                'amount' => 125000,
+                'schedule_delta_days' => 4,
+                'description' => 'Зафиксировано допсоглашение по армированию.',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.id', $variation->json('data.id'));
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/change-management/changes/{$changeId}/variation-orders", [
+                'variation_number' => 'VO-002',
+                'amount' => 0.01,
+            ])
+            ->assertStatus(422);
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/change-management/changes/{$changeId}/implement", [

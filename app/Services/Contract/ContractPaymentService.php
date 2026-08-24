@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services\Contract;
 
-use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\DTOs\Contract\ContractPaymentDTO;
 use App\Models\Contract;
@@ -156,7 +155,7 @@ class ContractPaymentService
         $metadata = $payment->metadata ?? [];
         $oldPaymentType = $metadata['contract_payment_type'] ?? null;
 
-        $payment->update([
+        $payment = $this->contractPaymentDocumentService->updateUnpaidDocument($payment, [
             'amount' => $paymentDTO->amount,
             'document_date' => $paymentDTO->payment_date,
             'due_date' => $paymentDTO->payment_date,
@@ -189,10 +188,11 @@ class ContractPaymentService
             || $payment->invoice_type?->value === 'advance';
         $actualContractId = (int) $payment->invoiceable_id;
 
-        $result = $payment->update([
-            'status' => PaymentDocumentStatus::CANCELLED,
-            'remaining_amount' => 0,
-        ]);
+        $this->contractPaymentDocumentService->cancelDocument(
+            $payment,
+            trans_message('payments.documents.cancelled'),
+        );
+        $result = true;
 
         if ($result && $wasAdvancePayment) {
             $this->updateActualAdvanceAmount($actualContractId, (int) $payment->id, 'cancelled');

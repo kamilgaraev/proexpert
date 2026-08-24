@@ -289,18 +289,69 @@ final class ChangeManagementService
 
     public function createVariationOrder(ChangeRequest $change, array $data): VariationOrder
     {
-        if (! in_array($change->status, ['approved', 'implemented', 'closed'], true)) {
-            throw new DomainException(trans_message('change_management.errors.variation_requires_approved_change'));
-        }
+        return DB::transaction(function () use ($change, $data): VariationOrder {
+            $lockedChange = ChangeRequest::query()->whereKey($change->id)->lockForUpdate()->firstOrFail();
+            if (! in_array($lockedChange->status, ['approved', 'implemented', 'closed'], true)) {
+                throw new DomainException(trans_message('change_management.errors.variation_requires_approved_change'));
+            }
 
-        return VariationOrder::create([
-            'organization_id' => $change->organization_id,
-            'change_request_id' => $change->id,
-            'variation_number' => $data['variation_number'] ?? $this->nextNumber(VariationOrder::class, (int) $change->organization_id, 'VO', 'variation_number'),
-            'amount' => $data['amount'] ?? $change->impact?->cost_delta ?? 0,
-            'schedule_delta_days' => $data['schedule_delta_days'] ?? $change->impact?->schedule_delta_days ?? 0,
-            'description' => $data['description'] ?? null,
-        ]);
+            $variationNumber = trim((string) $data['variation_number']);
+            if (DB::getDriverName() === 'pgsql') {
+                DB::select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [
+                    "variation:{$lockedChange->organization_id}:{$variationNumber}",
+                ]);
+            }
+
+            $amount = (string) ($data['amount'] ?? $lockedChange->impact?->cost_delta ?? 0);
+            $amountMinor = ExactDecimal::minor($amount);
+            if ($amountMinor < 0) {
+                throw new DomainException(trans_message('change_management.errors.variation_amount_invalid'));
+            }
+
+            $existing = VariationOrder::query()
+                ->where('organization_id', $lockedChange->organization_id)
+                ->where('variation_number', $variationNumber)
+                ->first();
+            if ($existing instanceof VariationOrder) {
+                if ((int) $existing->change_request_id !== (int) $lockedChange->id
+                    || ExactDecimal::minor((string) $existing->amount) !== $amountMinor
+                    || (int) $existing->schedule_delta_days !== (int) ($data['schedule_delta_days'] ?? $lockedChange->impact?->schedule_delta_days ?? 0)
+                    || (string) ($existing->description ?? '') !== (string) ($data['description'] ?? '')) {
+                    throw new DomainException(trans_message('change_management.errors.variation_idempotency_conflict'));
+                }
+
+                return $existing;
+            }
+
+            $approval = ChangeApproval::query()
+                ->where('change_request_id', $lockedChange->id)
+                ->where('status', 'approved')
+                ->whereNotNull('approved_cost_minor')
+                ->latest('decided_at')
+                ->latest('id')
+                ->first();
+            if (! $approval instanceof ChangeApproval) {
+                throw new DomainException(trans_message('change_management.errors.monetary_context_missing'));
+            }
+
+            $allocatedMinor = VariationOrder::query()
+                ->where('change_request_id', $lockedChange->id)
+                ->lockForUpdate()
+                ->get(['amount'])
+                ->sum(static fn (VariationOrder $order): int => ExactDecimal::minor((string) $order->amount));
+            if ($allocatedMinor + $amountMinor > (int) $approval->approved_cost_minor) {
+                throw new DomainException(trans_message('change_management.errors.variation_exceeds_approved_amount'));
+            }
+
+            return VariationOrder::query()->create([
+                'organization_id' => $lockedChange->organization_id,
+                'change_request_id' => $lockedChange->id,
+                'variation_number' => $variationNumber,
+                'amount' => $amount,
+                'schedule_delta_days' => $data['schedule_delta_days'] ?? $lockedChange->impact?->schedule_delta_days ?? 0,
+                'description' => $data['description'] ?? null,
+            ]);
+        }, 3);
     }
 
     public function implementChange(ChangeRequest $change, ?string $comment = null): ChangeRequest

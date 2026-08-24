@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Admin\ActReport\AnnulActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\BulkExportActReportsRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\PreviewActRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\RejectActReportRequest;
@@ -337,6 +338,32 @@ class ActReportsController extends Controller
             return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (Throwable $e) {
             $this->logActActionFailure('act_reports.reject_failed', $act, $e);
+
+            return AdminResponse::error(trans_message('act_reports.update_failed'), 500);
+        }
+    }
+
+    public function annul(AnnulActReportRequest $request, mixed $act): JsonResponse
+    {
+        try {
+            $organizationId = $this->accessService->currentOrganizationId($request);
+            $act = $this->accessService->resolveAccessibleAct($request, $act);
+            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_APPROVE, $organizationId);
+            $validated = $request->validated();
+
+            return AdminResponse::success(
+                new ContractPerformanceActResource($this->workflowService->annul(
+                    $act,
+                    (int) $request->user()?->id,
+                    $validated['reason'],
+                    $validated['idempotency_key'],
+                )),
+                trans_message('act_reports.act_annulled')
+            );
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            $this->logActActionFailure('act_reports.annul_failed', $act, $e);
 
             return AdminResponse::error(trans_message('act_reports.update_failed'), 500);
         }

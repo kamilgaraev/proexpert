@@ -39,6 +39,10 @@ class EstimateVersionComparisonService
         'unit',
     ];
 
+    private const COMPLEX_FIELDS = [
+        'resources',
+    ];
+
     public function compare(EstimateVersion $versionA, EstimateVersion $versionB): array
     {
         if ((int) $versionA->estimate_id !== (int) $versionB->estimate_id) {
@@ -54,8 +58,9 @@ class EstimateVersionComparisonService
         $unchanged = 0;
 
         foreach ($itemsB as $key => $entryB) {
-            if (!array_key_exists($key, $itemsA)) {
+            if (! array_key_exists($key, $itemsA)) {
                 $added[] = $this->diffItem($entryB, 'added');
+
                 continue;
             }
 
@@ -64,6 +69,7 @@ class EstimateVersionComparisonService
 
             if ($changes === []) {
                 $unchanged++;
+
                 continue;
             }
 
@@ -76,12 +82,14 @@ class EstimateVersionComparisonService
         }
 
         foreach ($itemsA as $key => $entryA) {
-            if (!array_key_exists($key, $itemsB)) {
+            if (! array_key_exists($key, $itemsB)) {
                 $removed[] = $this->diffItem($entryA, 'removed');
             }
         }
 
         $totalDeltaAmount = $this->numericTotalAmount($versionB) - $this->numericTotalAmount($versionA);
+        $totalDeltaAmountWithVat = $this->numericTotalAmountWithVat($versionB)
+            - $this->numericTotalAmountWithVat($versionA);
 
         return [
             'version_a' => $this->versionPayload($versionA),
@@ -92,12 +100,14 @@ class EstimateVersionComparisonService
                 'changed' => count($changed),
                 'unchanged' => $unchanged,
                 'total_delta_amount' => $this->roundMoney($totalDeltaAmount),
+                'total_delta_amount_with_vat' => $this->roundMoney($totalDeltaAmountWithVat),
                 'total_delta_amount_formatted' => $this->money($totalDeltaAmount),
                 'total_delta_pct' => $this->deltaPct($this->numericTotalAmount($versionA), $totalDeltaAmount),
             ],
             'added' => $added,
             'removed' => $removed,
             'changed' => $changed,
+            'section_changes' => $this->sectionChanges($versionA->snapshot ?? [], $versionB->snapshot ?? []),
         ];
     }
 
@@ -109,6 +119,9 @@ class EstimateVersionComparisonService
             'label' => $version->label,
             'total_amount' => $this->roundMoney($this->numericTotalAmount($version)),
             'total_amount_formatted' => $this->money($this->numericTotalAmount($version)),
+            'total_amount_with_vat' => $this->roundMoney($this->numericTotalAmountWithVat($version)),
+            'total_amount_with_vat_formatted' => $this->money($this->numericTotalAmountWithVat($version)),
+            'vat_rate' => $this->formattedSnapshotRate($version, 'vat_rate'),
         ];
     }
 
@@ -125,16 +138,16 @@ class EstimateVersionComparisonService
         $items = [];
 
         foreach ($sections as $index => $section) {
-            if (!is_array($section)) {
+            if (! is_array($section)) {
                 continue;
             }
 
-            $sectionPath = $path . '.' . $index;
+            $sectionPath = $path.'.'.$index;
 
             $items = [
                 ...$items,
-                ...$this->flattenItems($section['items'] ?? [], $sectionPath . '.items'),
-                ...$this->flattenSections($section['children'] ?? [], $sectionPath . '.children'),
+                ...$this->flattenItems($section['items'] ?? [], $sectionPath.'.items'),
+                ...$this->flattenSections($section['children'] ?? [], $sectionPath.'.children'),
             ];
         }
 
@@ -146,18 +159,18 @@ class EstimateVersionComparisonService
         $flattened = [];
 
         foreach ($items as $index => $item) {
-            if (!is_array($item)) {
+            if (! is_array($item)) {
                 continue;
             }
 
-            $itemPath = $path . '.' . $index;
+            $itemPath = $path.'.'.$index;
             $flattened[] = [
                 'item' => $item,
                 'ordinal_path' => $itemPath,
             ];
             $flattened = [
                 ...$flattened,
-                ...$this->flattenItems($item['children'] ?? [], $itemPath . '.children'),
+                ...$this->flattenItems($item['children'] ?? [], $itemPath.'.children'),
             ];
         }
 
@@ -175,7 +188,7 @@ class EstimateVersionComparisonService
             $occurrences[$baseKey] = ($occurrences[$baseKey] ?? 0) + 1;
             $key = $occurrences[$baseKey] === 1
                 ? $baseKey
-                : $baseKey . ':duplicate:' . $occurrences[$baseKey];
+                : $baseKey.':duplicate:'.$occurrences[$baseKey];
 
             $indexed[$key] = [
                 ...$entry,
@@ -213,14 +226,14 @@ class EstimateVersionComparisonService
 
         if ($legacyId !== null) {
             return [
-                'key' => 'legacy-id:' . $legacyId,
+                'key' => 'legacy-id:'.$legacyId,
                 'match_key_type' => 'legacy_id',
                 'item' => $item,
             ];
         }
 
         return [
-            'key' => 'ordinal-path:' . $ordinalPath,
+            'key' => 'ordinal-path:'.$ordinalPath,
             'match_key_type' => 'fallback',
             'item' => $item,
         ];
@@ -276,6 +289,18 @@ class EstimateVersionComparisonService
             ];
         }
 
+        foreach (self::COMPLEX_FIELDS as $field) {
+            $before = $itemA[$field] ?? [];
+            $after = $itemB[$field] ?? [];
+
+            if ($before !== $after) {
+                $changes[$field] = [
+                    'before' => $before,
+                    'after' => $after,
+                ];
+            }
+        }
+
         return $changes;
     }
 
@@ -300,7 +325,7 @@ class EstimateVersionComparisonService
 
     private function filledString(mixed $value): ?string
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return null;
         }
 
@@ -311,7 +336,7 @@ class EstimateVersionComparisonService
 
     private function filledScalar(mixed $value): ?string
     {
-        if (!is_scalar($value)) {
+        if (! is_scalar($value)) {
             return null;
         }
 
@@ -329,6 +354,108 @@ class EstimateVersionComparisonService
         }
 
         return (float) ($version->total_amount ?? 0);
+    }
+
+    private function numericTotalAmountWithVat(EstimateVersion $version): float
+    {
+        $snapshotTotal = $version->snapshot['totals']['total_amount_with_vat'] ?? null;
+
+        if (is_numeric($snapshotTotal)) {
+            return (float) $snapshotTotal;
+        }
+
+        return (float) ($version->total_amount_with_vat ?? 0);
+    }
+
+    private function formattedSnapshotRate(EstimateVersion $version, string $field): ?string
+    {
+        $value = $version->snapshot['rates'][$field] ?? null;
+
+        return is_numeric($value) ? number_format((float) $value, 2, '.', '') : null;
+    }
+
+    private function sectionChanges(array $snapshotA, array $snapshotB): array
+    {
+        $sectionsA = $this->indexSections($this->flattenSnapshotSections($snapshotA['sections'] ?? []));
+        $sectionsB = $this->indexSections($this->flattenSnapshotSections($snapshotB['sections'] ?? []));
+        $changes = [];
+
+        foreach ($sectionsB as $key => $sectionB) {
+            if (! isset($sectionsA[$key])) {
+                $changes[] = [...$sectionB, 'diff_type' => 'added'];
+
+                continue;
+            }
+
+            $before = $sectionsA[$key]['section_total_amount'];
+            $after = $sectionB['section_total_amount'];
+
+            if ($before !== $after) {
+                $changes[] = [
+                    ...$sectionB,
+                    'diff_type' => 'changed',
+                    'changes' => [
+                        'section_total_amount' => [
+                            'before' => $before,
+                            'after' => $after,
+                            'delta' => $this->roundMoney((float) $after - (float) $before),
+                        ],
+                    ],
+                ];
+            }
+        }
+
+        foreach ($sectionsA as $key => $sectionA) {
+            if (! isset($sectionsB[$key])) {
+                $changes[] = [...$sectionA, 'diff_type' => 'removed'];
+            }
+        }
+
+        return $changes;
+    }
+
+    private function flattenSnapshotSections(array $sections, string $path = 'sections'): array
+    {
+        $flattened = [];
+
+        foreach ($sections as $index => $section) {
+            if (! is_array($section)) {
+                continue;
+            }
+
+            $sectionPath = $path.'.'.$index;
+            $flattened[] = ['section' => $section, 'ordinal_path' => $sectionPath];
+            $flattened = [
+                ...$flattened,
+                ...$this->flattenSnapshotSections($section['children'] ?? [], $sectionPath.'.children'),
+            ];
+        }
+
+        return $flattened;
+    }
+
+    private function indexSections(array $sections): array
+    {
+        $indexed = [];
+
+        foreach ($sections as $entry) {
+            $section = $entry['section'];
+            $key = $this->filledString($section['stable_key'] ?? null)
+                ?? $this->filledString($section['structural_key'] ?? null)
+                ?? 'ordinal-path:'.$entry['ordinal_path'];
+            $indexed[$key] = [
+                'stable_key' => $key,
+                'section_number' => $section['section_number'] ?? null,
+                'full_section_number' => $section['full_section_number'] ?? null,
+                'name' => $section['name'] ?? null,
+                'section_total_amount' => $this->formatNumeric(
+                    $this->numericValue($section['section_total_amount'] ?? null) ?? 0.0,
+                    2
+                ),
+            ];
+        }
+
+        return $indexed;
     }
 
     private function numericValue(mixed $value): ?float

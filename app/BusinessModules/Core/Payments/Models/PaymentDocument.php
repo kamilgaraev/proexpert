@@ -28,18 +28,18 @@ use function trans_message;
 class PaymentDocument extends Model
 {
     use HasFactory, SoftDeletes;
-    
+
     /**
      * Boot the model
      */
     protected static function boot()
     {
         parent::boot();
-        
+
         // Перехватываем загрузку invoiceable для защиты от удаленного класса Invoice
         static::retrieved(function ($document) {
-            if ($document->invoiceable_type && 
-                str_contains($document->invoiceable_type, 'Invoice') && 
+            if ($document->invoiceable_type &&
+                str_contains($document->invoiceable_type, 'Invoice') &&
                 str_contains($document->invoiceable_type, 'Payments\\Models')) {
                 // Очищаем invoiceable_type для старых записей
                 $document->setAttribute('invoiceable_type', null);
@@ -62,6 +62,7 @@ class PaymentDocument extends Model
         'invoice_type',
         'invoiceable_type',
         'invoiceable_id',
+        'origin_key',
         'payer_organization_id',
         'payer_contractor_id',
         'payee_organization_id',
@@ -225,7 +226,7 @@ class PaymentDocument extends Model
     {
         return $this->morphTo('invoiceable');
     }
-    
+
     /**
      * Переопределяем getAttribute для безопасной загрузки invoiceable
      * Защита от удаленного класса Invoice
@@ -234,13 +235,13 @@ class PaymentDocument extends Model
     {
         if ($key === 'invoiceable' && $this->relationLoaded('invoiceable')) {
             $type = $this->attributes['invoiceable_type'] ?? null;
-            
+
             // Пропускаем старые ссылки на удаленный класс Invoice
             if ($type && str_contains($type, 'Invoice') && str_contains($type, 'Payments\\Models')) {
                 return null;
             }
         }
-        
+
         return parent::getAttribute($key);
     }
 
@@ -393,7 +394,7 @@ class PaymentDocument extends Model
      */
     public function getDaysUntilDue(): int
     {
-        if (!$this->due_date) {
+        if (! $this->due_date) {
             return 0;
         }
 
@@ -405,7 +406,7 @@ class PaymentDocument extends Model
      */
     public function getOverdueDays(): int
     {
-        if (!$this->due_date || $this->due_date >= Carbon::now()) {
+        if (! $this->due_date || $this->due_date >= Carbon::now()) {
             return 0;
         }
 
@@ -420,9 +421,9 @@ class PaymentDocument extends Model
         if ($this->overdue_since) {
             return true;
         }
-        
-        return $this->due_date && $this->due_date < Carbon::now() 
-            && !in_array($this->status->value, ['paid', 'cancelled', 'rejected']);
+
+        return $this->due_date && $this->due_date < Carbon::now()
+            && ! in_array($this->status->value, ['paid', 'cancelled', 'rejected']);
     }
 
     /**
@@ -459,9 +460,9 @@ class PaymentDocument extends Model
 
     /**
      * Определить ID организации-получателя (если зарегистрирована)
-     * 
+     *
      * Проверяет прямую связь через payee_organization_id или через подрядчика
-     * 
+     *
      * @return int|null ID организации-получателя или null если не зарегистрирована
      */
     public function getRecipientOrganizationId(): ?int
@@ -487,7 +488,7 @@ class PaymentDocument extends Model
 
     /**
      * Проверить, зарегистрирован ли получатель в системе
-     * 
+     *
      * @return bool true если получатель зарегистрирован как организация
      */
     public function hasRegisteredRecipient(): bool
@@ -497,52 +498,55 @@ class PaymentDocument extends Model
 
     /**
      * Отметить документ как уведомленный получателю
-     * 
+     *
      * Работает только если получатель зарегистрирован
-     * 
+     *
      * @return bool true если успешно отмечено, false если получатель не зарегистрирован
      */
     public function markAsNotifiedToRecipient(): bool
     {
-        if (!$this->hasRegisteredRecipient()) {
+        if (! $this->hasRegisteredRecipient()) {
             return false;
         }
 
         $this->recipient_notified_at = now();
+
         return $this->save();
     }
 
     /**
      * Отметить документ как просмотренный получателем
-     * 
+     *
      * Работает только если получатель зарегистрирован
-     * 
-     * @param int $userId ID пользователя, который просмотрел
+     *
+     * @param  int  $userId  ID пользователя, который просмотрел
      * @return bool true если успешно отмечено, false если получатель не зарегистрирован
      */
     public function markAsViewedByRecipient(int $userId): bool
     {
-        if (!$this->hasRegisteredRecipient()) {
+        if (! $this->hasRegisteredRecipient()) {
             return false;
         }
 
         $this->recipient_viewed_at = now();
+
         return $this->save();
     }
 
     /**
      * Подтвердить получение платежа получателем
-     * 
+     *
      * Работает только если получатель зарегистрирован и документ в подходящем статусе
-     * 
-     * @param int $userId ID пользователя, который подтверждает
-     * @param string|null $comment Комментарий получателя
+     *
+     * @param  int  $userId  ID пользователя, который подтверждает
+     * @param  string|null  $comment  Комментарий получателя
      * @return bool true если успешно подтверждено
+     *
      * @throws \DomainException если получатель не зарегистрирован или статус не подходит
      */
     public function confirmByRecipient(int $userId, ?string $comment = null): bool
     {
-        if (!$this->hasRegisteredRecipient()) {
+        if (! $this->hasRegisteredRecipient()) {
             throw new \DomainException(trans_message('payments.validation.recipient_not_registered'));
         }
 
@@ -554,7 +558,7 @@ class PaymentDocument extends Model
             PaymentDocumentStatus::PARTIALLY_PAID,
         ];
 
-        if (!in_array($this->status, $allowedStatuses)) {
+        if (! in_array($this->status, $allowedStatuses)) {
             throw new \DomainException(sprintf(
                 trans_message('payments.validation.recipient_confirm_status_invalid'),
                 $this->status->label()
@@ -573,7 +577,7 @@ class PaymentDocument extends Model
      */
     public function getFormattedAmountAttribute(): string
     {
-        return number_format($this->amount, 2, '.', ' ') . ' ' . $this->currency;
+        return number_format($this->amount, 2, '.', ' ').' '.$this->currency;
     }
 
     /**

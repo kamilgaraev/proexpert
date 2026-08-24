@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Payments\Services\FinancialBalanceQuery;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
@@ -19,9 +20,11 @@ use function trans_message;
 
 class DashboardController extends Controller
 {
+    public function __construct(private readonly FinancialBalanceQuery $financialBalances) {}
+
     /**
      * Получить финансовую статистику дашборда
-     * 
+     *
      * GET /api/v1/admin/payments/dashboard
      */
     public function index(Request $request): JsonResponse
@@ -29,69 +32,69 @@ class DashboardController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $period = max((int) $request->input('period', 30), 1);
-            
+
             return AdminResponse::success([
-                    // Основная финансовая сводка
-                    'summary' => $this->getSummary($organizationId),
-                    
-                    // Документы по статусам (с суммами!)
-                    'documents_by_status' => $this->getDocumentsByStatus($organizationId),
-                    
-                    // Разбивка по типам документов
-                    'documents_by_type' => $this->getDocumentsByType($organizationId),
-                    
-                    // Просроченные документы (топ-10)
-                    'overdue_documents' => $this->getOverdueDocuments($organizationId),
-                    
-                    // Предстоящие платежи (7 дней)
-                    'upcoming_documents' => $this->getUpcomingDocuments($organizationId),
-                    
-                    // Кэш-флоу за период
-                    'cash_flow' => $this->getCashFlow($organizationId, $period),
-                    
-                    // Топ-контрагенты (должники)
-                    'top_debtors' => $this->getTopDebtors($organizationId),
-                    
-                    // Топ-контрагенты (кому мы должны)
-                    'top_creditors' => $this->getTopCreditors($organizationId),
-                    
-                    // Разбивка по проектам
-                    'by_projects' => $this->getByProjects($organizationId),
-                    
-                    // Динамика платежей за период
-                    'payment_trends' => $this->getPaymentTrends($organizationId, $period),
-                    
-                    // Сравнение с контрактами
-                    'contract_comparison' => $this->getContractComparison($organizationId),
-                ],
+                // Основная финансовая сводка
+                'summary' => $this->getSummary($organizationId),
+
+                // Документы по статусам (с суммами!)
+                'documents_by_status' => $this->getDocumentsByStatus($organizationId),
+
+                // Разбивка по типам документов
+                'documents_by_type' => $this->getDocumentsByType($organizationId),
+
+                // Просроченные документы (топ-10)
+                'overdue_documents' => $this->getOverdueDocuments($organizationId),
+
+                // Предстоящие платежи (7 дней)
+                'upcoming_documents' => $this->getUpcomingDocuments($organizationId),
+
+                // Кэш-флоу за период
+                'cash_flow' => $this->getCashFlow($organizationId, $period),
+
+                // Топ-контрагенты (должники)
+                'top_debtors' => $this->getTopDebtors($organizationId),
+
+                // Топ-контрагенты (кому мы должны)
+                'top_creditors' => $this->getTopCreditors($organizationId),
+
+                // Разбивка по проектам
+                'by_projects' => $this->getByProjects($organizationId),
+
+                // Динамика платежей за период
+                'payment_trends' => $this->getPaymentTrends($organizationId, $period),
+
+                // Сравнение с контрактами
+                'contract_comparison' => $this->getContractComparison($organizationId),
+            ],
                 trans_message('payments.dashboard.loaded'));
         } catch (\Exception $e) {
             Log::error('payments.dashboard.error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
+
             return AdminResponse::error(trans_message('payments.dashboard.load_error'), 500);
         }
     }
-    
+
     /**
      * Получить общую статистику
      */
     private function getSummary(int $organizationId): array
     {
-        // Дебиторская задолженность (нам должны)
-        $totalReceivable = PaymentDocument::where('organization_id', $organizationId)
-            ->where('direction', InvoiceDirection::INCOMING)
-            ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
-            ->sum('remaining_amount');
-        
-        // Кредиторская задолженность (мы должны)
-        $totalPayable = PaymentDocument::where('organization_id', $organizationId)
-            ->where('direction', InvoiceDirection::OUTGOING)
-            ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
-            ->sum('remaining_amount');
-        
+        $receivableBalance = $this->financialBalances->forOrganization(
+            $organizationId,
+            InvoiceDirection::INCOMING->value
+        );
+        $payableBalance = $this->financialBalances->forOrganization(
+            $organizationId,
+            InvoiceDirection::OUTGOING->value
+        );
+        $totalBalance = $this->financialBalances->forOrganization($organizationId);
+        $totalReceivable = (float) $receivableBalance->debtAmount;
+        $totalPayable = (float) $payableBalance->debtAmount;
+
         // Просроченные платежи
         $overdueAmount = PaymentDocument::where('organization_id', $organizationId)
             ->where(function ($query) {
@@ -102,35 +105,35 @@ class DashboardController extends Controller
                     });
             })
             ->sum('remaining_amount');
-        
+
         // Предстоящие платежи (7 дней)
         $upcomingPayments7days = PaymentDocument::where('organization_id', $organizationId)
             ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
             ->whereBetween('due_date', [now(), now()->addDays(7)])
             ->sum('remaining_amount');
-        
+
         // Оплачено за текущий месяц
         $paidThisMonth = PaymentDocument::where('organization_id', $organizationId)
             ->whereNotNull('paid_at')
             ->whereBetween('paid_at', [now()->startOfMonth(), now()->endOfMonth()])
             ->sum('paid_amount');
-        
+
         // Выставлено за текущий месяц
         $issuedThisMonth = PaymentDocument::where('organization_id', $organizationId)
             ->whereNotNull('issued_at')
             ->whereBetween('issued_at', [now()->startOfMonth(), now()->endOfMonth()])
             ->sum('amount');
-        
+
         // Всего активных документов
         $activeInvoicesCount = PaymentDocument::where('organization_id', $organizationId)
             ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
             ->count();
-        
+
         // Всего оплаченных документов
         $paidInvoicesCount = PaymentDocument::where('organization_id', $organizationId)
             ->where('status', PaymentDocumentStatus::PAID)
             ->count();
-        
+
         return [
             // Задолженности
             'total_receivable' => (float) $totalReceivable,
@@ -138,18 +141,23 @@ class DashboardController extends Controller
             'net_position' => (float) ($totalReceivable - $totalPayable),
             'overdue_amount' => (float) $overdueAmount,
             'upcoming_payments_7days' => (float) $upcomingPayments7days,
-            
+
             // Месячная статистика
             'paid_this_month' => (float) $paidThisMonth,
             'issued_this_month' => (float) $issuedThisMonth,
-            
+            'invoiced_amount' => (float) $totalBalance->invoicedAmount,
+            'paid_amount' => (float) $totalBalance->paidAmount,
+            'refunded_amount' => (float) $totalBalance->refundedAmount,
+            'debt_amount' => (float) $totalBalance->debtAmount,
+            'overpayment_amount' => (float) $totalBalance->overpaymentAmount,
+
             // Счетчики
             'active_documents_count' => $activeInvoicesCount,
             'paid_documents_count' => $paidInvoicesCount,
             'total_documents_count' => $activeInvoicesCount + $paidInvoicesCount,
         ];
     }
-    
+
     /**
      * Документы по статусам с суммами
      */
@@ -165,18 +173,18 @@ class DashboardController extends Controller
             )
             ->groupBy('status')
             ->get()
-            ->keyBy(fn($item) => is_object($item->status) ? $item->status->value : $item->status)
-            ->map(fn($item) => [
+            ->keyBy(fn ($item) => is_object($item->status) ? $item->status->value : $item->status)
+            ->map(fn ($item) => [
                 'count' => $item->count,
                 'total_sum' => (float) $item->total_sum,
                 'paid_sum' => (float) $item->paid_sum,
                 'remaining_sum' => (float) $item->remaining_sum,
             ])
             ->toArray();
-        
+
         return $data;
     }
-    
+
     /**
      * Разбивка по типам документов
      */
@@ -191,18 +199,18 @@ class DashboardController extends Controller
             )
             ->groupBy('document_type')
             ->get()
-            ->keyBy(fn($item) => is_object($item->document_type) ? $item->document_type->value : $item->document_type)
-            ->map(fn($item) => [
+            ->keyBy(fn ($item) => is_object($item->document_type) ? $item->document_type->value : $item->document_type)
+            ->map(fn ($item) => [
                 'count' => $item->count,
                 'total_sum' => (float) $item->total_sum,
                 'paid_sum' => (float) $item->paid_sum,
                 'payment_rate' => $item->total_sum > 0 ? round(($item->paid_sum / $item->total_sum) * 100, 2) : 0,
             ])
             ->toArray();
-        
+
         return $data;
     }
-    
+
     /**
      * Просроченные документы
      */
@@ -237,7 +245,7 @@ class DashboardController extends Controller
             })
             ->toArray();
     }
-    
+
     /**
      * Предстоящие платежи
      */
@@ -266,14 +274,14 @@ class DashboardController extends Controller
             })
             ->toArray();
     }
-    
+
     /**
      * Кэш-флоу за период
      */
     private function getCashFlow(int $organizationId, int $days): array
     {
         $startDate = now()->subDays($days)->startOfDay();
-        
+
         // Входящие платежи
         $incoming = PaymentTransaction::where('payment_transactions.organization_id', $organizationId)
             ->join('payment_documents', 'payment_transactions.payment_document_id', '=', 'payment_documents.id')
@@ -281,7 +289,7 @@ class DashboardController extends Controller
             ->where('payment_transactions.status', 'completed')
             ->where('payment_transactions.transaction_date', '>=', $startDate)
             ->sum('payment_transactions.amount');
-        
+
         // Исходящие платежи
         $outgoing = PaymentTransaction::where('payment_transactions.organization_id', $organizationId)
             ->join('payment_documents', 'payment_transactions.payment_document_id', '=', 'payment_documents.id')
@@ -289,7 +297,7 @@ class DashboardController extends Controller
             ->where('payment_transactions.status', 'completed')
             ->where('payment_transactions.transaction_date', '>=', $startDate)
             ->sum('payment_transactions.amount');
-        
+
         return [
             'period_days' => $days,
             'incoming' => (float) $incoming,
@@ -299,7 +307,7 @@ class DashboardController extends Controller
             'daily_average_outgoing' => $days > 0 ? (float) ($outgoing / $days) : 0,
         ];
     }
-    
+
     /**
      * Топ-должники (кто нам должен)
      */
@@ -321,14 +329,14 @@ class DashboardController extends Controller
             ->orderByDesc('debt')
             ->limit(10)
             ->get()
-            ->map(fn($item) => [
+            ->map(fn ($item) => [
                 'counterparty_name' => $item->counterparty_name ?? 'Не указано',
                 'debt' => (float) $item->debt,
                 'documents_count' => $item->documents_count,
             ])
             ->toArray();
     }
-    
+
     /**
      * Топ-кредиторы (кому мы должны)
      */
@@ -350,14 +358,14 @@ class DashboardController extends Controller
             ->orderByDesc('payable')
             ->limit(10)
             ->get()
-            ->map(fn($item) => [
+            ->map(fn ($item) => [
                 'counterparty_name' => $item->counterparty_name ?? 'Не указано',
                 'payable' => (float) $item->payable,
                 'documents_count' => $item->documents_count,
             ])
             ->toArray();
     }
-    
+
     /**
      * Разбивка по проектам
      */
@@ -377,7 +385,7 @@ class DashboardController extends Controller
             ->orderByDesc('total_sum')
             ->limit(10)
             ->get()
-            ->map(fn($item) => [
+            ->map(fn ($item) => [
                 'project_id' => $item->project_id,
                 'project_name' => $item->project_name ?? 'Без проекта',
                 'documents_count' => $item->documents_count,
@@ -388,14 +396,14 @@ class DashboardController extends Controller
             ])
             ->toArray();
     }
-    
+
     /**
      * Динамика платежей за период
      */
     private function getPaymentTrends(int $organizationId, int $days): array
     {
         $startDate = now()->subDays($days)->startOfDay();
-        
+
         // Группировка по дням
         $trends = PaymentTransaction::where('payment_transactions.organization_id', $organizationId)
             ->join('payment_documents', 'payment_transactions.payment_document_id', '=', 'payment_documents.id')
@@ -409,17 +417,17 @@ class DashboardController extends Controller
             ->groupBy('date')
             ->orderBy('date', 'asc')
             ->get()
-            ->map(fn($item) => [
+            ->map(fn ($item) => [
                 'date' => $item->date,
                 'incoming' => (float) $item->incoming,
                 'outgoing' => (float) $item->outgoing,
                 'net' => (float) ($item->incoming - $item->outgoing),
             ])
             ->toArray();
-        
+
         return $trends;
     }
-    
+
     /**
      * Сравнение с контрактами
      */
@@ -430,17 +438,17 @@ class DashboardController extends Controller
             ->where('organization_id', $organizationId)
             ->whereNull('deleted_at')
             ->sum('total_amount');
-        
+
         // Сумма выставленных документов по контрактам
         $invoicedAmount = PaymentDocument::where('organization_id', $organizationId)
             ->where('invoiceable_type', 'App\\Models\\Contract')
             ->sum('amount');
-        
+
         // Оплаченная сумма по контрактам
         $paidAmount = PaymentDocument::where('organization_id', $organizationId)
             ->where('invoiceable_type', 'App\\Models\\Contract')
             ->sum('paid_amount');
-        
+
         return [
             'contracts_total' => (float) $contractsTotal,
             'invoiced_amount' => (float) $invoicedAmount,
@@ -452,4 +460,3 @@ class DashboardController extends Controller
         ];
     }
 }
-
