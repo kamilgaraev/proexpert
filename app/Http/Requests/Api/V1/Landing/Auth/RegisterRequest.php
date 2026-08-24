@@ -3,7 +3,6 @@
 namespace App\Http\Requests\Api\V1\Landing\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
 
@@ -23,6 +22,10 @@ class RegisterRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->merge([
+            'idempotency_key' => $this->header('Idempotency-Key'),
+        ]);
+
         if ($this->has('email')) {
             $this->merge([
                 'email' => Str::lower(trim((string) $this->input('email'))),
@@ -45,18 +48,6 @@ class RegisterRequest extends FormRequest
                 'string',
                 'email',
                 'max:255',
-                function (string $attribute, mixed $value, \Closure $fail): void {
-                    $email = Str::lower(trim((string) $value));
-
-                    if (
-                        DB::table('users')
-                            ->whereRaw('LOWER(email) = ?', [$email])
-                            ->whereNull('deleted_at')
-                            ->exists()
-                    ) {
-                        $fail(trans_message('customer.auth.validation.email_taken'));
-                    }
-                },
             ],
             'password' => [
                 'required',
@@ -101,6 +92,9 @@ class RegisterRequest extends FormRequest
                 'regex:/^\d{6}$/'
             ],
             'organization_country' => 'nullable|string|max:100|min:2',
+            'terms_accepted' => ['required', 'accepted'],
+            'privacy_accepted' => ['required', 'accepted'],
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:128', 'regex:/^[A-Za-z0-9._:-]+$/'],
         ];
     }
 
@@ -142,6 +136,12 @@ class RegisterRequest extends FormRequest
             'organization_postal_code.regex' => 'Почтовый индекс должен содержать ровно 6 цифр',
             
             'organization_country.min' => 'Название страны должно содержать не менее 2 символов',
+            'terms_accepted.required' => trans_message('auth.validation.terms_required'),
+            'terms_accepted.accepted' => trans_message('auth.validation.terms_required'),
+            'privacy_accepted.required' => trans_message('auth.validation.privacy_required'),
+            'privacy_accepted.accepted' => trans_message('auth.validation.privacy_required'),
+            'idempotency_key.required' => trans_message('auth.validation.idempotency_key_required'),
+            'idempotency_key.*' => trans_message('auth.validation.idempotency_key_invalid'),
         ];
     }
 } 

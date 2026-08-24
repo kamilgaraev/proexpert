@@ -68,6 +68,8 @@ return [
     'registration_error' => 'Не удалось завершить регистрацию. Попробуйте позже.',
     'registration_verification_required' => 'Регистрация завершена. Подтвердите email, чтобы войти в аккаунт.',
     'registration_incomplete_data' => 'Не удалось завершить регистрацию. Попробуйте позже.',
+    'registration_idempotency_conflict' => 'Этот запрос уже использован с другими данными. Обновите страницу и повторите попытку.',
+    'registration_in_progress' => 'Регистрация уже выполняется. Дождитесь ответа.',
     'validation' => [
         'email_required' => 'Укажите email.',
         'email_invalid' => 'Укажите корректный email.',
@@ -76,5 +78,9 @@ return [
         'password_min' => 'Пароль должен содержать не менее 8 символов.',
         'password_confirmation' => 'Пароли не совпадают.',
         'password_complexity' => 'Пароль должен содержать заглавную букву, строчную букву и цифру.',
+        'terms_required' => 'Примите условия использования.',
+        'privacy_required' => 'Примите политику конфиденциальности.',
+        'idempotency_key_required' => 'Обновите страницу и повторите регистрацию.',
+        'idempotency_key_invalid' => 'Не удалось подтвердить попытку регистрации. Обновите страницу.',
     ],
 ];

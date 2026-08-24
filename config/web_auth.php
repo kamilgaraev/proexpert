@@ -32,6 +32,11 @@ return [
     'access_ttl_minutes' => max(1, (int) env('WEB_AUTH_ACCESS_TTL_MINUTES', 15)),
     'refresh_ttl_minutes' => max(1, (int) env('WEB_AUTH_REFRESH_TTL_MINUTES', 1440)),
     'remember_refresh_ttl_minutes' => max(1, (int) env('WEB_AUTH_REMEMBER_REFRESH_TTL_MINUTES', 20160)),
+    'registration' => [
+        'idempotency_ttl_hours' => max(1, (int) env('WEB_AUTH_REGISTRATION_IDEMPOTENCY_TTL_HOURS', 24)),
+        'terms_version' => env('WEB_AUTH_TERMS_VERSION', '2026-08-24'),
+        'privacy_version' => env('WEB_AUTH_PRIVACY_VERSION', '2026-08-24'),
+    ],
     'keys' => [
         'lk' => env('WEB_AUTH_LK_SIGNING_KEY'),
         'admin' => env('WEB_AUTH_ADMIN_SIGNING_KEY'),

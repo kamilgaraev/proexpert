@@ -19,7 +19,10 @@ final class LandingRegistrationVerificationTest extends TestCase
         Notification::fake();
         config(['auth_tokens.sessions.enabled' => true]);
 
-        $response = $this->postJson('/api/v1/landing/auth/register', $this->registrationPayload(
+        $response = $this->withHeaders([
+            'Origin' => (string) config('web_auth.origins.lk.0'),
+            'Idempotency-Key' => 'landing-register-contract-key',
+        ])->postJson('/api/v1/landing/auth/register', $this->registrationPayload(
             'landing-register-contract@example.com'
         ));
 
@@ -59,7 +62,7 @@ final class LandingRegistrationVerificationTest extends TestCase
     }
 
     /**
-     * @return array<string, string>
+     * @return array<string, bool|string>
      */
     private function registrationPayload(string $email): array
     {
@@ -69,6 +72,8 @@ final class LandingRegistrationVerificationTest extends TestCase
             'password' => 'Password1',
             'password_confirmation' => 'Password1',
             'organization_name' => 'Registration Contract Organization',
+            'terms_accepted' => true,
+            'privacy_accepted' => true,
         ];
     }
 }

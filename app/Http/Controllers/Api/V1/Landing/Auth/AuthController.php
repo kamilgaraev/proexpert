@@ -6,6 +6,7 @@ use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
 use App\DTOs\Auth\WebAuthTokenPair;
 use App\DTOs\Auth\WebAuthTokenPayload;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Landing\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Api\V1\Landing\Auth\LoginRequest;
@@ -15,9 +16,12 @@ use App\Http\Responses\Auth\ProfileResponse;
 use App\Http\Responses\Auth\RegisterResponse;
 use App\Http\Responses\LandingResponse;
 use App\Services\Auth\JwtAuthService;
+use App\Services\Auth\RegistrationIdempotencyService;
+use App\Services\Auth\UserConsentService;
 use App\Services\Auth\WebAuthenticationService;
 use App\Services\Auth\WebRefreshCookieService;
 use App\Services\PerformanceMonitor;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -36,6 +40,8 @@ class AuthController extends Controller
         JwtAuthService $authService,
         private readonly WebAuthenticationService $webAuthentication,
         private readonly WebRefreshCookieService $refreshCookies,
+        private readonly RegistrationIdempotencyService $registrationIdempotency,
+        private readonly UserConsentService $userConsents,
     ) {
         $this->authService = $authService;
     }
@@ -48,13 +54,44 @@ class AuthController extends Controller
      */
     public function register(RegisterRequest $request)
     {
-        return PerformanceMonitor::measure('landing.register', function() use ($request) {
-            // Создаем DTO из запроса
-            // Убедимся, что DTO не падает, если avatar нет в request->all()
-            $registerDTO = RegisterDTO::fromRequest($request->safe()->except('avatar')); // Используем safe()->except(), чтобы DTO не получил файл
-            
-            // Выполняем регистрацию через сервис
-            $result = $this->authService->register($registerDTO);
+        return PerformanceMonitor::measure('landing.register', function () use ($request) {
+            $registrationData = $request->safe()->except(['avatar', 'idempotency_key']);
+
+            try {
+                $result = $this->registrationIdempotency->execute(
+                    'lk',
+                    (string) $request->input('idempotency_key'),
+                    $registrationData,
+                    function () use ($registrationData): array {
+                        $result = $this->authService->register(RegisterDTO::fromRequest($registrationData));
+
+                        if (($result['success'] ?? false) !== true || !isset($result['user'])) {
+                            return $result;
+                        }
+
+                        $acceptedAt = CarbonImmutable::now();
+                        $this->userConsents->record(
+                            $result['user'],
+                            'terms',
+                            (string) config('web_auth.registration.terms_version'),
+                            $acceptedAt,
+                        );
+                        $this->userConsents->record(
+                            $result['user'],
+                            'privacy',
+                            (string) config('web_auth.registration.privacy_version'),
+                            $acceptedAt,
+                        );
+
+                        return $result;
+                    },
+                );
+            } catch (BusinessLogicException $exception) {
+                return RegisterResponse::error(
+                    $exception->getMessage(),
+                    $exception->getCode() >= 400 && $exception->getCode() < 500 ? $exception->getCode() : 409,
+                );
+            }
 
             if (!$result['success']) {
                 return RegisterResponse::error($result['message'], $result['status_code']);
@@ -74,8 +111,7 @@ class AuthController extends Controller
             $user = $result['user'];
             $organization = $result['organization'];
 
-            // Обработка загрузки аватара
-            if ($request->hasFile('avatar')) {
+            if ($request->hasFile('avatar') && ($result['idempotent_replay'] ?? false) !== true) {
                 // Вызываем метод из трейта HasImages
                 if ($user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public')) {
                     // Если uploadImage успешен (путь установлен), сохраняем пользователя
