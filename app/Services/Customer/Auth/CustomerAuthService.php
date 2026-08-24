@@ -120,7 +120,11 @@ class CustomerAuthService
         return $this->login($loginDTO, $guard);
     }
 
-    public function register(RegisterDTO $registerDTO, ?string $verificationFrontendUrl = null): array
+    public function register(
+        RegisterDTO $registerDTO,
+        ?string $verificationFrontendUrl = null,
+        bool $sendVerification = true,
+    ): array
     {
         $stats = ['accepted' => 0, 'skipped' => 0, 'conflicted' => 0];
 
@@ -134,15 +138,7 @@ class CustomerAuthService
 
                 $this->userRepository->attachToOrganization($user->id, $organization->id, true, true);
 
-                try {
-                    $this->userRepository->assignRoleToUser($user->id, 'customer_owner', $organization->id);
-                } catch (\Throwable $exception) {
-                    Log::warning('customer.auth.register.role_assignment_failed', [
-                        'user_id' => $user->id,
-                        'organization_id' => $organization->id,
-                        'error' => $exception->getMessage(),
-                    ]);
-                }
+                $this->userRepository->assignRoleToUser($user->id, 'customer_owner', $organization->id);
 
                 $this->syncCurrentOrganization($user, $organization);
 
@@ -181,7 +177,9 @@ class CustomerAuthService
         $profile = $this->customerPortalService->getProfile($result['user']->fresh(), $result['organization']->id);
         $interfaces = $profile['user']['interfaces'] ?? ['customer'];
 
-        $this->sendVerificationNotification($result['user'], $verificationFrontendUrl);
+        if ($sendVerification) {
+            $this->sendVerificationNotification($result['user'], $verificationFrontendUrl);
+        }
 
         return [
             'success' => true,
@@ -382,24 +380,37 @@ class CustomerAuthService
             ];
         }
 
-        $result = $this->register($registerDTO, $verificationFrontendUrl);
+        $result = DB::transaction(function () use ($token, $registerDTO, $verificationFrontendUrl): array {
+            $registration = $this->register($registerDTO, $verificationFrontendUrl, false);
 
-        if (!$result['success']) {
-            return $result;
-        }
+            if (!$registration['success']) {
+                return $registration;
+            }
 
-        /** @var User|null $user */
-        $user = $this->userRepository->findByEmail($registerDTO->getEmail());
-        $organization = $user instanceof User ? $this->resolveActiveOrganization($user) : null;
+            /** @var User|null $user */
+            $user = $this->userRepository->findByEmail($registerDTO->getEmail());
+            $organization = $user instanceof User ? $this->resolveActiveOrganization($user) : null;
 
-        if ($user instanceof User && $organization instanceof Organization) {
+            if (!$user instanceof User || !$organization instanceof Organization) {
+                throw new \RuntimeException('Invitation registration context is incomplete.');
+            }
+
             $acceptedInvitation = $this->invitationService->acceptByToken($token, $user, $organization);
-
-            $result['invitation'] = [
+            $registration['invitation'] = [
                 'id' => $acceptedInvitation->id,
                 'status' => $acceptedInvitation->status,
                 'accepted_at' => $acceptedInvitation->accepted_at?->toIso8601String(),
             ];
+
+            return $registration;
+        });
+
+        if ($result['success']) {
+            $user = $this->userRepository->findByEmail($registerDTO->getEmail());
+
+            if ($user instanceof User) {
+                $this->sendVerificationNotification($user, $verificationFrontendUrl);
+            }
         }
 
         return $result;
