@@ -57,22 +57,24 @@ final class CompleteRegistrationSideEffects implements ShouldBeUnique, ShouldQue
             return;
         }
 
-        if (! $this->isCompleted($attempt, 'invitations')) {
+        $this->runOnce($attempt, 'invitations', static function () use ($invitations, $user, $organization): void {
             $invitations->acceptMatchingForOrganization($user, $organization);
-            $this->markCompleted($attempt, 'invitations');
-        }
+        });
 
-        if (! $this->isCompleted($attempt, 'contractor_sync')) {
+        $this->runOnce($attempt, 'contractor_sync', function () use (
+            $organization,
+            $verification,
+            $contractors,
+            $notifications,
+        ): void {
             $this->synchronizeContractors($organization, $verification, $contractors, $notifications);
-            $this->markCompleted($attempt, 'contractor_sync');
-        }
+        });
 
-        if (! $this->isCompleted($attempt, 'email_verification')) {
+        $this->runOnce($attempt, 'email_verification', static function () use ($user): void {
             if (! $user->hasVerifiedEmail()) {
                 $user->sendFrontendEmailVerificationNotification((string) config('app.frontend_url'));
             }
-            $this->markCompleted($attempt, 'email_verification');
-        }
+        });
     }
 
     public function uniqueId(): string
@@ -118,19 +120,45 @@ final class CompleteRegistrationSideEffects implements ShouldBeUnique, ShouldQue
         }
     }
 
-    private function isCompleted(AuthRegistrationAttempt $attempt, string $step): bool
+    private function runOnce(AuthRegistrationAttempt $attempt, string $step, callable $effect): void
     {
-        $attempt->refresh();
+        if (! $this->claim($attempt, $step)) {
+            return;
+        }
 
-        return ($attempt->side_effects[$step] ?? null) === 'completed';
+        try {
+            $effect();
+            $this->setState($attempt, $step, 'completed');
+        } catch (Throwable $exception) {
+            $this->setState($attempt, $step, 'pending');
+
+            throw $exception;
+        }
     }
 
-    private function markCompleted(AuthRegistrationAttempt $attempt, string $step): void
+    private function claim(AuthRegistrationAttempt $attempt, string $step): bool
     {
-        DB::transaction(function () use ($attempt, $step): void {
+        return DB::transaction(function () use ($attempt, $step): bool {
             $locked = AuthRegistrationAttempt::query()->whereKey($attempt->id)->lockForUpdate()->firstOrFail();
             $state = is_array($locked->side_effects) ? $locked->side_effects : [];
-            $state[$step] = 'completed';
+
+            if (in_array($state[$step] ?? null, ['executing', 'completed'], true)) {
+                return false;
+            }
+
+            $state[$step] = 'executing';
+            $locked->update(['side_effects' => $state]);
+
+            return true;
+        });
+    }
+
+    private function setState(AuthRegistrationAttempt $attempt, string $step, string $value): void
+    {
+        DB::transaction(function () use ($attempt, $step, $value): void {
+            $locked = AuthRegistrationAttempt::query()->whereKey($attempt->id)->lockForUpdate()->firstOrFail();
+            $state = is_array($locked->side_effects) ? $locked->side_effects : [];
+            $state[$step] = $value;
             $locked->update(['side_effects' => $state]);
         });
     }

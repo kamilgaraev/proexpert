@@ -6,7 +6,9 @@ namespace Tests\Feature\Api\V1\Customer\Auth;
 
 use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
+use App\Enums\AuthSessionStatus;
 use App\Models\User;
+use App\Models\UserAuthSession;
 use App\Services\Auth\WebAuthTokenService;
 use App\Services\Customer\Auth\CustomerAuthService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -98,6 +100,53 @@ final class CustomerWebAuthTest extends TestCase
             'Origin' => (string) config('web_auth.origins.customer.0'),
             'Authorization' => 'Bearer '.(string) $login->json('data.token'),
         ])->getJson('/api/v1/customer/profile')->assertForbidden();
+    }
+
+    public function test_refresh_revokes_session_after_membership_is_deactivated(): void
+    {
+        $user = $this->verifiedCustomer();
+        $login = $this->customerRequest()->postJson('/api/v1/customer/auth/login', [
+            'email' => $user->email,
+            'password' => 'Password1',
+        ])->assertOk();
+        $cookieName = (string) config('web_auth.cookies.customer.name');
+        $cookie = collect($login->headers->getCookies())
+            ->first(static fn ($candidate): bool => $candidate->getName() === $cookieName);
+        self::assertNotNull($cookie);
+        $payload = app(WebAuthTokenService::class)->parse($cookie->getValue(), 'customer', 'refresh');
+        $user->organizations()->updateExistingPivot($user->current_organization_id, ['is_active' => false]);
+
+        $response = $this->call(
+            'POST',
+            '/api/v1/customer/auth/refresh',
+            cookies: [$cookieName => $cookie->getValue()],
+            server: [
+                'HTTP_ACCEPT' => 'application/json',
+                'HTTP_ORIGIN' => (string) config('web_auth.origins.customer.0'),
+                'HTTP_X_CSRF_TOKEN' => (string) $login->json('data.csrf_token'),
+                'CONTENT_TYPE' => 'application/json',
+            ],
+            content: '{}',
+        );
+
+        $response->assertForbidden()->assertJsonPath('code', 'organization_membership_inactive');
+        self::assertSame(
+            AuthSessionStatus::Revoked,
+            UserAuthSession::query()->where('session_uuid', $payload->sessionUuid)->value('status'),
+        );
+    }
+
+    public function test_customer_mutating_auth_route_without_origin_uses_customer_error_contract(): void
+    {
+        $this->postJson('/api/v1/customer/auth/login', [
+            'email' => 'missing@example.test',
+            'password' => 'Password1',
+        ])->assertForbidden()->assertExactJson([
+            'success' => false,
+            'message' => trans_message('auth.access_denied'),
+            'data' => null,
+            'code' => 'http_403',
+        ]);
     }
 
     public function test_customer_auth_routes_use_customer_origin_refresh_cookie_and_csrf_stack(): void

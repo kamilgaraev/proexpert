@@ -71,6 +71,35 @@ final class RegistrationSideEffectsTest extends TestCase
         self::assertSame('completed', $state['email_verification'] ?? null);
     }
 
+    public function test_job_does_not_repeat_a_side_effect_left_executing_by_a_crashed_worker(): void
+    {
+        Notification::fake();
+        $organization = Organization::factory()->create(['tax_number' => null]);
+        $user = User::factory()->create([
+            'email_verified_at' => null,
+            'current_organization_id' => $organization->id,
+        ]);
+        $user->organizations()->attach($organization->id, ['is_owner' => true, 'is_active' => true]);
+        AuthRegistrationAttempt::query()->create([
+            'audience' => 'lk',
+            'idempotency_key' => 'crashed-side-effect-key',
+            'request_hash' => str_repeat('b', 64),
+            'status' => 'completed',
+            'user_id' => $user->id,
+            'response' => [],
+            'side_effects' => [
+                'invitations' => 'completed',
+                'contractor_sync' => 'completed',
+                'email_verification' => 'executing',
+            ],
+            'expires_at' => now()->addDay(),
+        ]);
+
+        app()->call([new CompleteRegistrationSideEffects($user->id, $organization->id), 'handle']);
+
+        Notification::assertNothingSent();
+    }
+
     /** @return array<string, bool|string> */
     private function payload(): array
     {

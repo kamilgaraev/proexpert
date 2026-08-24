@@ -472,3 +472,18 @@ Auth-контур МОСТ в целом содержит зрелые меха�
 При сборе evidence не изменялись код, конфигурация, production-данные, файлы production, ветки, CI/CD и deployment; не выполнялись миграции, сидеры, reset/rollback, tinker с записью, рестарты или cache clear. Production использовался только через разрешённые read-only HTTP, GlitchTip wrapper и SSH `codex-ro`.
 
 Единственное изменение после завершения аудита — настоящий Markdown-документ спецификации в отдельной локальной ветке backend. Продуктовый код и данные не изменены.
+
+## 18. Дополнение по реализации и единственному финальному ревью
+
+После завершения read-only аудита пользователь отдельно авторизовал реализацию плана. Историческое подтверждение неизменности в разделе 17 относится только к этапу аудита.
+
+Ровно одно независимое финальное ревью выявило четыре дополнительные конкретизации уже зафиксированных проблем; новые AUTH-идентификаторы не создавались, чтобы не дублировать первопричины:
+
+| Связанный пункт | Severity | Уточнение ревью | Реализованная защита | Регрессия |
+|---|---|---|---|---|
+| AUTH-003 | High | Modern web refresh проверял пользователя и auth-session, но не active membership из organization claim. | Refresh для LK/customer/admin отзывает server-side session и refresh state, возвращая `organization_membership_inactive`. | Inactive customer pivot и удалённый LK pivot блокируют refresh с 403 и revoke сессии. |
+| AUTH-006 | High | `declineByToken` мог конкурентно перезаписать уже принятое приглашение. | Decline выполняется под `lockForUpdate`, допускает только атомарный переход `pending → declined`; accepted остаётся terminal. | PostgreSQL accept-vs-accept и accept-vs-decline race с управляемым lock-barrier. |
+| AUTH-008 | Medium | Crash между внешним side effect и записью `completed` позволял повторить уведомление/интеграцию. | Для каждого шага введён durable state `executing/completed`; повторный worker не исполняет уже захваченный шаг, обычное исключение возвращает его в `pending`. | Повтор после имитации crash-state `executing` не отправляет email повторно. |
+| AUTH-018 | Medium | Customer origin denial формировался через `LandingResponse`. | `VerifyWebRequestOrigin` выбирает `CustomerResponse` для customer audience. | Mutating customer auth request без Origin проверяет стандартизированный customer error contract. |
+
+После закрытия замечаний ревью повторное независимое ревью не запускалось. Целевые PostgreSQL-регрессии и PHPStan изменённого блока прошли успешно; окончательный release/deploy evidence фиксируется в плане поставки и задаче `PHCODX-17`.

@@ -43,6 +43,15 @@ final class AuthenticateWebRefreshToken
                 return $this->error($audience);
             }
 
+            if ($payload->organizationId !== null
+                && ! $user->activeOrganizations()->whereKey($payload->organizationId)->exists()
+            ) {
+                $this->sessions->revoke($session, 'organization_membership_inactive');
+                $this->tokens->invalidateRefreshSession($audience, $payload->sessionUuid);
+
+                return $this->membershipError($audience);
+            }
+
             $guard = $audience === 'admin' ? 'api_admin' : 'api_landing';
             Auth::shouldUse($guard);
             Auth::guard($guard)->setUser($user);
@@ -66,6 +75,18 @@ final class AuthenticateWebRefreshToken
             'admin' => \App\Http\Responses\AdminResponse::error($message, 401),
             'customer' => \App\Http\Responses\CustomerResponse::error($message, 401),
             default => \App\Http\Responses\LandingResponse::error($message, 401),
+        };
+    }
+
+    private function membershipError(string $audience): Response
+    {
+        $message = trans_message('organization.access_denied');
+        $extra = ['code' => 'organization_membership_inactive'];
+
+        return match ($audience) {
+            'admin' => \App\Http\Responses\AdminResponse::error($message, 403, null, $extra),
+            'customer' => \App\Http\Responses\CustomerResponse::error($message, 403, null, $extra),
+            default => \App\Http\Responses\LandingResponse::error($message, 403, null, $extra),
         };
     }
 }
