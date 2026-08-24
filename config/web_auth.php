@@ -31,6 +31,7 @@ return [
     ],
     'access_ttl_minutes' => max(1, (int) env('WEB_AUTH_ACCESS_TTL_MINUTES', 15)),
     'refresh_ttl_minutes' => max(1, (int) env('WEB_AUTH_REFRESH_TTL_MINUTES', 1440)),
+    'refresh_concurrency_window_seconds' => max(1, (int) env('WEB_AUTH_REFRESH_CONCURRENCY_WINDOW_SECONDS', 5)),
     'remember_refresh_ttl_minutes' => max(1, (int) env('WEB_AUTH_REMEMBER_REFRESH_TTL_MINUTES', 20160)),
     'registration' => [
         'idempotency_ttl_hours' => max(1, (int) env('WEB_AUTH_REGISTRATION_IDEMPOTENCY_TTL_HOURS', 24)),

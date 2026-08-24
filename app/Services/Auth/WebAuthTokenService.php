@@ -9,7 +9,9 @@ use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Models\User;
 use DateInterval;
 use DateTimeImmutable;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Str;
 use Lcobucci\Clock\SystemClock;
 use Lcobucci\JWT\Configuration;
@@ -157,41 +159,52 @@ final class WebAuthTokenService
     {
         $lock = Cache::lock($this->refreshLockKey($payload->audience, $payload->sessionUuid), 10);
 
-        if (! $lock->get()) {
-            throw new RuntimeException('Refresh token rotation is unavailable.');
-        }
-
         try {
-            $record = Cache::get($this->refreshCacheKey($payload->audience, $payload->sessionUuid));
-            $tokenHash = hash('sha256', $refreshToken);
-
-            if (! is_array($record)
-                || ! isset($record['token_hash'], $record['token_id'])
-                || ! is_string($record['token_hash'])
-                || ! is_string($record['token_id'])
-                || ! hash_equals($record['token_hash'], $tokenHash)
-                || ! hash_equals($record['token_id'], $payload->tokenId)
-            ) {
-                $this->revokeForRefreshFailure($payload);
-                throw new RuntimeException('Refresh token replay detected.');
-            }
-
-            $session = $this->sessions->findActiveByUuid($payload->sessionUuid);
-
-            if ($session === null || (int) $session->user_id !== (int) $user->id || ! $user->is_active) {
-                $this->revokeForRefreshFailure($payload);
-                throw new RuntimeException('Refresh session is no longer active.');
-            }
-
-            return $this->issue(
+            return $lock->block($this->refreshConcurrencyWindowSeconds(), function () use (
                 $user,
-                $payload->audience,
-                $payload->sessionUuid,
-                $payload->organizationId,
-                $payload->remembered,
-            );
-        } finally {
-            $lock->release();
+                $payload,
+                $refreshToken,
+            ): WebAuthTokenPair {
+                $session = $this->sessions->findActiveByUuid($payload->sessionUuid);
+
+                if ($session === null || (int) $session->user_id !== (int) $user->id || ! $user->is_active) {
+                    $this->revokeForRefreshFailure($payload);
+                    throw new RuntimeException('Refresh session is no longer active.');
+                }
+
+                $record = Cache::get($this->refreshCacheKey($payload->audience, $payload->sessionUuid));
+                $tokenHash = hash('sha256', $refreshToken);
+
+                if (! is_array($record)
+                    || ! isset($record['token_hash'], $record['token_id'])
+                    || ! is_string($record['token_hash'])
+                    || ! is_string($record['token_id'])
+                    || ! hash_equals($record['token_hash'], $tokenHash)
+                    || ! hash_equals($record['token_id'], $payload->tokenId)
+                ) {
+                    $concurrentResult = $this->cachedRotationResult($payload);
+
+                    if ($concurrentResult instanceof WebAuthTokenPair) {
+                        return $concurrentResult;
+                    }
+
+                    $this->revokeForRefreshFailure($payload);
+                    throw new RuntimeException('Refresh token replay detected.');
+                }
+
+                $rotated = $this->issue(
+                    $user,
+                    $payload->audience,
+                    $payload->sessionUuid,
+                    $payload->organizationId,
+                    $payload->remembered,
+                );
+                $this->cacheRotationResult($payload, $rotated);
+
+                return $rotated;
+            });
+        } catch (LockTimeoutException) {
+            throw new RuntimeException('Refresh token rotation is unavailable.');
         }
     }
 
@@ -312,6 +325,51 @@ final class WebAuthTokenService
     private function refreshLockKey(string $audience, string $sessionUuid): string
     {
         return "web_auth:refresh_lock:{$audience}:{$sessionUuid}";
+    }
+
+    private function rotationResultKey(WebAuthTokenPayload $payload): string
+    {
+        return "web_auth:refresh_rotation:{$payload->audience}:{$payload->sessionUuid}:{$payload->tokenId}";
+    }
+
+    private function cacheRotationResult(WebAuthTokenPayload $payload, WebAuthTokenPair $pair): void
+    {
+        $encrypted = Crypt::encryptString(json_encode(
+            $pair->toCachePayload(),
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES,
+        ));
+        $stored = Cache::put(
+            $this->rotationResultKey($payload),
+            $encrypted,
+            now()->addSeconds($this->refreshConcurrencyWindowSeconds()),
+        );
+
+        if ($stored !== true) {
+            $this->revokeForRefreshFailure($payload);
+            throw new RuntimeException('Refresh rotation result storage failed.');
+        }
+    }
+
+    private function cachedRotationResult(WebAuthTokenPayload $payload): ?WebAuthTokenPair
+    {
+        $encrypted = Cache::get($this->rotationResultKey($payload));
+
+        if (!is_string($encrypted) || $encrypted === '') {
+            return null;
+        }
+
+        try {
+            $decoded = json_decode(Crypt::decryptString($encrypted), true, 16, JSON_THROW_ON_ERROR);
+
+            return is_array($decoded) ? WebAuthTokenPair::fromCachePayload($decoded) : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function refreshConcurrencyWindowSeconds(): int
+    {
+        return max(1, (int) config('web_auth.refresh_concurrency_window_seconds', 5));
     }
 
     private function randomToken(): string
