@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\MobileBudgetEstimatePage;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateStatusWorkflowService;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Estimate;
@@ -16,7 +17,6 @@ use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 final class MobileBudgetEstimateService
@@ -44,6 +44,7 @@ final class MobileBudgetEstimateService
     public function __construct(
         private readonly AuthorizationService $authorizationService,
         private readonly MobileProjectAccessResolver $projectAccess,
+        private readonly EstimateStatusWorkflowService $statusWorkflow,
     ) {}
 
     public function projectSummary(int $organizationId, int $projectId, User $user): array
@@ -120,58 +121,30 @@ final class MobileBudgetEstimateService
 
     public function approve(Estimate $estimate, int $userId, ?string $comment): Estimate
     {
-        $this->assertInReview($estimate);
+        $approved = $this->statusWorkflow->transition($estimate, 'approved', $userId, $comment, 'mobile');
 
-        return DB::transaction(function () use ($estimate, $userId, $comment): Estimate {
-            $estimate->forceFill([
-                'status' => 'approved',
-                'approved_by_user_id' => $userId,
-                'approved_at' => now(),
-                'metadata' => $this->withApprovalHistory($estimate, 'approve', $userId, $comment),
-            ])->save();
+        Log::info('budget_estimates.mobile.approved', [
+            'estimate_id' => $approved->id,
+            'organization_id' => $approved->organization_id,
+            'project_id' => $approved->project_id,
+            'user_id' => $userId,
+        ]);
 
-            Log::info('budget_estimates.mobile.approved', [
-                'estimate_id' => $estimate->id,
-                'organization_id' => $estimate->organization_id,
-                'project_id' => $estimate->project_id,
-                'user_id' => $userId,
-            ]);
-
-            return $estimate->fresh([
-                'project',
-                'approvedBy',
-                'sections.items.measurementUnit',
-                'items.measurementUnit',
-            ]);
-        });
+        return $approved->loadMissing(['sections.items.measurementUnit', 'items.measurementUnit']);
     }
 
     public function requestChanges(Estimate $estimate, int $userId, string $comment): Estimate
     {
-        $this->assertInReview($estimate);
+        $draft = $this->statusWorkflow->transition($estimate, 'draft', $userId, $comment, 'mobile');
 
-        return DB::transaction(function () use ($estimate, $userId, $comment): Estimate {
-            $estimate->forceFill([
-                'status' => 'draft',
-                'approved_by_user_id' => null,
-                'approved_at' => null,
-                'metadata' => $this->withApprovalHistory($estimate, 'request_changes', $userId, $comment),
-            ])->save();
+        Log::info('budget_estimates.mobile.changes_requested', [
+            'estimate_id' => $draft->id,
+            'organization_id' => $draft->organization_id,
+            'project_id' => $draft->project_id,
+            'user_id' => $userId,
+        ]);
 
-            Log::info('budget_estimates.mobile.changes_requested', [
-                'estimate_id' => $estimate->id,
-                'organization_id' => $estimate->organization_id,
-                'project_id' => $estimate->project_id,
-                'user_id' => $userId,
-            ]);
-
-            return $estimate->fresh([
-                'project',
-                'approvedBy',
-                'sections.items.measurementUnit',
-                'items.measurementUnit',
-            ]);
-        });
+        return $draft->loadMissing(['sections.items.measurementUnit', 'items.measurementUnit']);
     }
 
     public function linkedChangesForEstimate(int $organizationId, Estimate $estimate): array
@@ -316,29 +289,5 @@ final class MobileBudgetEstimateService
             'budget-estimates.approve',
             ['organization_id' => $organizationId]
         );
-    }
-
-    private function assertInReview(Estimate $estimate): void
-    {
-        if ($estimate->status !== 'in_review') {
-            throw new DomainException(trans_message('budget_estimates.mobile.errors.status_transition_forbidden'));
-        }
-    }
-
-    private function withApprovalHistory(Estimate $estimate, string $action, int $userId, ?string $comment): array
-    {
-        $metadata = is_array($estimate->metadata) ? $estimate->metadata : [];
-        $history = is_array($metadata['mobile_approval_history'] ?? null)
-            ? $metadata['mobile_approval_history']
-            : [];
-        $history[] = [
-            'action' => $action,
-            'user_id' => $userId,
-            'comment' => $comment,
-            'created_at' => now()->toIso8601String(),
-        ];
-        $metadata['mobile_approval_history'] = array_values($history);
-
-        return $metadata;
     }
 }

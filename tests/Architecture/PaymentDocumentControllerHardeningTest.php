@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Architecture;
 
+use App\BusinessModules\Core\Payments\Http\Requests\StorePaymentDocumentRequest;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -39,6 +40,37 @@ final class PaymentDocumentControllerHardeningTest extends TestCase
         self::assertStringContainsString('validateScopedMorphReference', $source);
         self::assertStringContainsString("->where('organization_id', \$organizationId)", $source);
         self::assertStringContainsString("->whereHas('contract'", $source);
+    }
+
+    #[Test]
+    public function payment_document_failures_do_not_log_financial_or_bank_payloads(): void
+    {
+        $source = $this->read('app/BusinessModules/Core/Payments/Services/PaymentDocumentService.php');
+
+        self::assertStringNotContainsString("'data' => \$data", $source);
+        self::assertStringContainsString('paymentDocumentFailureContext', $source);
+    }
+
+    #[Test]
+    public function store_request_preserves_money_as_a_normalized_decimal_string(): void
+    {
+        $request = new class extends StorePaymentDocumentRequest
+        {
+            public function normalize(): void
+            {
+                $this->prepareForValidation();
+            }
+        };
+        $request->initialize([], [
+            'amount' => '9 999 999 999 999,99',
+            'vat_rate' => '20,00',
+        ]);
+        $request->setMethod('POST');
+
+        $request->normalize();
+
+        self::assertSame('9999999999999.99', $request->input('amount'));
+        self::assertSame('20.00', $request->input('vat_rate'));
     }
 
     private function read(string $path): string

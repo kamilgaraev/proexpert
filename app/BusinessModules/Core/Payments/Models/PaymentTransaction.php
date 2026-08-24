@@ -30,6 +30,8 @@ class PaymentTransaction extends Model
         'payment_method',
         'reference_number',
         'bank_transaction_id',
+        'idempotency_key',
+        'reverses_transaction_id',
         'transaction_date',
         'value_date',
         'status',
@@ -48,7 +50,7 @@ class PaymentTransaction extends Model
         // Автоматически устанавливаем invoice_id = null если колонка существует
         // (для поддержки старых баз до выполнения миграции удаления invoice_id)
         static::creating(function (PaymentTransaction $transaction) {
-            if (\Schema::hasColumn('payment_transactions', 'invoice_id') && !isset($transaction->invoice_id)) {
+            if (\Schema::hasColumn('payment_transactions', 'invoice_id') && ! isset($transaction->invoice_id)) {
                 $transaction->invoice_id = null;
             }
         });
@@ -165,4 +167,3 @@ class PaymentTransaction extends Model
         return $this->status === PaymentTransactionStatus::COMPLETED;
     }
 }
-

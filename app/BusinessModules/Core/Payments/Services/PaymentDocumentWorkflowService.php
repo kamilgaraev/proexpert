@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Services;
 
-use App\BusinessModules\Core\Payments\Exceptions\PaymentDocumentDeviationBlockedException;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Core\Payments\Exceptions\PaymentDocumentDeviationBlockedException;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Contract;
 use App\Models\User;
@@ -23,7 +23,7 @@ final class PaymentDocumentWorkflowService
     ) {}
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array{document: PaymentDocument, warnings: array<int, string>}
      */
     public function create(int $organizationId, int $userId, array $data): array
@@ -34,7 +34,7 @@ final class PaymentDocumentWorkflowService
 
         $warnings = [];
 
-        if (!empty($data['estimate_splits'])) {
+        if (! empty($data['estimate_splits'])) {
             $deviationAnalysis = $this->documents->analyzePriceDeviation($data['estimate_splits']);
 
             if (($deviationAnalysis['is_blocked'] ?? false) && empty($data['overprice_justification'])) {
@@ -51,13 +51,13 @@ final class PaymentDocumentWorkflowService
 
         $document = $this->documents->create($data);
 
-        if (!empty($data['overprice_justification'])) {
+        if (! empty($data['overprice_justification'])) {
             $document->notes = trim(
                 ($document->notes ?? '')
-                . "\n\n"
-                . trans_message('payments.documents.overprice_justification_note')
-                . "\n"
-                . $data['overprice_justification']
+                ."\n\n"
+                .trans_message('payments.documents.overprice_justification_note')
+                ."\n"
+                .$data['overprice_justification']
             );
             $document->saveQuietly();
         }
@@ -71,7 +71,7 @@ final class PaymentDocumentWorkflowService
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     public function update(PaymentDocument $document, array $data): PaymentDocument
     {
@@ -98,16 +98,15 @@ final class PaymentDocumentWorkflowService
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     public function registerPayment(PaymentDocument $document, int $userId, array $data): PaymentDocument
     {
-        if (!isset($data['transaction_date']) && isset($data['payment_date'])) {
+        if (! isset($data['transaction_date']) && isset($data['payment_date'])) {
             $data['transaction_date'] = $data['payment_date'];
         }
 
         $data['created_by_user_id'] = $userId;
-        $data['amount'] = (float) $data['amount'];
 
         return $this->documents->registerPayment($document, $data['amount'], $data);
     }
@@ -123,7 +122,7 @@ final class PaymentDocumentWorkflowService
     }
 
     /**
-     * @param array<int, int> $ids
+     * @param  array<int, int>  $ids
      * @return array<string, mixed>
      */
     public function bulkAction(int $organizationId, array $ids, string $action, ?User $user, array $payload): array
@@ -173,7 +172,7 @@ final class PaymentDocumentWorkflowService
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     public function generatePurpose(string $documentType, array $data): string
     {
@@ -181,7 +180,7 @@ final class PaymentDocumentWorkflowService
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     private function applyBulkAction(PaymentDocument $document, string $action, ?User $user, array $payload): void
     {
@@ -207,7 +206,7 @@ final class PaymentDocumentWorkflowService
                 $user,
                 $this->nullableString($payload['budget_override_reason'] ?? null)
             ),
-            'pay' => $this->documents->registerPayment($document, (float) $document->remaining_amount, [
+            'pay' => $this->documents->registerPayment($document, (string) $document->remaining_amount, [
                 'notes' => trans_message('payments.documents.bulk_payment_note'),
                 'created_by_user_id' => $user?->id,
                 'budget_override_reason' => $this->nullableString($payload['budget_override_reason'] ?? null),
@@ -217,7 +216,7 @@ final class PaymentDocumentWorkflowService
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     private function prepareContractPaymentData(int $organizationId, array $data): array
@@ -249,11 +248,11 @@ final class PaymentDocumentWorkflowService
             }
         }
 
-        if (($data['invoice_type'] ?? null) !== 'advance' || !$isContractRelated || !$contractId || !empty($data['amount'])) {
+        if (($data['invoice_type'] ?? null) !== 'advance' || ! $isContractRelated || ! $contractId || ! empty($data['amount'])) {
             return $data;
         }
 
-        if (!$contract instanceof Contract) {
+        if (! $contract instanceof Contract) {
             Log::warning('payment_document.store.contract_not_found', [
                 'contract_id' => $contractId,
                 'organization_id' => $organizationId,
@@ -289,7 +288,7 @@ final class PaymentDocumentWorkflowService
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     private function applyContractPaymentParties(array $data, Contract $contract): array
@@ -299,22 +298,22 @@ final class PaymentDocumentWorkflowService
         $hasPayee = isset($data['payee_organization_id']) || isset($data['payee_contractor_id']);
 
         if ($direction === 'incoming') {
-            if (!$hasPayer && $contract->contractor_id) {
+            if (! $hasPayer && $contract->contractor_id) {
                 $data['payer_contractor_id'] = $contract->contractor_id;
             }
 
-            if (!$hasPayee) {
+            if (! $hasPayee) {
                 $data['payee_organization_id'] = $contract->organization_id;
             }
 
             return $data;
         }
 
-        if (!$hasPayer) {
+        if (! $hasPayer) {
             $data['payer_organization_id'] = $contract->organization_id;
         }
 
-        if (!$hasPayee && $contract->contractor_id) {
+        if (! $hasPayee && $contract->contractor_id) {
             $data['payee_contractor_id'] = $contract->contractor_id;
         }
 

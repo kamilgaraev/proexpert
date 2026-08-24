@@ -2,9 +2,9 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Contract\Payment;
 
-use Illuminate\Foundation\Http\FormRequest;
 use App\DTOs\Contract\ContractPaymentDTO;
 use App\Enums\Contract\ContractPaymentTypeEnum;
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Enum;
 
 class StoreContractPaymentRequest extends FormRequest
@@ -32,10 +32,10 @@ class StoreContractPaymentRequest extends FormRequest
     {
         return new ContractPaymentDTO(
             payment_date: $this->validated('payment_date'),
-            amount: (float) $this->validated('amount'),
+            amount: (string) $this->validated('amount'),
             payment_type: ContractPaymentTypeEnum::from($this->validated('payment_type')),
             reference_document_number: $this->validated('reference_document_number'),
             description: $this->validated('description')
         );
     }
-} 
+}

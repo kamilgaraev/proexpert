@@ -12,9 +12,7 @@ use Illuminate\Support\Facades\Schema;
 
 trait ActingTestSchema
 {
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
     protected function setUpActingSchema(): void
     {
@@ -43,6 +41,9 @@ trait ActingTestSchema
             'production_acceptance_owner_members',
             'production_acceptance_owner_versions',
             'performance_act_lines',
+            'change_management_variation_orders',
+            'change_management_change_requests',
+            'contract_project_allocations',
             'acting_policies',
             'performance_act_completed_works',
             'contract_performance_acts',
@@ -59,6 +60,7 @@ trait ActingTestSchema
             'project_schedules',
             'contract_estimate_items',
             'estimate_items',
+            'estimate_versions',
             'estimates',
             'work_types',
             'measurement_units',
@@ -245,6 +247,45 @@ trait ActingTestSchema
             $table->timestamps();
         });
 
+        Schema::create('contract_project_allocations', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('contract_id');
+            $table->unsignedBigInteger('project_id');
+            $table->string('allocation_type')->default('fixed');
+            $table->decimal('allocated_amount', 18, 2)->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('change_management_change_requests', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('created_by_user_id');
+            $table->unsignedBigInteger('reporting_contract_project_allocation_id')->nullable();
+            $table->string('change_number');
+            $table->string('title');
+            $table->string('reason');
+            $table->text('description')->nullable();
+            $table->string('initiator_type');
+            $table->string('status');
+            $table->string('reporting_currency', 3)->default('RUB');
+            $table->timestamp('approved_at')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('change_management_variation_orders', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('change_request_id');
+            $table->string('variation_number');
+            $table->decimal('amount', 18, 2);
+            $table->text('description')->nullable();
+            $table->timestamps();
+        });
+
         Schema::create('contract_state_events', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('contract_id');
@@ -307,8 +348,32 @@ trait ActingTestSchema
             $table->decimal('total_amount', 15, 2)->default(0);
             $table->decimal('total_amount_with_vat', 15, 2)->default(0);
             $table->decimal('vat_rate', 5, 2)->default(0);
+            $table->foreignId('current_version_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('estimate_versions', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('estimate_id');
+            $table->foreignId('organization_id');
+            $table->foreignId('created_by_user_id')->nullable();
+            $table->foreignId('approved_by_user_id')->nullable();
+            $table->timestamp('approved_at')->nullable();
+            $table->unsignedInteger('version_number');
+            $table->string('label')->nullable();
+            $table->text('comment')->nullable();
+            $table->string('snapshot_type')->default('manual');
+            $table->string('estimate_status')->nullable();
+            $table->jsonb('snapshot');
+            $table->string('snapshot_hash', 64);
+            $table->decimal('total_amount', 15, 2)->default(0);
+            $table->decimal('total_amount_with_vat', 15, 2)->default(0);
+            $table->decimal('total_direct_costs', 15, 2)->default(0);
+            $table->string('status', 40)->default('archived');
+            $table->string('idempotency_key', 128)->nullable();
+            $table->timestamp('superseded_at')->nullable();
+            $table->timestamps();
         });
 
         Schema::create('estimate_items', function (Blueprint $table): void {
@@ -509,11 +574,15 @@ trait ActingTestSchema
             $table->id();
             $table->foreignId('contract_id');
             $table->foreignId('project_id')->nullable();
+            $table->foreignId('estimate_version_id')->nullable();
             $table->string('act_document_number')->nullable();
             $table->date('act_date');
             $table->date('period_start')->nullable();
             $table->date('period_end')->nullable();
             $table->decimal('amount', 15, 2)->default(0);
+            $table->decimal('vat_rate', 5, 2)->default(0);
+            $table->decimal('vat_amount', 15, 2)->default(0);
+            $table->decimal('amount_without_vat', 15, 2)->default(0);
             $table->char('currency', 3)->nullable();
             $table->text('description')->nullable();
             $table->string('status', 32)->default('draft');
@@ -611,6 +680,8 @@ trait ActingTestSchema
                 performance_act_id BIGINT NOT NULL,
                 completed_work_id BIGINT NULL,
                 estimate_item_id BIGINT NULL,
+                estimate_version_id BIGINT NULL,
+                variation_order_id BIGINT NULL,
                 line_type VARCHAR(32) NOT NULL,
                 title VARCHAR(255) NOT NULL,
                 unit VARCHAR(255) NULL,
@@ -619,6 +690,7 @@ trait ActingTestSchema
                 amount NUMERIC NOT NULL,
                 currency CHAR(3) NULL,
                 manual_reason TEXT NULL,
+                basis_snapshot JSONB NULL,
                 created_by BIGINT NULL,
                 created_at TIMESTAMPTZ NULL,
                 updated_at TIMESTAMPTZ NULL,

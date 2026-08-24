@@ -9,7 +9,11 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid;
-use App\BusinessModules\Core\Payments\Http\Controllers\PaymentDocumentController;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentPresenter;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Core\Payments\Services\PaymentTransactionService;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseReceiptFromPaymentService;
@@ -19,8 +23,9 @@ use App\BusinessModules\Features\SiteRequests\Events\SiteRequestStatusChanged;
 use App\BusinessModules\Features\SiteRequests\Listeners\CompleteSiteRequestsOnPaymentPaid;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Enums\EstimatePositionItemType;
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\Material;
@@ -35,9 +40,13 @@ use Tests\TestCase;
 class PaymentDocumentEstimateLifecycleTest extends TestCase
 {
     private PaymentDocumentService $service;
+
     private Organization $organization;
+
     private Organization $counterparty;
+
     private Project $project;
+
     private Estimate $estimate;
 
     protected function setUp(): void
@@ -130,6 +139,71 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
         $this->assertSame('paid', $item->procurement_status);
     }
 
+    public function test_estimate_item_payment_progress_uses_decimal_arithmetic_for_large_partial_payment(): void
+    {
+        $item = $this->createEstimateItem([
+            'quantity' => '300.00000000',
+            'unit_price' => '33333333.3333',
+            'total_amount' => '9999999999.99',
+        ]);
+
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-EST-DECIMAL',
+            'status' => PaymentDocumentStatus::SCHEDULED->value,
+            'amount' => '9999999999.99',
+            'estimate_splits' => [[
+                'estimate_item_id' => $item->id,
+                'quantity' => '300.00000000',
+                'unit_price_actual' => '33333333.3333',
+                'amount' => '9999999999.99',
+                'percentage' => 100,
+            ]],
+        ]);
+
+        $this->service->registerPayment($document, '3333333333.33', [
+            'payment_method' => 'bank_transfer',
+            'transaction_date' => now(),
+        ]);
+
+        $item->refresh();
+
+        $this->assertSame('100.00000000', (string) $item->actual_quantity);
+        $this->assertSame('33333333.3333', (string) $item->actual_unit_price);
+    }
+
+    public function test_refund_reverses_estimate_item_payment_projection(): void
+    {
+        $actor = User::factory()->create(['current_organization_id' => $this->organization->id]);
+        $item = $this->createEstimateItem(['quantity' => 10, 'unit_price' => 100, 'total_amount' => 1000]);
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-EST-REFUND',
+            'status' => PaymentDocumentStatus::SCHEDULED->value,
+        ]);
+        $this->service->registerPayment($document, '1000.00', [
+            'payment_method' => 'bank_transfer',
+            'transaction_date' => '2026-08-23',
+            'idempotency_key' => 'payment-before-refund',
+        ]);
+        $transaction = PaymentTransaction::query()
+            ->where('payment_document_id', $document->id)
+            ->where('amount', '>', 0)
+            ->sole();
+
+        app(PaymentTransactionService::class)->refundPayment(
+            transactionId: $transaction->id,
+            organizationId: $this->organization->id,
+            actorId: $actor->id,
+            amount: '400.00',
+            reason: 'Корректировка платежа',
+            refundDate: '2026-08-24',
+            idempotencyKey: 'refund-estimate-projection'
+        );
+
+        $this->assertSame('600.00', $document->fresh()->paid_amount);
+        $this->assertSame('6.00000000', $item->fresh()->actual_quantity);
+        $this->assertSame('ordered', $item->fresh()->procurement_status);
+    }
+
     public function test_partial_payment_does_not_dispatch_paid_lifecycle_event(): void
     {
         $item = $this->createEstimateItem([
@@ -168,6 +242,228 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
                 && $event->invoiceableType === $document->invoiceable_type
                 && $event->invoiceableId === (int) $document->invoiceable_id
                 && $event->currency === $document->currency
+        );
+    }
+
+    public function test_repeated_payment_request_is_idempotent(): void
+    {
+        $item = $this->createEstimateItem([
+            'quantity' => 10,
+            'unit_price' => 100,
+            'total_amount' => 1000,
+        ]);
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-IDEMPOTENT-001',
+            'status' => PaymentDocumentStatus::SCHEDULED->value,
+        ]);
+        $paymentData = [
+            'payment_method' => 'bank_transfer',
+            'transaction_date' => now(),
+            'idempotency_key' => 'payment-request-20260823-0001',
+        ];
+
+        $first = $this->service->registerPayment($document, 400, $paymentData);
+        $second = $this->service->registerPayment($document->fresh(), 400, $paymentData);
+
+        self::assertSame('400.00', $first->paid_amount);
+        self::assertSame('400.00', $second->paid_amount);
+        self::assertSame(1, PaymentTransaction::query()->where('payment_document_id', $document->id)->count());
+    }
+
+    public function test_same_bank_event_cannot_be_applied_twice_with_different_idempotency_keys(): void
+    {
+        $item = $this->createEstimateItem(['quantity' => 10, 'unit_price' => 100, 'total_amount' => 1000]);
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-BANK-EVENT-001',
+            'status' => PaymentDocumentStatus::SCHEDULED->value,
+        ]);
+        $event = [
+            'payment_method' => 'bank_transfer',
+            'reference_number' => 'BANK-REF-001',
+            'bank_transaction_id' => 'BANK-EVENT-001',
+            'transaction_date' => '2026-08-23',
+            'value_date' => '2026-08-24',
+        ];
+
+        $first = $this->service->registerPayment($document, '400.00', $event + ['idempotency_key' => 'request-a']);
+        $second = $this->service->registerPayment($document->fresh(), '400.00', $event + ['idempotency_key' => 'request-b']);
+
+        self::assertSame('400.00', $first->paid_amount);
+        self::assertSame('400.00', $second->paid_amount);
+        self::assertSame(1, PaymentTransaction::query()->where('bank_transaction_id', 'BANK-EVENT-001')->count());
+    }
+
+    public function test_reused_bank_event_with_changed_fingerprint_is_rejected(): void
+    {
+        $item = $this->createEstimateItem(['quantity' => 10, 'unit_price' => 100, 'total_amount' => 1000]);
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-BANK-EVENT-002',
+            'status' => PaymentDocumentStatus::SCHEDULED->value,
+        ]);
+        $this->service->registerPayment($document, '400.00', [
+            'idempotency_key' => 'request-c',
+            'payment_method' => 'bank_transfer',
+            'reference_number' => 'BANK-REF-002',
+            'bank_transaction_id' => 'BANK-EVENT-002',
+            'transaction_date' => '2026-08-23',
+            'value_date' => '2026-08-24',
+        ]);
+
+        $this->expectException(\DomainException::class);
+        $this->service->registerPayment($document->fresh(), '400.00', [
+            'idempotency_key' => 'request-d',
+            'payment_method' => 'bank_transfer',
+            'reference_number' => 'CHANGED-REFERENCE',
+            'bank_transaction_id' => 'BANK-EVENT-002',
+            'transaction_date' => '2026-08-23',
+            'value_date' => '2026-08-24',
+        ]);
+    }
+
+    public function test_invoice_from_act_requires_approval_and_is_idempotent(): void
+    {
+        $contractor = Contractor::query()->create([
+            'organization_id' => $this->organization->id,
+            'name' => 'Act contractor',
+            'source_organization_id' => $this->counterparty->id,
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $this->organization->id,
+            'project_id' => $this->project->id,
+            'contractor_id' => $contractor->id,
+            'number' => 'ACT-INVOICE-1',
+            'date' => now()->toDateString(),
+            'subject' => 'Works',
+            'total_amount' => 5000,
+            'status' => 'active',
+        ]);
+        $act = ContractPerformanceAct::query()->create([
+            'contract_id' => $contract->id,
+            'project_id' => $this->project->id,
+            'act_document_number' => 'ACT-1',
+            'act_date' => now()->toDateString(),
+            'period_start' => now()->startOfMonth()->toDateString(),
+            'period_end' => now()->endOfMonth()->toDateString(),
+            'amount' => '1250.55',
+            'vat_rate' => '20.00',
+            'vat_amount' => '208.43',
+            'amount_without_vat' => '1042.12',
+            'currency' => 'RUB',
+            'status' => ContractPerformanceAct::STATUS_DRAFT,
+        ]);
+
+        try {
+            $this->service->createFromAct($act, InvoiceDirection::INCOMING);
+            self::fail('Счёт был создан из неутверждённого акта');
+        } catch (\DomainException) {
+            self::assertDatabaseCount('payment_documents', 0);
+        }
+
+        ContractPerformanceAct::withoutEvents(static function () use ($act): void {
+            $act->forceFill([
+                'status' => ContractPerformanceAct::STATUS_APPROVED,
+                'is_approved' => true,
+            ])->save();
+        });
+        $first = $this->service->createFromAct($act->fresh(), InvoiceDirection::INCOMING);
+        $second = $this->service->createFromAct($act->fresh(), InvoiceDirection::INCOMING);
+
+        self::assertSame($first->id, $second->id);
+        self::assertSame('1250.55', $first->amount);
+        self::assertSame('20.00', $first->vat_rate);
+        self::assertSame('208.43', $first->vat_amount);
+        self::assertSame('1042.12', $first->amount_without_vat);
+        self::assertSame(1, PaymentDocument::query()
+            ->where('invoiceable_type', ContractPerformanceAct::class)
+            ->where('invoiceable_id', $act->id)
+            ->count());
+    }
+
+    public function test_act_can_be_invoiced_in_idempotent_partial_allocations(): void
+    {
+        $contractor = Contractor::query()->create([
+            'organization_id' => $this->organization->id,
+            'name' => 'Partial act contractor',
+            'source_organization_id' => $this->counterparty->id,
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $this->organization->id,
+            'project_id' => $this->project->id,
+            'contractor_id' => $contractor->id,
+            'number' => 'ACT-INVOICE-PARTIAL',
+            'date' => now()->toDateString(),
+            'subject' => 'Works',
+            'total_amount' => 5000,
+            'status' => 'active',
+        ]);
+        $act = ContractPerformanceAct::query()->create([
+            'contract_id' => $contract->id,
+            'project_id' => $this->project->id,
+            'act_document_number' => 'ACT-PARTIAL-1',
+            'act_date' => now()->toDateString(),
+            'period_start' => now()->startOfMonth()->toDateString(),
+            'period_end' => now()->endOfMonth()->toDateString(),
+            'amount' => '1000.00',
+            'vat_rate' => '20.00',
+            'vat_amount' => '166.67',
+            'amount_without_vat' => '833.33',
+            'currency' => 'RUB',
+            'status' => ContractPerformanceAct::STATUS_APPROVED,
+            'is_approved' => true,
+        ]);
+
+        $first = $this->service->createFromAct(
+            $act,
+            InvoiceDirection::INCOMING,
+            '333.33',
+            'partial-act-invoice-20260823-0001'
+        );
+        $retry = $this->service->createFromAct(
+            $act->fresh(),
+            InvoiceDirection::INCOMING,
+            '333.33',
+            'partial-act-invoice-20260823-0001'
+        );
+        $second = $this->service->createFromAct(
+            $act->fresh(),
+            InvoiceDirection::INCOMING,
+            '333.33',
+            'partial-act-invoice-20260823-0002'
+        );
+        $third = $this->service->createFromAct(
+            $act->fresh(),
+            InvoiceDirection::INCOMING,
+            '333.34',
+            'partial-act-invoice-20260823-0003'
+        );
+
+        self::assertSame($first->id, $retry->id);
+        self::assertNotSame($first->id, $second->id);
+        self::assertSame('333.33', $first->amount);
+        self::assertSame('333.34', $third->amount);
+        self::assertSame(3, PaymentDocument::query()
+            ->where('invoiceable_type', ContractPerformanceAct::class)
+            ->where('invoiceable_id', $act->id)
+            ->count());
+        self::assertSame(1000.0, (float) PaymentDocument::query()
+            ->where('invoiceable_type', ContractPerformanceAct::class)
+            ->where('invoiceable_id', $act->id)
+            ->sum('amount'));
+        self::assertSame(833.33, (float) PaymentDocument::query()
+            ->where('invoiceable_type', ContractPerformanceAct::class)
+            ->where('invoiceable_id', $act->id)
+            ->sum('amount_without_vat'));
+        self::assertSame(166.67, (float) PaymentDocument::query()
+            ->where('invoiceable_type', ContractPerformanceAct::class)
+            ->where('invoiceable_id', $act->id)
+            ->sum('vat_amount'));
+
+        $this->expectException(\DomainException::class);
+        $this->service->createFromAct(
+            $act->fresh(),
+            InvoiceDirection::INCOMING,
+            '0.01',
+            'partial-act-invoice-20260823-0004'
         );
     }
 
@@ -288,12 +584,9 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
             'bank_bik' => null,
         ]);
 
-        $controller = app(PaymentDocumentController::class);
-        $flagsMethod = new \ReflectionMethod($controller, 'buildProblemFlags');
-        $summaryMethod = new \ReflectionMethod($controller, 'buildWorkflowSummary');
-
-        $flags = $flagsMethod->invoke($controller, $document->fresh());
-        $summary = $summaryMethod->invoke($controller, $document->fresh(), $flags, []);
+        $payload = app(PaymentDocumentPresenter::class)->detailed($document->fresh(), null);
+        $flags = $payload['problem_flags'];
+        $summary = $payload['workflow_summary'];
 
         $this->assertSame([], $flags);
         $this->assertSame('paid', $summary['current_stage']);
@@ -420,7 +713,7 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
 
     private function createDocumentWithSplit(EstimateItem $item, array $overrides = []): PaymentDocument
     {
-        return $this->service->create(array_merge([
+        $data = array_merge([
             'organization_id' => $this->organization->id,
             'project_id' => $this->project->id,
             'document_type' => PaymentDocumentType::INVOICE->value,
@@ -429,7 +722,7 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
             'direction' => InvoiceDirection::OUTGOING->value,
             'invoice_type' => InvoiceType::ACT->value,
             'invoiceable_type' => \App\Models\ContractPerformanceAct::class,
-            'invoiceable_id' => 1,
+            'invoiceable_id' => null,
             'payer_organization_id' => $this->organization->id,
             'payee_organization_id' => $this->counterparty->id,
             'amount' => 1000,
@@ -444,6 +737,53 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
                     'percentage' => 100,
                 ],
             ],
-        ], $overrides));
+        ], $overrides);
+
+        if (($data['invoiceable_type'] ?? null) === ContractPerformanceAct::class
+            && empty($data['invoiceable_id'])) {
+            $contractor = Contractor::query()->create([
+                'organization_id' => $this->organization->id,
+                'name' => 'Payment basis contractor',
+                'source_organization_id' => $this->counterparty->id,
+            ]);
+            $contract = Contract::query()->create([
+                'organization_id' => $this->organization->id,
+                'project_id' => $this->project->id,
+                'contractor_id' => $contractor->id,
+                'number' => 'PAY-BASIS-'.uniqid('', true),
+                'date' => now()->toDateString(),
+                'subject' => 'Payment basis',
+                'total_amount' => $data['amount'],
+                'status' => 'active',
+            ]);
+            $act = ContractPerformanceAct::query()->create([
+                'contract_id' => $contract->id,
+                'project_id' => $this->project->id,
+                'act_document_number' => 'PAY-ACT-'.uniqid('', true),
+                'act_date' => now()->toDateString(),
+                'period_start' => now()->startOfMonth()->toDateString(),
+                'period_end' => now()->endOfMonth()->toDateString(),
+                'amount' => $data['amount'],
+                'vat_rate' => '20.00',
+                'vat_amount' => '0.00',
+                'amount_without_vat' => $data['amount'],
+                'currency' => 'RUB',
+                'status' => ContractPerformanceAct::STATUS_APPROVED,
+                'is_approved' => true,
+            ]);
+            $data['invoiceable_id'] = $act->id;
+            $data['idempotency_key'] = 'estimate-payment:'.$act->id.':'.$data['document_number'];
+        }
+
+        $requestedStatus = $data['status'] ?? null;
+        $document = $this->service->create($data);
+
+        if (is_string($requestedStatus) && $document->status->value !== $requestedStatus) {
+            PaymentDocument::withoutEvents(static function () use ($document, $requestedStatus): void {
+                $document->forceFill(['status' => $requestedStatus])->save();
+            });
+        }
+
+        return $document->fresh();
     }
 }

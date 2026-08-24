@@ -9,7 +9,7 @@ class ContractPaymentDTO
     public function __construct(
         // contract_id будет устанавливаться в сервисе
         public readonly string $payment_date, // Y-m-d format
-        public readonly float $amount,
+        public readonly string $amount,
         public readonly ContractPaymentTypeEnum $payment_type,
         public readonly ?string $reference_document_number,
         public readonly ?string $description
@@ -25,4 +25,4 @@ class ContractPaymentDTO
             'description' => $this->description,
         ];
     }
-} 
+}

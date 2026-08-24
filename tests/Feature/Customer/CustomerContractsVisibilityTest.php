@@ -13,10 +13,93 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Customer\CustomerPortalService;
 use App\Services\Project\ProjectParticipantService;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class CustomerContractsVisibilityTest extends TestCase
 {
+    public function test_project_finance_uses_loaded_paid_amount_from_contract_documents(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Finance project',
+        ]);
+        $contractor = $this->createContractor($organization, 'Finance contractor');
+        $contract = $this->createContract(
+            $organization,
+            $project,
+            $contractor,
+            'FIN-019',
+            ContractStatusEnum::ACTIVE,
+            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+        );
+
+        $paymentDocumentId = DB::table('payment_documents')->insertGetId([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'document_type' => 'invoice',
+            'document_number' => 'FIN-019-PAYMENT',
+            'document_date' => now()->toDateString(),
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'amount' => '500.00',
+            'currency' => 'RUB',
+            'vat_amount' => '83.33',
+            'vat_rate' => '20.00',
+            'amount_without_vat' => '416.67',
+            'paid_amount' => '250.00',
+            'remaining_amount' => '250.00',
+            'status' => 'partially_paid',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $paymentTransactionId = DB::table('payment_transactions')->insertGetId([
+            'payment_document_id' => $paymentDocumentId,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'amount' => '300.00',
+            'currency' => 'RUB',
+            'payment_method' => 'bank_transfer',
+            'transaction_date' => now()->toDateString(),
+            'status' => 'completed',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('payment_transactions')->insert([
+            'payment_document_id' => $paymentDocumentId,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'amount' => '-50.00',
+            'currency' => 'RUB',
+            'payment_method' => 'bank_transfer',
+            'transaction_date' => now()->toDateString(),
+            'status' => 'completed',
+            'reverses_transaction_id' => $paymentTransactionId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $payload = app(CustomerPortalService::class)->getProjectFinanceSummary(
+            $organization->id,
+            $project
+        );
+
+        self::assertSame('300.00', $payload['summary']['totals']['paid_amount']);
+        self::assertSame('50.00', $payload['summary']['totals']['refunded_amount']);
+        self::assertSame('250.00', $payload['summary']['totals']['debt_amount']);
+
+        $registry = app(CustomerPortalService::class)->getContracts($organization->id);
+        self::assertSame('300.00', $registry['items'][0]['paid_amount']);
+        self::assertSame('50.00', $registry['items'][0]['refunded_amount']);
+        self::assertSame('250.00', $registry['items'][0]['debt_amount']);
+
+        $details = app(CustomerPortalService::class)->getContract($organization->id, $contract);
+        self::assertSame('300.00', $details['contract']['financial_summary']['paid_amount']);
+        self::assertSame('50.00', $details['contract']['financial_summary']['refunded_amount']);
+        self::assertSame('250.00', $details['contract']['financial_summary']['debt_amount']);
+    }
+
     public function test_customer_contracts_are_filtered_by_contract_side_and_return_meta_filters(): void
     {
         $ownerOrganization = Organization::factory()->create();
@@ -148,7 +231,7 @@ class CustomerContractsVisibilityTest extends TestCase
             'contract_side_type' => $contractSideType->value,
             'number' => $number,
             'date' => now()->toDateString(),
-            'subject' => 'Тестовый договор ' . $number,
+            'subject' => 'Тестовый договор '.$number,
             'total_amount' => 100000,
             'status' => $status->value,
             'is_fixed_amount' => true,

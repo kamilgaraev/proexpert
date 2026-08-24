@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
+use App\BusinessModules\Core\Payments\Http\Requests\RefundPaymentTransactionRequest;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
-use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Core\Payments\Services\PaymentTransactionService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
@@ -19,6 +19,8 @@ use function trans_message;
 
 class TransactionController extends Controller
 {
+    public function __construct(private readonly PaymentTransactionService $transactions) {}
+
     public function index(Request $request): JsonResponse
     {
         try {
@@ -55,23 +57,23 @@ class TransactionController extends Controller
                 $query->where('payment_document_id', $paymentDocumentId);
             }
 
-            if (!empty($validated['project_id'])) {
+            if (! empty($validated['project_id'])) {
                 $query->where('project_id', $validated['project_id']);
             }
 
-            if (!empty($validated['status'])) {
+            if (! empty($validated['status'])) {
                 $query->where('status', $validated['status']);
             }
 
-            if (!empty($validated['payment_method'])) {
+            if (! empty($validated['payment_method'])) {
                 $query->where('payment_method', $validated['payment_method']);
             }
 
-            if (!empty($validated['date_from'])) {
+            if (! empty($validated['date_from'])) {
                 $query->whereDate('transaction_date', '>=', $validated['date_from']);
             }
 
-            if (!empty($validated['date_to'])) {
+            if (! empty($validated['date_to'])) {
                 $query->whereDate('transaction_date', '<=', $validated['date_to']);
             }
 
@@ -138,8 +140,8 @@ class TransactionController extends Controller
             }
 
             $notes = trim((string) $transaction->notes);
-            if (!empty($validated['notes'])) {
-                $notes = trim($notes . PHP_EOL . $validated['notes']);
+            if (! empty($validated['notes'])) {
+                $notes = trim($notes.PHP_EOL.$validated['notes']);
             }
 
             PaymentTransaction::query()->whereKey($transaction->id)->update([
@@ -208,70 +210,26 @@ class TransactionController extends Controller
         }
     }
 
-    public function refund(Request $request, int|string $id): JsonResponse
+    public function refund(RefundPaymentTransactionRequest $request, int|string $id): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'amount' => ['nullable', 'numeric', 'min:0.01'],
-                'reason' => ['required', 'string', 'max:500'],
-                'refund_date' => ['nullable', 'date'],
-            ]);
-
+            $validated = $request->validated();
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $userId = (int) $request->user()->id;
-
-            $payload = DB::transaction(function () use ($organizationId, $userId, $validated, $id): array {
-                $originalTransaction = PaymentTransaction::query()
-                    ->where('organization_id', $organizationId)
-                    ->with('paymentDocument')
-                    ->lockForUpdate()
-                    ->findOrFail((int) $id);
-
-                if ($originalTransaction->status !== PaymentTransactionStatus::COMPLETED) {
-                    throw new \DomainException(trans_message('payments.transactions.completed_only'));
-                }
-
-                $refundAmount = (float) ($validated['amount'] ?? $originalTransaction->amount);
-                if ($refundAmount > (float) $originalTransaction->amount) {
-                    throw new \DomainException(trans_message('payments.transactions.refund_amount_invalid'));
-                }
-
-                $refundTransaction = PaymentTransaction::create([
-                    'payment_document_id' => $originalTransaction->payment_document_id,
-                    'organization_id' => $organizationId,
-                    'project_id' => $originalTransaction->project_id,
-                    'amount' => -$refundAmount,
-                    'currency' => $originalTransaction->currency,
-                    'payment_method' => $originalTransaction->payment_method,
-                    'transaction_date' => $validated['refund_date'] ?? now()->toDateString(),
-                    'status' => PaymentTransactionStatus::COMPLETED->value,
-                    'notes' => trans_message('payments.transactions.refund_note', ['reason' => $validated['reason']]),
-                    'created_by_user_id' => $userId,
-                    'approved_by_user_id' => $userId,
-                    'metadata' => [
-                        'original_transaction_id' => $originalTransaction->id,
-                        'refund_reason' => $validated['reason'],
-                    ],
-                ]);
-
-                PaymentTransaction::query()->whereKey($originalTransaction->id)->update([
-                    'status' => PaymentTransactionStatus::REFUNDED->value,
-                ]);
-
-                if ($originalTransaction->paymentDocument !== null) {
-                    $document = $originalTransaction->paymentDocument;
-                    $document->paid_amount -= $refundAmount;
-                    $document->remaining_amount += $refundAmount;
-
-                    app(PaymentDocumentService::class)->updateStatus($document);
-                    $document->save();
-                }
-
-                return [
-                    'original_transaction' => $this->findTransactionForResponse($originalTransaction->id),
-                    'refund_transaction' => $refundTransaction->fresh(['paymentDocument', 'createdBy', 'approvedBy']),
-                ];
-            });
+            $payload = $this->transactions->refundPayment(
+                (int) $id,
+                $organizationId,
+                $userId,
+                $validated['amount'] ?? null,
+                $validated['reason'],
+                $validated['refund_date'] ?? null,
+                $validated['idempotency_key'],
+            );
+            $payload['original_transaction'] = $this->findTransactionForResponse(
+                $payload['original_transaction']->id
+            );
+            $payload['refund_transaction'] = $payload['refund_transaction']
+                ->fresh(['paymentDocument', 'createdBy', 'approvedBy']);
 
             return AdminResponse::success([
                 'original_transaction' => $this->formatTransaction($payload['original_transaction'], true),
@@ -305,7 +263,7 @@ class TransactionController extends Controller
                 ->where('organization_id', $organizationId)
                 ->findOrFail((int) $id);
 
-            if (!in_array($transaction->status, [PaymentTransactionStatus::PENDING, PaymentTransactionStatus::PROCESSING], true)) {
+            if (! in_array($transaction->status, [PaymentTransactionStatus::PENDING, PaymentTransactionStatus::PROCESSING], true)) {
                 return AdminResponse::error(trans_message('payments.transactions.cancel_forbidden'), 422);
             }
 
@@ -385,6 +343,6 @@ class TransactionController extends Controller
 
     private function appendNote(?string $currentNote, string $newNote): string
     {
-        return trim(trim((string) $currentNote) . PHP_EOL . $newNote);
+        return trim(trim((string) $currentNote).PHP_EOL.$newNote);
     }
 }

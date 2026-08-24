@@ -8,14 +8,15 @@ use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Support\Collection;
 
 class EstimateSnapshotBuilder
 {
     public function __construct(
         private readonly EstimateStableKeyService $stableKeyService,
-    ) {
-    }
+    ) {}
 
     public function build(Estimate $estimate): array
     {
@@ -31,7 +32,7 @@ class EstimateSnapshotBuilder
             ->groupBy(static fn (EstimateItem $item): string => (string) ($item->estimate_section_id ?? 'unsectioned'));
 
         return [
-            'schema_version' => 1,
+            'schema_version' => 2,
             'estimate' => $this->estimatePayload($estimate),
             'approval' => $this->approvalPayload($estimate),
             'rates' => $this->ratesPayload($estimate),
@@ -68,6 +69,9 @@ class EstimateSnapshotBuilder
             ->with([
                 'parentWork:id,stable_key,position_number,name,item_type,normative_rate_code',
                 'measurementUnit:id,name,short_name',
+                'resources' => static fn ($query) => $query->orderBy('id'),
+                'resources.measurementUnit:id,name,short_name',
+                'contractLinks:id,contract_id,estimate_id,estimate_item_id,quantity,amount,notes',
             ])
             ->where('estimate_id', $estimate->id)
             ->orderBy('id')
@@ -93,6 +97,14 @@ class EstimateSnapshotBuilder
             'estimate_date' => $estimate->estimate_date?->toDateString(),
             'base_price_date' => $estimate->base_price_date?->toDateString(),
             'calculation_method' => $estimate->calculation_method,
+            'estimate_region_id' => $estimate->estimate_region_id,
+            'estimate_price_zone_id' => $estimate->estimate_price_zone_id,
+            'estimate_price_period_id' => $estimate->estimate_price_period_id,
+            'estimate_regional_price_version_id' => $estimate->estimate_regional_price_version_id,
+            'regional_price_snapshot' => $estimate->regional_price_snapshot,
+            'metadata' => $estimate->metadata,
+            'import_diagnostics' => $estimate->import_diagnostics,
+            'statistics' => $estimate->statistics,
         ];
     }
 
@@ -273,6 +285,34 @@ class EstimateSnapshotBuilder
             'coefficient_total' => $this->quantity($item->coefficient_total),
             'resource_calculation' => $item->resource_calculation,
             'custom_resources' => $item->custom_resources,
+            'contract_links' => $item->contractLinks
+                ->map(static fn ($link): array => [
+                    'contract_id' => $link->contract_id,
+                    'quantity' => self::decimal($link->quantity, 8),
+                    'amount' => self::decimal($link->amount, 2),
+                    'notes' => $link->notes,
+                ])
+                ->values()
+                ->all(),
+            'resources' => $item->resources
+                ->map(static fn ($resource): array => [
+                    'source_id' => $resource->id,
+                    'resource_type' => $resource->resource_type,
+                    'material_id' => $resource->material_id,
+                    'name' => $resource->name,
+                    'description' => $resource->description,
+                    'measurement_unit' => $resource->measurementUnit ? [
+                        'id' => $resource->measurementUnit->id,
+                        'name' => $resource->measurementUnit->name,
+                        'short_name' => $resource->measurementUnit->short_name,
+                    ] : null,
+                    'quantity_per_unit' => self::decimal($resource->quantity_per_unit, 4),
+                    'total_quantity' => self::decimal($resource->total_quantity, 4),
+                    'unit_price' => self::decimal($resource->unit_price, 2),
+                    'total_amount' => self::decimal($resource->total_amount, 2),
+                ])
+                ->values()
+                ->all(),
         ];
 
         $payload['children'] = $this->buildItems(
@@ -296,7 +336,7 @@ class EstimateSnapshotBuilder
             return $parentFullNumber;
         }
 
-        return $parentFullNumber . '.' . $sectionNumber;
+        return $parentFullNumber.'.'.$sectionNumber;
     }
 
     private function sectionStructuralKey(EstimateSection $section, array $sectionKeys, string $fullSectionNumber): string
@@ -338,7 +378,7 @@ class EstimateSnapshotBuilder
             return null;
         }
 
-        return number_format((float) $value, 2, '.', '');
+        return self::decimal($value, 2);
     }
 
     private function quantity(mixed $value): ?string
@@ -347,7 +387,12 @@ class EstimateSnapshotBuilder
             return null;
         }
 
-        return number_format((float) $value, 8, '.', '');
+        return self::decimal($value, 8);
+    }
+
+    private static function decimal(mixed $value, int $scale): string
+    {
+        return (string) BigDecimal::of((string) $value)->toScale($scale, RoundingMode::HalfUp);
     }
 
     private function compareItems(EstimateItem $left, EstimateItem $right): int

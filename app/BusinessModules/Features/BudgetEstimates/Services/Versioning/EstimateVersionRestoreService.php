@@ -5,20 +5,22 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Versioning;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
+use App\Models\Contract;
+use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\EstimateItemResource;
 use App\Models\EstimateSection;
 use App\Models\EstimateVersion;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class EstimateVersionRestoreService
 {
     public function __construct(
         private readonly EstimateVersioningService $versioningService,
-    ) {
-    }
+    ) {}
 
     public function restore(Estimate $estimate, EstimateVersion $version, int $actorId): Estimate
     {
@@ -32,10 +34,18 @@ class EstimateVersionRestoreService
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            if ($lockedEstimate->status === 'approved' && $lockedEstimate->current_version_id !== null) {
+                $lockedEstimate->forceFill([
+                    'status' => 'draft',
+                    'approved_by_user_id' => null,
+                    'approved_at' => null,
+                ])->save();
+            }
+
             $this->versioningService->createSnapshot(
                 estimate: $lockedEstimate,
                 actorId: $actorId,
-                label: 'Перед восстановлением из версии ' . $version->version_number,
+                label: 'Перед восстановлением из версии '.$version->version_number,
                 snapshotType: 'pre_restore'
             );
 
@@ -49,12 +59,24 @@ class EstimateVersionRestoreService
             $this->versioningService->createSnapshot(
                 estimate: $restoredEstimate,
                 actorId: $actorId,
-                label: 'Восстановление из версии ' . $version->version_number,
+                label: 'Восстановление из версии '.$version->version_number,
                 snapshotType: 'restore'
             );
 
             return $this->loadRestoredEstimate($lockedEstimate);
         });
+    }
+
+    public function restoreWorkingCopy(Estimate $estimate, EstimateVersion $version): Estimate
+    {
+        if ((int) $version->estimate_id !== (int) $estimate->id) {
+            throw new InvalidArgumentException('Версия не принадлежит выбранной смете');
+        }
+
+        $this->applyEstimateSnapshot($estimate, $version->snapshot ?? []);
+        $this->replaceStructure($estimate, $version->snapshot ?? []);
+
+        return $this->loadRestoredEstimate($estimate);
     }
 
     private function applyEstimateSnapshot(Estimate $estimate, array $snapshot): void
@@ -76,6 +98,14 @@ class EstimateVersionRestoreService
                 'estimate_date',
                 'base_price_date',
                 'calculation_method',
+                'estimate_region_id',
+                'estimate_price_zone_id',
+                'estimate_price_period_id',
+                'estimate_regional_price_version_id',
+                'regional_price_snapshot',
+                'metadata',
+                'import_diagnostics',
+                'statistics',
             ]),
             $this->only($totalsPayload, [
                 'total_direct_costs',
@@ -109,11 +139,7 @@ class EstimateVersionRestoreService
             ->whereNotNull('stable_key')
             ->get()
             ->keyBy('stable_key');
-        $existingItemsByStableKey = EstimateItem::withTrashed()
-            ->where('estimate_id', $estimate->id)
-            ->whereNotNull('stable_key')
-            ->get()
-            ->keyBy('stable_key');
+        $existingItemsByStableKey = collect();
         $sectionIdsByStableKey = [];
         $restoredSectionIds = [];
         $restoredItemIds = [];
@@ -303,6 +329,8 @@ class EstimateVersionRestoreService
 
         $restoredItemIds[] = $item->id;
         $pendingParentAssignments[$item->id] = $parentItemId;
+        $this->restoreResources($item, $itemPayload['resources'] ?? []);
+        $this->restoreContractLinks($estimate, $item, $itemPayload['contract_links'] ?? []);
 
         foreach ($itemPayload['children'] ?? [] as $childPayload) {
             $this->restoreItem(
@@ -318,6 +346,59 @@ class EstimateVersionRestoreService
         }
 
         return $item;
+    }
+
+    private function restoreResources(EstimateItem $item, array $resources): void
+    {
+        foreach ($resources as $resourcePayload) {
+            if (! is_array($resourcePayload)) {
+                continue;
+            }
+
+            EstimateItemResource::query()->create([
+                'estimate_item_id' => $item->id,
+                'resource_type' => $resourcePayload['resource_type'] ?? 'other',
+                'material_id' => $resourcePayload['material_id'] ?? null,
+                'name' => $resourcePayload['name'] ?? '',
+                'description' => $resourcePayload['description'] ?? null,
+                'measurement_unit_id' => $resourcePayload['measurement_unit']['id'] ?? null,
+                'quantity_per_unit' => $resourcePayload['quantity_per_unit'] ?? 0,
+                'total_quantity' => $resourcePayload['total_quantity'] ?? 0,
+                'unit_price' => $resourcePayload['unit_price'] ?? 0,
+                'total_amount' => $resourcePayload['total_amount'] ?? 0,
+            ]);
+        }
+    }
+
+    private function restoreContractLinks(Estimate $estimate, EstimateItem $item, array $links): void
+    {
+        ContractEstimateItem::query()->where('estimate_item_id', $item->id)->delete();
+
+        foreach ($links as $linkPayload) {
+            if (! is_array($linkPayload)) {
+                continue;
+            }
+
+            $contractId = (int) ($linkPayload['contract_id'] ?? 0);
+            $contractExistsInScope = Contract::query()
+                ->whereKey($contractId)
+                ->where('organization_id', $estimate->organization_id)
+                ->where('project_id', $estimate->project_id)
+                ->exists();
+
+            if (! $contractExistsInScope) {
+                throw new InvalidArgumentException('Договор позиции не принадлежит проекту и организации сметы');
+            }
+
+            ContractEstimateItem::query()->create([
+                'contract_id' => $contractId,
+                'estimate_id' => $estimate->id,
+                'estimate_item_id' => $item->id,
+                'quantity' => $linkPayload['quantity'] ?? '0',
+                'amount' => $linkPayload['amount'] ?? '0',
+                'notes' => $linkPayload['notes'] ?? null,
+            ]);
+        }
     }
 
     private function applyParentAssignments(array $pendingParentAssignments): void
@@ -348,7 +429,7 @@ class EstimateVersionRestoreService
 
     private function resolveSectionId(array $itemPayload, ?int $fallbackSectionId, array $sectionIdsByStableKey): ?int
     {
-        if (!array_key_exists('estimate_section_stable_key', $itemPayload)) {
+        if (! array_key_exists('estimate_section_stable_key', $itemPayload)) {
             return $fallbackSectionId;
         }
 

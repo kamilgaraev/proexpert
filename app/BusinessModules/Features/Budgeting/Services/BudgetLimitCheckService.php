@@ -13,21 +13,28 @@ use function trans_message;
 final class BudgetLimitCheckService
 {
     public const STATUS_AVAILABLE = 'available';
+
     public const STATUS_WARNING = 'warning';
+
     public const STATUS_EXCEEDED = 'exceeded';
+
     public const STATUS_REQUIRES_EXCEPTION = 'requires_exception';
+
     public const STATUS_BLOCKED = 'blocked';
 
     public const DECISION_ALLOW = 'allow';
+
     public const DECISION_WARN = 'warn';
+
     public const DECISION_REQUIRE_EXCEPTION = 'require_exception';
+
     public const DECISION_BLOCK = 'block';
 
     public const OVERRIDE_PERMISSION = 'budgeting.limits.override';
 
     public function check(BudgetLimitCheckContext $context, BudgetLimitAmounts $amounts): BudgetLimitCheckResult
     {
-        if (!$context->hasApprovedBudget && $amounts->requestedAmount > 0.0) {
+        if (! $context->hasApprovedBudget && $amounts->hasRequestedAmount()) {
             return $this->result(
                 self::STATUS_BLOCKED,
                 self::DECISION_BLOCK,
@@ -38,7 +45,7 @@ final class BudgetLimitCheckService
             );
         }
 
-        if ($amounts->excessAmount() > 0.0) {
+        if ($amounts->hasExcess()) {
             return $this->exceededResult($context, $amounts);
         }
 

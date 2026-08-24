@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Acting;
 
+use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\CurrencyCode;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
@@ -11,6 +12,8 @@ use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\PerformanceActLine;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionQuantity;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -20,8 +23,10 @@ class ActingActWizardService
 {
     public function __construct(
         private readonly ActingPolicyResolver $policyResolver,
-        private readonly ActingPriceService $priceService,
         private readonly ActingQuantityReservationService $quantityReservations,
+        private readonly PerformanceActFinancialBasisService $financialBasis,
+        private readonly ManualActLineBasisService $manualLineBasis,
+        private readonly PerformanceActFinancialTotalsService $financialTotals,
     ) {}
 
     public function createFromWizard(
@@ -37,6 +42,9 @@ class ActingActWizardService
 
         if (! $contract) {
             throw new BusinessLogicException(trans_message('act_reports.contract_not_found'), 404);
+        }
+        if ($contract->status !== ContractStatusEnum::ACTIVE) {
+            throw new BusinessLogicException(trans_message('act_reports.contract_not_active'), 422);
         }
 
         $policy = $this->policyResolver->resolveForContract($contract);
@@ -84,10 +92,26 @@ class ActingActWizardService
             ]);
 
             $this->createCompletedWorkLines($act, $contract, $selectedGroups, $works, $currency);
-            $this->createManualLines($act, $manualLines, $policy, $userId);
-            $act->recalculateAmount();
+            $this->createManualLines(
+                $act,
+                $contract,
+                $organizationId,
+                $projectId,
+                $manualLines,
+                $policy,
+                $userId,
+                $currency,
+            );
+            $this->financialTotals->synchronize($act);
 
-            return $act->fresh(['project', 'contract.project', 'contract.contractor', 'lines.completedWork']);
+            return $act->fresh([
+                'project',
+                'contract.project',
+                'contract.contractor',
+                'estimateVersion',
+                'lines.completedWork',
+                'lines.estimateVersion',
+            ]);
         });
     }
 
@@ -119,27 +143,32 @@ class ActingActWizardService
 
             $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
             $availableQuantity = $availableQuantities[$workId] ?? 0;
-            $unitPrice = $this->priceService->resolveCompletedWorkUnitPrice($work, $effectiveQuantity);
+            $basis = $this->financialBasis->forCompletedWork($work, $contract, $effectiveQuantity);
             $quantity = $this->sumRequestedQuantity($selectedWorks, $availableQuantity);
             $this->quantityReservations->assertScaledAvailable([$workId => $quantity], $availableQuantities);
             $quantityDecimal = AcceptedProductionQuantity::decimal($quantity);
+            $amount = (string) BigDecimal::of($quantityDecimal)
+                ->multipliedBy(BigDecimal::of($basis['unit_price']))
+                ->toScale(2, RoundingMode::HalfUp);
 
             PerformanceActLine::create([
                 'performance_act_id' => $act->id,
                 'completed_work_id' => $work->id,
                 'estimate_item_id' => $work->estimate_item_id,
+                'estimate_version_id' => $basis['estimate_version_id'],
                 'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
                 'title' => $this->resolveCompletedWorkTitle($work),
                 'quantity' => $quantityDecimal,
-                'unit_price' => $unitPrice,
-                'amount' => round((float) $quantityDecimal * $unitPrice, 2),
+                'unit_price' => $basis['unit_price'],
+                'amount' => $amount,
                 'currency' => $currency->value,
+                'basis_snapshot' => $basis['snapshot'],
             ]);
 
             $act->completedWorks()->syncWithoutDetaching([
                 $work->id => [
                     'included_quantity' => $quantityDecimal,
-                    'included_amount' => round((float) $quantityDecimal * $unitPrice, 2),
+                    'included_amount' => $amount,
                     'currency' => $currency->value,
                     'notes' => null,
                 ],
@@ -161,7 +190,7 @@ class ActingActWizardService
         $works = CompletedWork::query()
             ->with(
                 'estimateItem.contractLinks',
-                'estimateItem.estimate',
+                'estimateItem.estimate.currentVersion',
                 'workType',
                 'journalEntry',
             )
@@ -283,26 +312,34 @@ class ActingActWizardService
 
     private function createManualLines(
         ContractPerformanceAct $act,
+        Contract $contract,
+        int $organizationId,
+        int $projectId,
         array $manualLines,
         array $policy,
-        ?int $userId
+        ?int $userId,
+        CurrencyCode $currency,
     ): void {
         foreach ($manualLines as $manualLine) {
-            $quantity = (float) $manualLine['quantity'];
-            $unitPrice = isset($manualLine['unit_price']) ? (float) $manualLine['unit_price'] : null;
-            $amount = isset($manualLine['amount'])
-                ? (float) $manualLine['amount']
-                : round($quantity * (float) ($unitPrice ?? 0), 2);
+            $basis = $this->manualLineBasis->resolve(
+                $organizationId,
+                $projectId,
+                $contract,
+                $manualLine,
+            );
 
             $line = new PerformanceActLine([
                 'performance_act_id' => $act->id,
+                'variation_order_id' => (int) $manualLine['variation_order_id'],
                 'line_type' => PerformanceActLine::TYPE_MANUAL,
                 'title' => $manualLine['title'],
                 'unit' => $manualLine['unit'] ?? null,
-                'quantity' => $quantity,
-                'unit_price' => $unitPrice,
-                'amount' => $amount,
+                'quantity' => (string) $manualLine['quantity'],
+                'unit_price' => $basis['unit_price'],
+                'amount' => $basis['amount'],
+                'currency' => $currency->value,
                 'manual_reason' => $manualLine['manual_reason'] ?? null,
+                'basis_snapshot' => $basis['snapshot'],
                 'created_by' => $userId,
             ]);
 

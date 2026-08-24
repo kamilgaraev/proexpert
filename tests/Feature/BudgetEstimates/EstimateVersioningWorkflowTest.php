@@ -5,13 +5,21 @@ declare(strict_types=1);
 namespace Tests\Feature\BudgetEstimates;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\ApprovedEstimateVersionBackfillService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateRevisionService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateStatusWorkflowService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionRestoreService;
+use App\Models\Contract;
+use App\Models\ContractEstimateItem;
+use App\Models\Contractor;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\EstimateItemResource;
 use App\Models\EstimateSection;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -25,11 +33,49 @@ class EstimateVersioningWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_backfill_creates_current_immutable_snapshot_for_legacy_approved_estimate(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate();
+        $item = EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Историческая позиция',
+            'item_type' => 'work',
+            'quantity' => 2,
+            'unit_price' => 600,
+            'total_amount' => 1200,
+        ]);
+        DB::table('estimates')->where('id', $estimate->id)->update([
+            'status' => 'approved',
+            'approved_by_user_id' => $actor->id,
+            'approved_at' => now(),
+            'current_version_id' => null,
+        ]);
+
+        $service = app(ApprovedEstimateVersionBackfillService::class);
+
+        $this->assertSame(1, $service->backfill());
+        $this->assertSame(0, $service->backfill());
+
+        $estimate->refresh();
+        $this->assertNotNull($estimate->current_version_id);
+        $version = $estimate->currentVersion()->firstOrFail();
+        $this->assertSame('approved', $version->status);
+        $this->assertSame('approval', $version->snapshot_type);
+        $this->assertSame($actor->id, $version->approved_by_user_id);
+        $this->assertSame($item->id, $version->snapshot['unsectioned_items'][0]['id']);
+        $this->assertSame('Историческая позиция', $version->snapshot['unsectioned_items'][0]['name']);
+        $this->assertDatabaseCount('estimate_versions', 1);
+    }
+
     public function test_estimate_version_routes_use_canonical_nested_api_only(): void
     {
         $this->assertTrue(Route::has('admin.estimates.versions.index'));
         $this->assertTrue(Route::has('admin.estimates.versions.store'));
         $this->assertTrue(Route::has('admin.estimates.versions.compare'));
+        $this->assertTrue(Route::has('admin.estimates.versions.show'));
+        $this->assertTrue(Route::has('admin.estimates.versions.revision.store'));
         $this->assertTrue(Route::has('admin.estimates.versions.rollback'));
         $this->assertFalse(Route::has('admin.estimate_versions.index'));
         $this->assertFalse(Route::has('admin.estimate_versions.store'));
@@ -43,6 +89,14 @@ class EstimateVersioningWorkflowTest extends TestCase
         $this->assertSame(
             'api/v1/admin/estimates/{estimateId}/versions/compare',
             Route::getRoutes()->getByName('admin.estimates.versions.compare')?->uri()
+        );
+        $this->assertSame(
+            'api/v1/admin/estimates/{estimateId}/versions/{versionId}',
+            Route::getRoutes()->getByName('admin.estimates.versions.show')?->uri()
+        );
+        $this->assertSame(
+            'api/v1/admin/estimates/{estimateId}/versions/revisions',
+            Route::getRoutes()->getByName('admin.estimates.versions.revision.store')?->uri()
         );
         $this->assertSame(
             'api/v1/admin/estimates/{estimateId}/versions/{versionId}/rollback',
@@ -227,7 +281,7 @@ class EstimateVersioningWorkflowTest extends TestCase
         ]);
     }
 
-    public function test_update_status_leaving_approved_clears_approval_metadata(): void
+    public function test_update_status_cannot_leave_approved_without_starting_revision(): void
     {
         Gate::before(static fn (): bool => true);
 
@@ -239,13 +293,17 @@ class EstimateVersioningWorkflowTest extends TestCase
         ]);
         $actor->forceFill(['current_organization_id' => $estimate->organization_id])->save();
 
-        $this->updateEstimateStatus($estimate, $actor, 'in_review');
+        try {
+            $this->updateEstimateStatus($estimate, $actor, 'in_review');
+            $this->fail('Approved estimate must remain sealed until revision starts');
+        } catch (\DomainException) {
+        }
 
         $estimate->refresh();
 
-        $this->assertSame('in_review', $estimate->status);
-        $this->assertNull($estimate->approved_by_user_id);
-        $this->assertNull($estimate->approved_at);
+        $this->assertSame('approved', $estimate->status);
+        $this->assertSame($actor->id, $estimate->approved_by_user_id);
+        $this->assertNotNull($estimate->approved_at);
     }
 
     public function test_restore_recreates_working_estimate_from_snapshot(): void
@@ -295,6 +353,37 @@ class EstimateVersioningWorkflowTest extends TestCase
             'resource_calculation' => ['mode' => 'snapshot'],
             'custom_resources' => [['name' => 'resource']],
         ]);
+        $itemResource = EstimateItemResource::query()->create([
+            'estimate_item_id' => $item->id,
+            'resource_type' => 'material',
+            'name' => 'Snapshot concrete',
+            'quantity_per_unit' => 1.25,
+            'total_quantity' => 2.5,
+            'unit_price' => 480,
+            'total_amount' => 1200,
+        ]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $estimate->organization_id,
+            'name' => 'Snapshot contractor',
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $estimate->organization_id,
+            'project_id' => $estimate->project_id,
+            'contractor_id' => $contractor->id,
+            'number' => 'SNAPSHOT-CONTRACT',
+            'date' => '2026-05-01',
+            'subject' => 'Snapshot works',
+            'total_amount' => 1200,
+            'status' => 'active',
+        ]);
+        ContractEstimateItem::query()->create([
+            'contract_id' => $contract->id,
+            'estimate_id' => $estimate->id,
+            'estimate_item_id' => $item->id,
+            'quantity' => '2.00000000',
+            'amount' => '1200.00',
+            'notes' => 'Snapshot allocation',
+        ]);
         EstimateItem::query()->create([
             'estimate_id' => $estimate->id,
             'stable_key' => '44444444-4444-4444-4444-444444444444',
@@ -325,7 +414,7 @@ class EstimateVersioningWorkflowTest extends TestCase
             label: 'Baseline'
         );
 
-        DB::table('estimates')->whereKey($estimate->id)->update([
+        DB::table('estimates')->where('id', $estimate->id)->update([
             'status' => 'approved',
             'approved_by_user_id' => $actor->id,
             'approved_at' => now(),
@@ -346,6 +435,16 @@ class EstimateVersioningWorkflowTest extends TestCase
             'coefficient_total' => 9.9,
             'resource_calculation' => ['mode' => 'mutated'],
             'custom_resources' => [['name' => 'mutated']],
+        ]);
+        $itemResource->update([
+            'name' => 'Mutated concrete',
+            'unit_price' => 960,
+            'total_amount' => 2400,
+        ]);
+        ContractEstimateItem::query()->where('estimate_item_id', $item->id)->update([
+            'quantity' => '1.00000000',
+            'amount' => '10.00',
+            'notes' => 'Mutated allocation',
         ]);
         EstimateItem::query()->create([
             'estimate_id' => $estimate->id,
@@ -382,7 +481,22 @@ class EstimateVersioningWorkflowTest extends TestCase
         $this->assertSame('1.5000', $restoredItem->coefficient_total);
         $this->assertSame(['mode' => 'snapshot'], $restoredItem->resource_calculation);
         $this->assertSame([['name' => 'resource']], $restoredItem->custom_resources);
-        $this->assertSame($item->id, $restoredItem->id);
+        $this->assertNotSame($item->id, $restoredItem->id);
+        $restoredResource = $restoredItem->resources()->sole();
+        $this->assertNotSame($itemResource->id, $restoredResource->id);
+        $this->assertSame('Snapshot concrete', $restoredResource->name);
+        $this->assertSame('1.2500', $restoredResource->quantity_per_unit);
+        $this->assertSame('2.5000', $restoredResource->total_quantity);
+        $this->assertSame('480.00', $restoredResource->unit_price);
+        $this->assertSame('1200.00', $restoredResource->total_amount);
+        $restoredContractLink = ContractEstimateItem::query()
+            ->where('estimate_item_id', $restoredItem->id)
+            ->sole();
+        $this->assertSame($contract->id, $restoredContractLink->contract_id);
+        $this->assertSame('2.00000000', $restoredContractLink->quantity);
+        $this->assertSame('1200.00', $restoredContractLink->amount);
+        $this->assertSame('Snapshot allocation', $restoredContractLink->notes);
+        $this->assertSoftDeleted('estimate_items', ['id' => $item->id]);
         $this->assertNotNull($restoredChildItem);
         $this->assertSame($restoredItem->id, $restoredChildItem->parent_work_id);
         $this->assertNull($restoredChildItem->estimate_section_id);
@@ -402,7 +516,7 @@ class EstimateVersioningWorkflowTest extends TestCase
         );
     }
 
-    public function test_restore_reuses_soft_deleted_item_with_same_stable_key(): void
+    public function test_restore_creates_new_item_identity_without_reviving_historical_row(): void
     {
         $actor = User::factory()->create();
         $estimate = $this->createEstimate();
@@ -440,10 +554,14 @@ class EstimateVersioningWorkflowTest extends TestCase
         $restoredItem = $restored->items->firstWhere('stable_key', '66666666-6666-6666-6666-666666666666');
 
         $this->assertNotNull($restoredItem);
-        $this->assertSame($item->id, $restoredItem->id);
+        $this->assertNotSame($item->id, $restoredItem->id);
         $this->assertNull($restoredItem->deleted_at);
-        $this->assertDatabaseHas('estimate_items', [
+        $this->assertSoftDeleted('estimate_items', [
             'id' => $item->id,
+            'stable_key' => '66666666-6666-6666-6666-666666666666',
+        ]);
+        $this->assertDatabaseHas('estimate_items', [
+            'id' => $restoredItem->id,
             'stable_key' => '66666666-6666-6666-6666-666666666666',
             'deleted_at' => null,
         ]);
@@ -466,6 +584,246 @@ class EstimateVersioningWorkflowTest extends TestCase
         app(EstimateVersionRestoreService::class)->restore($estimate, $version, $actor->id);
     }
 
+    public function test_financial_revision_approval_sets_one_current_version_and_supersedes_previous(): void
+    {
+        Gate::before(static fn (): bool => true);
+
+        $estimate = $this->createEstimate(['status' => 'in_review']);
+        $actor = User::factory()->create(['current_organization_id' => $estimate->organization_id]);
+
+        $this->updateEstimateStatus($estimate, $actor, 'approved');
+        $estimate->refresh();
+        $firstVersionId = $estimate->current_version_id;
+
+        $this->assertNotNull($firstVersionId);
+        $this->assertDatabaseHas('estimate_versions', [
+            'id' => $firstVersionId,
+            'status' => 'approved',
+        ]);
+
+        $revision = app(EstimateRevisionService::class)->start(
+            estimate: $estimate,
+            actorId: $actor->id,
+            reason: 'Изменение цены'
+        );
+        $this->assertSame('draft', $revision->status);
+        $this->assertSame($firstVersionId, $revision->current_version_id);
+
+        $revision->status = 'in_review';
+        $revision->save();
+        $this->updateEstimateStatus($revision->fresh(), $actor, 'approved');
+        $revision->refresh();
+
+        $this->assertNotSame($firstVersionId, $revision->current_version_id);
+        $this->assertDatabaseHas('estimate_versions', [
+            'id' => $firstVersionId,
+            'status' => 'superseded',
+        ]);
+        $this->assertDatabaseHas('estimate_versions', [
+            'id' => $revision->current_version_id,
+            'status' => 'approved',
+        ]);
+        $this->assertSame(
+            1,
+            DB::table('estimate_versions')
+                ->where('estimate_id', $estimate->id)
+                ->where('status', 'approved')
+                ->count()
+        );
+    }
+
+    public function test_financial_revision_sealed_estimate_header_cannot_change_in_place(): void
+    {
+        Gate::before(static fn (): bool => true);
+
+        $estimate = $this->createEstimate(['status' => 'in_review']);
+        $actor = User::factory()->create(['current_organization_id' => $estimate->organization_id]);
+        $this->updateEstimateStatus($estimate, $actor, 'approved');
+
+        $this->expectException(QueryException::class);
+
+        $estimate->fresh()->update(['total_amount' => 999999]);
+    }
+
+    public function test_financial_revision_sealed_estimate_item_cannot_change_in_place(): void
+    {
+        Gate::before(static fn (): bool => true);
+
+        $estimate = $this->createEstimate(['status' => 'in_review']);
+        $item = EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Sealed item',
+            'item_type' => 'work',
+            'quantity' => 1,
+            'unit_price' => 1200,
+            'total_amount' => 1200,
+        ]);
+        $actor = User::factory()->create(['current_organization_id' => $estimate->organization_id]);
+        $this->updateEstimateStatus($estimate, $actor, 'approved');
+
+        $this->expectException(QueryException::class);
+
+        $item->update(['unit_price' => 999999]);
+    }
+
+    public function test_financial_revision_snapshot_payload_is_immutable_after_creation(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate();
+        $version = app(EstimateVersioningService::class)->createSnapshot($estimate, $actor->id, 'Immutable');
+
+        $this->expectException(\DomainException::class);
+
+        $version->update(['snapshot' => ['tampered' => true]]);
+    }
+
+    public function test_financial_revision_manual_snapshot_retry_is_idempotent(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate();
+        $service = app(EstimateVersioningService::class);
+
+        $first = $service->createSnapshot(
+            estimate: $estimate,
+            actorId: $actor->id,
+            label: 'Retry-safe',
+            idempotencyKey: 'estimate-version-request-001'
+        );
+        $second = $service->createSnapshot(
+            estimate: $estimate->fresh(),
+            actorId: $actor->id,
+            label: 'Retry-safe',
+            idempotencyKey: 'estimate-version-request-001'
+        );
+
+        $this->assertSame($first->id, $second->id);
+        $this->assertDatabaseCount('estimate_versions', 1);
+    }
+
+    public function test_financial_revision_version_list_is_paginated_without_snapshots(): void
+    {
+        $actor = User::factory()->create();
+        $estimate = $this->createEstimate();
+        $service = app(EstimateVersioningService::class);
+
+        foreach (range(1, 3) as $index) {
+            $service->createSnapshot(
+                estimate: $estimate->fresh(),
+                actorId: $actor->id,
+                label: 'Version '.$index,
+                idempotencyKey: 'list-version-'.$index
+            );
+        }
+
+        $page = $service->paginateVersions($estimate, page: 1, perPage: 2);
+
+        $this->assertSame(3, $page->total());
+        $this->assertSame(2, $page->count());
+        $this->assertArrayNotHasKey('snapshot', $page->items()[0]);
+        $this->assertArrayHasKey('status', $page->items()[0]);
+        $this->assertArrayHasKey('is_current', $page->items()[0]);
+    }
+
+    public function test_financial_revision_stale_repeat_approval_is_idempotent_after_locked_transition(): void
+    {
+        $estimate = $this->createEstimate(['status' => 'in_review']);
+        $actor = User::factory()->create();
+        $firstRequestView = $estimate->fresh();
+        $staleRetryView = $estimate->fresh();
+        $workflow = app(EstimateStatusWorkflowService::class);
+
+        $approved = $workflow->transition(
+            estimate: $firstRequestView,
+            newStatus: 'approved',
+            actorId: $actor->id,
+            comment: 'Approved',
+            source: 'admin'
+        );
+
+        $this->assertSame('approved', $approved->status);
+        $this->assertNotNull($approved->current_version_id);
+
+        $retried = $workflow->transition(
+            estimate: $staleRetryView,
+            newStatus: 'approved',
+            actorId: $actor->id,
+            comment: 'Retry',
+            source: 'admin'
+        );
+
+        $this->assertSame($approved->id, $retried->id);
+        $this->assertSame('approved', $retried->status);
+        $this->assertCount(1, $retried->metadata['approval_history']);
+        $this->assertDatabaseCount('estimate_versions', 1);
+    }
+
+    public function test_financial_revision_can_be_rejected_only_from_review_with_audited_reason(): void
+    {
+        $estimate = $this->createEstimate(['status' => 'in_review']);
+        $actor = User::factory()->create();
+
+        $rejected = app(EstimateStatusWorkflowService::class)->transition(
+            estimate: $estimate,
+            newStatus: 'rejected',
+            actorId: $actor->id,
+            comment: 'Цена требует уточнения',
+            source: 'admin'
+        );
+
+        $this->assertSame('rejected', $rejected->status);
+        $this->assertSame('Цена требует уточнения', $rejected->metadata['approval_history'][0]['comment']);
+
+        $this->expectException(\DomainException::class);
+        app(EstimateStatusWorkflowService::class)->transition(
+            estimate: $rejected,
+            newStatus: 'approved',
+            actorId: $actor->id,
+            comment: null,
+            source: 'admin'
+        );
+    }
+
+    public function test_financial_revision_draft_cannot_skip_review(): void
+    {
+        $estimate = $this->createEstimate(['status' => 'draft']);
+        $actor = User::factory()->create();
+
+        $this->expectException(\DomainException::class);
+
+        app(EstimateStatusWorkflowService::class)->transition(
+            estimate: $estimate,
+            newStatus: 'approved',
+            actorId: $actor->id,
+            comment: null,
+            source: 'mobile'
+        );
+    }
+
+    public function test_status_endpoint_rejects_estimate_from_another_project_in_same_organization(): void
+    {
+        $estimate = $this->createEstimate(['status' => 'in_review']);
+        $otherProject = Project::factory()->create(['organization_id' => $estimate->organization_id]);
+        $actor = User::factory()->create(['current_organization_id' => $estimate->organization_id]);
+        $this->actingAs($actor);
+
+        $request = \App\Http\Requests\Admin\Estimate\UpdateEstimateStatusRequest::create(
+            "/api/v1/admin/projects/{$otherProject->id}/estimates/{$estimate->id}/status",
+            'PUT',
+            ['status' => 'approved']
+        );
+        $request->setContainer($this->app);
+        $request->setRedirector($this->app['redirect']);
+        $request->setUserResolver(static fn (): User => $actor);
+        $request->attributes->set('current_organization_id', $estimate->organization_id);
+        $request->validateResolved();
+
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+
+        $this->app->make(\App\Http\Controllers\Api\V1\Admin\EstimateController::class)
+            ->updateStatus($request, $otherProject->id, $estimate->id);
+    }
+
     private function createEstimate(array $overrides = []): Estimate
     {
         $organization = Organization::factory()->create();
@@ -474,7 +832,7 @@ class EstimateVersioningWorkflowTest extends TestCase
         return Estimate::query()->create(array_merge([
             'organization_id' => $organization->id,
             'project_id' => $project->id,
-            'number' => 'EST-' . (DB::table('estimates')->count() + 1),
+            'number' => 'EST-'.(DB::table('estimates')->count() + 1),
             'name' => 'Test estimate',
             'type' => 'local',
             'status' => 'draft',

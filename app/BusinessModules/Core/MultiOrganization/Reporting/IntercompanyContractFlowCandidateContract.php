@@ -23,10 +23,14 @@ use ReflectionClass;
 final readonly class IntercompanyContractFlowCandidateContract
 {
     public const CODE = 'intercompany_contract_flows';
+
     public const FORMULA_VERSION = 'intercompany_contract_flow.v1';
+
     public const SOURCE_SCHEMA_VERSION = 'holding_allocation_facts.v2';
+
     public const FORMULA_HASH = '335648ea8becc17ed3d2543deacb02a7c218c8e5546647fc9e94cd3497e57282';
-    public const SOURCE_HASH = 'decab88170e8c174b3a147fcdde2da136eafaf60910ab309972786cd59f7a773';
+
+    public const SOURCE_HASH = '0bb038a4b48cd58a257fc32d98e51799312ea346f74b26ed9fc593463ad0e6eb';
 
     public function filters(): array
     {

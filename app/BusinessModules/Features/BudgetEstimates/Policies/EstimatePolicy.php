@@ -2,29 +2,34 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Policies;
 
-use App\Models\User;
 use App\Models\Estimate;
+use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
 
 /**
  * ИСПРАВЛЕННАЯ Policy с правильными permissions
- * 
+ *
  * ВАЖНО: Используем префикс 'budget-estimates' вместо 'estimates'
  * для соответствия slug модуля
  */
 class EstimatePolicy
 {
+    public function __construct(
+        private readonly UserProjectAccessService $projectAccessService,
+    ) {}
+
     /**
      * Determine whether the user can view any estimates.
      */
     public function viewAny(User $user): bool
     {
-        if (!$user->current_organization_id) {
+        if (! $user->current_organization_id) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -32,7 +37,7 @@ class EstimatePolicy
             return true;
         }
 
-        return $user->hasPermission('budget-estimates.view', $context) 
+        return $user->hasPermission('budget-estimates.view', $context)
             || $user->hasPermission('budget-estimates.view_all', $context);
     }
 
@@ -46,9 +51,13 @@ class EstimatePolicy
             return false;
         }
 
+        if (! $this->canAccessEstimateProject($user, $estimate)) {
+            return false;
+        }
+
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля в первую очередь
@@ -70,13 +79,13 @@ class EstimatePolicy
      */
     public function create(User $user): bool
     {
-        if (!$user->current_organization_id) {
+        if (! $user->current_organization_id) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -93,18 +102,22 @@ class EstimatePolicy
     public function update(User $user, Estimate $estimate): bool
     {
         // Проверка организации - если current_organization_id не установлен, запрещаем доступ
-        if (!$user->current_organization_id) {
+        if (! $user->current_organization_id) {
             return false;
         }
 
         // Проверка организации (приводим к int для корректного сравнения)
-        if ((int)$user->current_organization_id !== (int)$estimate->organization_id) {
+        if ((int) $user->current_organization_id !== (int) $estimate->organization_id) {
+            return false;
+        }
+
+        if (! $this->canAccessEstimateProject($user, $estimate)) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля в первую очередь
@@ -131,6 +144,10 @@ class EstimatePolicy
             return false;
         }
 
+        if (! $this->canAccessEstimateProject($user, $estimate)) {
+            return false;
+        }
+
         // Нельзя удалить утвержденную смету
         if ($estimate->isApproved()) {
             return false;
@@ -138,7 +155,7 @@ class EstimatePolicy
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -159,14 +176,18 @@ class EstimatePolicy
             return false;
         }
 
+        if (! $this->canAccessEstimateProject($user, $estimate)) {
+            return false;
+        }
+
         // Можно утвердить только сметы в статусе "на проверке"
-        if ($estimate->status !== 'in_review') {
+        if (! in_array($estimate->status, ['in_review', 'approved'], true)) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -182,13 +203,13 @@ class EstimatePolicy
      */
     public function import(User $user): bool
     {
-        if (!$user->current_organization_id) {
+        if (! $user->current_organization_id) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -209,9 +230,13 @@ class EstimatePolicy
             return false;
         }
 
+        if (! $this->canAccessEstimateProject($user, $estimate)) {
+            return false;
+        }
+
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -227,13 +252,13 @@ class EstimatePolicy
      */
     public function manageTemplates(User $user): bool
     {
-        if (!$user->current_organization_id) {
+        if (! $user->current_organization_id) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -249,13 +274,13 @@ class EstimatePolicy
      */
     public function viewAnalytics(User $user): bool
     {
-        if (!$user->current_organization_id) {
+        if (! $user->current_organization_id) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -276,14 +301,18 @@ class EstimatePolicy
             return false;
         }
 
+        if (! $this->canAccessEstimateProject($user, $estimate)) {
+            return false;
+        }
+
         // Версии можно создавать только для утвержденных смет
-        if (!$estimate->isApproved()) {
+        if (! $estimate->isApproved()) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -299,13 +328,13 @@ class EstimatePolicy
      */
     public function compareVersions(User $user): bool
     {
-        if (!$user->current_organization_id) {
+        if (! $user->current_organization_id) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         // Проверяем wildcard для всего модуля
@@ -318,17 +347,21 @@ class EstimatePolicy
 
     public function rollbackVersion(User $user, Estimate $estimate): bool
     {
-        if (!$user->current_organization_id) {
+        if (! $user->current_organization_id) {
             return false;
         }
 
-        if ((int)$user->current_organization_id !== (int)$estimate->organization_id) {
+        if ((int) $user->current_organization_id !== (int) $estimate->organization_id) {
+            return false;
+        }
+
+        if (! $this->canAccessEstimateProject($user, $estimate)) {
             return false;
         }
 
         $context = [
             'context_type' => 'organization',
-            'organization_id' => $user->current_organization_id
+            'organization_id' => $user->current_organization_id,
         ];
 
         if ($user->hasPermission('budget-estimates.*', $context)) {
@@ -337,5 +370,15 @@ class EstimatePolicy
 
         return $this->update($user, $estimate)
             && $user->hasPermission('budget-estimates.versions.rollback', $context);
+    }
+
+    private function canAccessEstimateProject(User $user, Estimate $estimate): bool
+    {
+        $organizationId = (int) $estimate->organization_id;
+
+        return $this->projectAccessService
+            ->queryAccessibleProjects($user, $organizationId)
+            ->whereKey((int) $estimate->project_id)
+            ->exists();
     }
 }

@@ -33,7 +33,7 @@ class UpdateContractPaymentRequest extends FormRequest
 
         return new ContractPaymentDTO(
             payment_date: $validatedData['payment_date'],
-            amount: (float) $validatedData['amount'],
+            amount: (string) $validatedData['amount'],
             payment_type: ContractPaymentTypeEnum::from($validatedData['payment_type']),
             reference_document_number: $validatedData['reference_document_number'] ?? null,
             description: $validatedData['description'] ?? null

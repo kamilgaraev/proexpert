@@ -502,9 +502,18 @@ final readonly class HoldingAllocationFactProjector
             'monetary_basis' => (string) ($source['monetary_basis'] ?? 'contracted'),
             'missing_fields' => array_values($missingFields),
         ];
+        $sourceHash = hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR));
         HoldingAllocationProjectionGap::query()->firstOrCreate(
-            [...$identity, 'source_hash' => hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR))],
             [
+                'organization_id' => $identity['organization_id'],
+                'source_type' => $identity['source_type'],
+                'source_id' => $identity['source_id'],
+                'source_version' => $identity['source_version'],
+                'monetary_basis' => $identity['monetary_basis'],
+                'source_hash' => $sourceHash,
+            ],
+            [
+                ...$identity,
                 'observed_at' => $recordedAt,
                 'business_effective_at' => $businessEffectiveAt,
                 'recorded_at' => $recordedAt,

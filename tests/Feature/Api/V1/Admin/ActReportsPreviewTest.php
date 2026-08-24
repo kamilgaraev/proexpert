@@ -4,18 +4,23 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
-use App\Domain\Authorization\Services\AuthorizationService;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
+use App\BusinessModules\Features\ChangeManagement\Models\VariationOrder;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Contractor;
+use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\PerformanceActLine;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Acting\LegacyPerformanceActBasisBackfillService;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\ActingTestSchema;
 use Tests\TestCase;
 
@@ -50,6 +55,55 @@ class ActReportsPreviewTest extends TestCase
         $response->assertJsonPath('data.summary.current_approved_amount', 0);
     }
 
+    public function test_preview_exposes_only_approved_variation_orders_for_the_selected_contract_project(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('PREVIEW-VARIATION');
+        $allocationId = DB::table('contract_project_allocations')->insertGetId([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'allocation_type' => 'fixed',
+            'allocated_amount' => 100000,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $approved = ChangeRequest::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'created_by_user_id' => $user->id,
+            'change_number' => 'CH-PREVIEW-1',
+            'title' => 'Согласованные допработы',
+            'reason' => 'customer_request',
+            'description' => 'Основание ручной строки',
+            'initiator_type' => 'customer',
+            'status' => 'approved',
+            'reporting_currency' => 'RUB',
+            'reporting_contract_project_allocation_id' => $allocationId,
+            'approved_at' => now(),
+        ]);
+        $variation = VariationOrder::query()->create([
+            'organization_id' => $organization->id,
+            'change_request_id' => $approved->id,
+            'variation_number' => 'VO-PREVIEW-1',
+            'amount' => 1500,
+            'description' => 'Согласованный лимит',
+        ]);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/preview', [
+            'contract_id' => $contract->id,
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonCount(1, 'data.available_variation_orders');
+        $response->assertJsonPath('data.available_variation_orders.0.id', $variation->id);
+        $response->assertJsonPath('data.available_variation_orders.0.remaining_amount', '1500.00');
+    }
+
     public function test_preview_and_wizard_accept_journal_work_resolved_by_estimate_contract_coverage(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('PREVIEW-COVERAGE');
@@ -77,6 +131,7 @@ class ActReportsPreviewTest extends TestCase
             'quantity' => 20,
             'amount' => 20000,
         ]);
+        $this->approveEstimateSnapshot($estimate, $user);
         $work = CompletedWork::create([
             'organization_id' => $organization->id,
             'project_id' => $project->id,
@@ -299,6 +354,7 @@ class ActReportsPreviewTest extends TestCase
             'quantity' => 6,
             'amount' => 6000,
         ]);
+        $this->approveEstimateSnapshot($estimate, $user);
         $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1201, 3);
         $work->update([
             'estimate_item_id' => $estimateItem->id,
@@ -351,6 +407,7 @@ class ActReportsPreviewTest extends TestCase
             'unit_price' => 1000,
             'total_amount' => 6000,
         ]);
+        $this->approveEstimateSnapshot($estimate, $user);
         $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1203, 3);
         $work->update([
             'estimate_item_id' => $estimateItem->id,
@@ -381,7 +438,7 @@ class ActReportsPreviewTest extends TestCase
         $response->assertJsonPath('data.lines.0.amount', 3600);
     }
 
-    public function test_approve_repairs_zero_amount_act_from_estimate_contract_price(): void
+    public function test_approve_rejects_zero_amount_act_without_stored_financial_basis(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVE-PRICE');
         $estimate = Estimate::create([
@@ -407,6 +464,7 @@ class ActReportsPreviewTest extends TestCase
             'quantity' => 6,
             'amount' => 6000,
         ]);
+        $this->approveEstimateSnapshot($estimate, $user);
         $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1202, 3);
         $work->update([
             'estimate_item_id' => $estimateItem->id,
@@ -445,15 +503,18 @@ class ActReportsPreviewTest extends TestCase
         $this->withoutMiddleware();
         $this->allowPermissions();
 
-        $response = $this->actingAs($user, 'api_admin')->postJson("/api/v1/admin/act-reports/{$act->id}/approve");
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/submit")
+            ->assertOk();
+        $response = $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/approve");
 
-        $response->assertOk();
-        $response->assertJsonPath('data.status', \App\Models\ContractPerformanceAct::STATUS_APPROVED);
-        $response->assertJsonPath('data.amount', 3000);
+        $response->assertStatus(422);
+        $this->assertSame(ContractPerformanceAct::STATUS_PENDING_APPROVAL, $act->fresh()->status);
         $this->assertDatabaseHas('performance_act_lines', [
             'id' => 1,
-            'unit_price' => 1000,
-            'amount' => 3000,
+            'unit_price' => 0,
+            'amount' => 0,
         ]);
     }
 
@@ -681,6 +742,11 @@ class ActReportsPreviewTest extends TestCase
             'quantity' => 3,
             'unit_price' => 100,
             'amount' => 300,
+            'basis_snapshot' => [
+                'base_unit_price' => '100.00',
+                'unit_price_with_vat' => '120.00',
+                'vat_rate' => '20.00',
+            ],
         ]);
         $act->completedWorks()->syncWithoutDetaching([
             $work->id => [
@@ -689,12 +755,7 @@ class ActReportsPreviewTest extends TestCase
             ],
         ]);
 
-        try {
-            app(\App\Services\ActReport\ActReportWorkflowService::class)->recalculatePricedLines($act);
-            $this->fail('Утверждённый акт не должен допускать перерасчёт строк');
-        } catch (\App\Exceptions\BusinessLogicException $exception) {
-            $this->assertSame('Состав утверждённого акта нельзя изменить', $exception->getMessage());
-        }
+        app(\App\Services\ActReport\ActReportWorkflowService::class)->recalculatePricedLines($act);
 
         $this->assertSame(300.0, (float) $act->fresh()->amount);
         $this->assertDatabaseHas('performance_act_lines', [
@@ -702,6 +763,46 @@ class ActReportsPreviewTest extends TestCase
             'unit_price' => 100,
             'amount' => 300,
         ]);
+    }
+
+    public function test_legacy_act_basis_backfill_preserves_stored_financial_history_idempotently(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('LEGACY-BASIS');
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1205, 2);
+        $act = ContractPerformanceAct::create([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'act_document_number' => 'KS-2-LEGACY-BASIS',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'amount' => '251.10',
+            'status' => ContractPerformanceAct::STATUS_APPROVED,
+            'is_approved' => true,
+            'created_by_user_id' => $user->id,
+        ]);
+        $line = PerformanceActLine::create([
+            'performance_act_id' => $act->id,
+            'completed_work_id' => $work->id,
+            'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
+            'title' => 'Историческая работа',
+            'quantity' => 2,
+            'unit_price' => '125.55',
+            'amount' => '251.10',
+        ]);
+
+        $service = app(LegacyPerformanceActBasisBackfillService::class);
+
+        $this->assertSame(1, $service->backfill());
+        $this->assertSame(0, $service->backfill());
+
+        $line->refresh();
+        $act->refresh();
+        $this->assertSame('legacy_act_line', $line->basis_snapshot['basis_type']);
+        $this->assertSame(125.55, (float) $line->basis_snapshot['unit_price_with_vat']);
+        $this->assertSame(251.10, (float) $line->basis_snapshot['legacy_amount']);
+        $this->assertSame(251.10, (float) $act->amount_without_vat);
+        $this->assertSame(0.0, (float) $act->vat_amount);
     }
 
     public function test_create_from_wizard_requires_create_permission(): void
@@ -903,9 +1004,9 @@ class ActReportsPreviewTest extends TestCase
         $approve->assertOk();
         $approve->assertJsonPath('data.status', 'approved');
         $approve->assertJsonPath('data.is_approved', true);
-        $approve->assertJsonPath('data.financial_summary.accepted_amount', 4000);
-        $approve->assertJsonPath('data.financial_summary.paid_amount', 1500);
-        $approve->assertJsonPath('data.financial_summary.debt_amount', 2500);
+        $approve->assertJsonPath('data.financial_summary.accepted_amount', '4000.00');
+        $approve->assertJsonPath('data.financial_summary.paid_amount', '1500.00');
+        $approve->assertJsonPath('data.financial_summary.debt_amount', '2500.00');
 
         $this->assertDatabaseHas('contract_performance_acts', [
             'id' => $act->id,
@@ -915,12 +1016,56 @@ class ActReportsPreviewTest extends TestCase
         ]);
     }
 
+    public function test_draft_act_cannot_skip_submission_and_be_approved(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVAL-SKIP');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'APPROVAL-SKIP-ACT', 1);
+
+        $response = $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/approve");
+
+        $response->assertStatus(422);
+        self::assertSame(ContractPerformanceAct::STATUS_DRAFT, $act->fresh()->status);
+    }
+
+    public function test_create_from_wizard_rejects_non_active_contract(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('CLOSED-CONTRACT-ACT');
+        $contract->forceFill(['status' => 'completed'])->save();
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 9901, 1);
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'ACT-CLOSED-CONTRACT',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [[
+                'completed_work_id' => $work->id,
+                'quantity' => 1,
+            ]],
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertDatabaseMissing('contract_performance_acts', [
+            'act_document_number' => 'ACT-CLOSED-CONTRACT',
+        ]);
+    }
+
     public function test_rejected_act_stores_reason_and_can_not_be_approved_after_signing_lock(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('REJECT-1');
         $this->withoutMiddleware();
         $this->allowPermissions();
         $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'REJECT-ACT', 1);
+
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/submit")
+            ->assertOk();
 
         $reject = $this->actingAs($user, 'api_admin')->postJson("/api/v1/admin/act-reports/{$act->id}/reject", [
             'reason' => 'Не совпадает объем',
@@ -935,6 +1080,22 @@ class ActReportsPreviewTest extends TestCase
             'status' => 'rejected',
             'rejected_by_user_id' => $user->id,
         ]);
+    }
+
+    public function test_draft_act_cannot_be_rejected_before_submission(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('REJECT-SKIP');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'REJECT-SKIP-ACT', 1);
+
+        $response = $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/reject", [
+                'reason' => 'Отклонение без согласования',
+            ]);
+
+        $response->assertStatus(422);
+        self::assertSame(ContractPerformanceAct::STATUS_DRAFT, $act->fresh()->status);
     }
 
     public function test_status_workflow_requires_exact_transition_permissions(): void
@@ -1073,5 +1234,65 @@ class ActReportsPreviewTest extends TestCase
         $response->assertCreated();
 
         return \App\Models\ContractPerformanceAct::query()->findOrFail((int) $response->json('data.id'));
+    }
+
+    private function approveEstimateSnapshot(Estimate $estimate, User $user): void
+    {
+        $items = EstimateItem::query()
+            ->where('estimate_id', $estimate->id)
+            ->orderBy('id')
+            ->get()
+            ->map(static function (EstimateItem $item): array {
+                $contractLinks = ContractEstimateItem::query()
+                    ->where('estimate_item_id', $item->id)
+                    ->get()
+                    ->map(static fn (ContractEstimateItem $link): array => [
+                        'contract_id' => (int) $link->contract_id,
+                        'quantity' => (string) ($link->quantity ?? 0),
+                        'amount' => (string) ($link->amount ?? 0),
+                    ])
+                    ->all();
+
+                return [
+                    'id' => (int) $item->id,
+                    'position_number' => $item->position_number,
+                    'name' => $item->name,
+                    'quantity' => (string) $item->quantity,
+                    'quantity_total' => (string) ($item->quantity_total ?? $item->quantity),
+                    'unit_price' => (string) $item->unit_price,
+                    'total_amount' => (string) $item->total_amount,
+                    'contract_links' => $contractLinks,
+                    'children' => [],
+                ];
+            })
+            ->all();
+        $snapshot = [
+            'schema_version' => 2,
+            'rates' => ['vat_rate' => (string) ($estimate->vat_rate ?? 0)],
+            'sections' => [],
+            'unsectioned_items' => $items,
+        ];
+        $versionId = DB::table('estimate_versions')->insertGetId([
+            'estimate_id' => $estimate->id,
+            'organization_id' => $estimate->organization_id,
+            'created_by_user_id' => $user->id,
+            'approved_by_user_id' => $user->id,
+            'approved_at' => now(),
+            'version_number' => 1,
+            'label' => 'Утверждённая версия',
+            'snapshot_type' => 'approval',
+            'estimate_status' => 'approved',
+            'snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
+            'snapshot_hash' => hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR)),
+            'total_amount' => $estimate->total_amount,
+            'total_amount_with_vat' => $estimate->total_amount_with_vat ?? $estimate->total_amount,
+            'total_direct_costs' => 0,
+            'status' => 'approved',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $estimate->forceFill([
+            'current_version_id' => $versionId,
+        ])->saveQuietly();
     }
 }

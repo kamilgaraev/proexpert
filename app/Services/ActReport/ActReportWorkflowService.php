@@ -4,20 +4,24 @@ declare(strict_types=1);
 
 namespace App\Services\ActReport;
 
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\File;
-use App\Models\PerformanceActLine;
+use App\Models\PerformanceActReversal;
 use App\Models\User;
 use App\Services\Acting\ActingActWizardService;
 use App\Services\Acting\ActingAvailabilityService;
 use App\Services\Acting\ActingPolicyResolver;
-use App\Services\Acting\ActingPriceService;
 use App\Services\Acting\KS3SummaryService;
+use App\Services\Acting\PerformanceActFinancialTotalsService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
 use App\Services\Workflow\WorkflowGuardService;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -28,15 +32,15 @@ class ActReportWorkflowService
 {
     public function __construct(
         private readonly ActReportNotificationService $notificationService,
-        private readonly ActingPriceService $priceService,
+        private readonly PerformanceActFinancialTotalsService $financialTotals,
         private readonly ActingPolicyResolver $actingPolicyResolver,
         private readonly ActingAvailabilityService $actingAvailabilityService,
         private readonly KS3SummaryService $ks3SummaryService,
         private readonly ActingActWizardService $actingActWizardService,
         private readonly ActReportAccessService $accessService,
         private readonly ProductionAcceptanceEventRecorder $acceptanceEvents,
-    ) {
-    }
+        private readonly PaymentDocumentService $paymentDocumentService,
+    ) {}
 
     public function preview(int $organizationId, array $data, ?User $user): array
     {
@@ -59,12 +63,69 @@ class ActReportWorkflowService
                 $data['period_start'],
                 $data['period_end']
             ),
+            'available_variation_orders' => $this->availableVariationOrders($contract),
             'summary' => $this->ks3SummaryService->summarize(
                 $contract->id,
                 $data['period_start'],
                 $data['period_end']
             ),
         ];
+    }
+
+    /**
+     * @return list<array{id: int, variation_number: string, change_number: string, description: ?string, amount: string, reserved_amount: string, remaining_amount: string}>
+     */
+    private function availableVariationOrders(Contract $contract): array
+    {
+        $reserved = DB::table('performance_act_lines as line')
+            ->join('contract_performance_acts as act', 'act.id', '=', 'line.performance_act_id')
+            ->whereNotNull('line.variation_order_id')
+            ->whereNotIn('act.status', ['rejected', 'annulled', 'cancelled'])
+            ->selectRaw('line.variation_order_id, COALESCE(SUM(line.amount), 0) AS reserved_amount')
+            ->groupBy('line.variation_order_id');
+
+        return DB::table('change_management_variation_orders as variation')
+            ->join('change_management_change_requests as change', 'change.id', '=', 'variation.change_request_id')
+            ->join('contract_project_allocations as allocation', function ($join): void {
+                $join->on('allocation.id', '=', 'change.reporting_contract_project_allocation_id')
+                    ->where('allocation.is_active', true)
+                    ->whereNull('allocation.deleted_at');
+            })
+            ->leftJoinSub($reserved, 'reserved', function ($join): void {
+                $join->on('reserved.variation_order_id', '=', 'variation.id');
+            })
+            ->where('variation.organization_id', $contract->organization_id)
+            ->where('change.organization_id', $contract->organization_id)
+            ->where('allocation.contract_id', $contract->id)
+            ->where('allocation.project_id', $contract->project_id)
+            ->whereIn('change.status', ['approved', 'implemented', 'closed'])
+            ->orderBy('variation.id')
+            ->get([
+                'variation.id',
+                'variation.variation_number',
+                'variation.description',
+                'variation.amount',
+                'change.change_number',
+                DB::raw('COALESCE(reserved.reserved_amount, 0) AS reserved_amount'),
+            ])
+            ->map(static function (object $row): array {
+                $amount = BigDecimal::of((string) $row->amount)->toScale(2, RoundingMode::HalfUp);
+                $reservedAmount = BigDecimal::of((string) $row->reserved_amount)->toScale(2, RoundingMode::HalfUp);
+                $remainingAmount = $amount->minus($reservedAmount)->toScale(2, RoundingMode::HalfUp);
+
+                return [
+                    'id' => (int) $row->id,
+                    'variation_number' => (string) $row->variation_number,
+                    'change_number' => (string) $row->change_number,
+                    'description' => $row->description === null ? null : (string) $row->description,
+                    'amount' => (string) $amount,
+                    'reserved_amount' => (string) $reservedAmount,
+                    'remaining_amount' => (string) $remainingAmount,
+                ];
+            })
+            ->filter(static fn (array $row): bool => BigDecimal::of($row['remaining_amount'])->isPositive())
+            ->values()
+            ->all();
     }
 
     public function createFromWizard(
@@ -167,11 +228,23 @@ class ActReportWorkflowService
 
     public function submit(ContractPerformanceAct $act, int $userId): ContractPerformanceAct
     {
-        $updatedAct = DB::transaction(function () use ($act, $userId): ContractPerformanceAct {
+        [$updatedAct, $changed] = DB::transaction(function () use ($act, $userId): array {
             $lockedAct = ContractPerformanceAct::query()
                 ->whereKey($act->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
+            if ($lockedAct->status === ContractPerformanceAct::STATUS_PENDING_APPROVAL) {
+                return [
+                    $lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']),
+                    false,
+                ];
+            }
+            if ($lockedAct->status !== ContractPerformanceAct::STATUS_DRAFT) {
+                throw new BusinessLogicException(
+                    trans_message('act_reports.act_must_be_draft_before_submission'),
+                    422,
+                );
+            }
             $this->assertMutable($lockedAct);
 
             $lockedAct->update([
@@ -183,10 +256,15 @@ class ActReportWorkflowService
                 'rejection_reason' => null,
             ]);
 
-            return $lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']);
+            return [
+                $lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']),
+                true,
+            ];
         });
 
-        $this->notificationService->notifyStatusChanged($updatedAct, trans_message('act_reports.act_submitted'));
+        if ($changed) {
+            $this->notificationService->notifyStatusChanged($updatedAct, trans_message('act_reports.act_submitted'));
+        }
 
         return $updatedAct;
     }
@@ -207,6 +285,9 @@ class ActReportWorkflowService
                 ContractPerformanceAct::STATUS_SIGNED,
             ], true)) {
                 return [$lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']), false];
+            }
+            if ($lockedAct->status !== ContractPerformanceAct::STATUS_PENDING_APPROVAL) {
+                throw new BusinessLogicException(trans_message('act_reports.act_must_be_submitted_before_approval'), 422);
             }
             $lockedAct = $this->recalculatePricedLines($lockedAct);
             $previousStatus = $this->acceptanceStatus($lockedAct);
@@ -245,44 +326,9 @@ class ActReportWorkflowService
 
     public function recalculatePricedLines(ContractPerformanceAct $act): ContractPerformanceAct
     {
-        return DB::transaction(function () use ($act): ContractPerformanceAct {
-            $act->loadMissing([
-                'contract.estimate',
-                'lines.estimateItem.contractLinks',
-                'lines.estimateItem.estimate',
-                'completedWorks',
-            ]);
-
-            $act->lines->each(function (PerformanceActLine $line) use ($act): void {
-                $unitPrice = $this->priceService->resolveLineUnitPrice($act, $line);
-
-                if ($unitPrice <= 0) {
-                    return;
-                }
-
-                $quantity = (float) $line->quantity;
-                $amount = round($quantity * $unitPrice, 2);
-
-                if ((float) $line->amount === $amount && (float) $line->unit_price === $unitPrice) {
-                    return;
-                }
-
-                $line->update([
-                    'unit_price' => $unitPrice,
-                    'amount' => $amount,
-                ]);
-
-                if ($line->completed_work_id) {
-                    $act->completedWorks()->updateExistingPivot($line->completed_work_id, [
-                        'included_amount' => $amount,
-                    ]);
-                }
-            });
-
-            $act->recalculateAmount();
-
-            return $act->fresh(['contract.project', 'contract.contractor', 'lines.estimateItem', 'files']);
-        });
+        return DB::transaction(
+            fn (): ContractPerformanceAct => $this->financialTotals->recalculateFromStoredBasis($act)
+        );
     }
 
     public function reject(ContractPerformanceAct $act, int $userId, string $reason): ContractPerformanceAct
@@ -293,7 +339,20 @@ class ActReportWorkflowService
                 ->lockForUpdate()
                 ->firstOrFail();
             if ($lockedAct->status === ContractPerformanceAct::STATUS_REJECTED) {
+                if ($lockedAct->rejection_reason !== $reason) {
+                    throw new BusinessLogicException(
+                        trans_message('act_reports.rejection_retry_conflict'),
+                        409,
+                    );
+                }
+
                 return [$lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']), false];
+            }
+            if ($lockedAct->status !== ContractPerformanceAct::STATUS_PENDING_APPROVAL) {
+                throw new BusinessLogicException(
+                    trans_message('act_reports.act_must_be_submitted_before_rejection'),
+                    422,
+                );
             }
             $this->assertMutable($lockedAct);
             $previousStatus = $this->acceptanceStatus($lockedAct);
@@ -325,6 +384,106 @@ class ActReportWorkflowService
         }
 
         return $updatedAct;
+    }
+
+    public function annul(
+        ContractPerformanceAct $act,
+        int $userId,
+        string $reason,
+        string $idempotencyKey,
+    ): ContractPerformanceAct {
+        return DB::transaction(function () use ($act, $userId, $reason, $idempotencyKey): ContractPerformanceAct {
+            $lockedAct = ContractPerformanceAct::query()
+                ->whereKey($act->getKey())
+                ->with('contract')
+                ->lockForUpdate()
+                ->firstOrFail();
+            $organizationId = (int) $lockedAct->contract?->organization_id;
+            $existing = PerformanceActReversal::query()
+                ->where('organization_id', $organizationId)
+                ->where('idempotency_key', $idempotencyKey)
+                ->first();
+            if ($existing !== null) {
+                if ((int) $existing->performance_act_id !== (int) $lockedAct->id
+                    || $existing->reason !== $reason) {
+                    throw new BusinessLogicException(trans_message('act_reports.annulment_idempotency_conflict'), 409);
+                }
+
+                return $lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']);
+            }
+            if ($lockedAct->status === ContractPerformanceAct::STATUS_ANNULLED) {
+                throw new BusinessLogicException(trans_message('act_reports.act_already_annulled'), 409);
+            }
+            if (! in_array($lockedAct->status, [
+                ContractPerformanceAct::STATUS_APPROVED,
+                ContractPerformanceAct::STATUS_SIGNED,
+            ], true)) {
+                throw new BusinessLogicException(trans_message('act_reports.only_accepted_act_can_be_annulled'), 422);
+            }
+
+            $invoices = PaymentDocument::query()
+                ->where('organization_id', $organizationId)
+                ->where(function ($query) use ($lockedAct): void {
+                    $query->where('origin_key', 'like', 'performance-act:'.$lockedAct->id.':%')
+                        ->orWhere(function ($morphQuery) use ($lockedAct): void {
+                            $morphQuery
+                                ->whereIn('invoiceable_type', array_values(array_unique([
+                                    ContractPerformanceAct::class,
+                                    $lockedAct->getMorphClass(),
+                                ])))
+                                ->where('invoiceable_id', $lockedAct->id);
+                        });
+                })
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            foreach ($invoices as $invoice) {
+                if (BigDecimal::of((string) $invoice->paid_amount)->isPositive()
+                    || in_array($invoice->status, [
+                        PaymentDocumentStatus::PAID,
+                        PaymentDocumentStatus::PARTIALLY_PAID,
+                    ], true)) {
+                    throw new BusinessLogicException(trans_message('act_reports.paid_invoice_blocks_annulment'), 409);
+                }
+            }
+            foreach ($invoices as $invoice) {
+                if ($invoice->status !== PaymentDocumentStatus::CANCELLED) {
+                    $this->paymentDocumentService->cancel($invoice, $reason, User::find($userId));
+                }
+            }
+
+            $occurredAt = CarbonImmutable::now();
+            $previousStatus = $this->acceptanceStatus($lockedAct);
+            PerformanceActReversal::query()->create([
+                'organization_id' => $organizationId,
+                'performance_act_id' => $lockedAct->id,
+                'reversed_by_user_id' => $userId,
+                'source_status' => $lockedAct->status,
+                'amount' => $lockedAct->amount,
+                'currency' => $lockedAct->currency,
+                'reason' => $reason,
+                'invoice_ids' => $invoices->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+                'idempotency_key' => $idempotencyKey,
+                'reversed_at' => $occurredAt,
+            ]);
+            $lockedAct->forceFill([
+                'status' => ContractPerformanceAct::STATUS_ANNULLED,
+                'is_approved' => false,
+                'annulled_at' => $occurredAt,
+                'annulled_by_user_id' => $userId,
+                'annulment_reason' => $reason,
+            ])->save();
+            $updatedAct = $lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']);
+            $this->acceptanceEvents->recordTransitionIfApplicable(
+                $updatedAct,
+                $previousStatus,
+                $this->acceptanceStatus($updatedAct),
+                $occurredAt,
+                $userId,
+            );
+
+            return $updatedAct;
+        });
     }
 
     public function markSigned(ContractPerformanceAct $act, int $fileId, int $userId): ContractPerformanceAct
@@ -406,19 +565,22 @@ class ActReportWorkflowService
             ->where('invoiceable_type', ContractPerformanceAct::class)
             ->where('invoiceable_id', $act->id);
 
-        $totalPaid = (float) (clone $contractDocuments)->sum('paid_amount')
-            + (float) (clone $actDocuments)->sum('paid_amount');
-
-        $totalRemaining = (float) (clone $contractDocuments)->sum('remaining_amount')
-            + (float) (clone $actDocuments)->sum('remaining_amount');
-
-        $acceptedAmount = (float) $act->amount;
-        $debtAmount = $totalRemaining > 0 ? $totalRemaining : max(0.0, $acceptedAmount - $totalPaid);
+        $totalPaid = BigDecimal::of((string) (clone $contractDocuments)->sum('paid_amount'))
+            ->plus((string) (clone $actDocuments)->sum('paid_amount'))
+            ->toScale(2, RoundingMode::HalfUp);
+        $totalRemaining = BigDecimal::of((string) (clone $contractDocuments)->sum('remaining_amount'))
+            ->plus((string) (clone $actDocuments)->sum('remaining_amount'))
+            ->toScale(2, RoundingMode::HalfUp);
+        $acceptedAmount = BigDecimal::of((string) $act->amount)->toScale(2, RoundingMode::HalfUp);
+        $calculatedDebt = $acceptedAmount->minus($totalPaid);
+        $debtAmount = $totalRemaining->isPositive()
+            ? $totalRemaining
+            : ($calculatedDebt->isPositive() ? $calculatedDebt : BigDecimal::zero()->toScale(2));
 
         return [
-            'accepted_amount' => round($acceptedAmount, 2),
-            'paid_amount' => round(min($totalPaid, max($acceptedAmount, $totalPaid)), 2),
-            'debt_amount' => round($debtAmount, 2),
+            'accepted_amount' => (string) $acceptedAmount,
+            'paid_amount' => (string) $totalPaid,
+            'debt_amount' => (string) $debtAmount,
             'payment_documents_count' => (clone $contractDocuments)->count() + (clone $actDocuments)->count(),
             'is_ready_for_payment' => $act->isReadyForPayment(),
         ];

@@ -67,11 +67,28 @@ final class PaymentDocumentController extends Controller
     {
         try {
             $documents = $this->queries->listForOrganization($this->organizationId($request), $request->filters());
-            $this->contractRequirement->preload($documents);
+            $pageItems = $documents->getCollection();
+            $this->contractRequirement->preload($pageItems);
 
             return AdminResponse::paginated(
-                $this->presenter->collection($documents, $request->user()),
-                $this->queries->summary($documents)
+                $this->presenter->collection($pageItems, $request->user()),
+                [
+                    'current_page' => $documents->currentPage(),
+                    'per_page' => $documents->perPage(),
+                    'total' => $documents->total(),
+                    'last_page' => $documents->lastPage(),
+                    'from' => $documents->firstItem(),
+                    'to' => $documents->lastItem(),
+                ],
+                trans_message('payments.documents.loaded'),
+                200,
+                $this->queries->summary($pageItems),
+                [
+                    'first' => $documents->url(1),
+                    'last' => $documents->url($documents->lastPage()),
+                    'prev' => $documents->previousPageUrl(),
+                    'next' => $documents->nextPageUrl(),
+                ]
             );
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
@@ -125,7 +142,7 @@ final class PaymentDocumentController extends Controller
             ]);
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
-        } catch (\DomainException | \InvalidArgumentException $e) {
+        } catch (\DomainException|\InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (Throwable $e) {
             Log::error('payment_document.store.error', [
@@ -198,7 +215,7 @@ final class PaymentDocumentController extends Controller
 
             return response($pdfContent, 200, [
                 'Content-Type' => 'application/pdf',
-                'Content-Disposition' => 'inline; filename="payment_order_' . $document->document_number . '.pdf"',
+                'Content-Disposition' => 'inline; filename="payment_order_'.$document->document_number.'.pdf"',
             ]);
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('payments.not_found'), 404);

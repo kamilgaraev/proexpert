@@ -57,7 +57,14 @@ class StoreSupplementaryAgreementRequest extends FormRequest
             'subcontract_changes' => ['nullable', 'array'],
             'gp_changes' => ['nullable', 'array'],
             'advance_changes' => ['nullable', 'array'],
-            'advance_changes.*.payment_id' => ['required', 'integer', 'exists:invoices,id'],
+            'advance_changes.*.payment_id' => [
+                'required',
+                'integer',
+                Rule::exists('payment_documents', 'id')
+                    ->where('invoiceable_type', \App\Models\Contract::class)
+                    ->where('invoiceable_id', $contractId)
+                    ->whereNull('deleted_at'),
+            ],
             'advance_changes.*.new_amount' => ['required', 'numeric', 'min:0'],
         ];
     }

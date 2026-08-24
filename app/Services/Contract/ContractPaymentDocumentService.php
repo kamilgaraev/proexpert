@@ -5,57 +5,81 @@ declare(strict_types=1);
 namespace App\Services\Contract;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
-use App\BusinessModules\Core\Payments\Enums\PaymentMethod;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentMethod;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
-use App\BusinessModules\Core\Payments\Services\PaymentTransactionService;
 use App\Models\Contract;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class ContractPaymentDocumentService
 {
     public function __construct(
         private readonly PaymentDocumentService $paymentDocumentService,
-        private readonly PaymentTransactionService $paymentTransactionService,
-    ) {
-    }
+    ) {}
 
     public function createPaidContractPayment(Contract $contract, array $data): PaymentDocument
     {
         $paymentType = (string) ($data['payment_type'] ?? 'other');
-        $amount = (float) ($data['amount'] ?? 0);
+        $amount = (string) BigDecimal::of((string) ($data['amount'] ?? 0))
+            ->toScale(2, RoundingMode::HalfUp);
         $paymentDate = $data['payment_date'] ?? now();
+        $idempotencyKey = isset($data['idempotency_key']) && $data['idempotency_key'] !== ''
+            ? (string) $data['idempotency_key']
+            : null;
 
-        $document = $this->paymentDocumentService->createFromContract(
+        return DB::transaction(function () use (
             $contract,
-            $this->mapContractPaymentTypeToInvoiceType($paymentType),
-            [
-                'amount' => $amount,
-                'currency' => $data['currency'] ?? config('payments.defaults.currency', 'RUB'),
-                'document_date' => $paymentDate,
-                'due_date' => $paymentDate,
-                'description' => $data['description'] ?? null,
-                'metadata' => array_merge($data['metadata'] ?? [], [
+            $data,
+            $paymentType,
+            $amount,
+            $paymentDate,
+            $idempotencyKey,
+        ): PaymentDocument {
+            $document = $this->paymentDocumentService->createFromContract(
+                $contract,
+                $this->mapContractPaymentTypeToInvoiceType($paymentType),
+                [
+                    'amount' => $amount,
+                    'currency' => $data['currency'] ?? config('payments.defaults.currency', 'RUB'),
+                    'document_date' => $paymentDate,
+                    'due_date' => $paymentDate,
+                    'description' => $data['description'] ?? null,
+                    'origin_key' => $idempotencyKey === null
+                        ? null
+                        : "contract-payment:{$contract->id}:{$idempotencyKey}",
+                    'metadata' => array_merge($data['metadata'] ?? [], [
+                        'contract_payment_type' => $paymentType,
+                        'reference_document_number' => $data['reference_document_number'] ?? null,
+                    ]),
+                ],
+            );
+
+            return $this->paymentDocumentService->registerPayment($document, $amount, [
+                'payment_method' => $data['payment_method'] ?? PaymentMethod::BANK_TRANSFER->value,
+                'reference_number' => $data['reference_document_number'] ?? null,
+                'idempotency_key' => $idempotencyKey,
+                'transaction_date' => $paymentDate,
+                'value_date' => $paymentDate,
+                'notes' => $data['description'] ?? null,
+                'metadata' => [
                     'contract_payment_type' => $paymentType,
-                    'reference_document_number' => $data['reference_document_number'] ?? null,
-                ]),
-            ],
-        );
+                ],
+            ]);
+        });
+    }
 
-        $this->paymentTransactionService->registerPayment($document, [
-            'amount' => $amount,
-            'payment_method' => $data['payment_method'] ?? PaymentMethod::BANK_TRANSFER->value,
-            'reference_number' => $data['reference_document_number'] ?? null,
-            'transaction_date' => $paymentDate,
-            'value_date' => $paymentDate,
-            'notes' => $data['description'] ?? null,
-            'metadata' => [
-                'contract_payment_type' => $paymentType,
-            ],
-        ]);
+    public function updateUnpaidDocument(PaymentDocument $document, array $data): PaymentDocument
+    {
+        return $this->paymentDocumentService->update($document, $data);
+    }
 
-        return $document->refresh();
+    public function cancelDocument(PaymentDocument $document, string $reason): PaymentDocument
+    {
+        return $this->paymentDocumentService->cancel($document, $reason, auth()->user());
     }
 
     public function getPaymentsForContract(int $contractId, array $filters = [], string $sortBy = 'document_date', string $sortDirection = 'desc'): Collection

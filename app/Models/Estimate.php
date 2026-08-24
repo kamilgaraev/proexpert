@@ -2,18 +2,18 @@
 
 namespace App\Models;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 use App\Support\EstimatePositionOrder;
+use App\Traits\HasOnboardingDemo;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use App\Traits\HasOnboardingDemo;
-use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Estimate extends Model
 {
-    use HasFactory, SoftDeletes, HasOnboardingDemo;
+    use HasFactory, HasOnboardingDemo, SoftDeletes;
 
     protected $fillable = [
         'organization_id',
@@ -54,6 +54,7 @@ class Estimate extends Model
         'total_base_labor_cost',
         'statistics',
         'structure_cache_path',
+        'current_version_id',
     ];
 
     protected $casts = [
@@ -82,6 +83,7 @@ class Estimate extends Model
         'import_diagnostics' => 'array',
         'statistics' => 'array',
         'is_onboarding_demo' => 'boolean',
+        'current_version_id' => 'integer',
     ];
 
     public function organization(): BelongsTo
@@ -123,6 +125,11 @@ class Estimate extends Model
     public function approvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by_user_id');
+    }
+
+    public function currentVersion(): BelongsTo
+    {
+        return $this->belongsTo(EstimateVersion::class, 'current_version_id');
     }
 
     public function importHistory(): HasMany
@@ -170,23 +177,23 @@ class Estimate extends Model
         $user = request()->user();
         $orgId = $user?->current_organization_id;
         $projectId = request()->route('project');
-        
+
         $query = static::where($this->getRouteKeyName(), $value);
-        
+
         if ($projectId) {
-            $query->where('project_id', (int)$projectId);
+            $query->where('project_id', (int) $projectId);
         }
-        
+
         $estimate = $query->first();
-        
-        if (!$estimate) {
+
+        if (! $estimate) {
             return null;
         }
-        
+
         if ($orgId && $estimate->organization_id !== $orgId) {
             return null;
         }
-        
+
         return $estimate;
     }
 
