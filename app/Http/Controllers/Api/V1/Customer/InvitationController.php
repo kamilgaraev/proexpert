@@ -48,10 +48,7 @@ class InvitationController extends CustomerController
                 trans_message('customer.auth.invitation_resolved')
             );
         } catch (Throwable $exception) {
-            Log::error('customer.invitation.resolve.failed', [
-                'token' => $token,
-                'error' => $exception->getMessage(),
-            ]);
+            $this->logFailure('customer.invitation.resolve.failed', $token, $exception);
 
             return CustomerResponse::error(trans_message('customer.auth.invitation_resolve_error'), 500);
         }
@@ -87,11 +84,7 @@ class InvitationController extends CustomerController
                 trans_message('customer.auth.invitation_login_success')
             )->withCookie($this->jwtCookieService->makeTokenCookie($result['token']));
         } catch (Throwable $exception) {
-            Log::error('customer.invitation.login.failed', [
-                'email' => $request->input('email'),
-                'token' => $token,
-                'error' => $exception->getMessage(),
-            ]);
+            $this->logFailure('customer.invitation.login.failed', $token, $exception);
 
             return CustomerResponse::error(trans_message('customer.auth.invitation_login_error'), 500);
         }
@@ -119,11 +112,7 @@ class InvitationController extends CustomerController
                 201
             );
         } catch (Throwable $exception) {
-            Log::error('customer.invitation.register.failed', [
-                'email' => $request->input('email'),
-                'token' => $token,
-                'error' => $exception->getMessage(),
-            ]);
+            $this->logFailure('customer.invitation.register.failed', $token, $exception);
 
             return CustomerResponse::error(trans_message('customer.auth.invitation_register_error'), 500);
         }
@@ -150,13 +139,14 @@ class InvitationController extends CustomerController
                 ],
             ], trans_message('customer.invitation_accepted'));
         } catch (Throwable $exception) {
-            Log::error('customer.invitation.accept.failed', [
+            $this->logFailure('customer.invitation.accept.failed', $token, $exception, [
                 'user_id' => $request->user()?->id,
-                'token' => $token,
-                'error' => $exception->getMessage(),
             ]);
 
-            return CustomerResponse::error($exception->getMessage(), 400);
+            return CustomerResponse::error(
+                trans_message('customer.auth.invitation_accept_error'),
+                $this->safeClientStatus($exception)
+            );
         }
     }
 
@@ -173,16 +163,32 @@ class InvitationController extends CustomerController
                 ],
             ], trans_message('customer.auth.invitation_decline_success'));
         } catch (Throwable $exception) {
-            Log::error('customer.invitation.decline.failed', [
-                'token' => $token,
-                'error' => $exception->getMessage(),
-            ]);
+            $this->logFailure('customer.invitation.decline.failed', $token, $exception);
 
             return CustomerResponse::error(
-                $exception->getMessage() ?: trans_message('customer.auth.invitation_decline_error'),
-                $exception->getCode() ?: 400
+                trans_message('customer.auth.invitation_decline_error'),
+                $this->safeClientStatus($exception)
             );
         }
+    }
+
+    /**
+     * @param array<string, int|string|null> $context
+     */
+    private function logFailure(string $event, string $token, Throwable $exception, array $context = []): void
+    {
+        Log::error($event, [
+            ...$context,
+            'token_fingerprint' => hash('sha256', $token),
+            'exception_class' => $exception::class,
+        ]);
+    }
+
+    private function safeClientStatus(Throwable $exception): int
+    {
+        $status = $exception->getCode();
+
+        return $status >= 400 && $status < 500 ? $status : 400;
     }
 
     private function extractExtraFields(array $result): array

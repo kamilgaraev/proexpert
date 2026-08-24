@@ -202,7 +202,7 @@ class ProjectParticipantInvitationService
             ->first();
 
         if (!$invitation instanceof ProjectParticipantInvitation) {
-            throw new BusinessLogicException('Приглашение не найдено.', 404);
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_not_found'), 404);
         }
 
         $this->expirePendingInvitations(invitation: $invitation);
@@ -213,26 +213,26 @@ class ProjectParticipantInvitationService
                 return $this->freshInvitation($invitation);
             }
 
-            throw new BusinessLogicException('Приглашение уже принято другой организацией.', 409);
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_accepted_elsewhere'), 409);
         }
 
         if ($invitation->isCancelled()) {
-            throw new BusinessLogicException('Приглашение было отменено и больше недоступно.', 410);
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_cancelled'), 410);
         }
 
         if ($invitation->isExpired()) {
-            throw new BusinessLogicException('Срок действия приглашения истек.', 410);
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_expired'), 410);
         }
 
         if (
             $invitation->invited_organization_id !== null
             && (int) $invitation->invited_organization_id !== (int) $organization->id
         ) {
-            throw new BusinessLogicException('Это приглашение выписано на другую организацию.', 403);
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_organization'), 403);
         }
 
         if ($invitation->email !== null && strcasecmp($invitation->email, $user->email) !== 0) {
-            throw new BusinessLogicException('Это приглашение выписано на другой email.', 403);
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_email'), 403);
         }
 
         if (
@@ -240,7 +240,7 @@ class ProjectParticipantInvitationService
             && $organization->tax_number !== null
             && $invitation->inn !== $organization->tax_number
         ) {
-            throw new BusinessLogicException('ИНН организации не совпадает с приглашением.', 422);
+            throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_inn'), 422);
         }
 
         return $this->acceptInvitation($invitation, $organization, $user);
@@ -337,6 +337,31 @@ class ProjectParticipantInvitationService
         User $user
     ): ProjectParticipantInvitation {
         return DB::transaction(function () use ($invitation, $organization, $user): ProjectParticipantInvitation {
+            $invitation = ProjectParticipantInvitation::query()
+                ->whereKey($invitation->id)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$invitation instanceof ProjectParticipantInvitation) {
+                throw new BusinessLogicException(trans_message('customer.auth.invitation_not_found'), 404);
+            }
+
+            if ($invitation->isAccepted()) {
+                if ((int) $invitation->accepted_organization_id_snapshot === (int) $organization->id) {
+                    return $this->freshInvitation($invitation);
+                }
+
+                throw new BusinessLogicException(trans_message('customer.auth.invitation_accepted_elsewhere'), 409);
+            }
+
+            if ($invitation->isCancelled()) {
+                throw new BusinessLogicException(trans_message('customer.auth.invitation_cancelled'), 410);
+            }
+
+            if ($invitation->isExpired()) {
+                throw new BusinessLogicException(trans_message('customer.auth.invitation_expired'), 410);
+            }
+
             $project = $invitation->project()->first();
 
             if (!$project instanceof Project) {
@@ -347,7 +372,19 @@ class ProjectParticipantInvitationService
                 $invitation->invited_organization_id !== null
                 && (int) $invitation->invited_organization_id !== (int) $organization->id
             ) {
-                throw new BusinessLogicException('Это приглашение выписано на другую организацию.', 403);
+                throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_organization'), 403);
+            }
+
+            if ($invitation->email !== null && strcasecmp($invitation->email, $user->email) !== 0) {
+                throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_email'), 403);
+            }
+
+            if (
+                $invitation->inn !== null
+                && $organization->tax_number !== null
+                && $invitation->inn !== $organization->tax_number
+            ) {
+                throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_inn'), 422);
             }
 
             $participant = $project->organizations()
