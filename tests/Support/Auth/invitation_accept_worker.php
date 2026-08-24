@@ -12,7 +12,7 @@ require dirname(__DIR__, 3).'/vendor/autoload.php';
 
 $payload = json_decode((string) getenv('MOST_INVITATION_ACCEPT_PAYLOAD'), true, 16, JSON_THROW_ON_ERROR);
 
-if (!is_array($payload)) {
+if (! is_array($payload)) {
     throw new RuntimeException('Invitation worker payload is missing.');
 }
 
@@ -45,4 +45,3 @@ try {
 
 fwrite(STDOUT, json_encode($result, JSON_THROW_ON_ERROR).PHP_EOL);
 fflush(STDOUT);
-

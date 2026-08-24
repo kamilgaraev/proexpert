@@ -21,8 +21,7 @@ class ProjectParticipantInvitationService
 
     public function __construct(
         private readonly ProjectParticipantService $projectParticipantService
-    ) {
-    }
+    ) {}
 
     public function list(Project $project): Collection
     {
@@ -50,7 +49,7 @@ class ProjectParticipantInvitationService
             ? Organization::find($invitedOrganizationId)
             : null;
 
-        if ($invitedOrganizationId !== null && !$invitedOrganization instanceof Organization) {
+        if ($invitedOrganizationId !== null && ! $invitedOrganization instanceof Organization) {
             throw new BusinessLogicException('Организация для приглашения не найдена.', 404);
         }
 
@@ -201,7 +200,7 @@ class ProjectParticipantInvitationService
             ->where('token', $token)
             ->first();
 
-        if (!$invitation instanceof ProjectParticipantInvitation) {
+        if (! $invitation instanceof ProjectParticipantInvitation) {
             throw new BusinessLogicException(trans_message('customer.auth.invitation_not_found'), 404);
         }
 
@@ -258,7 +257,7 @@ class ProjectParticipantInvitationService
             ->where('token', $token)
             ->first();
 
-        if (!$invitation instanceof ProjectParticipantInvitation) {
+        if (! $invitation instanceof ProjectParticipantInvitation) {
             throw new BusinessLogicException(trans_message('customer.auth.invitation_not_found'), 404);
         }
 
@@ -310,6 +309,7 @@ class ProjectParticipantInvitationService
             if ($invitation->hasExpired()) {
                 $this->markInvitationExpired($invitation);
                 $stats['skipped']++;
+
                 continue;
             }
 
@@ -342,7 +342,7 @@ class ProjectParticipantInvitationService
                 ->lockForUpdate()
                 ->first();
 
-            if (!$invitation instanceof ProjectParticipantInvitation) {
+            if (! $invitation instanceof ProjectParticipantInvitation) {
                 throw new BusinessLogicException(trans_message('customer.auth.invitation_not_found'), 404);
             }
 
@@ -364,7 +364,7 @@ class ProjectParticipantInvitationService
 
             $project = $invitation->project()->first();
 
-            if (!$project instanceof Project) {
+            if (! $project instanceof Project) {
                 throw new BusinessLogicException('Проект приглашения не найден.', 404);
             }
 
@@ -404,7 +404,7 @@ class ProjectParticipantInvitationService
                     );
                 }
 
-                if (!(bool) $participant->pivot->is_active) {
+                if (! (bool) $participant->pivot->is_active) {
                     $this->projectParticipantService->setActiveState($project, $organization->id, true);
                 }
             } else {
@@ -456,7 +456,7 @@ class ProjectParticipantInvitationService
 
     private function markInvitationExpired(ProjectParticipantInvitation $invitation): void
     {
-        if (!$invitation->isExpired()) {
+        if (! $invitation->isExpired()) {
             return;
         }
 

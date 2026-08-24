@@ -28,9 +28,7 @@ use Throwable;
 
 final class WebAuthTokenService
 {
-    public function __construct(private readonly UserAuthSessionService $sessions)
-    {
-    }
+    public function __construct(private readonly UserAuthSessionService $sessions) {}
 
     public function issue(
         User $user,
@@ -40,7 +38,7 @@ final class WebAuthTokenService
         bool $remembered,
     ): WebAuthTokenPair {
         $configuration = $this->configuration($audience);
-        $now = new DateTimeImmutable();
+        $now = new DateTimeImmutable;
         $accessExpiresAt = $now->add(new DateInterval('PT'.$this->accessTtlMinutes().'M'));
         $refreshExpiresAt = $now->add(new DateInterval('PT'.$this->refreshTtlMinutes($remembered).'M'));
         $refreshTokenId = (string) Str::uuid();
@@ -291,7 +289,7 @@ final class WebAuthTokenService
             throw new LogicException('Web authentication signing key is not configured.');
         }
 
-        return Configuration::forSymmetricSigner(new Sha256(), InMemory::plainText($key));
+        return Configuration::forSymmetricSigner(new Sha256, InMemory::plainText($key));
     }
 
     private function issuer(): string
@@ -354,7 +352,7 @@ final class WebAuthTokenService
     {
         $encrypted = Cache::get($this->rotationResultKey($payload));
 
-        if (!is_string($encrypted) || $encrypted === '') {
+        if (! is_string($encrypted) || $encrypted === '') {
             return null;
         }
 

@@ -21,8 +21,7 @@ final class WebAuthenticationService
         private readonly WebAuthTokenService $tokens,
         private readonly UserAuthSessionService $sessions,
         private readonly JWT $jwt,
-    ) {
-    }
+    ) {}
 
     public function authenticate(LoginDTO $credentials, string $audience, string $guard, bool $remembered): array
     {

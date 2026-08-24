@@ -43,7 +43,7 @@ final class AuthResponseContractTest extends TestCase
 
     public function test_registration_validation_messages_are_resolved_from_translations(): void
     {
-        $messages = (new RegisterRequest())->messages();
+        $messages = (new RegisterRequest)->messages();
 
         self::assertSame(trans_message('auth.validation.name_required'), $messages['name.required']);
         self::assertSame(trans_message('auth.validation.phone_invalid'), $messages['phone.regex']);

@@ -12,9 +12,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class VerifyWebCsrfToken
 {
-    public function __construct(private readonly WebAuthTokenService $tokens)
-    {
-    }
+    public function __construct(private readonly WebAuthTokenService $tokens) {}
 
     public function handle(Request $request, Closure $next, string $audience): Response
     {

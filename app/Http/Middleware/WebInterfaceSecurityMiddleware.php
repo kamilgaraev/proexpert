@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
-use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Http\Responses\AdminResponse;
 use App\Http\Responses\CustomerResponse;
 use App\Http\Responses\LandingResponse;
@@ -30,8 +30,7 @@ final class WebInterfaceSecurityMiddleware
         private readonly UserAuthSessionService $sessions,
         private readonly AuthorizationService $authorization,
         private readonly WebOriginPolicy $origins,
-    ) {
-    }
+    ) {}
 
     public function handle(Request $request, Closure $next, ?string $forcedAudience = null): Response
     {

@@ -14,9 +14,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class CorsMiddleware
 {
-    public function __construct(private readonly WebOriginPolicy $origins)
-    {
-    }
+    public function __construct(private readonly WebOriginPolicy $origins) {}
 
     public function handle(Request $request, Closure $next): Response
     {

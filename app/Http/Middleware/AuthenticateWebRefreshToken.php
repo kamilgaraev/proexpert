@@ -20,8 +20,7 @@ final class AuthenticateWebRefreshToken
         private readonly WebRefreshCookieService $cookies,
         private readonly WebAuthTokenService $tokens,
         private readonly UserAuthSessionService $sessions,
-    ) {
-    }
+    ) {}
 
     public function handle(Request $request, Closure $next, string $audience): Response
     {

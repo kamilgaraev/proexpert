@@ -15,8 +15,7 @@ final readonly class WebAuthTokenPair
         public string $refreshTokenId,
         public DateTimeImmutable $accessExpiresAt,
         public DateTimeImmutable $refreshExpiresAt,
-    ) {
-    }
+    ) {}
 
     public function toCachePayload(): array
     {
@@ -40,7 +39,7 @@ final readonly class WebAuthTokenPair
             'access_expires_at',
             'refresh_expires_at',
         ] as $key) {
-            if (!isset($payload[$key]) || !is_string($payload[$key]) || $payload[$key] === '') {
+            if (! isset($payload[$key]) || ! is_string($payload[$key]) || $payload[$key] === '') {
                 return null;
             }
         }

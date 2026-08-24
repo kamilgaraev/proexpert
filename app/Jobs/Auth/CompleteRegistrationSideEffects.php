@@ -37,8 +37,7 @@ final class CompleteRegistrationSideEffects implements ShouldBeUnique, ShouldQue
     public function __construct(
         public readonly int $userId,
         public readonly int $organizationId,
-    ) {
-    }
+    ) {}
 
     public function handle(
         ProjectParticipantInvitationService $invitations,
@@ -54,22 +53,22 @@ final class CompleteRegistrationSideEffects implements ShouldBeUnique, ShouldQue
         $user = User::query()->find($this->userId);
         $organization = Organization::query()->find($this->organizationId);
 
-        if (!$attempt instanceof AuthRegistrationAttempt || !$user instanceof User || !$organization instanceof Organization) {
+        if (! $attempt instanceof AuthRegistrationAttempt || ! $user instanceof User || ! $organization instanceof Organization) {
             return;
         }
 
-        if (!$this->isCompleted($attempt, 'invitations')) {
+        if (! $this->isCompleted($attempt, 'invitations')) {
             $invitations->acceptMatchingForOrganization($user, $organization);
             $this->markCompleted($attempt, 'invitations');
         }
 
-        if (!$this->isCompleted($attempt, 'contractor_sync')) {
+        if (! $this->isCompleted($attempt, 'contractor_sync')) {
             $this->synchronizeContractors($organization, $verification, $contractors, $notifications);
             $this->markCompleted($attempt, 'contractor_sync');
         }
 
-        if (!$this->isCompleted($attempt, 'email_verification')) {
-            if (!$user->hasVerifiedEmail()) {
+        if (! $this->isCompleted($attempt, 'email_verification')) {
+            if (! $user->hasVerifiedEmail()) {
                 $user->sendFrontendEmailVerificationNotification((string) config('app.frontend_url'));
             }
             $this->markCompleted($attempt, 'email_verification');

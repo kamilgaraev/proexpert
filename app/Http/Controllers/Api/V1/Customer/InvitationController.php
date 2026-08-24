@@ -31,15 +31,14 @@ class InvitationController extends CustomerController
         private readonly CustomerAuthService $customerAuthService,
         private readonly WebAuthenticationService $webAuthentication,
         private readonly WebRefreshCookieService $refreshCookies,
-    ) {
-    }
+    ) {}
 
     public function resolve(string $token): JsonResponse
     {
         try {
             $result = $this->customerAuthService->resolveInvitation($token);
 
-            if (!$result['success']) {
+            if (! $result['success']) {
                 return CustomerResponse::error(
                     $result['message'] ?? trans_message('customer.auth.invitation_resolve_error'),
                     $result['status_code'] ?? 404
@@ -70,7 +69,7 @@ class InvitationController extends CustomerController
                 $request->boolean('remember_me'),
             );
 
-            if (!$result['success']) {
+            if (! $result['success']) {
                 return CustomerResponse::error(
                     $result['message'] ?? trans_message('customer.auth.login_error'),
                     $result['status_code'] ?? 401,
@@ -81,7 +80,7 @@ class InvitationController extends CustomerController
 
             $tokens = $result['tokens'] ?? null;
 
-            if (!$tokens instanceof WebAuthTokenPair) {
+            if (! $tokens instanceof WebAuthTokenPair) {
                 return CustomerResponse::error(trans_message('customer.auth.invitation_login_error'), 500);
             }
 
@@ -117,7 +116,7 @@ class InvitationController extends CustomerController
                 (string) config('app.customer_frontend_url')
             );
 
-            if (!$result['success']) {
+            if (! $result['success']) {
                 return CustomerResponse::error(
                     $result['message'] ?? trans_message('customer.auth.register_error'),
                     $result['status_code'] ?? 400
@@ -143,7 +142,7 @@ class InvitationController extends CustomerController
             $organizationId = $this->resolveOrganizationId($request);
             $organization = Organization::find($organizationId);
 
-            if (!$user || !$organization instanceof Organization) {
+            if (! $user || ! $organization instanceof Organization) {
                 return CustomerResponse::error(trans_message('customer.unauthorized'), 401);
             }
 
@@ -191,7 +190,7 @@ class InvitationController extends CustomerController
     }
 
     /**
-     * @param array<string, int|string|null> $context
+     * @param  array<string, int|string|null>  $context
      */
     private function logFailure(string $event, string $token, Throwable $exception, array $context = []): void
     {

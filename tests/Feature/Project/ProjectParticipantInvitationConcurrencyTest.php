@@ -141,14 +141,14 @@ final class ProjectParticipantInvitationConcurrencyTest extends TestCase
             $environment,
         );
 
-        if (!is_resource($process)) {
+        if (! is_resource($process)) {
             throw new RuntimeException('Unable to start invitation acceptance worker.');
         }
 
         fclose($pipes[0]);
         $ready = fgets($pipes[1]);
 
-        if (!is_string($ready) || preg_match('/^READY:([1-9][0-9]*)\R$/D', $ready, $matches) !== 1) {
+        if (! is_string($ready) || preg_match('/^READY:([1-9][0-9]*)\R$/D', $ready, $matches) !== 1) {
             throw new RuntimeException('Invitation worker did not become ready: '.stream_get_contents($pipes[2]));
         }
 
@@ -164,7 +164,7 @@ final class ProjectParticipantInvitationConcurrencyTest extends TestCase
         fclose($worker['pipes'][2]);
         $exitCode = proc_close($worker['process']);
 
-        if ($exitCode !== 0 || !is_string($line)) {
+        if ($exitCode !== 0 || ! is_string($line)) {
             throw new RuntimeException('Invitation worker failed: '.$stderr);
         }
 

@@ -17,14 +17,13 @@ class EmailVerificationNotification extends VerifyEmail implements ShouldQueue
 
     public function __construct(
         private readonly ?string $frontendUrl = null
-    ) {
-    }
+    ) {}
 
     public function toMail($notifiable): MailMessage
     {
         $verificationUrl = $this->verificationUrl($notifiable);
 
-        return (new MailMessage())
+        return (new MailMessage)
             ->subject('Подтверждение email в МОСТ')
             ->markdown('emails.email_verification', [
                 'user' => $notifiable,
@@ -47,9 +46,9 @@ class EmailVerificationNotification extends VerifyEmail implements ShouldQueue
             ]
         );
 
-        return rtrim((string) $frontendUrl, '/') . '/verify-email?' . http_build_query([
+        return rtrim((string) $frontendUrl, '/').'/verify-email?'.http_build_query([
             'id' => $notifiable->getKey(),
             'hash' => sha1($notifiable->getEmailForVerification()),
-        ]) . '&' . (string) parse_url($signedUrl, PHP_URL_QUERY);
+        ]).'&'.(string) parse_url($signedUrl, PHP_URL_QUERY);
     }
 }

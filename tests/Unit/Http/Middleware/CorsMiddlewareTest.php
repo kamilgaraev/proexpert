@@ -138,7 +138,7 @@ class CorsMiddlewareTest extends TestCase
 
     private function middleware(): CorsMiddleware
     {
-        return new CorsMiddleware(new WebOriginPolicy());
+        return new CorsMiddleware(new WebOriginPolicy);
     }
 
     private function configureOrigins(): void

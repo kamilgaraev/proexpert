@@ -6,31 +6,30 @@ use App\Http\Responses\AdminResponse;
 use App\Http\Responses\CustomerResponse;
 use App\Http\Responses\LandingResponse;
 use App\Http\Responses\MobileResponse;
+use App\Models\LandingAdmin;
+use App\Models\User;
+use App\Services\Logging\LoggingService;
+use App\Services\Organization\OrganizationContext;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Symfony\Component\HttpFoundation\Response;
-use Tymon\JWTAuth\JWT;
-use Tymon\JWTAuth\Exceptions\JWTException;
-use App\Models\Organization;
-use App\Models\User;
-use App\Models\LandingAdmin;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\App;
-use App\Services\Organization\OrganizationContext;
-use App\Services\Logging\LoggingService;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\Response;
+use Tymon\JWTAuth\Exceptions\JWTException;
+use Tymon\JWTAuth\JWT;
 
 class SetOrganizationContext
 {
     protected LoggingService $logging;
-    
+
     public function __construct(
         LoggingService $logging,
         private readonly JWT $jwt,
-    )
-    {
+    ) {
         $this->logging = $logging;
     }
+
     /**
      * Handle an incoming request.
      *
@@ -51,7 +50,7 @@ class SetOrganizationContext
         if ($this->isRefreshEndpoint($request)) {
             $this->logging->technical('organization.context.skipped', [
                 'reason' => 'token_refresh',
-                'uri' => $request->getRequestUri()
+                'uri' => $request->getRequestUri(),
             ]);
 
             return $next($request);
@@ -59,11 +58,12 @@ class SetOrganizationContext
 
         $user = Auth::user();
 
-        if (!$user) {
+        if (! $user) {
             $this->logging->technical('organization.context.skipped', [
                 'reason' => 'no_authenticated_user',
-                'uri' => $request->getRequestUri()
+                'uri' => $request->getRequestUri(),
             ]);
+
             return $next($request);
         }
 
@@ -72,8 +72,9 @@ class SetOrganizationContext
             $this->logging->technical('organization.context.skipped', [
                 'reason' => 'landing_admin_user',
                 'user_id' => $user->id,
-                'uri' => $request->getRequestUri()
+                'uri' => $request->getRequestUri(),
             ]);
+
             return $next($request);
         }
 
@@ -81,7 +82,7 @@ class SetOrganizationContext
         $this->logging->technical('organization.context.started', [
             'user_id' => $user->id,
             'uri' => $request->getRequestUri(),
-            'method' => $request->method()
+            'method' => $request->method(),
         ]);
 
         // Приводим к типу User для дальнейшей работы
@@ -95,12 +96,12 @@ class SetOrganizationContext
             $jwtParseStart = microtime(true);
             $payload = $this->jwt->parseToken()->getPayload();
             $jwtParseDuration = (microtime(true) - $jwtParseStart) * 1000;
-            
+
             $this->logging->technical('organization.context.jwt_parsed', [
                 'user_id' => $user->id,
-                'parse_duration_ms' => $jwtParseDuration
+                'parse_duration_ms' => $jwtParseDuration,
             ]);
-            
+
             $organizationIdFromToken = $payload->get('organization_id');
             $logContext['token_org_id'] = $organizationIdFromToken;
 
@@ -109,55 +110,55 @@ class SetOrganizationContext
                 $orgLookupStart = microtime(true);
                 $org = $user->activeOrganizations()->find($organizationIdFromToken);
                 $orgLookupDuration = (microtime(true) - $orgLookupStart) * 1000;
-                
+
                 $this->logging->technical('organization.context.org_lookup', [
                     'user_id' => $user->id,
                     'organization_id' => $organizationIdFromToken,
                     'found' => $org !== null,
-                    'lookup_duration_ms' => $orgLookupDuration
+                    'lookup_duration_ms' => $orgLookupDuration,
                 ]);
-                
+
                 if ($org) {
                     $organization = $org;
                     $organizationId = $organizationIdFromToken;
                     $logContext['found_by'] = 'token';
                 } else {
                     $logContext['token_org_id_user_mismatch'] = true;
-                    
+
                     $this->logging->security('organization.context.token_mismatch', [
                         'user_id' => $user->id,
                         'token_org_id' => $organizationIdFromToken,
-                        'user_has_access' => false
+                        'user_has_access' => false,
                     ], 'warning');
 
                     return $this->organizationAccessDenied($request);
                 }
             }
 
-            if (!$organization) {
+            if (! $organization) {
                 $logContext['attempting_fallback'] = true;
-                
+
                 // ДИАГНОСТИКА: Время поиска первой организации пользователя
                 $fallbackLookupStart = microtime(true);
                 $firstOrg = $user->activeOrganizations()->first();
                 $fallbackLookupDuration = (microtime(true) - $fallbackLookupStart) * 1000;
-                
+
                 $this->logging->technical('organization.context.fallback_lookup', [
                     'user_id' => $user->id,
                     'found' => $firstOrg !== null,
-                    'lookup_duration_ms' => $fallbackLookupDuration
+                    'lookup_duration_ms' => $fallbackLookupDuration,
                 ]);
-                
+
                 if ($firstOrg) {
                     $organization = $firstOrg;
                     $organizationId = $firstOrg->id;
                     $logContext['found_by'] = 'fallback_first';
                 } else {
                     $logContext['no_organizations'] = true;
-                    
+
                     $this->logging->business('organization.context.no_organizations', [
                         'user_id' => $user->id,
-                        'user_email' => $user->email ?? 'unknown'
+                        'user_email' => $user->email ?? 'unknown',
                     ], 'warning');
                 }
             }
@@ -166,20 +167,20 @@ class SetOrganizationContext
             $this->logging->technical('organization.context.jwt_exception', [
                 'user_id' => $user->id,
                 'error' => $e->getMessage(),
-                'exception_class' => get_class($e)
+                'exception_class' => get_class($e),
             ], 'warning');
-            
+
             // ДИАГНОСТИКА: Fallback при JWT exception
             $fallbackStart = microtime(true);
             $firstOrg = $user->activeOrganizations()->first();
             $fallbackDuration = (microtime(true) - $fallbackStart) * 1000;
-            
+
             $this->logging->technical('organization.context.jwt_fallback', [
                 'user_id' => $user->id,
                 'found' => $firstOrg !== null,
-                'fallback_duration_ms' => $fallbackDuration
+                'fallback_duration_ms' => $fallbackDuration,
             ]);
-            
+
             if ($firstOrg) {
                 $organization = $firstOrg;
                 $organizationId = $firstOrg->id;
@@ -190,12 +191,12 @@ class SetOrganizationContext
                 'user_id' => $user->id,
                 'error' => $e->getMessage(),
                 'exception_class' => get_class($e),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ], 'error');
-            
-            Log::error('[SetOrganizationContext] Unexpected error: ' . $e->getMessage(), [
+
+            Log::error('[SetOrganizationContext] Unexpected error: '.$e->getMessage(), [
                 'user_id' => $user->id,
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
         }
 
@@ -207,36 +208,36 @@ class SetOrganizationContext
             App::instance(OrganizationContext::class, new OrganizationContext($organization));
 
             $logContext['final_org_id'] = $organizationId;
-            
+
             $this->logging->business('organization.context.set', [
                 'user_id' => $user->id,
                 'organization_id' => $organizationId,
                 'organization_name' => $organization->name ?? 'unknown',
-                'found_by' => $logContext['found_by'] ?? 'unknown'
+                'found_by' => $logContext['found_by'] ?? 'unknown',
             ]);
         } else {
             $logContext['final_org_id'] = null;
-            
+
             $this->logging->business('organization.context.failed', [
                 'user_id' => $user->id,
-                'reason' => 'no_organization_found'
+                'reason' => 'no_organization_found',
             ], 'warning');
         }
 
         $totalDuration = (microtime(true) - $startTime) * 1000;
-        
+
         $this->logging->technical('organization.context.completed', [
             'user_id' => $user->id,
             'organization_id' => $organizationId,
             'total_duration_ms' => $totalDuration,
-            'success' => $organization !== null
+            'success' => $organization !== null,
         ]);
-        
+
         if ($totalDuration > 500) {
             $this->logging->technical('organization.context.slow', [
                 'user_id' => $user->id,
                 'organization_id' => $organizationId,
-                'total_duration_ms' => $totalDuration
+                'total_duration_ms' => $totalDuration,
             ], 'warning');
         }
 
@@ -271,13 +272,9 @@ class SetOrganizationContext
     /**
      * Handle tasks after the response has been sent to the browser.
      *
-     * Добавляем пустой метод terminate, чтобы избежать ошибки вызова 
+     * Добавляем пустой метод terminate, чтобы избежать ошибки вызова
      * несуществующего метода ядром Laravel, если оно по какой-то причине
      * считает этот middleware "terminable".
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \Symfony\Component\HttpFoundation\Response  $response
-     * @return void
      */
     public function terminate(Request $request, Response $response): void
     {

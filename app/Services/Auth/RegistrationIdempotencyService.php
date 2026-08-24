@@ -32,7 +32,7 @@ final class RegistrationIdempotencyService
             }
 
             if ($attempt instanceof AuthRegistrationAttempt) {
-                if (!hash_equals($attempt->request_hash, $requestHash)) {
+                if (! hash_equals($attempt->request_hash, $requestHash)) {
                     throw new BusinessLogicException(trans_message('auth.registration_idempotency_conflict'), 409);
                 }
 

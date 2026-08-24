@@ -94,14 +94,14 @@ final class RegistrationIdempotencyConcurrencyTest extends TestCase
             $environment,
         );
 
-        if (!is_resource($process)) {
+        if (! is_resource($process)) {
             throw new RuntimeException('Unable to start registration worker.');
         }
 
         fclose($pipes[0]);
         $ready = fgets($pipes[1]);
 
-        if (!is_string($ready) || preg_match('/^READY:([1-9][0-9]*)\R$/D', $ready, $matches) !== 1) {
+        if (! is_string($ready) || preg_match('/^READY:([1-9][0-9]*)\R$/D', $ready, $matches) !== 1) {
             throw new RuntimeException('Registration worker did not become ready: '.stream_get_contents($pipes[2]));
         }
 
@@ -116,7 +116,7 @@ final class RegistrationIdempotencyConcurrencyTest extends TestCase
         fclose($worker['pipes'][2]);
         $exitCode = proc_close($worker['process']);
 
-        if ($exitCode !== 0 || !is_string($line)) {
+        if ($exitCode !== 0 || ! is_string($line)) {
             throw new RuntimeException('Registration worker failed: '.$stderr);
         }
 

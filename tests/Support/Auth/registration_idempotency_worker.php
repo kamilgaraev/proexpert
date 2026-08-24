@@ -14,7 +14,7 @@ require dirname(__DIR__, 3).'/vendor/autoload.php';
 
 $input = json_decode((string) getenv('MOST_REGISTRATION_PAYLOAD'), true, 16, JSON_THROW_ON_ERROR);
 
-if (!is_array($input) || !is_array($input['payload'] ?? null)) {
+if (! is_array($input) || ! is_array($input['payload'] ?? null)) {
     throw new RuntimeException('Registration worker payload is missing.');
 }
 

@@ -40,8 +40,8 @@ final class InvitationPrivacyTest extends TestCase
                 $encoded = json_encode($context, JSON_THROW_ON_ERROR);
 
                 return $event === 'customer.invitation.decline.failed'
-                    && !str_contains($encoded, $token)
-                    && !str_contains($encoded, $technicalMessage)
+                    && ! str_contains($encoded, $token)
+                    && ! str_contains($encoded, $technicalMessage)
                     && isset($context['token_fingerprint'], $context['exception_class']);
             });
     }

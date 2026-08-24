@@ -17,8 +17,8 @@ use App\Http\Responses\CustomerResponse;
 use App\Services\Auth\WebAuthenticationService;
 use App\Services\Auth\WebRefreshCookieService;
 use App\Services\Customer\Auth\CustomerAuthService;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -32,8 +32,7 @@ class AuthController extends Controller
         private readonly CustomerAuthService $authService,
         private readonly WebAuthenticationService $webAuthentication,
         private readonly WebRefreshCookieService $refreshCookies,
-    ) {
-    }
+    ) {}
 
     public function login(LoginRequest $request): JsonResponse
     {
@@ -45,7 +44,7 @@ class AuthController extends Controller
                 $request->boolean('remember_me'),
             );
 
-            if (!$result['success']) {
+            if (! $result['success']) {
                 return CustomerResponse::error(
                     $result['message'] ?? trans_message('customer.auth.login_error'),
                     $result['status_code'] ?? 401,
@@ -56,7 +55,7 @@ class AuthController extends Controller
 
             $tokens = $result['tokens'] ?? null;
 
-            if (!$tokens instanceof WebAuthTokenPair) {
+            if (! $tokens instanceof WebAuthTokenPair) {
                 return CustomerResponse::error(trans_message('customer.auth.login_error'), 500);
             }
 
@@ -93,7 +92,7 @@ class AuthController extends Controller
                 (string) config('app.customer_frontend_url')
             );
 
-            if (!$result['success']) {
+            if (! $result['success']) {
                 return CustomerResponse::error(
                     $result['message'] ?? trans_message('customer.auth.register_error'),
                     $result['status_code'] ?? 400
@@ -119,7 +118,7 @@ class AuthController extends Controller
         $payload = $request->attributes->get('web_refresh_payload');
         $refreshToken = $request->attributes->get('web_refresh_token');
 
-        if (!$payload instanceof WebAuthTokenPayload || !is_string($refreshToken) || $request->user() === null) {
+        if (! $payload instanceof WebAuthTokenPayload || ! is_string($refreshToken) || $request->user() === null) {
             return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401)
                 ->withCookie($this->refreshCookies->clear('customer'));
         }
@@ -153,7 +152,7 @@ class AuthController extends Controller
     {
         $payload = $request->attributes->get('web_refresh_payload');
 
-        if (!$payload instanceof WebAuthTokenPayload || !is_string($payload->csrfToken)) {
+        if (! $payload instanceof WebAuthTokenPayload || ! is_string($payload->csrfToken)) {
             return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401);
         }
 
@@ -166,7 +165,7 @@ class AuthController extends Controller
             $payload = $request->attributes->get('web_auth_payload');
             $user = $request->user();
 
-            if (!$payload instanceof WebAuthTokenPayload || $user === null) {
+            if (! $payload instanceof WebAuthTokenPayload || $user === null) {
                 return CustomerResponse::error(trans_message('customer.auth.logout_error'), 401)
                     ->withCookie($this->refreshCookies->clear('customer'));
             }
@@ -192,7 +191,7 @@ class AuthController extends Controller
         try {
             $result = $this->authService->sendResetLink((string) $request->validated('email'));
 
-            if (!$result['success']) {
+            if (! $result['success']) {
                 return CustomerResponse::error(
                     $result['message'] ?? trans_message('customer.auth.forgot_password_error'),
                     $result['status_code'] ?? 400
@@ -217,7 +216,7 @@ class AuthController extends Controller
         try {
             $result = $this->authService->resetPassword($request->validated());
 
-            if (!$result['success']) {
+            if (! $result['success']) {
                 return CustomerResponse::error(
                     $result['message'] ?? trans_message('customer.auth.reset_password_error'),
                     $result['status_code'] ?? 422

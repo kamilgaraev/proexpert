@@ -36,14 +36,13 @@ class CustomerAuthService
         private readonly ProjectParticipantInvitationService $invitationService,
         private readonly JwtAuthService $jwtAuthService,
         private readonly JwtTokenIssuer $tokenIssuer,
-    ) {
-    }
+    ) {}
 
     public function login(LoginDTO $loginDTO, string $guard): array
     {
         Auth::shouldUse($guard);
 
-        if (!Auth::validate($loginDTO->toArray())) {
+        if (! Auth::validate($loginDTO->toArray())) {
             return [
                 'success' => false,
                 'message' => trans_message('customer.auth.invalid_credentials'),
@@ -54,7 +53,7 @@ class CustomerAuthService
         /** @var User|null $user */
         $user = Auth::getLastAttempted();
 
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             return [
                 'success' => false,
                 'message' => trans_message('customer.auth.invalid_credentials'),
@@ -62,7 +61,7 @@ class CustomerAuthService
             ];
         }
 
-        if (!$user->is_active) {
+        if (! $user->is_active) {
             return [
                 'success' => false,
                 'message' => trans_message('auth.account_disabled'),
@@ -70,7 +69,7 @@ class CustomerAuthService
             ];
         }
 
-        if (!$user->hasVerifiedEmail()) {
+        if (! $user->hasVerifiedEmail()) {
             return [
                 'success' => false,
                 'message' => trans_message('customer.auth.email_verification_required'),
@@ -83,7 +82,7 @@ class CustomerAuthService
 
         $organization = $this->resolveActiveOrganization($user);
 
-        if (!$organization instanceof Organization) {
+        if (! $organization instanceof Organization) {
             return [
                 'success' => false,
                 'message' => trans_message('customer.auth.organization_access_missing'),
@@ -125,8 +124,7 @@ class CustomerAuthService
         RegisterDTO $registerDTO,
         ?string $verificationFrontendUrl = null,
         bool $sendVerification = true,
-    ): array
-    {
+    ): array {
         $stats = ['accepted' => 0, 'skipped' => 0, 'conflicted' => 0];
 
         try {
@@ -149,7 +147,7 @@ class CustomerAuthService
                 ];
             });
         } catch (QueryException $exception) {
-            if (!$this->isEmailUniqueViolation($exception)) {
+            if (! $this->isEmailUniqueViolation($exception)) {
                 throw $exception;
             }
 
@@ -217,7 +215,7 @@ class CustomerAuthService
     {
         $user = $this->userRepository->findByEmail($email);
 
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             return [
                 'success' => true,
                 'status_code' => 200,
@@ -277,7 +275,7 @@ class CustomerAuthService
     {
         $invitation = $this->findInvitation($token);
 
-        if (!$invitation instanceof ProjectParticipantInvitation) {
+        if (! $invitation instanceof ProjectParticipantInvitation) {
             return [
                 'success' => false,
                 'status_code' => 404,
@@ -314,14 +312,14 @@ class CustomerAuthService
     {
         $loginResult = $this->login($loginDTO, $guard);
 
-        if (!$loginResult['success']) {
+        if (! $loginResult['success']) {
             return $loginResult;
         }
 
         /** @var User|null $user */
         $user = $this->userRepository->findByEmail($loginDTO->getEmail());
 
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             return [
                 'success' => false,
                 'status_code' => 401,
@@ -331,7 +329,7 @@ class CustomerAuthService
 
         $organization = $this->resolveActiveOrganization($user);
 
-        if (!$organization instanceof Organization) {
+        if (! $organization instanceof Organization) {
             return [
                 'success' => false,
                 'status_code' => 403,
@@ -357,7 +355,7 @@ class CustomerAuthService
     ): array {
         $invitation = $this->findInvitation($token);
 
-        if (!$invitation instanceof ProjectParticipantInvitation) {
+        if (! $invitation instanceof ProjectParticipantInvitation) {
             return [
                 'success' => false,
                 'status_code' => 404,
@@ -384,7 +382,7 @@ class CustomerAuthService
         $result = DB::transaction(function () use ($token, $registerDTO, $verificationFrontendUrl): array {
             $registration = $this->register($registerDTO, $verificationFrontendUrl, false);
 
-            if (!$registration['success']) {
+            if (! $registration['success']) {
                 return $registration;
             }
 
@@ -392,7 +390,7 @@ class CustomerAuthService
             $user = $this->userRepository->findByEmail($registerDTO->getEmail());
             $organization = $user instanceof User ? $this->resolveActiveOrganization($user) : null;
 
-            if (!$user instanceof User || !$organization instanceof Organization) {
+            if (! $user instanceof User || ! $organization instanceof Organization) {
                 throw new \RuntimeException('Invitation registration context is incomplete.');
             }
 
@@ -463,6 +461,7 @@ class CustomerAuthService
         try {
             if ($verificationFrontendUrl !== null && $verificationFrontendUrl !== '') {
                 $user->sendFrontendEmailVerificationNotification($verificationFrontendUrl);
+
                 return;
             }
 
