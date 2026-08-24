@@ -3,6 +3,9 @@
 namespace App\Http\Middleware;
 
 use App\Http\Responses\AdminResponse;
+use App\Http\Responses\CustomerResponse;
+use App\Http\Responses\LandingResponse;
+use App\Http\Responses\MobileResponse;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -104,7 +107,7 @@ class SetOrganizationContext
             if ($organizationIdFromToken) {
                 // ДИАГНОСТИКА: Время поиска организации в БД
                 $orgLookupStart = microtime(true);
-                $org = $user->organizations()->find($organizationIdFromToken);
+                $org = $user->activeOrganizations()->find($organizationIdFromToken);
                 $orgLookupDuration = (microtime(true) - $orgLookupStart) * 1000;
                 
                 $this->logging->technical('organization.context.org_lookup', [
@@ -127,12 +130,7 @@ class SetOrganizationContext
                         'user_has_access' => false
                     ], 'warning');
 
-                    if ($request->is('api/v1/admin/*')) {
-                        return AdminResponse::error(
-                            trans_message('organization.access_denied'),
-                            Response::HTTP_FORBIDDEN
-                        );
-                    }
+                    return $this->organizationAccessDenied($request);
                 }
             }
 
@@ -141,7 +139,7 @@ class SetOrganizationContext
                 
                 // ДИАГНОСТИКА: Время поиска первой организации пользователя
                 $fallbackLookupStart = microtime(true);
-                $firstOrg = $user->organizations()->first();
+                $firstOrg = $user->activeOrganizations()->first();
                 $fallbackLookupDuration = (microtime(true) - $fallbackLookupStart) * 1000;
                 
                 $this->logging->technical('organization.context.fallback_lookup', [
@@ -173,7 +171,7 @@ class SetOrganizationContext
             
             // ДИАГНОСТИКА: Fallback при JWT exception
             $fallbackStart = microtime(true);
-            $firstOrg = $user->organizations()->first();
+            $firstOrg = $user->activeOrganizations()->first();
             $fallbackDuration = (microtime(true) - $fallbackStart) * 1000;
             
             $this->logging->technical('organization.context.jwt_fallback', [
@@ -248,6 +246,25 @@ class SetOrganizationContext
     private function isRefreshEndpoint(Request $request): bool
     {
         return $request->is('*/auth/refresh') || $request->is('*/landingAdminAuth/refresh');
+    }
+
+    private function organizationAccessDenied(Request $request): Response
+    {
+        $message = trans_message('organization.access_denied');
+
+        if ($request->is('api/v1/customer/*')) {
+            return CustomerResponse::error($message, Response::HTTP_FORBIDDEN);
+        }
+
+        if ($request->is('api/v1/mobile/*')) {
+            return MobileResponse::error($message, Response::HTTP_FORBIDDEN);
+        }
+
+        if ($request->is('api/v1/landing/*') || $request->is('api/lk/*')) {
+            return LandingResponse::error($message, Response::HTTP_FORBIDDEN);
+        }
+
+        return AdminResponse::error($message, Response::HTTP_FORBIDDEN);
     }
 
     /**

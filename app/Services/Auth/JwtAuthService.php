@@ -375,8 +375,28 @@ class JwtAuthService
         try {
             Auth::shouldUse($guard);
             $payload = request()->attributes->get('token_payload') ?? $this->jwt->parseToken()->getPayload();
+            $user = Auth::user();
+            $organizationId = $payload->get('organization_id');
+
+            if ($user instanceof User
+                && $organizationId !== null
+                && ! $user->belongsToOrganization((int) $organizationId)
+            ) {
+                $session = $this->authSessionService->findActiveByUuid($payload->get('session_uuid'));
+
+                if ($session !== null) {
+                    $this->authSessionService->revoke($session, 'organization_membership_inactive');
+                }
+
+                return [
+                    'success' => false,
+                    'message' => trans_message('organization.access_denied'),
+                    'status_code' => 403,
+                ];
+            }
+
             $claims = array_filter([
-                'organization_id' => $payload->get('organization_id'),
+                'organization_id' => $organizationId,
                 'session_uuid' => $payload->get('session_uuid'),
             ], static fn ($value) => $value !== null);
             $token = auth($guard)->claims($claims)->refresh();
