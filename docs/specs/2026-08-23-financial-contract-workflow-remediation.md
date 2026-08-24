@@ -122,3 +122,11 @@
 - 2026-08-23: выбран совместимый переход к immutable snapshots и allocation ledger без второго параллельного финансового механизма; существующие endpoints сохраняются только как адаптеры к единому service workflow.
 - 2026-08-23: FIN-024 оставлен `Needs production evidence` до read-only проверки фактических данных и производительности.
 - 2026-08-24: единственное независимое ревью завершено; все подтверждённые замечания закрыты targeted regressions, production duplicate/SLO evidence отложен только из-за недоступности SSH banner.
+
+## Поставка
+
+- Backend: commit `48caaecd50125bea4efea42c1027a9a972a7efb0`, PR `proexpert#467`.
+- Admin: commit `3ddc567216867ae3039d462fb2c87bfde7cbce4d`, PR `prohelper_admin#92`.
+- Кабинет заказчика: commit `3104ad319c231bef11e26b68c1696c83e2c2f1d7`, PR `prohelper_customers#2`.
+- Все три PR после создания имеют `MERGEABLE/CLEAN`; pull-request checks в репозиториях не настроены, штатные workflow запускаются после merge в `main`.
+- Merge SHA, deploy run и post-deploy evidence заполняются после терминального результата поставки.
