@@ -1,9 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Api\V1\Landing\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
 
@@ -13,16 +14,18 @@ class RegisterRequest extends FormRequest
 {
     /**
      * Определяет, авторизован ли пользователь для выполнения запроса.
-     *
-     * @return bool
      */
-    public function authorize()
+    public function authorize(): bool
     {
         return true;
     }
 
     protected function prepareForValidation(): void
     {
+        $this->merge([
+            'idempotency_key' => $this->header('Idempotency-Key'),
+        ]);
+
         if ($this->has('email')) {
             $this->merge([
                 'email' => Str::lower(trim((string) $this->input('email'))),
@@ -35,7 +38,7 @@ class RegisterRequest extends FormRequest
      *
      * @return array<string, mixed>
      */
-    public function rules()
+    public function rules(): array
     {
         return [
             // Данные пользователя
@@ -45,18 +48,6 @@ class RegisterRequest extends FormRequest
                 'string',
                 'email',
                 'max:255',
-                function (string $attribute, mixed $value, \Closure $fail): void {
-                    $email = Str::lower(trim((string) $value));
-
-                    if (
-                        DB::table('users')
-                            ->whereRaw('LOWER(email) = ?', [$email])
-                            ->whereNull('deleted_at')
-                            ->exists()
-                    ) {
-                        $fail(trans_message('customer.auth.validation.email_taken'));
-                    }
-                },
             ],
             'password' => [
                 'required',
@@ -68,29 +59,29 @@ class RegisterRequest extends FormRequest
                 'nullable',
                 'string',
                 'max:20',
-                'regex:/^(\+7|8)[- ]?\(?[0-9]{3}\)?[- ]?[0-9]{3}[- ]?[0-9]{2}[- ]?[0-9]{2}$/' // Российский формат телефона
+                'regex:/^(\+7|8)[- ]?\(?[0-9]{3}\)?[- ]?[0-9]{3}[- ]?[0-9]{2}[- ]?[0-9]{2}$/', // Российский формат телефона
             ],
             'position' => 'nullable|string|max:100',
             'avatar' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-            
+
             // Данные организации
             'organization_name' => 'required|string|max:255|min:2',
             'organization_legal_name' => 'nullable|string|max:255|min:2',
             'organization_tax_number' => [
                 'nullable',
                 'string',
-                'regex:/^(\d{10}|\d{12})$/'
+                'regex:/^(\d{10}|\d{12})$/',
             ],
             'organization_registration_number' => [
                 'nullable',
                 'string',
-                'regex:/^(\d{13}|\d{15})$/'
+                'regex:/^(\d{13}|\d{15})$/',
             ],
             'organization_phone' => [
                 'nullable',
                 'string',
                 'max:20',
-                'regex:/^(\+7|8)[- ]?\(?[0-9]{3}\)?[- ]?[0-9]{3}[- ]?[0-9]{2}[- ]?[0-9]{2}$/' // Российский формат телефона
+                'regex:/^(\+7|8)[- ]?\(?[0-9]{3}\)?[- ]?[0-9]{3}[- ]?[0-9]{2}[- ]?[0-9]{2}$/', // Российский формат телефона
             ],
             'organization_email' => 'nullable|string|email|max:255',
             'organization_address' => 'nullable|string|max:500|min:10',
@@ -98,9 +89,12 @@ class RegisterRequest extends FormRequest
             'organization_postal_code' => [
                 'nullable',
                 'string',
-                'regex:/^\d{6}$/'
+                'regex:/^\d{6}$/',
             ],
             'organization_country' => 'nullable|string|max:100|min:2',
+            'terms_accepted' => ['required', 'accepted'],
+            'privacy_accepted' => ['required', 'accepted'],
+            'idempotency_key' => ['required', 'string', 'min:8', 'max:128', 'regex:/^[A-Za-z0-9._:-]+$/'],
         ];
     }
 
@@ -109,39 +103,45 @@ class RegisterRequest extends FormRequest
      *
      * @return array<string, string>
      */
-    public function messages()
+    public function messages(): array
     {
         return [
-            'name.required' => 'Имя обязательно для заполнения',
-            'email.required' => 'Email обязателен для заполнения',
-            'email.email' => 'Введите корректный email адрес',
-            'email.unique' => 'Пользователь с таким email уже существует',
-            'password.required' => 'Пароль обязателен для заполнения',
-            'password.min' => 'Пароль должен содержать не менее 8 символов',
-            'password.confirmed' => 'Пароли не совпадают',
+            'name.required' => trans_message('auth.validation.name_required'),
+            'email.required' => trans_message('auth.validation.email_required'),
+            'email.email' => trans_message('auth.validation.email_invalid'),
+            'email.unique' => trans_message('auth.validation.email_exists'),
+            'password.required' => trans_message('auth.validation.password_required'),
+            'password.min' => trans_message('auth.validation.password_min'),
+            'password.confirmed' => trans_message('auth.validation.password_confirmation'),
             'password.password.mixed' => trans_message('auth.validation.password_complexity'),
             'password.password.numbers' => trans_message('auth.validation.password_complexity'),
-            'phone.regex' => 'Некорректный формат телефона. Используйте формат +7XXXXXXXXXX или 8XXXXXXXXXX',
-            
-            'organization_name.required' => 'Название организации обязательно для заполнения',
-            'organization_name.min' => 'Название организации должно содержать не менее 2 символов',
-            'organization_legal_name.min' => 'Юридическое название должно содержать не менее 2 символов',
-            
-            'organization_tax_number.regex' => 'ИНН должен содержать 10 цифр для организации или 12 цифр для ИП',
-            'organization_registration_number.regex' => 'ОГРН должен содержать 13 цифр для организации или 15 цифр для ИП (ОГРНИП)',
-            
-            'organization_phone.regex' => 'Некорректный формат телефона. Используйте формат +7XXXXXXXXXX или 8XXXXXXXXXX',
-            'organization_email.email' => 'Введите корректный email адрес организации',
-            
-            'organization_address.min' => 'Адрес должен содержать не менее 10 символов',
-            'organization_address.max' => 'Адрес не должен превышать 500 символов',
-            
-            'organization_city.min' => 'Название города должно содержать не менее 2 символов',
-            'organization_city.regex' => 'Название города может содержать только буквы, пробелы, дефисы и точки',
-            
-            'organization_postal_code.regex' => 'Почтовый индекс должен содержать ровно 6 цифр',
-            
-            'organization_country.min' => 'Название страны должно содержать не менее 2 символов',
+            'phone.regex' => trans_message('auth.validation.phone_invalid'),
+
+            'organization_name.required' => trans_message('auth.validation.organization_name_required'),
+            'organization_name.min' => trans_message('auth.validation.organization_name_min'),
+            'organization_legal_name.min' => trans_message('auth.validation.organization_legal_name_min'),
+
+            'organization_tax_number.regex' => trans_message('auth.validation.organization_tax_number_invalid'),
+            'organization_registration_number.regex' => trans_message('auth.validation.organization_registration_number_invalid'),
+
+            'organization_phone.regex' => trans_message('auth.validation.phone_invalid'),
+            'organization_email.email' => trans_message('auth.validation.organization_email_invalid'),
+
+            'organization_address.min' => trans_message('auth.validation.organization_address_min'),
+            'organization_address.max' => trans_message('auth.validation.organization_address_max'),
+
+            'organization_city.min' => trans_message('auth.validation.organization_city_min'),
+            'organization_city.regex' => trans_message('auth.validation.organization_city_invalid'),
+
+            'organization_postal_code.regex' => trans_message('auth.validation.organization_postal_code_invalid'),
+
+            'organization_country.min' => trans_message('auth.validation.organization_country_min'),
+            'terms_accepted.required' => trans_message('auth.validation.terms_required'),
+            'terms_accepted.accepted' => trans_message('auth.validation.terms_required'),
+            'privacy_accepted.required' => trans_message('auth.validation.privacy_required'),
+            'privacy_accepted.accepted' => trans_message('auth.validation.privacy_required'),
+            'idempotency_key.required' => trans_message('auth.validation.idempotency_key_required'),
+            'idempotency_key.*' => trans_message('auth.validation.idempotency_key_invalid'),
         ];
     }
-} 
+}

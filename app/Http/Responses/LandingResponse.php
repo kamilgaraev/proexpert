@@ -3,8 +3,8 @@
 namespace App\Http\Responses;
 
 use App\Http\Responses\Concerns\NormalizesPayloadResponse;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Contracts\Support\Arrayable;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Http\Resources\Json\ResourceCollection;
 
@@ -14,25 +14,19 @@ class LandingResponse
 
     /**
      * Return a success response for Landing/LK API.
-     *
-     * @param mixed $data
-     * @param string|null $message
-     * @param int $code
-     * @return JsonResponse
      */
     public static function success(
         mixed $data = null,
         ?string $message = null,
         int $code = 200,
         ?array $meta = null
-    ): JsonResponse
-    {
+    ): JsonResponse {
         [$resolvedData, $resourceMeta] = self::transformDataWithMeta($data);
 
         $response = [
             'success' => true,
             'message' => $message,
-            'data'    => $resolvedData,
+            'data' => $resolvedData,
         ];
 
         $meta = self::mergeMeta($resourceMeta, $meta);
@@ -46,31 +40,26 @@ class LandingResponse
 
     /**
      * Return an error response for Landing/LK API.
-     *
-     * @param string $message
-     * @param int $code
-     * @param mixed $errors
-     * @return JsonResponse
      */
     public static function error(
         string $message,
         int $code = 400,
         mixed $errors = null,
         array $extra = []
-    ): JsonResponse
-    {
+    ): JsonResponse {
         $response = [
             'success' => false,
             'message' => $message,
             'data' => null,
+            'code' => is_string($extra['code'] ?? null) ? $extra['code'] : 'http_'.$code,
         ];
 
-        if (!is_null($errors)) {
+        if (! is_null($errors)) {
             $response['errors'] = $errors;
         }
 
         foreach ($extra as $key => $value) {
-            if (in_array($key, ['success', 'message', 'errors'], true)) {
+            if (in_array($key, ['success', 'message', 'data', 'code', 'errors'], true)) {
                 continue;
             }
 
@@ -108,9 +97,6 @@ class LandingResponse
 
     /**
      * Transform data to array if needed.
-     *
-     * @param mixed $data
-     * @return mixed
      */
     protected static function transformData(mixed $data): mixed
     {

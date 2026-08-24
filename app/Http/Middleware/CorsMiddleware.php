@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Middleware;
 
 use App\Http\Responses\AdminResponse;
+use App\Http\Responses\CustomerResponse;
 use App\Http\Responses\LandingResponse;
 use App\Services\Security\WebOriginPolicy;
 use Closure;
@@ -13,9 +14,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class CorsMiddleware
 {
-    public function __construct(private readonly WebOriginPolicy $origins)
-    {
-    }
+    public function __construct(private readonly WebOriginPolicy $origins) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -106,11 +105,16 @@ final class CorsMiddleware
 
     private function forbidden(Request $request): Response
     {
-        $message = trans_message('auth.access_denied');
+        $message = trans_message('auth.cors.origin_forbidden');
+        $extra = ['code' => 'cors_origin_forbidden'];
+
+        if ($request->is('api/v1/customer/*')) {
+            return CustomerResponse::error($message, Response::HTTP_FORBIDDEN, extra: $extra);
+        }
 
         return $request->is('api/v1/landing/*') || $request->is('api/lk/*')
-            ? LandingResponse::error($message, Response::HTTP_FORBIDDEN)
-            : AdminResponse::error($message, Response::HTTP_FORBIDDEN);
+            ? LandingResponse::error($message, Response::HTTP_FORBIDDEN, extra: $extra)
+            : AdminResponse::error($message, Response::HTTP_FORBIDDEN, extra: $extra);
     }
 
     private function audienceFor(Request $request): ?string
@@ -121,6 +125,10 @@ final class CorsMiddleware
 
         if ($request->is('api/v1/landing/*') || $request->is('api/lk/*')) {
             return 'lk';
+        }
+
+        if ($request->is('api/v1/customer/*')) {
+            return 'customer';
         }
 
         return null;

@@ -12,9 +12,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class VerifyWebCsrfToken
 {
-    public function __construct(private readonly WebAuthTokenService $tokens)
-    {
-    }
+    public function __construct(private readonly WebAuthTokenService $tokens) {}
 
     public function handle(Request $request, Closure $next, string $audience): Response
     {
@@ -49,8 +47,10 @@ final class VerifyWebCsrfToken
     {
         $message = trans_message('auth.access_denied');
 
-        return $audience === 'admin'
-            ? \App\Http\Responses\AdminResponse::error($message, 403)
-            : \App\Http\Responses\LandingResponse::error($message, 403);
+        return match ($audience) {
+            'admin' => \App\Http\Responses\AdminResponse::error($message, 403),
+            'customer' => \App\Http\Responses\CustomerResponse::error($message, 403),
+            default => \App\Http\Responses\LandingResponse::error($message, 403),
+        };
     }
 }

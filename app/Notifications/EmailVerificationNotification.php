@@ -6,24 +6,24 @@ namespace App\Notifications;
 
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\URL;
 
-class EmailVerificationNotification extends VerifyEmail
+class EmailVerificationNotification extends VerifyEmail implements ShouldQueue
 {
     use Queueable;
 
     public function __construct(
         private readonly ?string $frontendUrl = null
-    ) {
-    }
+    ) {}
 
     public function toMail($notifiable): MailMessage
     {
         $verificationUrl = $this->verificationUrl($notifiable);
 
-        return (new MailMessage())
+        return (new MailMessage)
             ->subject('Подтверждение email в МОСТ')
             ->markdown('emails.email_verification', [
                 'user' => $notifiable,
@@ -46,9 +46,9 @@ class EmailVerificationNotification extends VerifyEmail
             ]
         );
 
-        return rtrim((string) $frontendUrl, '/') . '/verify-email?' . http_build_query([
+        return rtrim((string) $frontendUrl, '/').'/verify-email?'.http_build_query([
             'id' => $notifiable->getKey(),
             'hash' => sha1($notifiable->getEmailForVerification()),
-        ]) . '&' . (string) parse_url($signedUrl, PHP_URL_QUERY);
+        ]).'&'.(string) parse_url($signedUrl, PHP_URL_QUERY);
     }
 }

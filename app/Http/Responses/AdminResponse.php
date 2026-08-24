@@ -19,8 +19,7 @@ class AdminResponse
         ?string $message = null,
         int $code = 200,
         ?array $meta = null
-    ): JsonResponse
-    {
+    ): JsonResponse {
         $response = [
             'success' => true,
             'message' => $message,
@@ -39,8 +38,7 @@ class AdminResponse
         int $code = 400,
         mixed $errors = null,
         array $extra = []
-    ): JsonResponse
-    {
+    ): JsonResponse {
         $statusCode = self::normalizeStatusCode($code, 400);
 
         $response = [
@@ -48,6 +46,7 @@ class AdminResponse
             'message' => $message,
             'data' => null,
             'error' => $message,
+            'code' => is_string($extra['code'] ?? null) ? $extra['code'] : 'http_'.$statusCode,
         ];
 
         if ($errors !== null) {
@@ -55,7 +54,7 @@ class AdminResponse
         }
 
         foreach ($extra as $key => $value) {
-            if (in_array($key, ['success', 'message', 'error', 'errors'], true)) {
+            if (in_array($key, ['success', 'message', 'data', 'error', 'code', 'errors'], true)) {
                 continue;
             }
 

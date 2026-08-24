@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
-use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Http\Responses\AdminResponse;
+use App\Http\Responses\CustomerResponse;
 use App\Http\Responses\LandingResponse;
 use App\Models\User;
 use App\Services\Auth\UserAuthSessionService;
@@ -29,8 +30,7 @@ final class WebInterfaceSecurityMiddleware
         private readonly UserAuthSessionService $sessions,
         private readonly AuthorizationService $authorization,
         private readonly WebOriginPolicy $origins,
-    ) {
-    }
+    ) {}
 
     public function handle(Request $request, Closure $next, ?string $forcedAudience = null): Response
     {
@@ -104,6 +104,10 @@ final class WebInterfaceSecurityMiddleware
             return 'lk';
         }
 
+        if ($request->is('api/v1/customer/*') || $request->is('api/customer/*')) {
+            return 'customer';
+        }
+
         return null;
     }
 
@@ -116,8 +120,25 @@ final class WebInterfaceSecurityMiddleware
             return true;
         }
 
+        if ($request->is('api/v1/customer/auth/register')
+            || $request->is('api/v1/customer/auth/login')
+            || $request->is('api/v1/customer/auth/forgot-password')
+            || $request->is('api/v1/customer/auth/reset-password')
+            || $request->is('api/v1/customer/auth/email/resend')
+            || $request->is('api/v1/customer/auth/email/verify/*')
+            || $request->is('api/v1/customer/auth/refresh')
+            || $request->is('api/v1/customer/auth/csrf')
+            || $request->is('api/v1/customer/invitations/*/login')
+            || $request->is('api/v1/customer/invitations/*/register')
+            || $request->is('api/v1/customer/invitations/*/decline')
+            || ($request->isMethod('GET') && $request->is('api/v1/customer/invitations/*'))
+        ) {
+            return true;
+        }
+
         return $request->is('api/v1/landing/auth/login')
             || $request->is('api/v1/landing/auth/register')
+            || $request->is('api/v1/landing/auth/email/verification-notification')
             || $request->is('api/v1/landing/auth/password/email')
             || $request->is('api/v1/landing/auth/password/reset')
             || $request->is('api/v1/landing/auth/refresh')
@@ -194,8 +215,10 @@ final class WebInterfaceSecurityMiddleware
             ? trans_message('errors.unauthenticated')
             : trans_message('auth.access_denied');
 
-        return $audience === 'admin'
-            ? AdminResponse::error($message, $status)
-            : LandingResponse::error($message, $status);
+        return match ($audience) {
+            'admin' => AdminResponse::error($message, $status),
+            'customer' => CustomerResponse::error($message, $status),
+            default => LandingResponse::error($message, $status),
+        };
     }
 }

@@ -14,6 +14,8 @@ Route::prefix('auth')->name('auth.')->group(function () {
         Route::post('login', [AuthController::class, 'login'])->name('landing.login');
         Route::post('password/email', [AuthController::class, 'forgotPassword'])->name('password.email');
         Route::post('password/reset', [AuthController::class, 'resetPassword'])->name('password.reset');
+        Route::post('email/verification-notification', [AuthController::class, 'resendVerification'])
+            ->name('verification.notification');
     });
 
     Route::middleware(['auth.web-refresh:lk', 'origin.web:lk', 'csrf.web:lk', 'throttle:web-refresh'])
