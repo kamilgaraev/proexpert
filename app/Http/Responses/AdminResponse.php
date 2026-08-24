@@ -48,6 +48,7 @@ class AdminResponse
             'message' => $message,
             'data' => null,
             'error' => $message,
+            'code' => is_string($extra['code'] ?? null) ? $extra['code'] : 'http_'.$statusCode,
         ];
 
         if ($errors !== null) {
@@ -55,7 +56,7 @@ class AdminResponse
         }
 
         foreach ($extra as $key => $value) {
-            if (in_array($key, ['success', 'message', 'error', 'errors'], true)) {
+            if (in_array($key, ['success', 'message', 'data', 'error', 'code', 'errors'], true)) {
                 continue;
             }
 

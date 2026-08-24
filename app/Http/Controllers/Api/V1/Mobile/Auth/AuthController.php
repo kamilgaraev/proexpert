@@ -109,7 +109,9 @@ class AuthController extends Controller
             $result = $this->authService->refresh($this->guard);
 
             if (!$result['success']) {
-                return MobileResponse::error($result['message'], $result['status_code'] ?? 401);
+                $extra = is_string($result['code'] ?? null) ? ['code' => $result['code']] : [];
+
+                return MobileResponse::error($result['message'], $result['status_code'] ?? 401, null, $extra);
             }
 
             return MobileResponse::success(['token' => $result['token']], trans_message('auth.token_refreshed'));

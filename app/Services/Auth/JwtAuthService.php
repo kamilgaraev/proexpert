@@ -392,6 +392,7 @@ class JwtAuthService
                     'success' => false,
                     'message' => trans_message('organization.access_denied'),
                     'status_code' => 403,
+                    'code' => 'organization_membership_inactive',
                 ];
             }
 

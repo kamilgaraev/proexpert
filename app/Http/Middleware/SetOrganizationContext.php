@@ -251,20 +251,21 @@ class SetOrganizationContext
     private function organizationAccessDenied(Request $request): Response
     {
         $message = trans_message('organization.access_denied');
+        $extra = ['code' => 'organization_membership_inactive'];
 
         if ($request->is('api/v1/customer/*')) {
-            return CustomerResponse::error($message, Response::HTTP_FORBIDDEN);
+            return CustomerResponse::error($message, Response::HTTP_FORBIDDEN, null, $extra);
         }
 
         if ($request->is('api/v1/mobile/*')) {
-            return MobileResponse::error($message, Response::HTTP_FORBIDDEN);
+            return MobileResponse::error($message, Response::HTTP_FORBIDDEN, null, $extra);
         }
 
         if ($request->is('api/v1/landing/*') || $request->is('api/lk/*')) {
-            return LandingResponse::error($message, Response::HTTP_FORBIDDEN);
+            return LandingResponse::error($message, Response::HTTP_FORBIDDEN, null, $extra);
         }
 
-        return AdminResponse::error($message, Response::HTTP_FORBIDDEN);
+        return AdminResponse::error($message, Response::HTTP_FORBIDDEN, null, $extra);
     }
 
     /**

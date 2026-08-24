@@ -18,18 +18,19 @@ final class ActiveOrganizationMembershipTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_customer_request_rejects_organization_claim_after_membership_is_deactivated(): void
+    public function test_mobile_request_rejects_organization_claim_after_membership_is_deactivated(): void
     {
         [$user, $organization, $token] = $this->authenticatedCustomer();
 
         $user->organizations()->updateExistingPivot($organization->id, ['is_active' => false]);
 
         $this->withToken($token)
-            ->getJson('/api/v1/customer/dashboard')
-            ->assertForbidden();
+            ->getJson('/api/v1/mobile/auth/me')
+            ->assertForbidden()
+            ->assertJsonPath('code', 'organization_membership_inactive');
     }
 
-    public function test_customer_request_does_not_fallback_when_claimed_membership_is_inactive(): void
+    public function test_mobile_request_does_not_fallback_when_claimed_membership_is_inactive(): void
     {
         [$user, $claimedOrganization, $token] = $this->authenticatedCustomer();
         $otherOrganization = Organization::factory()->create();
@@ -40,8 +41,9 @@ final class ActiveOrganizationMembershipTest extends TestCase
         $user->organizations()->updateExistingPivot($claimedOrganization->id, ['is_active' => false]);
 
         $this->withToken($token)
-            ->getJson('/api/v1/customer/dashboard')
-            ->assertForbidden();
+            ->getJson('/api/v1/mobile/auth/me')
+            ->assertForbidden()
+            ->assertJsonPath('code', 'organization_membership_inactive');
 
         self::assertSame($claimedOrganization->id, $user->fresh()->current_organization_id);
     }
@@ -54,8 +56,9 @@ final class ActiveOrganizationMembershipTest extends TestCase
         $user->organizations()->updateExistingPivot($organization->id, ['is_active' => false]);
 
         $this->withToken($token)
-            ->postJson('/api/v1/customer/auth/refresh')
-            ->assertForbidden();
+            ->postJson('/api/v1/mobile/auth/refresh')
+            ->assertForbidden()
+            ->assertJsonPath('code', 'organization_membership_inactive');
 
         $this->assertDatabaseHas('user_auth_sessions', [
             'session_uuid' => $sessionUuid,
@@ -82,7 +85,7 @@ final class ActiveOrganizationMembershipTest extends TestCase
 
         $result = app(CustomerAuthService::class)->login(
             new LoginDTO($user->email, 'password'),
-            'api_landing',
+            'api_mobile',
         );
 
         self::assertTrue($result['success']);

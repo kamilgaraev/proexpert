@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Api\V1\Landing\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -15,7 +17,7 @@ class RegisterRequest extends FormRequest
      *
      * @return bool
      */
-    public function authorize()
+    public function authorize(): bool
     {
         return true;
     }
@@ -38,7 +40,7 @@ class RegisterRequest extends FormRequest
      *
      * @return array<string, mixed>
      */
-    public function rules()
+    public function rules(): array
     {
         return [
             // Данные пользователя
@@ -103,39 +105,39 @@ class RegisterRequest extends FormRequest
      *
      * @return array<string, string>
      */
-    public function messages()
+    public function messages(): array
     {
         return [
-            'name.required' => 'Имя обязательно для заполнения',
-            'email.required' => 'Email обязателен для заполнения',
-            'email.email' => 'Введите корректный email адрес',
-            'email.unique' => 'Пользователь с таким email уже существует',
-            'password.required' => 'Пароль обязателен для заполнения',
-            'password.min' => 'Пароль должен содержать не менее 8 символов',
-            'password.confirmed' => 'Пароли не совпадают',
+            'name.required' => trans_message('auth.validation.name_required'),
+            'email.required' => trans_message('auth.validation.email_required'),
+            'email.email' => trans_message('auth.validation.email_invalid'),
+            'email.unique' => trans_message('auth.validation.email_exists'),
+            'password.required' => trans_message('auth.validation.password_required'),
+            'password.min' => trans_message('auth.validation.password_min'),
+            'password.confirmed' => trans_message('auth.validation.password_confirmation'),
             'password.password.mixed' => trans_message('auth.validation.password_complexity'),
             'password.password.numbers' => trans_message('auth.validation.password_complexity'),
-            'phone.regex' => 'Некорректный формат телефона. Используйте формат +7XXXXXXXXXX или 8XXXXXXXXXX',
+            'phone.regex' => trans_message('auth.validation.phone_invalid'),
             
-            'organization_name.required' => 'Название организации обязательно для заполнения',
-            'organization_name.min' => 'Название организации должно содержать не менее 2 символов',
-            'organization_legal_name.min' => 'Юридическое название должно содержать не менее 2 символов',
+            'organization_name.required' => trans_message('auth.validation.organization_name_required'),
+            'organization_name.min' => trans_message('auth.validation.organization_name_min'),
+            'organization_legal_name.min' => trans_message('auth.validation.organization_legal_name_min'),
             
-            'organization_tax_number.regex' => 'ИНН должен содержать 10 цифр для организации или 12 цифр для ИП',
-            'organization_registration_number.regex' => 'ОГРН должен содержать 13 цифр для организации или 15 цифр для ИП (ОГРНИП)',
+            'organization_tax_number.regex' => trans_message('auth.validation.organization_tax_number_invalid'),
+            'organization_registration_number.regex' => trans_message('auth.validation.organization_registration_number_invalid'),
             
-            'organization_phone.regex' => 'Некорректный формат телефона. Используйте формат +7XXXXXXXXXX или 8XXXXXXXXXX',
-            'organization_email.email' => 'Введите корректный email адрес организации',
+            'organization_phone.regex' => trans_message('auth.validation.phone_invalid'),
+            'organization_email.email' => trans_message('auth.validation.organization_email_invalid'),
             
-            'organization_address.min' => 'Адрес должен содержать не менее 10 символов',
-            'organization_address.max' => 'Адрес не должен превышать 500 символов',
+            'organization_address.min' => trans_message('auth.validation.organization_address_min'),
+            'organization_address.max' => trans_message('auth.validation.organization_address_max'),
             
-            'organization_city.min' => 'Название города должно содержать не менее 2 символов',
-            'organization_city.regex' => 'Название города может содержать только буквы, пробелы, дефисы и точки',
+            'organization_city.min' => trans_message('auth.validation.organization_city_min'),
+            'organization_city.regex' => trans_message('auth.validation.organization_city_invalid'),
             
-            'organization_postal_code.regex' => 'Почтовый индекс должен содержать ровно 6 цифр',
+            'organization_postal_code.regex' => trans_message('auth.validation.organization_postal_code_invalid'),
             
-            'organization_country.min' => 'Название страны должно содержать не менее 2 символов',
+            'organization_country.min' => trans_message('auth.validation.organization_country_min'),
             'terms_accepted.required' => trans_message('auth.validation.terms_required'),
             'terms_accepted.accepted' => trans_message('auth.validation.terms_required'),
             'privacy_accepted.required' => trans_message('auth.validation.privacy_required'),

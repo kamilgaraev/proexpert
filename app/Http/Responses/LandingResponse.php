@@ -63,6 +63,7 @@ class LandingResponse
             'success' => false,
             'message' => $message,
             'data' => null,
+            'code' => is_string($extra['code'] ?? null) ? $extra['code'] : 'http_'.$code,
         ];
 
         if (!is_null($errors)) {
@@ -70,7 +71,7 @@ class LandingResponse
         }
 
         foreach ($extra as $key => $value) {
-            if (in_array($key, ['success', 'message', 'errors'], true)) {
+            if (in_array($key, ['success', 'message', 'data', 'code', 'errors'], true)) {
                 continue;
             }
 
