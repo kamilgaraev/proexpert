@@ -136,6 +136,36 @@ class CorsMiddlewareTest extends TestCase
         self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
     }
 
+    public function test_allows_public_origin_for_registration_and_dadata_but_not_protected_landing_routes(): void
+    {
+        $this->configureOrigins();
+
+        foreach ([
+            '/api/v1/landing/auth/register',
+            '/api/v1/landing/dadata/suggest/organizations',
+        ] as $path) {
+            $request = Request::create($path, 'OPTIONS', server: [
+                'HTTP_ORIGIN' => 'https://www.example.test',
+                'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
+                'HTTP_ACCESS_CONTROL_REQUEST_HEADERS' => 'Content-Type',
+            ]);
+            $response = $this->middleware()->handle($request, static fn (): Response => response('ok'));
+
+            self::assertSame(Response::HTTP_NO_CONTENT, $response->getStatusCode());
+            self::assertSame('https://www.example.test', $response->headers->get('Access-Control-Allow-Origin'));
+            self::assertSame('true', $response->headers->get('Access-Control-Allow-Credentials'));
+        }
+
+        $protected = Request::create('/api/v1/landing/profile', 'OPTIONS', server: [
+            'HTTP_ORIGIN' => 'https://www.example.test',
+            'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'GET',
+        ]);
+        $response = $this->middleware()->handle($protected, static fn (): Response => response('ok'));
+
+        self::assertSame(Response::HTTP_FORBIDDEN, $response->getStatusCode());
+        self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
+    }
+
     private function middleware(): CorsMiddleware
     {
         return new CorsMiddleware(new WebOriginPolicy);

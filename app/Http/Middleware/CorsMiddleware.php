@@ -26,9 +26,7 @@ final class CorsMiddleware
 
         $audience = $this->audienceFor($request);
         $credentials = $audience !== null;
-        $allowedOrigins = $audience === null
-            ? $this->origins->originsFor('public')
-            : $this->origins->originsFor($audience);
+        $allowedOrigins = $this->allowedOriginsFor($request, $audience);
 
         if (! $this->origins->matches($origin, $allowedOrigins)) {
             return $this->forbidden($request);
@@ -115,6 +113,27 @@ final class CorsMiddleware
         return $request->is('api/v1/landing/*') || $request->is('api/lk/*')
             ? LandingResponse::error($message, Response::HTTP_FORBIDDEN, extra: $extra)
             : AdminResponse::error($message, Response::HTTP_FORBIDDEN, extra: $extra);
+    }
+
+    private function allowedOriginsFor(Request $request, ?string $audience): array
+    {
+        if ($audience === null) {
+            return $this->origins->originsFor('public');
+        }
+
+        $origins = $this->origins->originsFor($audience);
+
+        if ($audience === 'lk' && $this->isPublicLandingEndpoint($request)) {
+            $origins = array_merge($origins, $this->origins->originsFor('public'));
+        }
+
+        return array_values(array_unique($origins));
+    }
+
+    private function isPublicLandingEndpoint(Request $request): bool
+    {
+        return $request->is('api/v1/landing/auth/register')
+            || $request->is('api/v1/landing/dadata/*');
     }
 
     private function audienceFor(Request $request): ?string
