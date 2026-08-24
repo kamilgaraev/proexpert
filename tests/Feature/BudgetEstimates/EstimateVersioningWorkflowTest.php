@@ -46,6 +46,27 @@ class EstimateVersioningWorkflowTest extends TestCase
             'unit_price' => 600,
             'total_amount' => 1200,
         ]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $estimate->organization_id,
+            'name' => 'Legacy contractor',
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $estimate->organization_id,
+            'project_id' => $estimate->project_id,
+            'contractor_id' => $contractor->id,
+            'number' => 'LEGACY-NULL-ALLOCATION',
+            'date' => '2026-05-01',
+            'subject' => 'Legacy allocation without financial values',
+            'total_amount' => 1200,
+            'status' => 'active',
+        ]);
+        ContractEstimateItem::query()->create([
+            'contract_id' => $contract->id,
+            'estimate_id' => $estimate->id,
+            'estimate_item_id' => $item->id,
+            'quantity' => null,
+            'amount' => null,
+        ]);
         DB::table('estimates')->where('id', $estimate->id)->update([
             'status' => 'approved',
             'approved_by_user_id' => $actor->id,
@@ -66,6 +87,8 @@ class EstimateVersioningWorkflowTest extends TestCase
         $this->assertSame($actor->id, $version->approved_by_user_id);
         $this->assertSame($item->id, $version->snapshot['unsectioned_items'][0]['id']);
         $this->assertSame('Историческая позиция', $version->snapshot['unsectioned_items'][0]['name']);
+        $this->assertNull($version->snapshot['unsectioned_items'][0]['contract_links'][0]['quantity']);
+        $this->assertNull($version->snapshot['unsectioned_items'][0]['contract_links'][0]['amount']);
         $this->assertDatabaseCount('estimate_versions', 1);
     }
 

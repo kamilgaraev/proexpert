@@ -286,10 +286,10 @@ class EstimateSnapshotBuilder
             'resource_calculation' => $item->resource_calculation,
             'custom_resources' => $item->custom_resources,
             'contract_links' => $item->contractLinks
-                ->map(static fn ($link): array => [
+                ->map(fn ($link): array => [
                     'contract_id' => $link->contract_id,
-                    'quantity' => self::decimal($link->quantity, 8),
-                    'amount' => self::decimal($link->amount, 2),
+                    'quantity' => $this->quantity($link->quantity),
+                    'amount' => $this->money($link->amount),
                     'notes' => $link->notes,
                 ])
                 ->values()
