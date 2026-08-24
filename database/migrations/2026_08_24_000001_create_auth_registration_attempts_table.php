@@ -18,6 +18,7 @@ return new class extends Migration
             $table->string('status', 16);
             $table->foreignId('user_id')->nullable()->constrained()->restrictOnDelete();
             $table->jsonb('response')->nullable();
+            $table->jsonb('side_effects')->default('{}');
             $table->timestampTz('expires_at');
             $table->timestampsTz();
 

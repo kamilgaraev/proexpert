@@ -15,6 +15,8 @@ use App\Http\Requests\Api\V1\Landing\Auth\ResetPasswordRequest;
 use App\Http\Responses\Auth\ProfileResponse;
 use App\Http\Responses\Auth\RegisterResponse;
 use App\Http\Responses\LandingResponse;
+use App\Jobs\Auth\CompleteRegistrationSideEffects;
+use App\Models\User;
 use App\Services\Auth\JwtAuthService;
 use App\Services\Auth\RegistrationIdempotencyService;
 use App\Services\Auth\UserConsentService;
@@ -25,6 +27,8 @@ use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Throwable;
 
 class AuthController extends Controller
 {
@@ -111,6 +115,10 @@ class AuthController extends Controller
             $user = $result['user'];
             $organization = $result['organization'];
 
+            if (($result['idempotent_replay'] ?? false) !== true) {
+                CompleteRegistrationSideEffects::dispatch($user->id, $organization->id)->afterCommit();
+            }
+
             if ($request->hasFile('avatar') && ($result['idempotent_replay'] ?? false) !== true) {
                 // Вызываем метод из трейта HasImages
                 if ($user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public')) {
@@ -128,6 +136,31 @@ class AuthController extends Controller
             // Возвращаем успешный ответ
             return RegisterResponse::verificationRequired($user, $organization)->toResponse($request);
         });
+    }
+
+    public function resendVerification(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'email' => ['required', 'string', 'email', 'max:255'],
+        ]);
+        $email = Str::lower(trim((string) $validated['email']));
+        $user = User::query()
+            ->whereRaw('LOWER(email) = ?', [$email])
+            ->where('is_active', true)
+            ->first();
+
+        if ($user instanceof User && !$user->hasVerifiedEmail()) {
+            try {
+                $user->sendFrontendEmailVerificationNotification((string) config('app.frontend_url'));
+            } catch (Throwable $exception) {
+                Log::error('auth.email_verification_resend_dispatch_failed', [
+                    'user_id' => $user->id,
+                    'exception_class' => $exception::class,
+                ]);
+            }
+        }
+
+        return LandingResponse::success(null, trans_message('auth.email_verification_resend_opaque'));
     }
 
     /**

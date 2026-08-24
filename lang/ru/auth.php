@@ -19,6 +19,7 @@ return [
     'mobile_organization_access_denied' => 'Вы не состоите в этой организации или доступ заблокирован.',
     'mobile_organization_switched' => 'Организация успешно переключена.',
     'email_verification_required' => 'Подтвердите email, чтобы продолжить.',
+    'email_verification_resend_opaque' => 'Если аккаунт с таким email ожидает подтверждения, мы отправили новое письмо.',
     'onboarding_updated' => 'Настройки запуска обновлены.',
     'profile_get_error' => 'Не удалось получить данные профиля.',
     'profile_not_found' => 'Профиль пользователя не найден.',

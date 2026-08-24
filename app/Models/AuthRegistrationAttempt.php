@@ -16,6 +16,7 @@ final class AuthRegistrationAttempt extends Model
         'status',
         'user_id',
         'response',
+        'side_effects',
         'expires_at',
     ];
 
@@ -23,6 +24,7 @@ final class AuthRegistrationAttempt extends Model
     {
         return [
             'response' => 'array',
+            'side_effects' => 'array',
             'expires_at' => 'immutable_datetime',
         ];
     }

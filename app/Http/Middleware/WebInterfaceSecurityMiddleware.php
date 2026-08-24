@@ -118,6 +118,7 @@ final class WebInterfaceSecurityMiddleware
 
         return $request->is('api/v1/landing/auth/login')
             || $request->is('api/v1/landing/auth/register')
+            || $request->is('api/v1/landing/auth/email/verification-notification')
             || $request->is('api/v1/landing/auth/password/email')
             || $request->is('api/v1/landing/auth/password/reset')
             || $request->is('api/v1/landing/auth/refresh')
