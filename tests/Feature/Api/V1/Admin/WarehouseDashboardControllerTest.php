@@ -12,7 +12,9 @@ use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
@@ -247,6 +249,76 @@ class WarehouseDashboardControllerTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/warehouses/{$foreignWarehouse->id}/dashboard")
             ->assertNotFound();
+    }
+
+    public function test_dashboard_keeps_partially_unlocated_stock_visible(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial(
+            $context->organization->id,
+            $unit->id,
+            'Cement',
+            'CEMENT-MIXED-ADDRESS'
+        );
+        $warehouse = $this->createWarehouse(
+            $context->organization->id,
+            'Main warehouse',
+            'MAIN-MIXED-ADDRESS',
+            true
+        );
+        $zone = WarehouseZone::query()->create([
+            'warehouse_id' => $warehouse->id,
+            'name' => 'Storage zone',
+            'code' => 'STORAGE',
+            'zone_type' => WarehouseZone::TYPE_STORAGE,
+            'is_active' => true,
+        ]);
+        $cell = WarehouseStorageCell::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'zone_id' => $zone->id,
+            'name' => 'Storage cell',
+            'code' => 'CELL-A1',
+            'cell_type' => WarehouseStorageCell::TYPE_STORAGE,
+            'status' => WarehouseStorageCell::STATUS_AVAILABLE,
+            'is_active' => true,
+        ]);
+
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'available_quantity' => 100,
+            'reserved_quantity' => 0,
+            'unit_price' => 18,
+        ]);
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'cell_id' => $cell->id,
+            'material_id' => $material->id,
+            'available_quantity' => 1,
+            'reserved_quantity' => 0,
+            'unit_price' => 18,
+            'location_code' => 'CELL-A1',
+            'batch_number' => 'QA-BATCH-001',
+        ]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/dashboard")
+            ->assertOk()
+            ->assertJsonPath('data.storage_health.missing_location_count', 1)
+            ->assertJsonPath('data.quick_filters.stock.missing_locations', 1)
+            ->assertJsonPath('data.operational_queue.0.kind', 'missing_locations')
+            ->assertJsonPath('data.operational_queue.0.count', 1)
+            ->assertJsonPath('data.materials.0.material_id', $material->id)
+            ->assertJsonPath('data.materials.0.available_quantity', 101)
+            ->assertJsonPath('data.materials.0.addressed_quantity', 1)
+            ->assertJsonPath('data.materials.0.unlocated_quantity', 100)
+            ->assertJsonPath('data.materials.0.has_unlocated_quantity', true)
+            ->assertJsonPath('data.materials.0.storage_address', 'Зона STORAGE');
     }
 
     private function createUnit(int $organizationId): MeasurementUnit
