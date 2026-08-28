@@ -307,15 +307,18 @@ final class BudgetVersionService
     private function summary(Builder $query): array
     {
         $versions = $query->get(['id', 'status']);
-        $ids = $versions->pluck('id')->all();
+        $activeVersionIds = $versions
+            ->where('status', BudgetWorkflowService::STATUS_ACTIVE)
+            ->pluck('id')
+            ->all();
 
         return [
-            'active_versions' => $versions->where('status', 'active')->count(),
+            'active_versions' => count($activeVersionIds),
             'draft_versions' => $versions->where('status', 'draft')->count(),
             'on_approval_versions' => $versions->where('status', 'on_approval')->count(),
             'approved_versions' => $versions->where('status', 'approved')->count(),
-            'plan_total' => $ids === [] ? 0.0 : round((float) BudgetAmount::query()->whereHas('line', fn (Builder $scope) => $scope->whereIn('budget_version_id', $ids))->sum('plan_amount'), 2),
-            'forecast_total' => $ids === [] ? 0.0 : round((float) BudgetAmount::query()->whereHas('line', fn (Builder $scope) => $scope->whereIn('budget_version_id', $ids))->sum('forecast_amount'), 2),
+            'plan_total' => $activeVersionIds === [] ? 0.0 : round((float) BudgetAmount::query()->whereHas('line', fn (Builder $scope) => $scope->whereIn('budget_version_id', $activeVersionIds))->sum('plan_amount'), 2),
+            'forecast_total' => $activeVersionIds === [] ? 0.0 : round((float) BudgetAmount::query()->whereHas('line', fn (Builder $scope) => $scope->whereIn('budget_version_id', $activeVersionIds))->sum('forecast_amount'), 2),
             'currency' => 'RUB',
         ];
     }
