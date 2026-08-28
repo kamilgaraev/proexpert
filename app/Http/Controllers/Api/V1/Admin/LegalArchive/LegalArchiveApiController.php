@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\LegalArchive\LegalArchiveLockConflict;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Lang;
@@ -85,9 +86,40 @@ abstract class LegalArchiveApiController extends Controller
             'organization_id' => $this->organizationId($request),
             'error_class' => $error::class,
             ...$context,
+            ...$this->databaseDiagnostics($error),
         ]);
 
         return AdminResponse::error(trans_message('legal_archive.messages.operation_failed'), 500);
+    }
+
+    protected function databaseDiagnostics(Throwable $error): array
+    {
+        if (! $error instanceof QueryException) {
+            return [];
+        }
+
+        $diagnostics = [];
+        $sqlState = strtoupper((string) ($error->errorInfo[0] ?? $error->getCode()));
+        if (preg_match('/^[A-Z0-9]{5}$/', $sqlState) === 1) {
+            $diagnostics['database_sqlstate'] = $sqlState;
+        }
+
+        $message = (string) $error->getPrevious()?->getMessage();
+        if (preg_match('/\b(legal_[a-z0-9_]+)\b/', $message, $invariant) === 1) {
+            $diagnostics['database_invariant'] = $invariant[1];
+        }
+        if (preg_match('/constraint "([a-z][a-z0-9_]{0,127})"/', $message, $constraint) === 1) {
+            $diagnostics['database_constraint'] = $constraint[1];
+        }
+        if (preg_match(
+            '/\b(?i:insert\s+into|update|delete\s+from)\s+(?:"([a-z][a-z0-9_]{0,127})"|([a-z][a-z0-9_]{0,127})(?![A-Za-z0-9_$]))/',
+            $error->getSql(),
+            $table,
+        ) === 1) {
+            $diagnostics['database_query_table'] = $table[1] !== '' ? $table[1] : $table[2];
+        }
+
+        return $diagnostics;
     }
 
     protected function etag(JsonResponse $response, LegalArchiveDocument $document): JsonResponse
