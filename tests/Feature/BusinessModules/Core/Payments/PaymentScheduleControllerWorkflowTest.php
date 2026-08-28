@@ -13,11 +13,13 @@ use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
 
 class PaymentScheduleControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+    use EnablesImmutableAuditWriter;
 
     public function test_payment_schedule_templates_are_business_readable(): void
     {
@@ -38,6 +40,7 @@ class PaymentScheduleControllerWorkflowTest extends TestCase
 
     public function test_payment_schedule_creation_replaces_manual_installments_and_feeds_overdue_registry(): void
     {
+        $this->enableImmutableAuditWriter();
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activatePaymentsModule($context->organization->id);
         $document = $this->createDocument($context, 1500);
@@ -88,6 +91,8 @@ class PaymentScheduleControllerWorkflowTest extends TestCase
         $createResponse->assertJsonPath('success', true);
         $createResponse->assertJsonCount(2, 'data');
         $this->assertSame(2, PaymentSchedule::query()->where('payment_document_id', $document->id)->count());
+        $this->assertSame(PaymentDocumentStatus::SCHEDULED, $document->fresh()->status);
+        $this->assertSame(now()->subDays(5)->toDateString(), $document->fresh()->scheduled_at?->toDateString());
 
         $documentScheduleResponse = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/payments/schedules?payment_document_id={$document->id}");

@@ -1,10 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\Models\User;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -12,6 +16,55 @@ use function trans_message;
 
 class PaymentScheduleService
 {
+    public function __construct(
+        private readonly PaymentDocumentService $paymentDocumentService,
+    ) {}
+
+    /**
+     * @param array<int, array{installment_number: int, due_date: string, amount: int|float|string, notes?: string|null}> $installments
+     * @return array<int, PaymentSchedule>
+     */
+    public function replacePendingSchedule(PaymentDocument $document, array $installments, ?User $user = null): array
+    {
+        $totalScheduleAmount = (float) collect($installments)->sum('amount');
+        if ((float) $document->amount !== $totalScheduleAmount) {
+            throw new \DomainException(trans_message('payments.schedule.sum_mismatch'));
+        }
+
+        $hasLockedInstallments = PaymentSchedule::query()
+            ->where('payment_document_id', $document->id)
+            ->where('status', '!=', 'pending')
+            ->exists();
+
+        if ($hasLockedInstallments) {
+            throw new \DomainException(trans_message('payments.schedule.update_locked'));
+        }
+
+        return DB::transaction(function () use ($document, $installments, $user): array {
+            PaymentSchedule::query()
+                ->where('payment_document_id', $document->id)
+                ->where('status', 'pending')
+                ->delete();
+
+            $schedules = [];
+            foreach ($installments as $installment) {
+                $schedules[] = PaymentSchedule::query()->create([
+                    'payment_document_id' => $document->id,
+                    'installment_number' => $installment['installment_number'],
+                    'due_date' => $installment['due_date'],
+                    'amount' => $installment['amount'],
+                    'status' => 'pending',
+                    'notes' => $installment['notes'] ?? null,
+                ]);
+            }
+
+            $firstPaymentDate = Carbon::parse((string) collect($installments)->min('due_date'))->startOfDay();
+            $this->paymentDocumentService->schedule($document, $firstPaymentDate, $user);
+
+            return $schedules;
+        });
+    }
+
     /**
      * Создать график платежей
      */
@@ -105,4 +158,3 @@ class PaymentScheduleService
             ->get();
     }
 }
-
