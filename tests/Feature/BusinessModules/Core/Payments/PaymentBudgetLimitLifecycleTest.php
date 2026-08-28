@@ -47,6 +47,53 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertSame('600.00', $check['summary']['available_after_request']);
     }
 
+    public function test_payment_registration_preview_uses_selected_month_without_writes(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 1000.0);
+        $document = $this->createDocument($context, $budget, 400.0);
+        $document->forceFill(['scheduled_at' => now()->addMonthNoOverflow()->startOfMonth()])->save();
+
+        $documentCheck = $this->service()->check($document->fresh(), $context->user);
+        $paymentCheck = $this->service()->checkPaymentRegistration(
+            $document->fresh(),
+            '400.00',
+            now(),
+            $context->user
+        );
+
+        $this->assertSame('block', $documentCheck['decision']);
+        $this->assertSame('allow', $paymentCheck['decision']);
+        $this->assertSame(now()->format('Y-m'), $paymentCheck['dimensions']['period']);
+        $this->assertDatabaseCount('budget_limit_checks', 0);
+        $this->assertDatabaseCount('budget_limit_reservations', 0);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_payment_budget_preview_endpoint_returns_selected_date_result_without_mutation(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 1000.0);
+        $document = $this->createDocument($context, $budget, 400.0);
+        $document->forceFill(['scheduled_at' => now()->addMonthNoOverflow()->startOfMonth()])->save();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/documents/{$document->id}/payment-budget-preview", [
+                'amount' => '400.00',
+                'transaction_date' => now()->toDateString(),
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.decision', 'allow');
+        $response->assertJsonPath('data.dimensions.period', now()->format('Y-m'));
+        $this->assertDatabaseCount('budget_limit_checks', 0);
+        $this->assertDatabaseCount('budget_limit_reservations', 0);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     public function test_exceeded_limit_is_blocked_without_override_permission(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
@@ -252,7 +299,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'paid_amount' => 0,
             'remaining_amount' => $amount,
             'status' => PaymentDocumentStatus::DRAFT,
-            'due_date' => now()->addDays(7)->toDateString(),
+            'due_date' => now()->toDateString(),
             'created_by_user_id' => $context->user->id,
         ]);
     }
@@ -281,6 +328,34 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'activated_at' => now(),
         ]);
         app(ModulePermissionChecker::class)->clearModuleCache($organizationId, 'budgeting');
+    }
+
+    private function activatePaymentsModule(int $organizationId): void
+    {
+        $module = Module::query()->firstOrCreate(
+            ['slug' => 'payments'],
+            [
+                'name' => 'Payments',
+                'version' => '1.0.0',
+                'type' => 'core',
+                'billing_model' => 'free',
+                'category' => 'finance',
+                'permissions' => [
+                    'payments.invoice.edit',
+                    'payments.transaction.register',
+                ],
+                'is_active' => true,
+                'is_system_module' => false,
+            ]
+        );
+
+        OrganizationModuleActivation::query()->create([
+            'organization_id' => $organizationId,
+            'module_id' => $module->id,
+            'status' => 'active',
+            'activated_at' => now(),
+        ]);
+        app(ModulePermissionChecker::class)->clearModuleCache($organizationId, 'payments');
     }
 
     /**

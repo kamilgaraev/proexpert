@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Http\Requests\BulkActionRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\CancelPaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\GeneratePaymentPurposeRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\PaymentDocumentIndexRequest;
+use App\BusinessModules\Core\Payments\Http\Requests\PreviewPaymentDocumentBudgetRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\RegisterPaymentDocumentPaymentRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\SchedulePaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\StorePaymentDocumentRequest;
@@ -16,6 +17,7 @@ use App\BusinessModules\Core\Payments\Http\Requests\SubmitPaymentDocumentRequest
 use App\BusinessModules\Core\Payments\Http\Requests\UpcomingPaymentDocumentsRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\UpdatePaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Services\Export\PaymentOrderPdfService;
+use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentPresenter;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentQueryService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentWorkflowService;
@@ -25,6 +27,7 @@ use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
@@ -38,6 +41,7 @@ final class PaymentDocumentController extends Controller
         private readonly PaymentDocumentQueryService $queries,
         private readonly PaymentDocumentWorkflowService $workflow,
         private readonly PaymentDocumentPresenter $presenter,
+        private readonly PaymentBudgetLimitService $budgetLimits,
         private readonly PaymentOrderPdfService $pdfExport,
         private readonly PurchaseOrderContractRequirementService $contractRequirement,
     ) {}
@@ -305,6 +309,32 @@ final class PaymentDocumentController extends Controller
             Log::error('payment_document.register_payment.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('payments.documents.register_error'), 500);
+        }
+    }
+
+    public function previewPaymentBudget(PreviewPaymentDocumentBudgetRequest $request, int|string $id): JsonResponse
+    {
+        try {
+            $document = $this->queries->findForWorkflow($this->organizationId($request), $id);
+            $check = $this->budgetLimits->checkPaymentRegistration(
+                $document,
+                $request->validated('amount'),
+                Carbon::parse((string) $request->validated('transaction_date')),
+                $request->user()
+            );
+
+            return AdminResponse::success($check);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
+        } catch (Throwable $e) {
+            Log::error('payment_document.preview_payment_budget.error', [
+                'id' => $id,
+                'user_id' => $request->user()?->id,
             ]);
 
             return AdminResponse::error(trans_message('payments.documents.register_error'), 500);
