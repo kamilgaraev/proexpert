@@ -67,7 +67,6 @@ class InventoryActItem extends Model
      */
     public function hasDiscrepancy(): bool
     {
-        return $this->difference !== null && abs((float)$this->difference) > 0.001;
+        return $this->difference !== null && abs((float) $this->difference) >= 0.001;
     }
 }
-

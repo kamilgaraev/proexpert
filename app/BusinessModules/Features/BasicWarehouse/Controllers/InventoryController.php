@@ -4,17 +4,18 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\InventoryApprovalStatusException;
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\InventoryReservationConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager;
+use App\BusinessModules\Features\BasicWarehouse\Services\InventoryWorkflowService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -22,9 +23,9 @@ use Illuminate\Validation\ValidationException;
 class InventoryController extends Controller
 {
     public function __construct(
-        protected WarehouseExportManager $exportManager
-    ) {
-    }
+        protected WarehouseExportManager $exportManager,
+        private readonly InventoryWorkflowService $inventoryWorkflowService,
+    ) {}
 
     public function export(Request $request, int $id): JsonResponse
     {
@@ -133,79 +134,27 @@ class InventoryController extends Controller
 
             $warehouse = $this->findWarehouse($organizationId, (int) $validated['warehouse_id']);
 
-            DB::beginTransaction();
+            $act = $this->inventoryWorkflowService->createAct(
+                $organizationId,
+                $warehouse->id,
+                (string) $validated['inventory_date'],
+                (int) $request->user()->id,
+                array_map('intval', $validated['commission_members'] ?? []),
+                isset($validated['notes']) ? (string) $validated['notes'] : null,
+            );
 
-            try {
-                $actNumber = 'INV-' . now()->format('Ymd') . '-' . str_pad(
-                    (string) (InventoryAct::where('organization_id', $organizationId)->count() + 1),
-                    4,
-                    '0',
-                    STR_PAD_LEFT
-                );
+            $act->load([
+                'warehouse',
+                'creator',
+                'items.material.measurementUnit',
+                'items.cell.zone',
+            ]);
 
-                $act = InventoryAct::create([
-                    'organization_id' => $organizationId,
-                    'warehouse_id' => $warehouse->id,
-                    'act_number' => $actNumber,
-                    'status' => InventoryAct::STATUS_DRAFT,
-                    'inventory_date' => $validated['inventory_date'],
-                    'created_by' => $request->user()->id,
-                    'commission_members' => $validated['commission_members'] ?? [],
-                    'notes' => $validated['notes'] ?? null,
-                ]);
-
-                $groupedBalances = WarehouseBalance::query()
-                    ->with(['material.measurementUnit', 'cell.zone'])
-                    ->where('organization_id', $organizationId)
-                    ->where('warehouse_id', $warehouse->id)
-                    ->where('available_quantity', '>', 0)
-                    ->get()
-                    ->groupBy(fn (WarehouseBalance $balance) => implode(':', [
-                        $balance->material_id,
-                        $balance->cell_id ?? 'no-cell',
-                        $balance->batch_number ?? 'no-batch',
-                        $balance->unit_price,
-                    ]));
-
-                foreach ($groupedBalances as $balances) {
-                    $firstBalance = $balances->first();
-                    $locationCodes = $balances
-                        ->pluck('location_code')
-                        ->filter(fn ($locationCode) => filled($locationCode))
-                        ->unique()
-                        ->values();
-
-                    InventoryActItem::create([
-                        'inventory_act_id' => $act->id,
-                        'material_id' => $firstBalance->material_id,
-                        'expected_quantity' => $balances->sum(
-                            fn (WarehouseBalance $balance) => (float) $balance->available_quantity
-                        ),
-                        'unit_price' => $firstBalance->unit_price,
-                        'cell_id' => $firstBalance->cell_id,
-                        'location_code' => $locationCodes->count() === 1 ? $locationCodes->first() : null,
-                        'batch_number' => $firstBalance->batch_number,
-                    ]);
-                }
-
-                DB::commit();
-
-                $act->load([
-                    'warehouse',
-                    'creator',
-                    'items.material.measurementUnit',
-                    'items.cell.zone',
-                ]);
-
-                return AdminResponse::success(
-                    $this->makeInventoryActPayload($act, true),
-                    trans_message('basic_warehouse.inventory.created'),
-                    201
-                );
-            } catch (\Throwable $exception) {
-                DB::rollBack();
-                throw $exception;
-            }
+            return AdminResponse::success(
+                $this->makeInventoryActPayload($act, true),
+                trans_message('basic_warehouse.inventory.created'),
+                201
+            );
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
         } catch (ModelNotFoundException) {
@@ -396,51 +345,33 @@ class InventoryController extends Controller
         $organizationId = (int) $request->user()->current_organization_id;
 
         try {
-            $act = $this->findAct($organizationId, $id, ['warehouse', 'creator', 'approver', 'items.material.measurementUnit']);
+            $act = $this->inventoryWorkflowService->approveAct(
+                $organizationId,
+                $id,
+                (int) $request->user()->id,
+            );
 
-            if ($act->status !== InventoryAct::STATUS_COMPLETED) {
-                return AdminResponse::error(trans_message('basic_warehouse.inventory.approve_invalid_status'), 400);
-            }
+            $act->refresh()->load([
+                'warehouse',
+                'creator',
+                'approver',
+                'items.material.measurementUnit',
+                'items.cell.zone',
+            ]);
 
-            DB::beginTransaction();
-
-            try {
-                foreach ($act->items as $item) {
-                    if (!$item->hasDiscrepancy()) {
-                        continue;
-                    }
-
-                    $actualQuantity = (float) ($item->actual_quantity ?? 0);
-
-                    $this->applyApprovedItemQuantity($act, $item, $actualQuantity);
-                }
-
-                $act->update([
-                    'status' => InventoryAct::STATUS_APPROVED,
-                    'approved_at' => now(),
-                    'approved_by' => $request->user()->id,
-                ]);
-
-                DB::commit();
-
-                $act->refresh()->load([
-                    'warehouse',
-                    'creator',
-                    'approver',
-                    'items.material.measurementUnit',
-                    'items.cell.zone',
-                ]);
-
-                return AdminResponse::success(
-                    $this->makeInventoryActPayload($act, true),
-                    trans_message('basic_warehouse.inventory.approved')
-                );
-            } catch (\Throwable $exception) {
-                DB::rollBack();
-                throw $exception;
-            }
+            return AdminResponse::success(
+                $this->makeInventoryActPayload($act, true),
+                trans_message('basic_warehouse.inventory.approved')
+            );
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('basic_warehouse.inventory.not_found'), 404);
+        } catch (InventoryApprovalStatusException) {
+            return AdminResponse::error(trans_message('basic_warehouse.inventory.approve_invalid_status'), 400);
+        } catch (InventoryReservationConflictException) {
+            return AdminResponse::error(
+                trans_message('basic_warehouse.inventory.reservation_conflict'),
+                409
+            );
         } catch (\Throwable $exception) {
             Log::error('InventoryController::approve error', [
                 'organization_id' => $organizationId,
@@ -473,66 +404,6 @@ class InventoryController extends Controller
         return InventoryActItem::query()
             ->where('inventory_act_id', $act->id)
             ->findOrFail($itemId);
-    }
-
-    private function applyApprovedItemQuantity(InventoryAct $act, InventoryActItem $item, float $actualQuantity): void
-    {
-        $query = WarehouseBalance::query()
-            ->where('organization_id', $act->organization_id)
-            ->where('warehouse_id', $act->warehouse_id)
-            ->where('material_id', $item->material_id)
-            ->where('unit_price', $item->unit_price);
-
-        $item->batch_number
-            ? $query->where('batch_number', $item->batch_number)
-            : $query->whereNull('batch_number');
-
-        if ($item->cell_id !== null) {
-            $query->where('cell_id', $item->cell_id);
-        } elseif ($item->location_code) {
-            $query->where('location_code', $item->location_code);
-        }
-
-        $balances = $query->orderBy('id')->lockForUpdate()->get();
-
-        if ($balances->isEmpty()) {
-            if ($actualQuantity <= 0) {
-                return;
-            }
-
-            WarehouseBalance::create([
-                'organization_id' => $act->organization_id,
-                'warehouse_id' => $act->warehouse_id,
-                'material_id' => $item->material_id,
-                'available_quantity' => $actualQuantity,
-                'reserved_quantity' => 0,
-                'unit_price' => $item->unit_price,
-                'min_stock_level' => 0,
-                'max_stock_level' => 0,
-                'cell_id' => $item->cell_id,
-                'location_code' => $item->location_code,
-                'batch_number' => $item->batch_number,
-                'last_movement_at' => now(),
-                'created_at' => now(),
-            ]);
-
-            return;
-        }
-
-        $remainingQuantity = $actualQuantity;
-        $lastIndex = $balances->count() - 1;
-
-        foreach ($balances->values() as $index => $balance) {
-            $newQuantity = $index === $lastIndex
-                ? max(0, $remainingQuantity)
-                : min((float) $balance->available_quantity, max(0, $remainingQuantity));
-
-            $balance->available_quantity = $newQuantity;
-            $balance->last_movement_at = now();
-            $balance->save();
-
-            $remainingQuantity -= $newQuantity;
-        }
     }
 
     private function makeInventoryActPayload(InventoryAct $act, bool $includeItems = false): array
