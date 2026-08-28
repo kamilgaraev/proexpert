@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
@@ -18,7 +19,6 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
-use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
@@ -169,6 +169,37 @@ final class ProcurementChainControllerTest extends TestCase
         $response->assertJsonPath('data.procurement_chain.current_stage.key', 'payment_partially_registered');
         $response->assertJsonPath('data.procurement_chain.blockers.0.key', 'payment_amount_not_enough');
         $response->assertJsonPath('data.procurement_chain.next_action.key', 'register_payment');
+    }
+
+    public function test_completed_order_chain_uses_completed_labels_for_conditional_stages(): void
+    {
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::DELIVERED);
+        $this->createPaymentDocument($purchaseOrder, PaymentDocumentStatus::PAID, 500);
+        $this->createPostedReceipt($purchaseOrder, 5, 100);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.procurement_chain.current_stage.key', 'completed');
+
+        $stages = collect($response->json('data.procurement_chain.stages'))->keyBy('key');
+        $expectedLabels = [
+            'payment_document_missing' => 'Платежный документ создан',
+            'payment_document_draft' => 'Счет передан на согласование',
+            'payment_approval_required' => 'Счет согласован',
+            'payment_partially_registered' => 'Оплата зарегистрирована',
+            'partially_delivered' => 'Поставка принята полностью',
+        ];
+
+        foreach ($expectedLabels as $stageKey => $expectedLabel) {
+            $this->assertSame('done', $stages->get($stageKey)['status']);
+            $this->assertSame($expectedLabel, $stages->get($stageKey)['label']);
+        }
     }
 
     public function test_payment_document_endpoint_is_idempotent_and_uses_supplier_contractor(): void
