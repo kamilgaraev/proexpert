@@ -18,8 +18,7 @@ class RolesComparisonController extends Controller
     public function __construct(
         protected RoleScanner $roleScanner,
         protected RolePayloadFormatter $rolePayloadFormatter
-    ) {
-    }
+    ) {}
 
     public function comparison(Request $request): JsonResponse
     {
@@ -28,7 +27,7 @@ class RolesComparisonController extends Controller
         $includeUnassignable = $request->boolean('include_unassignable', false);
 
         foreach ($allRoles as $roleSlug => $roleData) {
-            if (!$includeUnassignable && !$this->rolePayloadFormatter->isAssignableSystemRole($roleData)) {
+            if (! $includeUnassignable && ! $this->rolePayloadFormatter->isAssignableSystemRole($roleData)) {
                 continue;
             }
 
@@ -57,7 +56,7 @@ class RolesComparisonController extends Controller
     {
         $systemPermissions = $roleData['system_permissions'] ?? [];
         $normalizedSystemPermissions = $this->rolePayloadFormatter->normalizedSystemPermissions($roleData);
-        $modulePermissions = $roleData['module_permissions'] ?? [];
+        $modulePermissions = $this->rolePayloadFormatter->normalizedModulePermissions($roleData);
         $permissions = $this->rolePayloadFormatter->translatedPermissionsForRole($roleData);
         $canManageRoles = $this->getCanManageRoles($roleData);
         $timeRestrictions = $this->getTimeRestrictions($roleData);
@@ -192,7 +191,7 @@ class RolesComparisonController extends Controller
             return null;
         }
 
-        if (!is_array($days)) {
+        if (! is_array($days)) {
             return null;
         }
 

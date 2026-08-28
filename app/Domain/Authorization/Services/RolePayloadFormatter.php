@@ -19,7 +19,7 @@ final class RolePayloadFormatter
     {
         $roleData['slug'] = $roleData['slug'] ?? $roleSlug;
         $normalizedSystemPermissions = $this->normalizedSystemPermissions($roleData);
-        $modulePermissions = $this->modulePermissions($roleData);
+        $modulePermissions = $this->normalizedModulePermissions($roleData);
         $permissions = $this->translatePermissions(
             $normalizedSystemPermissions,
             $modulePermissions,
@@ -108,7 +108,7 @@ final class RolePayloadFormatter
     {
         return $this->translatePermissions(
             $this->normalizedSystemPermissions($roleData),
-            $this->modulePermissions($roleData),
+            $this->normalizedModulePermissions($roleData),
             $roleData['interface_access'] ?? []
         );
     }
@@ -183,6 +183,13 @@ final class RolePayloadFormatter
         );
     }
 
+    public function normalizedModulePermissions(array $roleData): array
+    {
+        return RolePermissionNormalizer::normalizeModulePermissions(
+            is_array($roleData['module_permissions'] ?? null) ? $roleData['module_permissions'] : []
+        );
+    }
+
     public function countModulePermissions(array $modulePermissions): int
     {
         $count = 0;
@@ -207,13 +214,6 @@ final class RolePayloadFormatter
             'module_permissions' => $modulePermissions,
             'interface_access' => $interfaceAccess,
         ]);
-    }
-
-    private function modulePermissions(array $roleData): array
-    {
-        return RolePermissionNormalizer::normalizeModulePermissions(
-            is_array($roleData['module_permissions'] ?? null) ? $roleData['module_permissions'] : []
-        );
     }
 
     private function permissionItems(array $permissions): array
