@@ -87,6 +87,57 @@ final class ProcurementAwardSourcePostgresTest extends TestCase
             ->count());
     }
 
+    public function test_candidate_hash_matches_postgres_guard_for_comparable_candidate_without_exclusions(): void
+    {
+        $candidate = new ProcurementAwardCandidateEvidence(
+            organizationId: 38,
+            projectId: 52,
+            purchaseRequestId: 64,
+            supplierRequestId: 39,
+            supplierRequestVersionId: 39,
+            supplierRequestVersionHash: str_repeat('a', 64),
+            proposalId: 42,
+            proposalVersionId: 39,
+            supplierPartyId: 33,
+            proposalStatus: 'submitted',
+            proposalValidUntil: '2026-09-30',
+            versionContentHash: str_repeat('b', 64),
+            subtotalAmount: '1800',
+            deliveryAmount: '300',
+            vatAmount: '350',
+            totalAmount: '2100',
+            comparisonTotal: '2100',
+            currency: 'RUB',
+            vatMode: 'included',
+            vatRate: '20',
+            deliveryDueDate: null,
+            leadTimeDays: 7,
+            requestLineCoverage: [[
+                'supplier_request_line_id' => 39,
+                'required_quantity' => '100',
+                'required_unit' => 'кг',
+                'covered_quantity' => '100',
+                'covered_unit' => 'кг',
+                'covered' => true,
+            ]],
+            comparable: true,
+            exclusionCodes: [],
+        );
+        $parts = [
+            '38', '52', '64', '39', '39', str_repeat('a', 64), '42', '39', '33',
+            'submitted', '2026-09-30', str_repeat('b', 64), '1800', '300', '350',
+            '2100', '2100', 'RUB', 'included', '20', null, '7', '39,100,кг,100,кг,1',
+            '1', null,
+        ];
+        $placeholders = implode(', ', array_fill(0, count($parts), '?'));
+        $databaseHash = DB::scalar(
+            'SELECT procurement_award_hash_parts(VARIADIC ARRAY['.$placeholders.']::text[])',
+            $parts,
+        );
+
+        self::assertSame($databaseHash, $candidate->contentHash());
+    }
+
     public function test_real_source_query_and_owner_capture_keep_the_full_candidate_universe(): void
     {
         $fixture = $this->fixture();
