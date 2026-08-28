@@ -472,11 +472,13 @@ final class LegalArchiveApiContractTest extends TestCase
         ]);
 
         $resolved = $registry->find(7, 'contract.supply');
+        $bulkResolved = $registry->findManyForOrganizations([7 => ['contract.supply']]);
 
         self::assertSame('contract.supply', $profile->code);
         self::assertSame('Договор поставки с согласованием', $resolved->label);
         self::assertTrue($resolved->requiresSignature);
         self::assertContains('delivery_terms', $resolved->requiredFields);
+        self::assertSame('Договор поставки с согласованием', $bulkResolved[7]['contract.supply']->label);
     }
 
     private function runCanonical(Request $request, User $actor): JsonResponse

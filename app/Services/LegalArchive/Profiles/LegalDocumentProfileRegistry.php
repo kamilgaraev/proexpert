@@ -156,16 +156,7 @@ final class LegalDocumentProfileRegistry
         if ($normalized === []) {
             return [];
         }
-        $customPairs = [];
-        foreach ($normalized as $organizationId => $codes) {
-            $customCodes = array_values(array_filter(
-                $codes,
-                fn (string $code): bool => ! isset($this->standardProfiles[$code]),
-            ));
-            if ($customCodes !== []) {
-                $customPairs[$organizationId] = $customCodes;
-            }
-        }
+        $customPairs = $normalized;
         $custom = collect();
         if ($customPairs !== []) {
             $custom = LegalArchiveDocumentTypeProfile::query()->active()
