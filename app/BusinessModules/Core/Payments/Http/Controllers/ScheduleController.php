@@ -6,11 +6,11 @@ namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
+use App\BusinessModules\Core\Payments\Services\PaymentScheduleService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
@@ -18,6 +18,10 @@ use function trans_message;
 
 class ScheduleController extends Controller
 {
+    public function __construct(
+        private readonly PaymentScheduleService $paymentScheduleService,
+    ) {}
+
     public function index(Request $request): JsonResponse
     {
         try {
@@ -87,41 +91,11 @@ class ScheduleController extends Controller
                 ->where('organization_id', $organizationId)
                 ->findOrFail((int) $validated['payment_document_id']);
 
-            $totalScheduleAmount = (float) collect($validated['installments'])->sum('amount');
-            if ((float) $document->amount !== $totalScheduleAmount) {
-                return AdminResponse::error(trans_message('payments.schedule.sum_mismatch'), 422);
-            }
-
-            $hasLockedInstallments = PaymentSchedule::query()
-                ->where('payment_document_id', $document->id)
-                ->where('status', '!=', 'pending')
-                ->exists();
-
-            if ($hasLockedInstallments) {
-                return AdminResponse::error(trans_message('payments.schedule.update_locked'), 422);
-            }
-
-            $schedules = DB::transaction(function () use ($validated): array {
-                PaymentSchedule::query()
-                    ->where('payment_document_id', $validated['payment_document_id'])
-                    ->where('status', 'pending')
-                    ->delete();
-
-                $created = [];
-
-                foreach ($validated['installments'] as $installment) {
-                    $created[] = PaymentSchedule::create([
-                        'payment_document_id' => $validated['payment_document_id'],
-                        'installment_number' => $installment['installment_number'],
-                        'due_date' => $installment['due_date'],
-                        'amount' => $installment['amount'],
-                        'status' => 'pending',
-                        'notes' => $installment['notes'] ?? null,
-                    ]);
-                }
-
-                return $created;
-            });
+            $schedules = $this->paymentScheduleService->replacePendingSchedule(
+                $document,
+                $validated['installments'],
+                $request->user()
+            );
 
             return AdminResponse::success(
                 collect($schedules)->map(fn (PaymentSchedule $schedule) => $this->formatSchedule($schedule->load('paymentDocument.project'))),
@@ -132,6 +106,8 @@ class ScheduleController extends Controller
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('payments.not_found'), 404);
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             Log::error('payments.schedule.store.error', [
                 'organization_id' => $request->attributes->get('current_organization_id'),
