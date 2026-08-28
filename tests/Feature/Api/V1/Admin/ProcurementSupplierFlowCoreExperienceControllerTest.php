@@ -43,8 +43,8 @@ use Tests\TestCase;
 
 class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
 {
-    use RefreshDatabase;
     use EnablesImmutableAuditWriter;
+    use RefreshDatabase;
 
     public function test_admin_can_run_supplier_flow_to_purchase_order_receipt_without_organization_leaks(): void
     {
@@ -351,6 +351,75 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $this->assertStringContainsString('application/pdf', (string) $response->headers->get('content-type'));
         $this->assertStringContainsString('torg12-', (string) $response->headers->get('content-disposition'));
         $this->assertStringStartsWith('%PDF', (string) $response->getContent());
+        $this->assertSame(0, PurchaseReceipt::query()
+            ->where('purchase_order_id', $purchaseOrder->id)
+            ->count());
+    }
+
+    public function test_purchase_order_receipt_document_preview_preserves_included_vat_from_accepted_offer(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $supplier = $this->createSupplier($context->organization->id, 'VAT Supplier', 'vat@example.test');
+        $warehouse = $this->createWarehouse($context->organization->id);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $purchaseOrder = PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'supplier_id' => $supplier->id,
+            'order_number' => 'PO-VAT-'.uniqid(),
+            'order_date' => now()->toDateString(),
+            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'total_amount' => 2100,
+            'currency' => 'RUB',
+            'metadata' => [
+                'commercial_snapshot' => [
+                    'subtotal_amount' => '1800.00',
+                    'delivery_amount' => '300.00',
+                    'vat_mode' => 'included',
+                    'vat_rate' => '20.00',
+                    'vat_amount' => '350.00',
+                    'total_amount' => '2100.00',
+                ],
+            ],
+        ]);
+
+        $item = PurchaseOrderItem::query()->create([
+            'purchase_order_id' => $purchaseOrder->id,
+            'material_id' => $material->id,
+            'material_name' => $material->name,
+            'quantity' => 100,
+            'unit' => 'kg',
+            'unit_price' => 18,
+            'total_price' => 1800,
+        ]);
+        $this->createPaidProcurementPaymentDocument($context, $purchaseOrder, 2100);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-document/preview", [
+                'warehouse_id' => $warehouse->id,
+                'receipt_date' => now()->toDateString(),
+                'items' => [
+                    [
+                        'item_id' => $item->id,
+                        'quantity_received' => 100,
+                        'price' => 18,
+                    ],
+                ],
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.rows.0.vat_rate', 20);
+        $response->assertJsonPath('data.rows.0.amount_without_vat', 1500);
+        $response->assertJsonPath('data.rows.0.vat_amount', 300);
+        $response->assertJsonPath('data.rows.0.amount_with_vat', 1800);
+        $response->assertJsonPath('data.totals.amount_without_vat', 1500);
+        $response->assertJsonPath('data.totals.vat_amount', 300);
+        $response->assertJsonPath('data.totals.amount_with_vat', 1800);
         $this->assertSame(0, PurchaseReceipt::query()
             ->where('purchase_order_id', $purchaseOrder->id)
             ->count());

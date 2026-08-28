@@ -12,6 +12,7 @@ use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnAuth
 use App\BusinessModules\Features\Procurement\Contracts\PurchaseReceiptReturnUnitOfWork;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalVatModeEnum;
 use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptIdempotencyConflictException;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
@@ -878,15 +879,27 @@ class PurchaseOrderService
         string $receiptNumber,
         string $receiptDate
     ): array {
-        $order->loadMissing(['organization', 'supplier', 'externalSupplierContact', 'supplierParty']);
+        $order->loadMissing([
+            'organization',
+            'supplier',
+            'externalSupplierContact',
+            'supplierParty',
+            'acceptedSupplierProposal',
+        ]);
         $orderItemsById = $orderItems->keyBy('id');
+        $vatSettings = $this->receiptVatSettings($order);
         $rows = collect($items)
             ->values()
-            ->map(function (array $item, int $index) use ($orderItemsById): array {
+            ->map(function (array $item, int $index) use ($orderItemsById, $vatSettings): array {
                 $orderItem = $orderItemsById->get((int) $item['item_id']);
                 $quantity = (float) $item['quantity_received'];
                 $price = (float) $item['price'];
                 $amount = round($quantity * $price, 2);
+                $amounts = $this->receiptRowAmounts(
+                    $amount,
+                    $vatSettings['mode'],
+                    $vatSettings['rate'],
+                );
                 $unit = trim((string) ($orderItem?->unit ?? ''));
 
                 return [
@@ -901,14 +914,16 @@ class PurchaseOrderService
                     'gross_weight' => null,
                     'quantity' => $quantity,
                     'price' => $price,
-                    'amount_without_vat' => $amount,
-                    'vat_rate' => null,
-                    'vat_amount' => 0.0,
-                    'amount_with_vat' => $amount,
+                    'amount_without_vat' => $amounts['amount_without_vat'],
+                    'vat_rate' => $amounts['vat_rate'],
+                    'vat_amount' => $amounts['vat_amount'],
+                    'amount_with_vat' => $amounts['amount_with_vat'],
                 ];
             })
             ->all();
 
+        $amountWithoutVat = round((float) collect($rows)->sum('amount_without_vat'), 2);
+        $vatAmount = round((float) collect($rows)->sum('vat_amount'), 2);
         $amountWithVat = round((float) collect($rows)->sum('amount_with_vat'), 2);
 
         return [
@@ -937,8 +952,8 @@ class PurchaseOrderService
             'totals' => [
                 'rows_count' => count($rows),
                 'quantity' => round((float) collect($rows)->sum('quantity'), 3),
-                'amount_without_vat' => $amountWithVat,
-                'vat_amount' => 0.0,
+                'amount_without_vat' => $amountWithoutVat,
+                'vat_amount' => $vatAmount,
                 'amount_with_vat' => $amountWithVat,
             ],
             'signatures' => [
@@ -947,6 +962,55 @@ class PurchaseOrderService
                 'accepted_by' => trans_message('procurement.receipt_document.signatures.accepted_by'),
                 'received_by' => trans_message('procurement.receipt_document.signatures.received_by'),
             ],
+        ];
+    }
+
+    /**
+     * @return array{mode: SupplierProposalVatModeEnum, rate: float}
+     */
+    private function receiptVatSettings(PurchaseOrder $order): array
+    {
+        $snapshot = data_get($order->metadata, 'commercial_snapshot');
+        $snapshot = is_array($snapshot) ? $snapshot : [];
+        $proposal = $order->acceptedSupplierProposal;
+        $rawMode = (string) ($snapshot['vat_mode'] ?? $proposal?->vat_mode ?? '');
+        $mode = SupplierProposalVatModeEnum::tryFrom($rawMode)
+            ?? SupplierProposalVatModeEnum::NOT_APPLICABLE;
+        $rawRate = $snapshot['vat_rate'] ?? $proposal?->vat_rate;
+
+        return [
+            'mode' => $mode,
+            'rate' => is_numeric($rawRate) ? max((float) $rawRate, 0.0) : 0.0,
+        ];
+    }
+
+    /**
+     * @return array{amount_without_vat: float, vat_rate: float|null, vat_amount: float, amount_with_vat: float}
+     */
+    private function receiptRowAmounts(
+        float $amount,
+        SupplierProposalVatModeEnum $mode,
+        float $rate,
+    ): array {
+        $calculated = SupplierProposalAmountCalculator::calculate([
+            'items' => [[
+                'quantity' => 1,
+                'unit_price' => $amount,
+            ]],
+            'delivery_amount' => 0,
+            'vat_mode' => $mode->value,
+            'vat_rate' => $rate,
+        ]);
+        $vatAmount = (float) $calculated['vat_amount'];
+        $amountWithVat = (float) $calculated['total_amount'];
+
+        return [
+            'amount_without_vat' => $mode === SupplierProposalVatModeEnum::INCLUDED
+                ? round($amount - $vatAmount, 2)
+                : $amount,
+            'vat_rate' => $mode === SupplierProposalVatModeEnum::NOT_APPLICABLE ? null : $rate,
+            'vat_amount' => $vatAmount,
+            'amount_with_vat' => $amountWithVat,
         ];
     }
 

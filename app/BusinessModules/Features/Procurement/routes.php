@@ -132,6 +132,9 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/receipt-document/pdf', [PurchaseOrderController::class, 'receiptDocumentPdf'])
                 ->middleware('authorize:procurement.purchase_orders.receive')
                 ->name('receipt_document_pdf');
+            Route::post('/{id}/receipt-document/preview', [PurchaseOrderController::class, 'receiptDocumentPreview'])
+                ->middleware('authorize:procurement.purchase_orders.receive')
+                ->name('receipt_document_preview');
             Route::get('/{id}/receipts/{receipt}/document/pdf', [PurchaseOrderController::class, 'receiptDocumentPdfFromReceipt'])
                 ->middleware('authorize:procurement.purchase_orders.view')
                 ->name('receipt_document_pdf.show');
