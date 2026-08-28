@@ -267,11 +267,7 @@ final readonly class LegalWorkflowActionResolver
             $readinessBlocker,
             $hasBlockingComments ? $this->label('blockers.open_blocking_comments') : null,
             $latest?->status === 'in_progress' ? $this->label('blockers.active_workflow_exists') : null,
-            $latest instanceof LegalWorkflowInstance
-                && in_array($latest->status, ['returned', 'rejected'], true)
-                && $version instanceof LegalArchiveDocumentVersion
-                && (int) $latest->document_version_id === (int) $version->id
-                && hash_equals((string) $latest->document_content_hash, (string) $version->content_hash)
+            LegalWorkflowResubmissionPolicy::requiresNewVersion($latest, $version)
                     ? $this->label('blockers.new_version_required')
                     : null,
         ]));
