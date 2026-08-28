@@ -36,6 +36,7 @@ final readonly class LegalDocumentTypeProfileService
                 'confidentiality_level' => $base->confidentialityLevel,
                 ...$data,
             ];
+            $data['confidentiality_level'] ??= $base->confidentialityLevel ?? 'internal';
             $this->assertInput($data);
             $this->assertWorkflowTemplate($organizationId, $data['workflow_template_id'] ?? null);
             if (LegalArchiveDocumentTypeProfile::query()->forOrganization($organizationId)
@@ -77,6 +78,10 @@ final readonly class LegalDocumentTypeProfileService
                 ->whereKey($id)->lockForUpdate()->first();
             if (! $profile instanceof LegalArchiveDocumentTypeProfile) {
                 throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+            if (array_key_exists('confidentiality_level', $changes) && $changes['confidentiality_level'] === null) {
+                $base = $this->registry->find($organizationId, (string) $profile->base_code);
+                $changes['confidentiality_level'] = $base->confidentialityLevel ?? 'internal';
             }
             $this->assertInput([
                 ...$profile->only(['required_fields', 'required_file_roles', 'allowed_signature_kinds', 'required_signature_kinds', 'allowed_signature_formats']),

@@ -432,12 +432,19 @@ final class LegalArchiveApiContractTest extends TestCase
             'code' => 'customer.minimal',
             'base_code' => 'contract.supply',
             'name' => 'Минимальный профиль',
+            'confidentiality_level' => null,
         ]);
 
         self::assertSame([], $profile->schema);
         self::assertSame([], $profile->required_fields);
         self::assertNull($profile->requires_signature);
         self::assertNull($profile->workflow_template_id);
+        self::assertSame('internal', $profile->confidentiality_level);
+
+        $profile = $service->update(7, (string) $profile->id, 0, [
+            'confidentiality_level' => null,
+        ]);
+
         self::assertSame('internal', $profile->confidentiality_level);
 
         $this->expectException(DomainException::class);
