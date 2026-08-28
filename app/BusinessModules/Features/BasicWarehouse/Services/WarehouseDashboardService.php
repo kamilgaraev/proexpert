@@ -24,8 +24,7 @@ final class WarehouseDashboardService
 {
     public function __construct(
         private readonly WarehouseService $warehouseService
-    ) {
-    }
+    ) {}
 
     public function build(int $organizationId, int $warehouseId): array
     {
@@ -52,7 +51,9 @@ final class WarehouseDashboardService
 
         $lowStock = $stock->filter(static fn (array $item): bool => (bool) ($item['is_low_stock'] ?? false))->values();
         $missingLocationCount = $stock
-            ->filter(static fn (array $item): bool => empty($item['location_code']))
+            ->filter(static fn (array $item): bool => array_key_exists('has_unlocated_quantity', $item)
+                ? (bool) $item['has_unlocated_quantity']
+                : empty($item['location_code']) && empty($item['storage_address']))
             ->count();
         $topMaterials = $lowStock
             ->sortBy(static fn (array $item): float => (float) ($item['available_quantity'] ?? 0))
@@ -162,6 +163,10 @@ final class WarehouseDashboardService
                         'total_value' => (float) ($item['total_value'] ?? 0),
                         'is_low_stock' => (bool) ($item['is_low_stock'] ?? false),
                         'location_code' => $item['location_code'] ?? null,
+                        'storage_address' => $item['storage_address'] ?? null,
+                        'addressed_quantity' => (float) ($item['addressed_quantity'] ?? 0),
+                        'unlocated_quantity' => (float) ($item['unlocated_quantity'] ?? 0),
+                        'has_unlocated_quantity' => (bool) ($item['has_unlocated_quantity'] ?? false),
                         'photo_url' => $photo['url'] ?? null,
                     ];
                 })
@@ -225,8 +230,7 @@ final class WarehouseDashboardService
     }
 
     /**
-     * @param array<string, int> $signals
-     *
+     * @param  array<string, int>  $signals
      * @return array<int, array<string, mixed>>
      */
     private function buildOperationalQueue(array $signals): array
@@ -275,8 +279,7 @@ final class WarehouseDashboardService
     }
 
     /**
-     * @param array<string, int> $signals
-     *
+     * @param  array<string, int>  $signals
      * @return array<string, int|bool>
      */
     private function buildAttention(array $signals): array

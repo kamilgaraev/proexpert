@@ -657,6 +657,62 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
             ->sum('available_quantity'));
     }
 
+    public function test_aggregated_stock_keeps_unlocated_quantity_separate_from_cell_address(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $zone = $this->createZone($warehouse->id, 'Storage zone', 'STORAGE');
+        $cell = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            'Storage cell',
+            'CELL-A1'
+        );
+        $material = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Cement',
+            'code' => 'CEMENT-MIXED-ADDRESS',
+            'is_active' => true,
+        ]);
+
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'available_quantity' => 100,
+            'reserved_quantity' => 2,
+            'unit_price' => 18,
+        ]);
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'cell_id' => $cell->id,
+            'material_id' => $material->id,
+            'available_quantity' => 1,
+            'reserved_quantity' => 1,
+            'unit_price' => 18,
+            'batch_number' => 'QA-BATCH-001',
+        ]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/balances")
+            ->assertOk()
+            ->assertJsonPath('data.0.available_quantity', 101)
+            ->assertJsonPath('data.0.reserved_quantity', 3)
+            ->assertJsonPath('data.0.total_quantity', 104)
+            ->assertJsonPath('data.0.addressed_quantity', 2)
+            ->assertJsonPath('data.0.unlocated_quantity', 102)
+            ->assertJsonPath('data.0.has_unlocated_quantity', true)
+            ->assertJsonPath('data.0.cell_id', null)
+            ->assertJsonPath('data.0.cell', null)
+            ->assertJsonPath('data.0.cell_ids.0', $cell->id)
+            ->assertJsonPath('data.0.cells.0.id', $cell->id)
+            ->assertJsonPath('data.0.cells.0.available_quantity', 1)
+            ->assertJsonPath('data.0.cells.0.reserved_quantity', 1);
+    }
+
     private function createWarehouse(int $organizationId, string $name, string $code): OrganizationWarehouse
     {
         return OrganizationWarehouse::query()->create([

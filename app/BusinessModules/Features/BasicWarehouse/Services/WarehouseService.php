@@ -923,6 +923,46 @@ class WarehouseService implements WarehouseReportDataProvider
             $totalValue = $batches->sum(fn ($b) => $b->available_quantity * $b->unit_price);
             $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
 
+            $cellBatches = $batches->filter(
+                static fn (WarehouseBalance $batch): bool => $batch->cell_id !== null
+            );
+            $unlocatedBatches = $batches->filter(
+                static fn (WarehouseBalance $batch): bool => $batch->cell_id === null
+                    && (! is_string($batch->location_code) || trim($batch->location_code) === '')
+            );
+            $unlocatedQuantity = (float) $unlocatedBatches->sum(
+                static fn (WarehouseBalance $batch): float => (float) $batch->available_quantity
+                    + (float) $batch->reserved_quantity
+            );
+            $addressedQuantity = (float) $totalQty + (float) $totalReserved - $unlocatedQuantity;
+            $cellIds = $cellBatches->pluck('cell_id')->unique()->values();
+            $allBatchesInSingleCell = $cellIds->count() === 1 && $cellBatches->count() === $batches->count();
+            $cells = $cellBatches
+                ->groupBy('cell_id')
+                ->map(static function ($batchesInCell): ?array {
+                    $cell = $batchesInCell->first()?->cell;
+
+                    if ($cell === null) {
+                        return null;
+                    }
+
+                    return [
+                        'id' => $cell->id,
+                        'code' => $cell->code,
+                        'name' => $cell->name,
+                        'full_address' => $cell->full_address,
+                        'available_quantity' => (float) $batchesInCell->sum('available_quantity'),
+                        'reserved_quantity' => (float) $batchesInCell->sum('reserved_quantity'),
+                        'zone' => $cell->zone ? [
+                            'id' => $cell->zone->id,
+                            'code' => $cell->zone->code,
+                            'name' => $cell->zone->name,
+                        ] : null,
+                    ];
+                })
+                ->filter()
+                ->values();
+
             $first = $batches->first();
             $qrCode = $identifierMap[$first->material_id]->code ?? sprintf('AST-%d-%06d', $organizationId, $first->material_id);
             $galleryKey = $first->warehouse_id.':'.$first->material_id;
@@ -947,34 +987,13 @@ class WarehouseService implements WarehouseReportDataProvider
                 'max_stock_level' => (float) $first->max_stock_level,
                 'is_low_stock' => $first->min_stock_level > 0 && $totalQty <= $first->min_stock_level,
                 'location_code' => $batches->pluck('location_code')->filter()->unique()->implode(', '),
-                'cell_id' => $batches->pluck('cell_id')->filter()->unique()->count() === 1
-                    ? $batches->pluck('cell_id')->filter()->unique()->first()
-                    : null,
-                'cell_ids' => $batches->pluck('cell_id')->filter()->unique()->values()->all(),
-                'cells' => $batches->pluck('cell')->filter()->unique('id')->map(static fn ($cell) => [
-                    'id' => $cell->id,
-                    'code' => $cell->code,
-                    'name' => $cell->name,
-                    'full_address' => $cell->full_address,
-                    'zone' => $cell->zone ? [
-                        'id' => $cell->zone->id,
-                        'code' => $cell->zone->code,
-                        'name' => $cell->zone->name,
-                    ] : null,
-                ])->values()->all(),
-                'cell' => $batches->pluck('cell')->filter()->unique('id')->count() === 1
-                    ? $batches->pluck('cell')->filter()->unique('id')->map(static fn ($cell) => [
-                        'id' => $cell->id,
-                        'code' => $cell->code,
-                        'name' => $cell->name,
-                        'full_address' => $cell->full_address,
-                        'zone' => $cell->zone ? [
-                            'id' => $cell->zone->id,
-                            'code' => $cell->zone->code,
-                            'name' => $cell->zone->name,
-                        ] : null,
-                    ])->first()
-                    : null,
+                'addressed_quantity' => $addressedQuantity,
+                'unlocated_quantity' => $unlocatedQuantity,
+                'has_unlocated_quantity' => $unlocatedQuantity > 0,
+                'cell_id' => $allBatchesInSingleCell ? $cellIds->first() : null,
+                'cell_ids' => $cellIds->all(),
+                'cells' => $cells->all(),
+                'cell' => $allBatchesInSingleCell ? $cells->first() : null,
                 'storage_address' => $batches->pluck('cell.full_address')->filter()->unique()->implode(', ')
                     ?: $batches->pluck('location_code')->filter()->unique()->implode(', '),
                 'last_movement_at' => $batches->max('last_movement_at')?->toDateTimeString(),
