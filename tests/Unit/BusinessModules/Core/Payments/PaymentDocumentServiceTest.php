@@ -10,8 +10,9 @@ use App\BusinessModules\Core\Payments\Services\PaymentAuditService;
 use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentStateMachine;
-use App\BusinessModules\Core\Payments\Services\PurchaseOrderContractRequirementService;
+use App\BusinessModules\Core\Payments\Services\PaymentScheduleLedgerReconciliationService;
 use App\BusinessModules\Core\Payments\Services\PaymentValidationService;
+use App\BusinessModules\Core\Payments\Services\PurchaseOrderContractRequirementService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetLimitCheckService;
 use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Modules\Core\AccessController;
@@ -34,11 +35,11 @@ final class PaymentDocumentServiceTest extends TestCase
 
     public function test_submit_does_not_log_expected_domain_transition_as_error(): void
     {
-        $document = new PaymentDocument();
+        $document = new PaymentDocument;
         $document->id = 160;
         $document->amount = 1000;
 
-        $app = new Container();
+        $app = new Container;
         Facade::clearResolvedInstances();
         Facade::setFacadeApplication($app);
 
@@ -74,11 +75,12 @@ final class PaymentDocumentServiceTest extends TestCase
             Mockery::mock(ApprovalWorkflowService::class),
             $validator,
             new PaymentBudgetLimitService(
-                new BudgetLimitCheckService(),
+                new BudgetLimitCheckService,
                 new ModulePermissionChecker(Mockery::mock(AccessController::class)),
             ),
             Mockery::mock(PaymentAuditService::class),
-            new PurchaseOrderContractRequirementService(),
+            new PurchaseOrderContractRequirementService,
+            new PaymentScheduleLedgerReconciliationService,
         );
 
         $this->expectException(DomainException::class);

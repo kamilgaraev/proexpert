@@ -15,14 +15,17 @@ use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
 
 class OffsetControllerWorkflowTest extends TestCase
 {
+    use EnablesImmutableAuditWriter;
     use RefreshDatabase;
 
     public function test_perform_offset_creates_paired_transactions_and_updates_document_balances(): void
     {
+        $this->enableImmutableAuditWriter();
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activatePaymentsModule($context->organization->id);
         $contractor = Contractor::query()->create([
@@ -117,7 +120,7 @@ class OffsetControllerWorkflowTest extends TestCase
         return PaymentDocument::query()->create(array_merge([
             'organization_id' => $context->organization->id,
             'document_type' => PaymentDocumentType::INVOICE,
-            'document_number' => 'OFF-' . uniqid(),
+            'document_number' => 'OFF-'.uniqid(),
             'document_date' => now()->toDateString(),
             'direction' => $direction,
             'contractor_id' => $contractor->id,

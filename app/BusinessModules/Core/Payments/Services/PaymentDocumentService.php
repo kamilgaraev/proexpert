@@ -34,6 +34,7 @@ class PaymentDocumentService
         private readonly PaymentBudgetLimitService $budgetLimitService,
         private readonly PaymentAuditService $auditService,
         private readonly PurchaseOrderContractRequirementService $contractRequirement,
+        private readonly PaymentScheduleLedgerReconciliationService $scheduleReconciliation,
     ) {}
 
     /**
@@ -467,6 +468,7 @@ class PaymentDocumentService
                         $paymentAmount,
                         $paymentData
                     );
+                    $this->scheduleReconciliation->reconcile($document->fresh(), $existingBankTransaction);
                     DB::commit();
 
                     return $document->fresh();
@@ -487,6 +489,7 @@ class PaymentDocumentService
 
                 if ($existingTransaction instanceof PaymentTransaction) {
                     $this->assertPaymentRetryMatches($existingTransaction, $document, $paymentAmount, $paymentData);
+                    $this->scheduleReconciliation->reconcile($document->fresh(), $existingTransaction);
 
                     DB::commit();
 
@@ -620,7 +623,9 @@ class PaymentDocumentService
                 $this->stateMachine->markPartiallyPaid($document, (string) $paymentAmount, $transaction);
             }
 
-            $this->budgetLimitService->convertAfterPayment($document->fresh(), $transactionModel);
+            $freshDocument = $document->fresh();
+            $this->scheduleReconciliation->reconcile($freshDocument, $transactionModel);
+            $this->budgetLimitService->convertAfterPayment($freshDocument, $transactionModel);
             $this->synchronizeEstimateItemsPaymentProgress($document);
             DB::afterCommit(fn () => $this->notifyPaymentRecipientAfterCommit($document->id, $transaction));
 

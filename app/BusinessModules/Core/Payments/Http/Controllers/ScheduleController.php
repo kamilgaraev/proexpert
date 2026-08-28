@@ -39,11 +39,11 @@ class ScheduleController extends Controller
                 ->with(['paymentDocument.project'])
                 ->whereHas('paymentDocument', fn ($builder) => $builder->where('organization_id', $organizationId));
 
-            if (!empty($validated['payment_document_id'])) {
+            if (! empty($validated['payment_document_id'])) {
                 $query->where('payment_document_id', $validated['payment_document_id']);
             }
 
-            if (!empty($validated['status'])) {
+            if (! empty($validated['status'])) {
                 $query->where('status', $validated['status']);
             }
 
@@ -255,7 +255,10 @@ class ScheduleController extends Controller
             'installment_number' => $schedule->installment_number,
             'due_date' => $schedule->due_date,
             'amount' => (float) $schedule->amount,
+            'paid_amount' => (float) $schedule->paid_amount,
             'status' => $schedule->status,
+            'paid_at' => $schedule->paid_at?->toDateTimeString(),
+            'payment_transaction_id' => $schedule->payment_transaction_id,
             'notes' => $schedule->notes,
             'payment_document' => $document ? [
                 'id' => $document->id,
