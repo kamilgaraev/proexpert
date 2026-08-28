@@ -56,10 +56,6 @@ final class LegalDocumentProfileRegistry
             throw $this->notFound();
         }
 
-        if (isset($this->standardProfiles[$code])) {
-            return $this->fromStandardProfile($code, $this->standardProfiles[$code]);
-        }
-
         $custom = ($this->organizationProfileLoader)($organizationId, $code);
 
         if (
@@ -68,6 +64,10 @@ final class LegalDocumentProfileRegistry
             || (string) ($custom['code'] ?? '') !== $code
             || ($custom['is_active'] ?? false) !== true
         ) {
+            if (isset($this->standardProfiles[$code])) {
+                return $this->fromStandardProfile($code, $this->standardProfiles[$code]);
+            }
+
             throw $this->notFound();
         }
 
