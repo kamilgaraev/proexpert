@@ -570,7 +570,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
     }
 
     /** @param Collection<int, LegalArchiveDocument> $documents */
-    private function attachResolvedProfiles(Collection $documents): void
+    public function attachResolvedProfiles(Collection $documents): void
     {
         $codesByOrganization = $documents->groupBy('organization_id')->map(
             static fn (Collection $ownedDocuments): array => $ownedDocuments->map(

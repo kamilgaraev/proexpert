@@ -167,6 +167,7 @@ final class LegalArchiveApiContractTest extends TestCase
         ]);
         $owned = $this->documentRow(42, 7, 'Договор поставки');
         $owned['type_profile_code'] = 'customer.supply';
+        $owned['primary_project_id'] = 11;
         $retired = $this->documentRow(45, 7, 'Архивный профиль');
         $retired['type_profile_code'] = 'retired.profile';
         $external = $this->documentRow(43, 8, 'Внешний договор');
@@ -176,6 +177,20 @@ final class LegalArchiveApiContractTest extends TestCase
             $retired,
             $external,
             $this->documentRow(44, 8, 'Недоступный договор'),
+        ]);
+        DB::table('projects')->insert([
+            'id' => 11,
+            'organization_id' => 7,
+            'name' => 'Тестовый проект',
+            'status' => 'active',
+        ]);
+        DB::table('contracts')->insert([
+            'id' => 9,
+            'organization_id' => 7,
+            'project_id' => 11,
+            'legal_archive_document_id' => 42,
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
         DB::table('legal_document_access_grants')->insert([
             'organization_id' => 8,
@@ -226,6 +241,14 @@ final class LegalArchiveApiContractTest extends TestCase
         self::assertSame(200, $detail->getStatusCode(), (string) $detail->getContent());
         self::assertSame('42', (string) $detail->getData(true)['data']['id']);
         self::assertSame('"legal-document-42-v3"', $detail->headers->get('ETag'));
+
+        $contractDetail = $this->runCanonical(
+            Request::create('/api/v1/admin/projects/11/contracts/9/documents/42', 'GET'),
+            $actor,
+        );
+        self::assertSame(200, $contractDetail->getStatusCode(), (string) $contractDetail->getContent());
+        self::assertTrue($contractDetail->getData(true)['data']['type_profile_configured']);
+        self::assertSame('Специальная поставка', $contractDetail->getData(true)['data']['type_profile']['label']);
 
         $externalDetail = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/43', 'GET'), $actor);
         self::assertSame(200, $externalDetail->getStatusCode());
@@ -549,6 +572,7 @@ final class LegalArchiveApiContractTest extends TestCase
         return [
             'id' => $id,
             'organization_id' => $organizationId,
+            'primary_project_id' => null,
             'title' => $title,
             'document_type' => 'contract',
             'type_profile_code' => 'contract.supply',
