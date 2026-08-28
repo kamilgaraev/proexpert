@@ -62,11 +62,22 @@ final class ProcurementChainService
         'completed',
     ];
 
+    /**
+     * @var array<string, string>
+     */
+    private const DONE_STAGE_TRANSLATION_KEYS = [
+        'fulfillment_source_required' => 'fulfillment_source_selected',
+        'payment_document_missing' => 'payment_document_created',
+        'payment_document_draft' => 'payment_document_submitted',
+        'payment_approval_required' => 'payment_approved',
+        'payment_partially_registered' => 'payment_registered',
+        'partially_delivered' => 'delivery_completed',
+    ];
+
     public function __construct(
         private readonly ProcurementChainResolver $resolver,
         private readonly ProcurementChainActionResolver $actionResolver
-    ) {
-    }
+    ) {}
 
     public function forSiteRequest(SiteRequest $siteRequest, ?User $actor = null): ProcurementChainSummary
     {
@@ -94,7 +105,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param array<string, mixed> $graph
+     * @param  array<string, mixed>  $graph
      */
     private function build(array $graph, string $rootContext, int $rootId, ?User $actor): ProcurementChainSummary
     {
@@ -128,7 +139,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param array<string, mixed> $graph
+     * @param  array<string, mixed>  $graph
      * @return array{0: string, 1: ProcurementChainAction|null, 2: Collection<int, ProcurementChainBlocker>}
      */
     private function resolveCurrentState(array $graph, ?User $actor, int $organizationId): array
@@ -462,7 +473,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param Collection<int, ProjectMaterialDelivery> $deliveries
+     * @param  Collection<int, ProjectMaterialDelivery>  $deliveries
      */
     private function warehouseDelivery(Collection $deliveries): ?ProjectMaterialDelivery
     {
@@ -538,7 +549,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param Collection<int, PaymentDocument> $paymentDocuments
+     * @param  Collection<int, PaymentDocument>  $paymentDocuments
      */
     private function paidAmount(Collection $paymentDocuments): float
     {
@@ -554,7 +565,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param Collection<int, PurchaseReceipt> $receipts
+     * @param  Collection<int, PurchaseReceipt>  $receipts
      */
     private function receivedAmount(Collection $receipts): float
     {
@@ -564,7 +575,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param array<string, mixed> $graph
+     * @param  array<string, mixed>  $graph
      * @return Collection<int, ProcurementChainDocumentLink>
      */
     private function linkedDocuments(array $graph): Collection
@@ -722,7 +733,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param Collection<int, ProcurementChainDocumentLink> $documents
+     * @param  Collection<int, ProcurementChainDocumentLink>  $documents
      */
     private function documentForStage(string $stage, Collection $documents): ?ProcurementChainDocumentLink
     {
@@ -749,8 +760,8 @@ final class ProcurementChainService
     }
 
     /**
-     * @param Collection<int, ProcurementChainDocumentLink> $documents
-     * @param Collection<int, ProcurementChainBlocker> $blockers
+     * @param  Collection<int, ProcurementChainDocumentLink>  $documents
+     * @param  Collection<int, ProcurementChainBlocker>  $blockers
      * @return Collection<int, ProcurementChainStage>
      */
     private function stages(
@@ -758,8 +769,7 @@ final class ProcurementChainService
         Collection $documents,
         Collection $blockers,
         bool $includeFulfillmentStages
-    ): Collection
-    {
+    ): Collection {
         $stageOrder = $this->stageOrder($documents, $includeFulfillmentStages);
         $currentIndex = array_search($currentKey, $stageOrder, true);
         $currentIndex = $currentIndex === false ? count($stageOrder) - 1 : $currentIndex;
@@ -789,14 +799,14 @@ final class ProcurementChainService
     }
 
     /**
-     * @param array<string, mixed> $graph
-     * @param Collection<int, ProcurementChainDocumentLink> $documents
+     * @param  array<string, mixed>  $graph
+     * @param  Collection<int, ProcurementChainDocumentLink>  $documents
      */
     private function usesFulfillmentStages(array $graph, string $currentKey, Collection $documents): bool
     {
         $siteRequest = $graph['site_request'] ?? null;
 
-        if (!$siteRequest instanceof SiteRequest || $siteRequest->request_type !== SiteRequestTypeEnum::MATERIAL_REQUEST) {
+        if (! $siteRequest instanceof SiteRequest || $siteRequest->request_type !== SiteRequestTypeEnum::MATERIAL_REQUEST) {
             return false;
         }
 
@@ -806,7 +816,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param Collection<int, ProcurementChainDocumentLink> $documents
+     * @param  Collection<int, ProcurementChainDocumentLink>  $documents
      * @return array<int, string>
      */
     private function stageOrder(Collection $documents, bool $includeFulfillmentStages): array
@@ -820,11 +830,11 @@ final class ProcurementChainService
         return array_values(array_filter(
             self::STAGE_ORDER,
             static function (string $stage) use ($includeFulfillmentStages, $fulfillmentStages, $warehouseStages, $hasWarehouseDelivery): bool {
-                if (!$includeFulfillmentStages && in_array($stage, $fulfillmentStages, true)) {
+                if (! $includeFulfillmentStages && in_array($stage, $fulfillmentStages, true)) {
                     return false;
                 }
 
-                if ($includeFulfillmentStages && !$hasWarehouseDelivery && in_array($stage, $warehouseStages, true)) {
+                if ($includeFulfillmentStages && ! $hasWarehouseDelivery && in_array($stage, $warehouseStages, true)) {
                     return false;
                 }
 
@@ -839,8 +849,8 @@ final class ProcurementChainService
         ?ProcurementChainDocumentLink $document = null,
         ?ProcurementChainBlocker $blocker = null
     ): ProcurementChainStage {
-        $translationKey = $key === 'fulfillment_source_required' && $status === 'done'
-            ? 'fulfillment_source_selected'
+        $translationKey = $status === 'done'
+            ? self::DONE_STAGE_TRANSLATION_KEYS[$key] ?? $key
             : $key;
 
         return new ProcurementChainStage(
@@ -855,7 +865,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param array<string, mixed> $graph
+     * @param  array<string, mixed>  $graph
      */
     private function organizationId(array $graph): int
     {
@@ -889,7 +899,7 @@ final class ProcurementChainService
     }
 
     /**
-     * @param array<string, mixed>|null $snapshot
+     * @param  array<string, mixed>|null  $snapshot
      */
     private function supplierName(?array $snapshot): ?string
     {
