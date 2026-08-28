@@ -11,13 +11,13 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowDecision;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Models\User;
+use App\Notifications\LegalArchive\LegalDocumentApprovalRequiredNotification;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
 use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\LegalArchive\LegalDocumentNotificationPublisher;
-use App\Notifications\LegalArchive\LegalDocumentApprovalRequiredNotification;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowOverride;
 use Carbon\CarbonImmutable;
@@ -150,12 +150,7 @@ final class LegalDocumentWorkflowService
                     ->where('document_id', (int) $lockedDocument->id)
                     ->latest('id')
                     ->first();
-                if (
-                    $latest instanceof LegalWorkflowInstance
-                    && in_array($latest->status, ['returned', 'rejected'], true)
-                    && (int) $latest->document_version_id === $versionId
-                    && hash_equals((string) $latest->document_content_hash, (string) $version->content_hash)
-                ) {
+                if (LegalWorkflowResubmissionPolicy::requiresNewVersion($latest, $version)) {
                     throw new DomainException('legal_workflow_new_version_required');
                 }
                 if ($this->instances()
@@ -241,6 +236,7 @@ final class LegalDocumentWorkflowService
                     ($this->notifications ?? new LegalDocumentNotificationPublisher)->publish($document, $recipient, 'workflow-step:'.$step->id.':'.$recipient->id, new LegalDocumentApprovalRequiredNotification($document));
                 }
             }
+
             return $instance;
         } catch (QueryException $exception) {
             $existing = $this->instances()
@@ -491,6 +487,7 @@ final class LegalDocumentWorkflowService
                 }
             }
         }
+
         return $updated;
     }
 
