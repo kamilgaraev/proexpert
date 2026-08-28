@@ -107,6 +107,26 @@ final class PaymentBudgetLimitService
         return $this->presentResult($calculation, $user);
     }
 
+    public function checkPaymentRegistration(
+        PaymentDocument $document,
+        string|int|float $amount,
+        Carbon $operationDate,
+        ?User $user = null,
+    ): array {
+        $calculation = $this->calculate(
+            $document,
+            self::OPERATION_PAYMENT_REGISTER,
+            $amount,
+            $operationDate
+        );
+
+        if (! $calculation['controlled']) {
+            return $this->neutralPayload((string) $calculation['message']);
+        }
+
+        return $this->presentResult($calculation, $user);
+    }
+
     public function assertAllowed(
         PaymentDocument $document,
         string $operationType,

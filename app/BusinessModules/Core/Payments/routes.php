@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Core\Payments\Http\Controllers\CounterpartyAccountController;
 use App\BusinessModules\Core\Payments\Http\Controllers\BankStatementImportController;
 use App\BusinessModules\Core\Payments\Http\Controllers\CfoDashboardController;
+use App\BusinessModules\Core\Payments\Http\Controllers\CounterpartyAccountController;
 use App\BusinessModules\Core\Payments\Http\Controllers\DashboardController;
 use App\BusinessModules\Core\Payments\Http\Controllers\ExportController;
 use App\BusinessModules\Core\Payments\Http\Controllers\OffsetController;
@@ -176,6 +176,9 @@ Route::prefix('api/v1/admin/payments')
             Route::post('/{id}/register-payment', [PaymentDocumentController::class, 'registerPayment'])
                 ->middleware('authorize:payments.transaction.register')
                 ->name('register_payment');
+            Route::post('/{id}/payment-budget-preview', [PaymentDocumentController::class, 'previewPaymentBudget'])
+                ->middleware('authorize:payments.transaction.register')
+                ->name('payment_budget_preview');
             Route::post('/{id}/cancel', [PaymentDocumentController::class, 'cancel'])
                 ->middleware('authorize:payments.invoice.cancel')
                 ->name('cancel');
