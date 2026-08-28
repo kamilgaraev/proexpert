@@ -37,6 +37,7 @@ return [
         ],
         'stages' => [
             'fulfillment_source_required' => 'Источник обеспечения не выбран',
+            'fulfillment_source_selected' => 'Источник обеспечения выбран',
             'warehouse_reserved' => 'Материал зарезервирован на складе',
             'warehouse_in_transit' => 'Материал передается на объект',
             'project_material_accepted' => 'Материал принят на объекте',
@@ -67,6 +68,7 @@ return [
         ],
         'stage_descriptions' => [
             'fulfillment_source_required' => 'Снабженцу нужно выбрать: выдать материал со склада, создать закупку или закрыть потребность смешанно.',
+            'fulfillment_source_selected' => 'Источник обеспечения определён, потребность передана в выбранный контур.',
             'warehouse_reserved' => 'Материал зарезервирован на складе и ожидает передачи на объект.',
             'warehouse_in_transit' => 'Материал находится в складской передаче и ожидает приемки на объекте.',
             'project_material_accepted' => 'Потребность закрыта складской выдачей.',
