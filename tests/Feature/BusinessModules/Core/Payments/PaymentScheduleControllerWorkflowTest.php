@@ -18,8 +18,8 @@ use Tests\TestCase;
 
 class PaymentScheduleControllerWorkflowTest extends TestCase
 {
-    use RefreshDatabase;
     use EnablesImmutableAuditWriter;
+    use RefreshDatabase;
 
     public function test_payment_schedule_templates_are_business_readable(): void
     {
@@ -100,6 +100,9 @@ class PaymentScheduleControllerWorkflowTest extends TestCase
         $documentScheduleResponse->assertOk();
         $documentScheduleResponse->assertJsonPath('data.summary.total', 2);
         $documentScheduleResponse->assertJsonPath('data.summary.total_amount', 1500);
+        $documentScheduleResponse->assertJsonPath('data.items.0.paid_amount', 0);
+        $documentScheduleResponse->assertJsonPath('data.items.0.paid_at', null);
+        $documentScheduleResponse->assertJsonPath('data.items.0.payment_transaction_id', null);
 
         $overdueResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/payments/schedules/overdue');
@@ -135,7 +138,7 @@ class PaymentScheduleControllerWorkflowTest extends TestCase
             'organization_id' => $context->organization->id,
             'payer_organization_id' => $context->organization->id,
             'document_type' => PaymentDocumentType::INVOICE,
-            'document_number' => 'INV-' . uniqid(),
+            'document_number' => 'INV-'.uniqid(),
             'document_date' => now()->toDateString(),
             'direction' => InvoiceDirection::OUTGOING,
             'amount' => $amount,

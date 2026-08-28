@@ -309,6 +309,8 @@ class TransactionController extends Controller
             'status' => $transaction->status instanceof PaymentTransactionStatus ? $transaction->status->value : $transaction->status,
             'payment_method' => is_object($transaction->payment_method) ? $transaction->payment_method->value : $transaction->payment_method,
             'transaction_date' => $transaction->transaction_date?->toDateString(),
+            'reference_number' => $transaction->reference_number,
+            'bank_transaction_id' => $transaction->bank_transaction_id,
             'notes' => $transaction->notes,
             'metadata' => $transaction->metadata,
             'created_at' => $transaction->created_at?->toDateTimeString(),

@@ -2,7 +2,6 @@
 
 namespace App\BusinessModules\Core\Payments\Services;
 
-use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use Carbon\Carbon;
@@ -19,17 +18,19 @@ class OffsetService
     public function __construct(
         private readonly CounterpartyAccountService $accountService,
         private readonly PaymentDocumentStateMachine $stateMachine,
-        private readonly PaymentAuditService $auditService
+        private readonly PaymentAuditService $auditService,
+        private readonly PaymentScheduleLedgerReconciliationService $scheduleReconciliation,
     ) {}
 
     /**
      * Выполнить взаимозачет между двумя документами с защитой от гонок
-     * 
-     * @param int $receivableId ID дебиторского документа (нам должны)
-     * @param int $payableId ID кредиторского документа (мы должны)
-     * @param float $amount Сумма зачета
-     * @param string $notes Примечание
+     *
+     * @param  int  $receivableId  ID дебиторского документа (нам должны)
+     * @param  int  $payableId  ID кредиторского документа (мы должны)
+     * @param  float  $amount  Сумма зачета
+     * @param  string  $notes  Примечание
      * @return array Результат операции
+     *
      * @throws \Exception
      */
     public function performOffset(
@@ -50,7 +51,7 @@ class OffsetService
             $firstDoc = PaymentDocument::where('id', $firstId)->lockForUpdate()->first();
             $secondDoc = PaymentDocument::where('id', $secondId)->lockForUpdate()->first();
 
-            if (!$firstDoc || !$secondDoc) {
+            if (! $firstDoc || ! $secondDoc) {
                 throw new \InvalidArgumentException(trans_message('payments.validation.offset_documents_not_found'));
             }
 
@@ -67,6 +68,8 @@ class OffsetService
 
                 // 4. Обновляем документы (State Machine должна корректно обработать частичную оплату)
                 $this->updateDocuments($receivable, $payable, $amount);
+                $this->scheduleReconciliation->reconcile($receivable->fresh(), $transactions[0]);
+                $this->scheduleReconciliation->reconcile($payable->fresh(), $transactions[1]);
 
                 // 5. Обновляем счета контрагентов
                 $this->accountService->updateBalanceFromDocument($receivable->fresh());
@@ -104,7 +107,7 @@ class OffsetService
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
                 ]);
-                
+
                 throw $e;
             }
         });
@@ -121,14 +124,14 @@ class OffsetService
         // 1. Читаем кандидатов
         // 2. В цикле вызываем performOffset, который берет свои маленькие транзакции с блокировками.
         // Это чуть медленнее, но безопаснее и меньше шансов на Deadlock большого диапазона.
-        
+
         // ОДНАКО, для атомарности всей операции авто-зачета лучше обернуть всё.
         // Но блокировать таблицу целиком нельзя.
         // Пойдем по пути итеративного зачета: каждый зачет - отдельная атомарная операция.
-        
+
         $offsets = [];
         $processedCount = 0;
-        
+
         // Получаем кандидатов (snapshot reading)
         $receivables = PaymentDocument::where('organization_id', $organizationId)
             ->where('payer_contractor_id', $contractorId)
@@ -154,18 +157,22 @@ class OffsetService
 
         foreach ($receivables as $receivable) {
             // Перепроверяем актуальность остатка перед поиском пары (оптимизация)
-            if ($receivable->remaining_amount <= 0.001) continue;
+            if ($receivable->remaining_amount <= 0.001) {
+                continue;
+            }
 
             foreach ($payables as $payable) {
-                if ($payable->remaining_amount <= 0.001) continue;
+                if ($payable->remaining_amount <= 0.001) {
+                    continue;
+                }
 
                 // Важно: мы передаем ID, чтобы performOffset сам заблокировал и проверил актуальные данные
                 // Внутри performOffset будет повторная проверка remaining_amount
-                
+
                 // Вычисляем потенциальную сумму (по snapshot данным)
                 // Реальная сумма может быть меньше, если кто-то успел изменить документ
                 $offsetAmount = min($receivable->remaining_amount, $payable->remaining_amount);
-                
+
                 if ($offsetAmount > 0.001) {
                     try {
                         $result = $this->performOffset(
@@ -177,19 +184,19 @@ class OffsetService
 
                         $offsets[] = $result;
                         $processedCount++;
-                        
+
                         // Обновляем локальные модели для следующей итерации цикла
                         // (хотя performOffset работает по ID, нам нужны актуальные данные для условий цикла)
                         $receivable->refresh();
                         $payable->refresh();
-                        
+
                     } catch (\Exception $e) {
                         // Если один зачет не прошел (например, документ заблокирован или изменился),
                         // логируем и идем дальше
                         Log::warning('auto_offset.item_failed', [
                             'receivable_id' => $receivable->id,
                             'payable_id' => $payable->id,
-                            'error' => $e->getMessage()
+                            'error' => $e->getMessage(),
                         ]);
                     }
                 }
@@ -200,7 +207,7 @@ class OffsetService
             'success' => true,
             'message' => "Автоматический взаимозачет завершен. Выполнено операций: {$processedCount}",
             'offsets_count' => count($offsets),
-            'total_amount' => collect($offsets)->sum(fn($o) => $o['transactions'][0]->amount ?? 0),
+            'total_amount' => collect($offsets)->sum(fn ($o) => $o['transactions'][0]->amount ?? 0),
             'offsets' => $offsets,
         ];
     }
@@ -221,21 +228,21 @@ class OffsetService
         // Проверка контрагента
         $receivableContractor = $receivable->payer_contractor_id;
         $payableContractor = $payable->payee_contractor_id;
-        
+
         if ($receivableContractor !== $payableContractor) {
             throw new \InvalidArgumentException(trans_message('payments.validation.offset_contractor_mismatch'));
         }
 
         // Проверка статусов
         $allowedStatuses = ['approved', 'scheduled', 'partially_paid'];
-        if (!in_array($receivable->status->value, $allowedStatuses)) {
+        if (! in_array($receivable->status->value, $allowedStatuses)) {
             throw new \DomainException(sprintf(
                 trans_message('payments.validation.offset_receivable_status_invalid'),
                 $receivable->status->label()
             ));
         }
 
-        if (!in_array($payable->status->value, $allowedStatuses)) {
+        if (! in_array($payable->status->value, $allowedStatuses)) {
             throw new \DomainException(sprintf(
                 trans_message('payments.validation.offset_payable_status_invalid'),
                 $payable->status->label()
@@ -333,7 +340,7 @@ class OffsetService
     ): void {
         // Обновляем дебиторский документ
         $this->stateMachine->registerPartialPayment($receivable, $amount);
-        
+
         // Обновляем кредиторский документ
         $this->stateMachine->registerPartialPayment($payable, $amount);
     }
@@ -343,7 +350,7 @@ class OffsetService
      */
     private function generateOffsetReferenceNumber(): string
     {
-        return 'OFFSET-' . date('Ymd') . '-' . strtoupper(substr(md5(uniqid()), 0, 8));
+        return 'OFFSET-'.date('Ymd').'-'.strtoupper(substr(md5(uniqid()), 0, 8));
     }
 
     /**

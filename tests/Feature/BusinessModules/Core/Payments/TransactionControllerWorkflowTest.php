@@ -163,7 +163,15 @@ class TransactionControllerWorkflowTest extends TestCase
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activatePaymentsModule($context->organization->id);
         $document = $this->createDocument($context);
-        $matchingTransaction = $this->createTransaction($document, PaymentTransactionStatus::COMPLETED, 700);
+        $matchingTransaction = $this->createTransaction(
+            $document,
+            PaymentTransactionStatus::COMPLETED,
+            700,
+            [
+                'reference_number' => 'QA-ПП-20260902-01',
+                'bank_transaction_id' => 'BANK-TRANSACTION-001',
+            ]
+        );
         $this->createTransaction($this->createDocument($context), PaymentTransactionStatus::COMPLETED, 300);
 
         $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
@@ -177,6 +185,8 @@ class TransactionControllerWorkflowTest extends TestCase
         $response->assertJsonPath('data.0.id', $matchingTransaction->id);
         $response->assertJsonPath('data.0.payment_document_id', $document->id);
         $response->assertJsonPath('data.0.amount', 700);
+        $response->assertJsonPath('data.0.reference_number', 'QA-ПП-20260902-01');
+        $response->assertJsonPath('data.0.bank_transaction_id', 'BANK-TRANSACTION-001');
         $response->assertJsonCount(1, 'data');
         $response->assertJsonPath('meta.total', 1);
         $response->assertJsonPath('meta.per_page', 25);
@@ -201,9 +211,10 @@ class TransactionControllerWorkflowTest extends TestCase
     private function createTransaction(
         PaymentDocument $document,
         PaymentTransactionStatus $status,
-        float $amount = 250
+        float $amount = 250,
+        array $overrides = [],
     ): PaymentTransaction {
-        return PaymentTransaction::query()->create([
+        return PaymentTransaction::query()->create(array_merge([
             'payment_document_id' => $document->id,
             'organization_id' => $document->organization_id,
             'project_id' => $document->project_id,
@@ -212,7 +223,7 @@ class TransactionControllerWorkflowTest extends TestCase
             'payment_method' => PaymentMethod::BANK_TRANSFER,
             'transaction_date' => now()->toDateString(),
             'status' => $status,
-        ]);
+        ], $overrides));
     }
 
     private function activatePaymentsModule(int $organizationId): void

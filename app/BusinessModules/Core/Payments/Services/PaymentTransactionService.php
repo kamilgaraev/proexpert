@@ -21,6 +21,7 @@ class PaymentTransactionService
         private readonly PaymentDocumentService $paymentDocumentService,
         private readonly PaymentBudgetLimitService $budgetLimitService,
         private readonly PurchaseOrderContractRequirementService $contractRequirement,
+        private readonly PaymentScheduleLedgerReconciliationService $scheduleReconciliation,
     ) {}
 
     /**
@@ -70,7 +71,9 @@ class PaymentTransactionService
 
             // Обновить документ
             $this->updateDocumentFromTransaction($document, $transaction);
-            $this->budgetLimitService->convertAfterPayment($document->fresh(), $transaction);
+            $freshDocument = $document->fresh();
+            $this->scheduleReconciliation->reconcile($freshDocument, $transaction);
+            $this->budgetLimitService->convertAfterPayment($freshDocument, $transaction);
 
             \Log::info('payments.transaction.registered', [
                 'transaction_id' => $transaction->id,
@@ -245,7 +248,9 @@ class PaymentTransactionService
                 'paid_at' => null,
             ])->save();
 
-            $this->budgetLimitService->reconcileAfterLedgerChange($document->fresh(), $refund);
+            $freshDocument = $document->fresh();
+            $this->scheduleReconciliation->reconcile($freshDocument, $refund);
+            $this->budgetLimitService->reconcileAfterLedgerChange($freshDocument, $refund);
             $this->paymentDocumentService->synchronizeFinancialProjections($document);
 
             DB::afterCommit(static function () use ($transaction, $refund, $refundAmount): void {
