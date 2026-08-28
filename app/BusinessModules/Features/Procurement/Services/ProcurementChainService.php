@@ -612,7 +612,7 @@ final class ProcurementChainService
             type: 'site_request',
             id: $siteRequest->id,
             label: trans_message('procurement.chain.documents.site_request'),
-            number: (string) $siteRequest->id,
+            number: $siteRequest->title,
             status: $siteRequest->status->value,
             statusLabel: $siteRequest->status->label(),
             href: '/site-requests/'.$siteRequest->id,
