@@ -24,8 +24,7 @@ class AdvancedWarehouseController extends Controller
 {
     public function __construct(
         protected WarehouseService $warehouseService
-    ) {
-    }
+    ) {}
 
     public function turnoverAnalytics(TurnoverAnalyticsRequest $request): JsonResponse
     {
@@ -110,7 +109,7 @@ class AdvancedWarehouseController extends Controller
             $reservation = AssetReservation::query()
                 ->where('organization_id', $organizationId)
                 ->where('id', (int) ($result['reservation_id'] ?? 0))
-                ->with(['material', 'warehouse', 'project', 'reservedBy'])
+                ->with(['material.measurementUnit', 'warehouse', 'project', 'reservedBy'])
                 ->first();
 
             return AdminResponse::success(
@@ -167,7 +166,7 @@ class AdvancedWarehouseController extends Controller
 
             $reservationsQuery = AssetReservation::query()
                 ->where('organization_id', $organizationId)
-                ->with(['material', 'warehouse', 'project', 'reservedBy'])
+                ->with(['material.measurementUnit', 'warehouse', 'project', 'reservedBy'])
                 ->when($request->filled('warehouse_id'), fn (Builder $query) => $query->where('warehouse_id', (int) $request->input('warehouse_id')));
 
             $this->applyReservationStatusFilter($reservationsQuery, $request->input('status'));
@@ -424,7 +423,10 @@ class AdvancedWarehouseController extends Controller
             'material' => $reservation->material ? [
                 'id' => $reservation->material->id,
                 'name' => $reservation->material->name,
-                'unit' => $reservation->material->unit?->name ?? $reservation->material->measurement_unit ?? 'шт',
+                'unit' => $reservation->material->measurementUnit?->short_name
+                    ?? $reservation->material->measurementUnit?->name
+                    ?? $reservation->material->measurement_unit
+                    ?? 'шт',
             ] : null,
             'warehouse' => $reservation->warehouse ? [
                 'id' => $reservation->warehouse->id,
@@ -441,7 +443,9 @@ class AdvancedWarehouseController extends Controller
                         $reservation->reservedBy->first_name ?? null,
                         $reservation->reservedBy->last_name ?? null,
                     ]))
-                ) ?: ($reservation->reservedBy->name ?? $reservation->reservedBy->email ?? ('#' . $reservation->reserved_by)),
+                ) ?: ($reservation->reservedBy->name
+                    ?? $reservation->reservedBy->email
+                    ?? trans_message('basic_warehouse.reservation.employee_not_specified')),
             ] : null,
         ];
     }
