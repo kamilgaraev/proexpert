@@ -839,11 +839,15 @@ final class ProcurementChainService
         ?ProcurementChainDocumentLink $document = null,
         ?ProcurementChainBlocker $blocker = null
     ): ProcurementChainStage {
+        $translationKey = $key === 'fulfillment_source_required' && $status === 'done'
+            ? 'fulfillment_source_selected'
+            : $key;
+
         return new ProcurementChainStage(
             key: $key,
-            label: trans_message("procurement.chain.stages.{$key}"),
+            label: trans_message("procurement.chain.stages.{$translationKey}"),
             status: $status,
-            description: trans_message("procurement.chain.stage_descriptions.{$key}"),
+            description: trans_message("procurement.chain.stage_descriptions.{$translationKey}"),
             document: $document,
             blocker: $blocker,
             severity: $blocker instanceof ProcurementChainBlocker ? 'warning' : 'neutral',
