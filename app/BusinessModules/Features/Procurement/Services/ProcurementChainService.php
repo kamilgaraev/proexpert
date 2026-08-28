@@ -689,7 +689,7 @@ final class ProcurementChainService
             number: $document->document_number,
             status: $document->status->value,
             statusLabel: $document->status->label(),
-            href: '/payments/documents/'.$document->id,
+            href: '/payments?tab=documents&document_id='.$document->id,
             amount: (float) $document->amount,
             currency: $document->currency,
         );

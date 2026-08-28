@@ -181,6 +181,10 @@ final class ProcurementChainServiceTest extends TestCase
             "/api/v1/admin/payments/documents/{$paymentDocument->id}/submit",
             $summary->nextAction?->href
         );
+        $this->assertSame(
+            "/payments?tab=documents&document_id={$paymentDocument->id}",
+            $summary->linkedDocuments->firstWhere('type', 'payment_document')?->href
+        );
         $this->assertSame('payment_document_not_submitted', $summary->blockers->first()?->key);
     }
 
