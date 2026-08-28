@@ -6,7 +6,6 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
-use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
@@ -19,6 +18,7 @@ use App\Models\Project;
 use App\Models\Supplier;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Schema;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -158,13 +158,14 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $createResponse->assertCreated();
         $createResponse->assertJsonPath('success', true);
         $createResponse->assertJsonPath('data.status', InventoryAct::STATUS_DRAFT);
-        $createResponse->assertJsonCount(1, 'data.items');
-        $createResponse->assertJsonPath('data.items.0.expected_quantity', 10);
-        $createResponse->assertJsonPath('data.items.0.location_code', null);
-        $createResponse->assertJsonPath('data.items.0.batch_number', 'B-1');
+        $createResponse->assertJsonCount(2, 'data.items');
 
         $actId = (int) $createResponse->json('data.id');
-        $itemId = (int) $createResponse->json('data.items.0.id');
+        $items = collect($createResponse->json('data.items'))->keyBy('location_code');
+        $this->assertSame(4, $items->get('A1')['expected_quantity']);
+        $this->assertSame(6, $items->get('A2')['expected_quantity']);
+        $this->assertSame('B-1', $items->get('A1')['batch_number']);
+        $this->assertSame('B-1', $items->get('A2')['batch_number']);
 
         $completeBeforeCountingResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/complete");
@@ -177,20 +178,29 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
             ->assertJsonPath('data.status', InventoryAct::STATUS_IN_PROGRESS);
 
         $this->withHeaders($context->authHeaders())
-            ->putJson("/api/v1/admin/warehouses/inventory/{$actId}/items/{$itemId}", [
-                'actual_quantity' => 8,
-                'notes' => 'Shortage found',
+            ->putJson("/api/v1/admin/warehouses/inventory/{$actId}/items/{$items->get('A1')['id']}", [
+                'actual_quantity' => 3,
+                'notes' => 'Shortage found in A1',
             ])
             ->assertOk()
-            ->assertJsonPath('data.difference_quantity', -2)
-            ->assertJsonPath('data.difference_value', -200);
+            ->assertJsonPath('data.difference_quantity', -1)
+            ->assertJsonPath('data.difference_value', -100);
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/inventory/{$actId}/items/{$items->get('A2')['id']}", [
+                'actual_quantity' => 5,
+                'notes' => 'Shortage found in A2',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.difference_quantity', -1)
+            ->assertJsonPath('data.difference_value', -100);
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/complete")
             ->assertOk()
             ->assertJsonPath('data.status', InventoryAct::STATUS_COMPLETED)
-            ->assertJsonPath('data.summary.total_items', 1)
-            ->assertJsonPath('data.summary.items_with_discrepancy', 1);
+            ->assertJsonPath('data.summary.total_items', 2)
+            ->assertJsonPath('data.summary.items_with_discrepancy', 2);
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/approve")
@@ -219,6 +229,387 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $this->assertDatabaseMissing('inventory_acts', [
             'organization_id' => $context->organization->id,
         ]);
+    }
+
+    public function test_inventory_counts_reserved_stock_as_physical_and_preserves_reservations_on_approval(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Reserved inventory warehouse', 'INV-RES');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Reserved paint', 'PNT-RES');
+        $balance = $this->createBalance($context->organization->id, $warehouse->id, $material->id, 95, 18);
+        $balance->update(['reserved_quantity' => 6]);
+        $this->allowAdminAccess();
+
+        $createResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated()
+            ->assertJsonCount(1, 'data.items')
+            ->assertJsonPath('data.act_number', 'INV-20260829-0001')
+            ->assertJsonPath('data.items.0.expected_quantity', 101);
+
+        $actId = (int) $createResponse->json('data.id');
+        $itemId = (int) $createResponse->json('data.items.0.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/start")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/inventory/{$actId}/items/{$itemId}", [
+                'actual_quantity' => 100,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.difference_quantity', -1);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/complete")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/approve")
+            ->assertOk()
+            ->assertJsonPath('data.status', InventoryAct::STATUS_APPROVED);
+
+        $balance->refresh();
+        $this->assertSame(94.0, (float) $balance->available_quantity);
+        $this->assertSame(6.0, (float) $balance->reserved_quantity);
+        $this->assertSame(100.0, $balance->total_quantity);
+    }
+
+    public function test_inventory_rejects_approval_when_physical_count_is_below_active_reservations(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Fully reserved warehouse', 'INV-FULL-RES');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Reserved cement', 'CEM-FULL-RES');
+        $balance = $this->createBalance($context->organization->id, $warehouse->id, $material->id, 0, 20);
+        $balance->update(['reserved_quantity' => 6]);
+        $this->allowAdminAccess();
+
+        $createResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated()
+            ->assertJsonCount(1, 'data.items')
+            ->assertJsonPath('data.items.0.expected_quantity', 6);
+
+        $actId = (int) $createResponse->json('data.id');
+        $itemId = (int) $createResponse->json('data.items.0.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/start")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/inventory/{$actId}/items/{$itemId}", [
+                'actual_quantity' => 5.999,
+            ])
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/complete")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/approve")
+            ->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath(
+                'message',
+                'Фактический остаток меньше уже зарезервированного количества. Сначала скорректируйте активные резервы.'
+            );
+
+        $this->assertSame(InventoryAct::STATUS_COMPLETED, InventoryAct::query()->findOrFail($actId)->status);
+        $balance->refresh();
+        $this->assertSame(0.0, (float) $balance->available_quantity);
+        $this->assertSame(6.0, (float) $balance->reserved_quantity);
+    }
+
+    public function test_inventory_numbers_are_scoped_to_organization(): void
+    {
+        $firstContext = AdminApiTestContext::create();
+        $secondContext = AdminApiTestContext::create();
+        $firstWarehouse = $this->createWarehouse($firstContext->organization->id, 'First inventory warehouse', 'INV-ORG-1');
+        $secondWarehouse = $this->createWarehouse($secondContext->organization->id, 'Second inventory warehouse', 'INV-ORG-2');
+        $this->allowAdminAccess();
+
+        $firstResponse = $this->withHeaders($firstContext->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $firstWarehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated();
+
+        $secondResponse = $this->withHeaders($secondContext->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $secondWarehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated();
+
+        $this->assertSame('INV-20260829-0001', $firstResponse->json('data.act_number'));
+        $this->assertSame('INV-20260829-0001', $secondResponse->json('data.act_number'));
+    }
+
+    public function test_inventory_number_does_not_collide_after_an_earlier_act_is_deleted(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Sequence inventory warehouse', 'INV-SEQ');
+        $this->allowAdminAccess();
+
+        $actIds = [];
+        foreach (['2026-08-27', '2026-08-28', '2026-08-29'] as $inventoryDate) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouses/inventory', [
+                    'warehouse_id' => $warehouse->id,
+                    'inventory_date' => $inventoryDate,
+                ])
+                ->assertCreated();
+
+            $actIds[] = (int) $response->json('data.id');
+        }
+
+        InventoryAct::query()->findOrFail($actIds[0])->delete();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-30',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.act_number', 'INV-20260830-0004');
+    }
+
+    public function test_inventory_reconciles_located_and_unlocated_balances_independently(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Address inventory warehouse', 'INV-ADDR');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Addressed paint', 'PNT-ADDR');
+        $locatedBalance = $this->createBalance(
+            $context->organization->id,
+            $warehouse->id,
+            $material->id,
+            5,
+            100,
+            'A1',
+            'B-ADDR'
+        );
+        $unlocatedBalance = $this->createBalance(
+            $context->organization->id,
+            $warehouse->id,
+            $material->id,
+            5,
+            100,
+            null,
+            'B-ADDR'
+        );
+        $this->allowAdminAccess();
+
+        $createResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated()
+            ->assertJsonCount(2, 'data.items');
+
+        $items = collect($createResponse->json('data.items'))->keyBy('location_code');
+        $locatedItemId = (int) $items->get('A1')['id'];
+        $unlocatedItemId = (int) $items->get(null)['id'];
+        $actId = (int) $createResponse->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/start")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/inventory/{$actId}/items/{$locatedItemId}", [
+                'actual_quantity' => 4,
+            ])
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/inventory/{$actId}/items/{$unlocatedItemId}", [
+                'actual_quantity' => 5,
+            ])
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/complete")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/approve")
+            ->assertOk();
+
+        $this->assertSame(4.0, (float) $locatedBalance->fresh()->available_quantity);
+        $this->assertSame(5.0, (float) $unlocatedBalance->fresh()->available_quantity);
+    }
+
+    public function test_inventory_supports_same_batch_at_multiple_prices(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Price inventory warehouse', 'INV-PRICE');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Priced paint', 'PNT-PRICE');
+        $this->createBalance($context->organization->id, $warehouse->id, $material->id, 3, 100, null, 'B-PRICE');
+        $this->createBalance($context->organization->id, $warehouse->id, $material->id, 4, 200, null, 'B-PRICE');
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated()
+            ->assertJsonCount(2, 'data.items');
+
+        $this->assertSame([100, 200], collect($response->json('data.items'))->pluck('unit_price')->sort()->values()->all());
+    }
+
+    public function test_inventory_grouping_distinguishes_literal_marker_values(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Marker inventory warehouse', 'INV-MARKER');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Marker paint', 'PNT-MARKER');
+        $this->createBalance($context->organization->id, $warehouse->id, $material->id, 3, 100);
+        $this->createBalance(
+            $context->organization->id,
+            $warehouse->id,
+            $material->id,
+            4,
+            100,
+            'no-location',
+            'no-batch'
+        );
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated()
+            ->assertJsonCount(2, 'data.items');
+
+        $items = collect($response->json('data.items'))->keyBy('expected_quantity');
+        $this->assertNull($items->get(3)['location_code']);
+        $this->assertNull($items->get(3)['batch_number']);
+        $this->assertSame('no-location', $items->get(4)['location_code']);
+        $this->assertSame('no-batch', $items->get(4)['batch_number']);
+    }
+
+    public function test_inventory_grouping_distinguishes_delimiters_inside_position_values(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Delimiter inventory warehouse', 'INV-DELIMITER');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Delimiter paint', 'PNT-DELIMITER');
+        $this->createBalance($context->organization->id, $warehouse->id, $material->id, 3, 100, 'A:B', 'C');
+        $this->createBalance($context->organization->id, $warehouse->id, $material->id, 4, 100, 'A', 'B:C');
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated()
+            ->assertJsonCount(2, 'data.items');
+
+        $this->assertSame(
+            [['A:B', 'C'], ['A', 'B:C']],
+            collect($response->json('data.items'))
+                ->map(static fn (array $item): array => [$item['location_code'], $item['batch_number']])
+                ->sortBy(static fn (array $position): string => implode('|', $position))
+                ->values()
+                ->all()
+        );
+    }
+
+    public function test_inventory_constraint_migration_refuses_destructive_rollback_after_new_identity_is_used(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Rollback inventory warehouse', 'INV-ROLLBACK');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Rollback paint', 'PNT-ROLLBACK');
+        $this->createBalance($context->organization->id, $warehouse->id, $material->id, 3, 100, 'A1', 'B-ROLLBACK');
+        $this->createBalance($context->organization->id, $warehouse->id, $material->id, 4, 100, 'A2', 'B-ROLLBACK');
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated()
+            ->assertJsonCount(2, 'data.items');
+
+        $migration = require base_path(
+            'app/BusinessModules/Features/BasicWarehouse/migrations/2026_08_29_000001_harden_inventory_identity_constraints.php'
+        );
+
+        try {
+            $migration->down();
+            self::fail('Inventory identity migration rollback must reject incompatible data.');
+        } catch (\LogicException) {
+        }
+
+        self::assertTrue(Schema::hasIndex('inventory_act_items', 'inventory_act_items_position_unique'));
+    }
+
+    public function test_inventory_matches_zero_like_batch_and_location_codes_exactly(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Zero code warehouse', 'INV-ZERO');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Zero code paint', 'PNT-ZERO');
+        $balance = $this->createBalance($context->organization->id, $warehouse->id, $material->id, 5, 100, '0', '0');
+        $this->allowAdminAccess();
+
+        $createResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-29',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.items.0.location_code', '0')
+            ->assertJsonPath('data.items.0.batch_number', '0');
+
+        $actId = (int) $createResponse->json('data.id');
+        $itemId = (int) $createResponse->json('data.items.0.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/start")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/inventory/{$actId}/items/{$itemId}", [
+                'actual_quantity' => 4,
+            ])
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/complete")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/inventory/{$actId}/approve")
+            ->assertOk();
+
+        $this->assertSame(4.0, (float) $balance->fresh()->available_quantity);
+        $this->assertSame(1, WarehouseBalance::query()
+            ->where('warehouse_id', $warehouse->id)
+            ->where('material_id', $material->id)
+            ->count());
     }
 
     public function test_advanced_reservation_rejects_foreign_warehouse_material_and_project_before_mutation(): void
@@ -291,7 +682,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $this->allowAdminAccess();
 
         $turnoverResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/advanced-warehouse/analytics/turnover?' . http_build_query([
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/turnover?'.http_build_query([
                 'warehouse_id' => $foreignWarehouse->id,
             ]));
 
@@ -299,7 +690,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $turnoverResponse->assertJsonValidationErrors('warehouse_id');
 
         $forecastResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/advanced-warehouse/analytics/forecast?' . http_build_query([
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/forecast?'.http_build_query([
                 'asset_ids' => [$foreignMaterial->id],
             ]));
 
@@ -307,7 +698,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $forecastResponse->assertJsonValidationErrors('asset_ids.0');
 
         $forecastWarehouseResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/advanced-warehouse/analytics/forecast?' . http_build_query([
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/forecast?'.http_build_query([
                 'warehouse_id' => $foreignWarehouse->id,
             ]));
 
@@ -315,7 +706,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $forecastWarehouseResponse->assertJsonValidationErrors('warehouse_id');
 
         $abcXyzResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/advanced-warehouse/analytics/abc-xyz?' . http_build_query([
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/abc-xyz?'.http_build_query([
                 'warehouse_id' => $foreignWarehouse->id,
             ]));
 
@@ -338,7 +729,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $this->allowAdminAccess();
 
         $forecastResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/advanced-warehouse/analytics/forecast?' . http_build_query([
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/forecast?'.http_build_query([
                 'warehouse_id' => $mainWarehouse->id,
                 'horizon_days' => 30,
             ]));
@@ -349,7 +740,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $this->assertSame(40.0, (float) $forecastResponse->json('data.forecasts.0.current_stock'));
 
         $abcXyzResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/advanced-warehouse/analytics/abc-xyz?' . http_build_query([
+            ->getJson('/api/v1/admin/advanced-warehouse/analytics/abc-xyz?'.http_build_query([
                 'warehouse_id' => $mainWarehouse->id,
             ]));
 
