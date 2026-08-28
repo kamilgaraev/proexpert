@@ -57,6 +57,7 @@ final class ProcurementChainControllerTest extends TestCase
         $response->assertJsonPath('data.next_action.key', 'determine_fulfillment_source');
         $response->assertJsonPath('data.blockers.0.key', 'fulfillment_source_not_selected');
         $response->assertJsonPath('data.linked_documents.0.type', 'site_request');
+        $response->assertJsonPath('data.linked_documents.0.number', 'Материалы на площадку');
         $response->assertJsonStructure([
             'data' => [
                 'root',
