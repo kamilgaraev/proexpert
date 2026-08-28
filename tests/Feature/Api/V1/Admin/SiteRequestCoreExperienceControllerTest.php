@@ -4,18 +4,18 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
-use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
-use App\Modules\Core\AccessController;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Models\Project;
 use App\Models\User;
+use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Mockery\MockInterface;
@@ -97,7 +97,7 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
             ->getJson('/api/v1/admin/site-requests?per_page=20&request_type=material_request');
 
         $indexResponse->assertOk();
-        $ids = collect($indexResponse->json('data'))->pluck('id')->all();
+        $ids = collect($indexResponse->json('data.data'))->pluck('id')->all();
         $this->assertContains($requests[0]->id, $ids);
         $this->assertContains($requests[1]->id, $ids);
         $this->assertNotContains($foreignRequest->id, $ids);
@@ -331,8 +331,16 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $submitResponse->assertOk();
         $submitResponse->assertJsonPath('success', true);
         $submitResponse->assertJsonPath('data.status', SiteRequestStatusEnum::PENDING->value);
+        $submitResponse->assertJsonPath('data.project.id', $project->id);
+        $submitResponse->assertJsonPath('data.project.name', $project->name);
         $submitResponse->assertJsonPath('data.requests.0.status', SiteRequestStatusEnum::PENDING->value);
+        $submitResponse->assertJsonPath('data.requests.0.project.id', $project->id);
+        $submitResponse->assertJsonPath('data.requests.0.project.name', $project->name);
+        $submitResponse->assertJsonPath('data.requests.0.user.id', $context->user->id);
         $submitResponse->assertJsonPath('data.requests.1.status', SiteRequestStatusEnum::PENDING->value);
+        $submitResponse->assertJsonPath('data.requests.1.project.id', $project->id);
+        $submitResponse->assertJsonPath('data.requests.1.project.name', $project->name);
+        $submitResponse->assertJsonPath('data.requests.1.user.id', $context->user->id);
 
         $this->assertDatabaseHas('site_request_groups', [
             'id' => $group->id,

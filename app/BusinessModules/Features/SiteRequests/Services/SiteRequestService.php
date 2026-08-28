@@ -79,6 +79,8 @@ class SiteRequestService
             ->where('organization_id', $organizationId)
             ->visibleToActor($actorId)
             ->with([
+                'project',
+                'user',
                 'requests' => static fn ($query) => $query->visibleToActor($actorId)->orderBy('id'),
                 'requests.project',
                 'requests.user',
@@ -459,7 +461,7 @@ class SiteRequestService
             throw new DomainException(trans_message('site_requests.group_empty'));
         }
 
-        return DB::transaction(function () use ($group, $userId) {
+        DB::transaction(function () use ($group, $userId): void {
             $group->update(['status' => SiteRequestStatusEnum::PENDING->value]);
 
             foreach ($group->requests as $request) {
@@ -469,9 +471,10 @@ class SiteRequestService
 
                 $this->changeStatus($request, $userId, SiteRequestStatusEnum::PENDING->value);
             }
-
-            return $group->fresh(['requests.estimateItem.measurementUnit']);
         });
+
+        return $this->findGroup($group->id, $group->organization_id, $userId)
+            ?? throw new \LogicException('Submitted site request group is unavailable.');
     }
 
     /**
