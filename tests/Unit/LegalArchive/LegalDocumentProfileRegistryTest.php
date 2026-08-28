@@ -102,6 +102,37 @@ final class LegalDocumentProfileRegistryTest extends TestCase
         self::assertSame(3, $profile->lockVersion);
     }
 
+    public function test_organization_can_configure_a_standard_profile_without_changing_document_code(): void
+    {
+        $registry = new LegalDocumentProfileRegistry(
+            static fn (int $organizationId, string $code): ?array => [
+                'organization_id' => $organizationId,
+                'code' => $code,
+                'base_code' => 'contract.supply',
+                'name' => 'Договор поставки с согласованием',
+                'schema' => [],
+                'required_fields' => [],
+                'required_file_roles' => [],
+                'requires_signature' => null,
+                'workflow_template_id' => 71,
+                'retention_policy' => null,
+                'confidentiality_level' => null,
+                'is_active' => true,
+                'lock_version' => 1,
+            ],
+            require dirname(__DIR__, 3).'/config/legal-document-profiles.php',
+        );
+
+        $profile = $registry->find(15, 'contract.supply');
+
+        self::assertSame('contract.supply', $profile->code);
+        self::assertSame('contract.supply', $profile->baseCode);
+        self::assertSame('Договор поставки с согласованием', $profile->label);
+        self::assertSame(71, $profile->workflowTemplateId);
+        self::assertTrue($profile->requiresSignature);
+        self::assertContains('delivery_terms', $profile->requiredFields);
+    }
+
     public function test_foreign_organization_profile_is_not_available(): void
     {
         $registry = new LegalDocumentProfileRegistry(

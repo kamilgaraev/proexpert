@@ -456,6 +456,29 @@ final class LegalArchiveApiContractTest extends TestCase
         ]);
     }
 
+    public function test_profile_creation_can_configure_a_standard_document_code_for_an_organization(): void
+    {
+        $registry = new LegalDocumentProfileRegistry;
+        $service = new LegalDocumentTypeProfileService(
+            DB::connection(),
+            $registry,
+            new LegalDocumentProfileValidator,
+        );
+
+        $profile = $service->create(7, [
+            'code' => 'contract.supply',
+            'base_code' => 'contract.supply',
+            'name' => 'Договор поставки с согласованием',
+        ]);
+
+        $resolved = $registry->find(7, 'contract.supply');
+
+        self::assertSame('contract.supply', $profile->code);
+        self::assertSame('Договор поставки с согласованием', $resolved->label);
+        self::assertTrue($resolved->requiresSignature);
+        self::assertContains('delivery_terms', $resolved->requiredFields);
+    }
+
     private function runCanonical(Request $request, User $actor): JsonResponse
     {
         $request->attributes->set('current_organization_id', 7);
