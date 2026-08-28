@@ -528,6 +528,56 @@ class PurchaseOrderController extends Controller
         }
     }
 
+    public function receiptDocumentPreview(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $order = PurchaseOrder::forOrganization($organizationId)
+                ->with([
+                    'items.receiptLines',
+                    'items.material',
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'acceptedSupplierProposal',
+                    'purchaseRequest',
+                    'organization',
+                ])
+                ->find($id);
+
+            if (! $order) {
+                return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
+            }
+
+            $validated = $this->validateReceiptPayload($request, $order, $organizationId);
+            $document = $this->service->buildReceiptDocumentPreview(
+                $order,
+                (int) $validated['warehouse_id'],
+                $validated['items'],
+                $validated['receipt_date'] ?? null,
+            );
+
+            return AdminResponse::success($document);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (PurchaseReceiptPaymentException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
+        } catch (\Throwable $exception) {
+            Log::error('procurement.purchase_orders.receipt_document_preview.error', [
+                'purchase_order_id' => $id,
+                'user_id' => $request->user()?->getAuthIdentifier(),
+                'exception_class' => $exception::class,
+            ]);
+
+            return AdminResponse::error(
+                trans_message('procurement.purchase_orders.receipt_document_pdf_error'),
+                500,
+            );
+        }
+    }
+
     public function receiptDocumentPdfFromReceipt(Request $request, int $id, int $receipt): JsonResponse|Response
     {
         try {
