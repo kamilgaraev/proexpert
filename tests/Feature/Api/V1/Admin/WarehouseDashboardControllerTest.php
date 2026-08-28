@@ -181,7 +181,7 @@ class WarehouseDashboardControllerTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('data.stats.total_positions', 5);
-        $response->assertJsonPath('data.stats.total_value', 100);
+        $response->assertJsonPath('data.stats.total_value', 125);
         $response->assertJsonPath('data.stats.unique_items', 1);
         $response->assertJsonPath('data.stats.low_stock_items', 1);
         $response->assertJsonPath('data.stats.active_tasks', 1);

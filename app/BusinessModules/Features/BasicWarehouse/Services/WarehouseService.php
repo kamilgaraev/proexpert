@@ -23,6 +23,7 @@ use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
 use chillerlan\QRCode\QRCode;
 use chillerlan\QRCode\QROptions;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -825,7 +826,10 @@ class WarehouseService implements WarehouseReportDataProvider
     public function getStockData(int $organizationId, array $filters = []): array
     {
         $query = WarehouseBalance::where('organization_id', $organizationId)
-            ->where('available_quantity', '>', 0)
+            ->where(function (Builder $query): void {
+                $query->where('available_quantity', '>', 0)
+                    ->orWhere('reserved_quantity', '>', 0);
+            })
             ->with(['material.measurementUnit', 'warehouse', 'cell.zone', 'material.photos']);
 
         // Применяем фильтры
@@ -920,8 +924,11 @@ class WarehouseService implements WarehouseReportDataProvider
         foreach ($grouped as $materialId => $batches) {
             $totalQty = $batches->sum('available_quantity');
             $totalReserved = $batches->sum('reserved_quantity');
-            $totalValue = $batches->sum(fn ($b) => $b->available_quantity * $b->unit_price);
-            $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
+            $totalPhysicalQuantity = $totalQty + $totalReserved;
+            $totalValue = $batches->sum(
+                fn ($batch) => ($batch->available_quantity + $batch->reserved_quantity) * $batch->unit_price
+            );
+            $avgPrice = $totalPhysicalQuantity > 0 ? $totalValue / $totalPhysicalQuantity : 0;
 
             $cellBatches = $batches->filter(
                 static fn (WarehouseBalance $batch): bool => $batch->cell_id !== null
@@ -980,7 +987,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'measurement_unit' => $first->material->measurementUnit->name ?? null,
                 'available_quantity' => (float) $totalQty,
                 'reserved_quantity' => (float) $totalReserved,
-                'total_quantity' => $totalQty + $totalReserved,
+                'total_quantity' => (float) $totalPhysicalQuantity,
                 'average_price' => (float) $avgPrice,
                 'total_value' => $totalValue, // Точная сумма цен всех партий
                 'min_stock_level' => (float) $first->min_stock_level,
