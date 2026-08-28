@@ -122,7 +122,7 @@ final readonly class ProcurementAwardCandidateEvidence
             $this->leadTimeDays,
             $coverage,
             $this->comparable,
-            implode(',', $this->exclusionCodes),
+            $this->exclusionCodes === [] ? null : implode(',', $this->exclusionCodes),
         ]);
     }
 }
