@@ -190,9 +190,9 @@ final class ProcurementChainControllerTest extends TestCase
         $stages = collect($response->json('data.procurement_chain.stages'))->keyBy('key');
         $expectedLabels = [
             'payment_document_missing' => 'Платежный документ создан',
-            'payment_document_draft' => 'Счет передан на согласование',
-            'payment_approval_required' => 'Счет согласован',
-            'payment_partially_registered' => 'Оплата зарегистрирована',
+            'payment_document_draft' => 'Счет подготовлен',
+            'payment_approval_required' => 'Счет передан на согласование',
+            'payment_partially_registered' => 'Оплата начата',
             'partially_delivered' => 'Поставка принята полностью',
         ];
 

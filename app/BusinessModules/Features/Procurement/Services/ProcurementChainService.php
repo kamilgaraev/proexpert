@@ -68,9 +68,9 @@ final class ProcurementChainService
     private const DONE_STAGE_TRANSLATION_KEYS = [
         'fulfillment_source_required' => 'fulfillment_source_selected',
         'payment_document_missing' => 'payment_document_created',
-        'payment_document_draft' => 'payment_document_submitted',
-        'payment_approval_required' => 'payment_approved',
-        'payment_partially_registered' => 'payment_registered',
+        'payment_document_draft' => 'payment_document_prepared',
+        'payment_approval_required' => 'payment_document_submitted',
+        'payment_partially_registered' => 'payment_started',
         'partially_delivered' => 'delivery_completed',
     ];
 
