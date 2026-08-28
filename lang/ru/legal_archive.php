@@ -222,6 +222,7 @@ return [
         'contract' => 'Договор',
         'payment' => 'Платеж',
         'procurement' => 'Закупка',
+        'purchase_order' => 'Заказ поставщику',
         'act' => 'Акт',
         'commercial_proposal' => 'Коммерческое предложение',
         'mdm' => 'Справочник',

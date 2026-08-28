@@ -91,9 +91,9 @@ final class LegalArchiveDocumentResourceTest extends TestCase
         $link = new LegalArchiveDocumentLink([
             'document_id' => 42,
             'organization_id' => 15,
-            'link_type' => 'project',
+            'link_type' => 'purchase_order',
             'linked_id' => '100',
-            'display_name' => 'ЖК Север',
+            'display_name' => 'ЗП-202608-0001',
         ]);
         $link->id = 3;
 
@@ -113,7 +113,7 @@ final class LegalArchiveDocumentResourceTest extends TestCase
         $this->assertFalse($payload['editor']['enabled']);
         $this->assertSame('1.0', $payload['current_version']['version_number']);
         $this->assertSame('На проверке безопасности', $payload['current_version']['processing_status_label']);
-        $this->assertSame('Проект', $payload['links'][0]['link_type_label']);
+        $this->assertSame('Заказ поставщику', $payload['links'][0]['link_type_label']);
         $this->assertArrayNotHasKey('file_path', $payload['current_version']);
     }
 

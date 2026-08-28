@@ -52,6 +52,8 @@ final class LegalArchiveDictionaryTest extends TestCase
         $this->assertSame('Договор', LegalArchiveDictionary::label('types', 'contract'));
         $this->assertSame('Действует', LegalArchiveDictionary::label('statuses', 'active'));
         $this->assertSame('Проект', LegalArchiveDictionary::label('link_types', 'project'));
+        $this->assertSame('Заказ поставщику', LegalArchiveDictionary::label('link_types', 'purchase_order'));
+        $this->assertSame('Другая связь', LegalArchiveDictionary::label('link_types', 'legacy_internal_link'));
         $this->assertSame('Правовой статус не подтвержден', LegalArchiveDictionary::label('legal_significance_statuses', 'not_confirmed'));
     }
 
@@ -62,6 +64,7 @@ final class LegalArchiveDictionaryTest extends TestCase
             'contract',
             'payment',
             'procurement',
+            'purchase_order',
             'act',
             'commercial_proposal',
             'mdm',

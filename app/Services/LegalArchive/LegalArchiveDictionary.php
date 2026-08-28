@@ -46,6 +46,7 @@ final class LegalArchiveDictionary
         'contract',
         'payment',
         'procurement',
+        'purchase_order',
         'act',
         'commercial_proposal',
         'mdm',
@@ -91,6 +92,10 @@ final class LegalArchiveDictionary
     {
         if ($value === null || $value === '') {
             return null;
+        }
+
+        if ($group === 'link_types' && ! in_array($value, self::LINK_TYPES, true)) {
+            return trans_message('legal_archive.link_types.other');
         }
 
         $key = "legal_archive.{$group}.{$value}";
