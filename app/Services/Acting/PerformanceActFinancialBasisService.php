@@ -104,16 +104,16 @@ final class PerformanceActFinancialBasisService
             }
         }
 
-        foreach (['actual_unit_price', 'current_unit_price', 'unit_price'] as $field) {
-            if (($item[$field] ?? null) !== null && BigDecimal::of((string) $item[$field])->isGreaterThan(0)) {
-                return $this->decimal($item[$field], 2);
-            }
-        }
-
         $quantity = BigDecimal::of((string) ($item['quantity_total'] ?? $item['quantity'] ?? '0'));
         $amount = BigDecimal::of((string) ($item['current_total_amount'] ?? $item['total_amount'] ?? '0'));
         if ($quantity->isGreaterThan(0) && $amount->isGreaterThan(0)) {
             return (string) $amount->dividedBy($quantity, 2, RoundingMode::HalfUp);
+        }
+
+        foreach (['actual_unit_price', 'current_unit_price', 'unit_price'] as $field) {
+            if (($item[$field] ?? null) !== null && BigDecimal::of((string) $item[$field])->isGreaterThan(0)) {
+                return $this->decimal($item[$field], 2);
+            }
         }
 
         throw new BusinessLogicException(trans_message('act_reports.estimate_version_price_required'), 422);

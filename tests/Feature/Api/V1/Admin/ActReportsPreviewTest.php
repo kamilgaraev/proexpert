@@ -438,6 +438,59 @@ class ActReportsPreviewTest extends TestCase
         $response->assertJsonPath('data.lines.0.amount', 3600);
     }
 
+    public function test_create_from_wizard_uses_full_estimate_item_amount_for_composite_price(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('WIZARD-COMPOSITE-PRICE');
+        $estimate = Estimate::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'name' => 'Estimate with overhead and profit',
+            'status' => 'approved',
+            'total_amount' => 95250,
+            'total_amount_with_vat' => 114300,
+            'vat_rate' => 20,
+        ]);
+        $estimateItem = EstimateItem::create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Reinforcement installation',
+            'quantity' => 100,
+            'quantity_total' => null,
+            'unit_price' => 750,
+            'total_amount' => 95250,
+        ]);
+        $this->approveEstimateSnapshot($estimate, $user);
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1204, 5);
+        $work->update([
+            'estimate_item_id' => $estimateItem->id,
+            'price' => 952.5,
+            'total_amount' => 4762.5,
+        ]);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-COMPOSITE-PRICE',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [
+                [
+                    'completed_work_id' => $work->id,
+                    'quantity' => 5,
+                ],
+            ],
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.amount', 5715);
+        $response->assertJsonPath('data.lines.0.unit_price', 1143);
+        $response->assertJsonPath('data.lines.0.amount', 5715);
+    }
+
     public function test_approve_rejects_zero_amount_act_without_stored_financial_basis(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVE-PRICE');
