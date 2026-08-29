@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Api\V1\Admin\AccessRecertification;
 
+use App\Rules\ActiveOrganizationUser;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -16,6 +17,10 @@ final class AccessRecertificationCampaignRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationUser = new ActiveOrganizationUser(
+            (int) $this->attributes->get('current_organization_id'),
+        );
+
         return [
             'name' => ['required', 'string', 'max:180'],
             'description' => ['sometimes', 'nullable', 'string', 'max:4000'],
@@ -26,11 +31,11 @@ final class AccessRecertificationCampaignRequest extends FormRequest
             'scope.role_slugs' => ['sometimes', 'array'],
             'scope.role_slugs.*' => ['string', 'max:120'],
             'scope.user_ids' => ['sometimes', 'array'],
-            'scope.user_ids.*' => ['integer', 'min:1'],
+            'scope.user_ids.*' => ['integer', 'min:1', $organizationUser],
             'scope.risk_levels' => ['sometimes', 'array'],
             'scope.risk_levels.*' => ['string', Rule::in(['low', 'medium', 'high', 'critical'])],
-            'owner_user_id' => ['required', 'integer', 'exists:users,id'],
-            'escalation_user_id' => ['sometimes', 'nullable', 'integer', 'exists:users,id'],
+            'owner_user_id' => ['required', 'integer', $organizationUser],
+            'escalation_user_id' => ['sometimes', 'nullable', 'integer', $organizationUser],
             'starts_at' => ['sometimes', 'nullable', 'date'],
             'due_at' => ['required', 'date', 'after:today'],
         ];

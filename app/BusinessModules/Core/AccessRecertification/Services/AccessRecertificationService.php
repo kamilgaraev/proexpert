@@ -34,6 +34,7 @@ final class AccessRecertificationService
         private readonly AccessRecertificationEvidenceBuilder $evidence,
         private readonly AccessRecertificationRiskScanner $riskScanner,
         private readonly AccessRecertificationDecisionPolicy $decisionPolicy,
+        private readonly AccessRecertificationParticipantPolicy $participants,
     ) {}
 
     public function campaigns(int $organizationId, array $filters, int $perPage): LengthAwarePaginator
@@ -91,6 +92,8 @@ final class AccessRecertificationService
 
     public function createCampaign(int $organizationId, User $actor, array $data): AccessRecertificationCampaign
     {
+        $this->assertCampaignParticipants($organizationId, $data);
+
         return DB::transaction(function () use ($organizationId, $actor, $data): AccessRecertificationCampaign {
             $campaign = AccessRecertificationCampaign::query()->create([
                 'organization_id' => $organizationId,
@@ -138,6 +141,8 @@ final class AccessRecertificationService
         if (!in_array($campaign->status, ['draft', 'scheduled'], true)) {
             throw new InvalidArgumentException('campaign_locked');
         }
+
+        $this->assertCampaignParticipants($organizationId, $data);
 
         return DB::transaction(function () use ($campaign, $organizationId, $actor, $data): AccessRecertificationCampaign {
             $before = $campaign->only(['name', 'description', 'type', 'status', 'risk_mode', 'scope', 'owner_user_id', 'escalation_user_id', 'starts_at', 'due_at']);
@@ -327,6 +332,13 @@ final class AccessRecertificationService
         $decisionType = $data['decision'];
         $this->decisionPolicy->assertCanDecide((int) $actor->id, (int) $item->subject_user_id, $decisionType, $data);
 
+        if ($decisionType === 'revoke') {
+            $this->participants->assertActiveOrganizationUsers(
+                $organizationId,
+                [$data['revoke_executor_user_id'] ?? null],
+            );
+        }
+
         return DB::transaction(function () use ($item, $organizationId, $actor, $data, $decisionType): AccessRecertificationDecision {
             $decision = AccessRecertificationDecision::query()->create([
                 'campaign_id' => $item->campaign_id,
@@ -396,6 +408,8 @@ final class AccessRecertificationService
         if ($reviewerUserId === (int) $item->subject_user_id) {
             throw new InvalidArgumentException('self_review_forbidden');
         }
+
+        $this->participants->assertActiveOrganizationUsers($organizationId, [$reviewerUserId]);
 
         return DB::transaction(function () use ($item, $organizationId, $actor, $reviewerUserId, $reason): AccessRecertificationItem {
             $beforeReviewer = $item->reviewer_user_id;
@@ -654,6 +668,16 @@ final class AccessRecertificationService
         if ((int) $campaign->organization_id !== $organizationId) {
             throw new InvalidArgumentException('campaign_not_found');
         }
+    }
+
+    private function assertCampaignParticipants(int $organizationId, array $data): void
+    {
+        $scopeUserIds = $data['scope']['user_ids'] ?? [];
+        $this->participants->assertActiveOrganizationUsers($organizationId, [
+            $data['owner_user_id'] ?? null,
+            $data['escalation_user_id'] ?? null,
+            ...(is_array($scopeUserIds) ? $scopeUserIds : []),
+        ]);
     }
 
     private function createItemsFromActiveAssignments(AccessRecertificationCampaign $campaign, int $organizationId): int
