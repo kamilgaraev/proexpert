@@ -27,6 +27,7 @@ class ActingActWizardService
         private readonly PerformanceActFinancialBasisService $financialBasis,
         private readonly ManualActLineBasisService $manualLineBasis,
         private readonly PerformanceActFinancialTotalsService $financialTotals,
+        private readonly FixedContractActAmountGuard $contractAmountGuard,
     ) {}
 
     public function createFromWizard(
@@ -72,12 +73,16 @@ class ActingActWizardService
             $manualLines,
             $currency,
         ): ContractPerformanceAct {
+            $lockedContract = Contract::query()
+                ->whereKey($contract->id)
+                ->lockForUpdate()
+                ->firstOrFail();
             $selectedGroups = collect($data['selected_works'] ?? [])
                 ->groupBy(fn (array $selectedWork): int => (int) $selectedWork['completed_work_id']);
-            $works = $this->lockCompletedWorks($organizationId, $contract, $data, $selectedGroups);
-            $projectId = $this->resolveActProjectId($contract, $works);
+            $works = $this->lockCompletedWorks($organizationId, $lockedContract, $data, $selectedGroups);
+            $projectId = $this->resolveActProjectId($lockedContract, $works);
             $act = ContractPerformanceAct::create([
-                'contract_id' => $contract->id,
+                'contract_id' => $lockedContract->id,
                 'project_id' => $projectId,
                 'act_document_number' => $data['act_document_number'],
                 'act_date' => $data['act_date'],
@@ -91,10 +96,10 @@ class ActingActWizardService
                 'created_by_user_id' => $userId,
             ]);
 
-            $this->createCompletedWorkLines($act, $contract, $selectedGroups, $works, $currency);
+            $this->createCompletedWorkLines($act, $lockedContract, $selectedGroups, $works, $currency);
             $this->createManualLines(
                 $act,
-                $contract,
+                $lockedContract,
                 $organizationId,
                 $projectId,
                 $manualLines,
@@ -102,7 +107,8 @@ class ActingActWizardService
                 $userId,
                 $currency,
             );
-            $this->financialTotals->synchronize($act);
+            $act = $this->financialTotals->synchronize($act);
+            $this->contractAmountGuard->assertActFits($lockedContract, (string) $act->amount, (int) $act->id);
 
             return $act->fresh([
                 'project',

@@ -55,6 +55,41 @@ class ActReportsPreviewTest extends TestCase
         $response->assertJsonPath('data.summary.current_approved_amount', 0);
     }
 
+    public function test_preview_exposes_fixed_contract_amount_and_available_balance(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('PREVIEW-LIMIT');
+        $contract->forceFill(['is_fixed_amount' => true])->saveQuietly();
+        ContractPerformanceAct::create([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'act_document_number' => 'KS-2-APPROVED',
+            'act_date' => '2026-03-31',
+            'period_start' => '2026-03-01',
+            'period_end' => '2026-03-31',
+            'amount' => 1000,
+            'currency' => 'RUB',
+            'status' => ContractPerformanceAct::STATUS_APPROVED,
+            'is_approved' => true,
+            'created_by_user_id' => $user->id,
+        ]);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/preview', [
+            'contract_id' => $contract->id,
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.contract_amount_limit.is_fixed', true);
+        $response->assertJsonPath('data.contract_amount_limit.contract_amount', '100000.00');
+        $response->assertJsonPath('data.contract_amount_limit.approved_amount', '1000.00');
+        $response->assertJsonPath('data.contract_amount_limit.remaining_amount', '99000.00');
+        $response->assertJsonPath('data.contract_amount_limit.currency', 'RUB');
+    }
+
     public function test_preview_exposes_only_approved_variation_orders_for_the_selected_contract_project(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('PREVIEW-VARIATION');
@@ -268,6 +303,73 @@ class ActReportsPreviewTest extends TestCase
             'quantity' => 2,
             'amount' => 2000,
         ]);
+    }
+
+    public function test_create_from_wizard_rejects_amount_above_fixed_contract_balance(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('WIZARD-LIMIT');
+        $contract->forceFill(['is_fixed_amount' => true, 'total_amount' => 1500])->saveQuietly();
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1205, 2);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-LIMIT',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [
+                ['completed_work_id' => $work->id, 'quantity' => 2],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath(
+            'message',
+            'Нельзя оформить акт на 2 000,00 ₽: сумма договора — 1 500,00 ₽, уже утверждено — 0,00 ₽, доступно — 1 500,00 ₽. Уменьшите сумму акта или оформите изменение суммы договора.'
+        );
+        $this->assertDatabaseMissing('contract_performance_acts', [
+            'act_document_number' => 'KS-2-LIMIT',
+        ]);
+    }
+
+    public function test_submit_rejects_existing_draft_above_fixed_contract_balance(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('SUBMIT-LIMIT');
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'KS-2-SUBMIT-LIMIT', 2);
+        $contract->forceFill(['is_fixed_amount' => true, 'total_amount' => 1500])->saveQuietly();
+
+        $response = $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/submit");
+
+        $response->assertStatus(422);
+        $this->assertSame(ContractPerformanceAct::STATUS_DRAFT, $act->fresh()->status);
+    }
+
+    public function test_approve_rejects_pending_act_above_fixed_contract_balance(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVE-LIMIT');
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'KS-2-APPROVE-LIMIT', 2);
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/submit")
+            ->assertOk();
+        $contract->forceFill(['is_fixed_amount' => true, 'total_amount' => 1500])->saveQuietly();
+
+        $response = $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/approve");
+
+        $response->assertStatus(422);
+        $this->assertSame(ContractPerformanceAct::STATUS_PENDING_APPROVAL, $act->fresh()->status);
     }
 
     public function test_create_from_wizard_derives_project_from_the_selected_contract_work(): void
