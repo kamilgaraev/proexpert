@@ -66,6 +66,7 @@ return [
     'act_annulled' => 'Акт аннулирован, связанные неоплаченные счета отменены.',
     'act_must_be_approved_before_signing' => 'Перед подписанием акт должен быть утвержден',
     'contract_currency_required' => 'Укажите поддерживаемую валюту в договоре перед созданием акта',
+    'fixed_contract_amount_exceeded' => 'Нельзя оформить акт на :act_amount: сумма договора — :contract_amount, уже утверждено — :approved_amount, доступно — :remaining_amount. Уменьшите сумму акта или оформите изменение суммы договора.',
     'empty_act' => 'Акт не содержит работ',
     'empty_act_not_allowed' => 'Добавьте хотя бы одну работу или ручную строку',
     'use_acting_wizard' => 'Состав акта формируется через мастер актирования',

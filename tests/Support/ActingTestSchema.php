@@ -203,6 +203,7 @@ trait ActingTestSchema
             $table->decimal('total_amount', 15, 2)->nullable();
             $table->char('currency', 3)->default('RUB');
             $table->string('status')->default('draft');
+            $table->boolean('is_fixed_amount')->default(false);
             $table->boolean('is_multi_project')->default(false);
             $table->timestamps();
             $table->softDeletes();

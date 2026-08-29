@@ -16,6 +16,7 @@ use App\Models\User;
 use App\Services\Acting\ActingActWizardService;
 use App\Services\Acting\ActingAvailabilityService;
 use App\Services\Acting\ActingPolicyResolver;
+use App\Services\Acting\FixedContractActAmountGuard;
 use App\Services\Acting\KS3SummaryService;
 use App\Services\Acting\PerformanceActFinancialTotalsService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
@@ -40,6 +41,7 @@ class ActReportWorkflowService
         private readonly ActReportAccessService $accessService,
         private readonly ProductionAcceptanceEventRecorder $acceptanceEvents,
         private readonly PaymentDocumentService $paymentDocumentService,
+        private readonly FixedContractActAmountGuard $contractAmountGuard,
     ) {}
 
     public function preview(int $organizationId, array $data, ?User $user): array
@@ -69,6 +71,7 @@ class ActReportWorkflowService
                 $data['period_start'],
                 $data['period_end']
             ),
+            'contract_amount_limit' => $this->contractAmountGuard->summary($contract),
         ];
     }
 
@@ -246,6 +249,15 @@ class ActReportWorkflowService
                 );
             }
             $this->assertMutable($lockedAct);
+            $lockedContract = Contract::query()
+                ->whereKey($lockedAct->contract_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $this->contractAmountGuard->assertActFits(
+                $lockedContract,
+                (string) $lockedAct->amount,
+                (int) $lockedAct->id,
+            );
 
             $lockedAct->update([
                 'status' => ContractPerformanceAct::STATUS_PENDING_APPROVAL,
@@ -294,6 +306,15 @@ class ActReportWorkflowService
             if ((float) $lockedAct->amount <= 0) {
                 throw new BusinessLogicException(trans_message('act_reports.empty_act'), 422);
             }
+            $lockedContract = Contract::query()
+                ->whereKey($lockedAct->contract_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $this->contractAmountGuard->assertActFits(
+                $lockedContract,
+                (string) $lockedAct->amount,
+                (int) $lockedAct->id,
+            );
 
             $occurredAt = CarbonImmutable::now();
             $lockedAct->update([
