@@ -7,8 +7,8 @@ namespace Tests\Feature;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\BusinessModules\Features\BudgetEstimates\Services\JournalApprovalService;
-use App\Enums\EstimatePositionItemType;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\EstimatePositionItemType;
 use App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
@@ -167,6 +167,64 @@ class ConstructionJournalContractCoverageTest extends TestCase
 
         $this->assertSame($workTypeId, (int) $volume->work_type_id);
         $this->assertSame($workTypeId, (int) $work->work_type_id);
+    }
+
+    public function test_journal_work_without_catalog_work_type_remains_visible_for_acting(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $approver = User::factory()->create(['current_organization_id' => $organization->id]);
+        $estimateItem->update(['work_type_id' => null]);
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $this->coverEstimateItem($contract, $estimate, $estimateItem);
+        $this->allowPermissions();
+        Notification::fake();
+        \Illuminate\Support\Facades\Event::fake();
+
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id,
+            'entry_date' => '2026-04-28',
+            'work_description' => 'Монтаж арматуры',
+            'work_volumes' => [
+                [
+                    'estimate_item_id' => $estimateItem->id,
+                    'quantity' => 15,
+                ],
+            ],
+        ], $user);
+
+        $entry = app(JournalApprovalService::class)->submitForApproval($entry, $user);
+        app(JournalApprovalService::class)->approve($entry, $approver, [
+            'enabled' => true,
+            'target' => 'schedule_missing',
+            'reason' => 'Факт принят до детализации календарного графика',
+        ]);
+
+        $volume = $entry->workVolumes()->firstOrFail();
+        $this->assertDatabaseHas('completed_works', [
+            'journal_work_volume_id' => $volume->id,
+            'contract_id' => $contract->id,
+            'estimate_item_id' => $estimateItem->id,
+            'work_type_id' => null,
+            'planning_status' => CompletedWork::PLANNING_REQUIRES_SCHEDULE,
+            'status' => 'confirmed',
+        ]);
+
+        $this->withoutMiddleware();
+        $this->actingAs($user, 'api_admin')
+            ->postJson('/api/v1/admin/act-reports/preview', [
+                'contract_id' => $contract->id,
+                'period_start' => '2026-04-01',
+                'period_end' => '2026-04-30',
+            ])
+            ->assertOk()
+            ->assertJsonCount(0, 'data.available_works')
+            ->assertJsonCount(1, 'data.blocked_works')
+            ->assertJsonPath('data.blocked_works.0.work_title', $estimateItem->name)
+            ->assertJsonPath('data.blocked_works.0.blockers.0.code', 'schedule_missing')
+            ->assertJsonPath(
+                'data.blocked_works.0.blockers.0.message',
+                trans_message('workflow.blockers.schedule_missing'),
+            );
     }
 
     public function test_multiple_coverages_without_journal_contract_keep_fact_without_contract(): void
@@ -692,8 +750,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         EstimateItem $estimateItem,
         float $quantity = 50,
         float $amount = 50000
-    ): ContractEstimateItem
-    {
+    ): ContractEstimateItem {
         return ContractEstimateItem::create([
             'contract_id' => $contract->id,
             'estimate_id' => $estimate->id,

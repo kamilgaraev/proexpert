@@ -30,8 +30,7 @@ class CompletedWorkFactService
         private readonly ScheduleTaskService $scheduleTaskService,
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly JournalScheduleTaskResolver $scheduleTaskResolver,
-    ) {
-    }
+    ) {}
 
     public function syncFromJournalEntry(ConstructionJournalEntry $entry): void
     {
@@ -83,20 +82,6 @@ class CompletedWorkFactService
                 $task = $this->scheduleTaskResolver->resolveForVolume($entry, $volume);
                 $payload = $this->buildPayloadFromJournalVolume($entry, $volume, $task);
 
-                if (!$payload['work_type_id']) {
-                    $completedWork = $worksByVolumeId->get($volume->id);
-
-                    if ($completedWork) {
-                        if ($completedWork->schedule_task_id) {
-                            $syncedTaskIds->push((int) $completedWork->schedule_task_id);
-                        }
-
-                        $completedWork->delete();
-                    }
-
-                    continue;
-                }
-
                 if ($payload['work_type_id'] && (int) ($volume->work_type_id ?? 0) !== (int) $payload['work_type_id']) {
                     $volume->forceFill(['work_type_id' => $payload['work_type_id']])->saveQuietly();
                     $volume->setAttribute('work_type_id', $payload['work_type_id']);
@@ -105,7 +90,7 @@ class CompletedWorkFactService
                 /** @var CompletedWork $completedWork */
                 $completedWork = $worksByVolumeId->get($volume->id)
                     ?? $legacyWorks->shift()
-                    ?? new CompletedWork();
+                    ?? new CompletedWork;
                 $completedWork->fill($payload);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
@@ -119,7 +104,7 @@ class CompletedWorkFactService
                 $payload = $this->buildPayloadFromJournalMaterial($entry, $material);
 
                 /** @var CompletedWork $completedWork */
-                $completedWork = $worksByMaterialId->get($material->id) ?? new CompletedWork();
+                $completedWork = $worksByMaterialId->get($material->id) ?? new CompletedWork;
                 $completedWork->fill($payload);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
@@ -129,7 +114,7 @@ class CompletedWorkFactService
                 $payload = $this->buildPayloadFromJournalEquipment($entry, $equipmentItem);
 
                 /** @var CompletedWork $completedWork */
-                $completedWork = $worksByEquipmentId->get($equipmentItem->id) ?? new CompletedWork();
+                $completedWork = $worksByEquipmentId->get($equipmentItem->id) ?? new CompletedWork;
                 $completedWork->fill($payload);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
@@ -139,7 +124,7 @@ class CompletedWorkFactService
                 $payload = $this->buildPayloadFromJournalWorker($entry, $worker);
 
                 /** @var CompletedWork $completedWork */
-                $completedWork = $worksByWorkerId->get($worker->id) ?? new CompletedWork();
+                $completedWork = $worksByWorkerId->get($worker->id) ?? new CompletedWork;
                 $completedWork->fill($payload);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
@@ -360,7 +345,7 @@ class CompletedWorkFactService
             'planning_status' => CompletedWork::PLANNING_PLANNED,
         ]);
 
-        if (!$completedWork->work_type_id && $task->work_type_id) {
+        if (! $completedWork->work_type_id && $task->work_type_id) {
             $completedWork->work_type_id = $task->work_type_id;
         }
 
@@ -464,7 +449,7 @@ class CompletedWorkFactService
         $contractId = $contractLink?->contract_id;
         $contractorId = $contractLink?->contract?->contractor_id;
 
-        if (!$estimateItem && $entry->journal->contract_id) {
+        if (! $estimateItem && $entry->journal->contract_id) {
             $contractId = $entry->journal->contract_id;
             $contractorId = $entry->journal->contract?->contractor_id;
         }
@@ -590,7 +575,7 @@ class CompletedWorkFactService
         $contractId = $contractLink?->contract_id;
         $contractorId = $contractLink?->contract?->contractor_id;
 
-        if (!$estimateItem && $entry->journal->contract_id) {
+        if (! $estimateItem && $entry->journal->contract_id) {
             $contractId = $entry->journal->contract_id;
             $contractorId = $entry->journal->contract?->contractor_id;
         }
@@ -670,7 +655,7 @@ class CompletedWorkFactService
 
     private function resolveContractLinkForEntry(ConstructionJournalEntry $entry, ?EstimateItem $estimateItem): ?ContractEstimateItem
     {
-        if (!$estimateItem) {
+        if (! $estimateItem) {
             return null;
         }
 
@@ -723,7 +708,7 @@ class CompletedWorkFactService
     {
         $baseName = $completedWork->workType?->name;
 
-        if (!$baseName && is_string($completedWork->notes) && trim($completedWork->notes) !== '') {
+        if (! $baseName && is_string($completedWork->notes) && trim($completedWork->notes) !== '') {
             $baseName = trim(mb_substr($completedWork->notes, 0, 120));
         }
 
