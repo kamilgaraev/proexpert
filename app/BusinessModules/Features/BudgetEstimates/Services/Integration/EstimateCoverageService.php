@@ -234,13 +234,32 @@ class EstimateCoverageService
         return collect($this->getContractCoverageSummary($contract)['linked_estimates']);
     }
 
-    public function validateContractAmount(Estimate $estimate, ?int $contractId = null): array
-    {
+    public function validateContractAmount(
+        Estimate $estimate,
+        ?Contract $candidateContract = null,
+        bool $includeVat = false
+    ): array {
         $coverage = $this->getCoverageForEstimate($estimate);
         $contracts = collect($coverage['contracts']);
 
-        if ($contractId !== null) {
-            $contracts = $contracts->where('contract_id', $contractId)->values();
+        if ($candidateContract !== null) {
+            $this->assertOwnership($candidateContract, $estimate);
+            $contracts = $contracts->where('contract_id', $candidateContract->id)->values();
+
+            if ($contracts->isEmpty()) {
+                $coveredAmount = $this->contractEstimateService->calculateItemsTotal(
+                    $estimate,
+                    $this->getCoveredItemIds($estimate)->all(),
+                    $includeVat
+                );
+
+                return $this->amountValidationResult(
+                    $estimate,
+                    $coveredAmount,
+                    (float) $candidateContract->total_amount,
+                    'not_linked'
+                );
+            }
         }
 
         if ($contracts->isEmpty()) {
@@ -251,7 +270,7 @@ class EstimateCoverageService
                 'contract_amount' => null,
                 'difference' => 0.0,
                 'percentage_difference' => 0.0,
-                'message' => 'Смета не покрыта договором',
+                'message' => trans_message('contract.estimate_not_linked'),
                 'coverage_status' => 'not_linked',
             ];
         }
@@ -259,22 +278,38 @@ class EstimateCoverageService
         $primaryCoverage = $contracts->first();
         $contractAmount = (float) ($primaryCoverage['contract']['total_amount'] ?? 0);
         $coveredAmount = (float) ($primaryCoverage['linked_amount'] ?? 0);
-        $difference = $coveredAmount - $contractAmount;
+
+        return $this->amountValidationResult(
+            $estimate,
+            $coveredAmount,
+            $contractAmount,
+            $primaryCoverage['coverage_status']
+        );
+    }
+
+    private function amountValidationResult(
+        Estimate $estimate,
+        float $coveredAmount,
+        float $contractAmount,
+        string $coverageStatus
+    ): array {
+        $difference = round($coveredAmount - $contractAmount, 2);
         $percentageDifference = $contractAmount > 0
             ? round(($difference / $contractAmount) * 100, 2)
-            : 0.0;
+            : ($coveredAmount === 0.0 ? 0.0 : 100.0);
+        $valid = abs($percentageDifference) <= 5;
 
         return [
-            'valid' => abs($percentageDifference) <= 5,
+            'valid' => $valid,
             'estimate_amount' => (float) $estimate->total_amount,
             'covered_amount' => $coveredAmount,
             'contract_amount' => $contractAmount,
             'difference' => $difference,
             'percentage_difference' => $percentageDifference,
-            'message' => abs($percentageDifference) <= 5
-                ? 'Сумма покрытия сметы соответствует сумме договора'
-                : 'Сумма покрытия сметы отличается от суммы договора более чем на 5%',
-            'coverage_status' => $primaryCoverage['coverage_status'],
+            'message' => $valid
+                ? trans_message('contract.estimate_amount_matches')
+                : trans_message('contract.estimate_amount_differs'),
+            'coverage_status' => $coverageStatus,
         ];
     }
 

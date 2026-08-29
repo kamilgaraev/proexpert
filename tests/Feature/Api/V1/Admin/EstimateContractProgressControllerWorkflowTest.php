@@ -15,6 +15,7 @@ use App\Enums\ContractorType;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Estimate;
+use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -113,6 +114,77 @@ class EstimateContractProgressControllerWorkflowTest extends TestCase
             ->assertJsonPath('data.overall_completion_percentage', 45.5)
             ->assertJsonPath('data.total_planned_amount', 100000)
             ->assertJsonPath('data.total_actual_amount', 45500);
+    }
+
+    public function test_amount_validation_previews_selected_contract_before_linking(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project, [
+            'total_amount' => 95250,
+            'total_amount_with_vat' => 114300,
+            'vat_rate' => 20,
+        ]);
+        EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'name' => 'Арматурные работы',
+            'item_type' => 'work',
+            'quantity' => 1,
+            'quantity_total' => 1,
+            'unit_price' => 95250,
+            'total_amount' => 95250,
+            'is_manual' => true,
+        ]);
+
+        $contractor = $this->createContractor($context->organization);
+        $contract = $this->createContract($context->organization, $project, $contractor);
+        $contract->update([
+            'base_amount' => 2100,
+            'total_amount' => 2100,
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson(
+                "/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}"
+                ."/contract/validation?contract_id={$contract->id}&include_vat=1"
+            );
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.is_valid', false)
+            ->assertJsonPath('data.estimate_total', 95250)
+            ->assertJsonPath('data.covered_amount', 114300)
+            ->assertJsonPath('data.contract_total', 2100)
+            ->assertJsonPath('data.difference', 112200)
+            ->assertJsonPath('data.difference_percentage', 5342.86)
+            ->assertJsonPath('data.coverage_status', 'not_linked');
+
+        $this->assertDatabaseCount('contract_estimate_items', 0);
+    }
+
+    public function test_amount_validation_does_not_disclose_foreign_contract(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignContract = $this->createContract(
+            $foreignOrganization,
+            $foreignProject,
+            $this->createContractor($foreignOrganization)
+        );
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson(
+                "/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}"
+                ."/contract/validation?contract_id={$foreignContract->id}"
+            )
+            ->assertNotFound();
     }
 
     private function createEstimate(Organization $organization, Project $project, array $overrides = []): Estimate
