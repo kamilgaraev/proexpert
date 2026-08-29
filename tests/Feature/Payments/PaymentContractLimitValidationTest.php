@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Payments;
 
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentValidationService;
 use App\Models\Contract;
 use Illuminate\Database\Schema\Blueprint;
@@ -73,6 +74,37 @@ class PaymentContractLimitValidationTest extends TestCase
 
         $this->expectException(\DomainException::class);
         $this->validateContractSource($contract, '400.01');
+    }
+
+    public function test_submission_balance_ignores_cancelled_contract_documents(): void
+    {
+        $contract = Contract::query()->create([
+            'organization_id' => 10,
+            'number' => 'SUBMIT-019',
+            'date' => now()->toDateString(),
+            'total_amount' => '1000.00',
+            'planned_advance_amount' => '1000.00',
+            'status' => 'active',
+            'is_fixed_amount' => true,
+            'is_multi_project' => false,
+        ]);
+
+        $this->insertDocument($contract, '600.00', 'approved', false);
+        $this->insertDocument($contract, '500.00', 'cancelled', false);
+
+        $document = new PaymentDocument;
+        $document->id = 999;
+        $document->organization_id = $contract->organization_id;
+        $document->source_type = Contract::class;
+        $document->source_id = $contract->id;
+        $document->invoice_type = 'advance';
+        $document->amount = '400.00';
+
+        $errors = [];
+        $method = new ReflectionMethod(PaymentValidationService::class, 'checkContractBalance');
+        $method->invokeArgs(app(PaymentValidationService::class), [$document, &$errors]);
+
+        $this->assertSame([], $errors);
     }
 
     private function insertDocument(

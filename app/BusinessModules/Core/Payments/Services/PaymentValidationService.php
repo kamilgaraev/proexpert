@@ -540,10 +540,7 @@ class PaymentValidationService
         $projectId = $document->project_id ?? null;
         $isMultiProject = $contract->is_multi_project ?? false;
 
-        // Базовый запрос для подсчета платежей
-        $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
-            ->where('source_id', $contract->id)
-            ->where('id', '!=', $document->id);
+        $paymentsQuery = $this->effectiveContractDocumentsQuery($contract, $document);
 
         // Для мультипроектных договоров фильтруем по проекту
         if ($isMultiProject && $projectId) {
@@ -573,9 +570,7 @@ class PaymentValidationService
             }
 
             // Получаем сумму неавансовых платежей (исключая финальные расчеты)
-            $regularPaymentsQuery = PaymentDocument::where('source_type', Contract::class)
-                ->where('source_id', $contract->id)
-                ->where('id', '!=', $document->id);
+            $regularPaymentsQuery = $this->effectiveContractDocumentsQuery($contract, $document);
             $this->scopePerformedWorkPayments($regularPaymentsQuery);
 
             if ($isMultiProject && $projectId) {
