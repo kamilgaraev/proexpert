@@ -19,6 +19,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use RuntimeException;
@@ -31,6 +32,7 @@ final class WorkforceCorporateWorkflowTest extends TestCase
 
     public function test_missing_and_inactive_accounting_mapping_blocks_lock_then_active_mapping_locks_period(): void
     {
+        Queue::fake();
         Storage::fake('s3');
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
@@ -537,6 +539,15 @@ final class WorkforceCorporateWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/production-labor/work-orders/{$workOrderId}/issue")
             ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/output-entries', [
+                'work_order_line_id' => $lineId,
+                'work_date' => '2026-05-16',
+                'quantity' => 10,
+                'hours' => 8,
+            ])
+            ->assertCreated();
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/timesheets', [
