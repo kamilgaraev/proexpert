@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
+use App\BusinessModules\Features\WorkforceManagement\Domain\Scheduling\WorkforceWeekPattern;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
 use DomainException;
@@ -27,11 +28,12 @@ final class WorkforceAttendanceService
         $scheduleDays = $this->scheduleDays($organizationId, $assignments, $start, $end);
         $corrections = $this->correctionsForPeriod($organizationId, $employeeIds, $start, $end, $projectId);
         $qrScans = $this->qrScansForPeriod($organizationId, $employeeIds, $start, $end, $projectId);
+        $events = $this->approvedEventsForPeriod($organizationId, $employeeIds, $start, $end);
 
         return [
             'days' => $days,
             'rows' => $assignments
-                ->map(fn (object $assignment): array => $this->row($assignment, $days, $scheduleDays, $corrections, $qrScans))
+                ->map(fn (object $assignment): array => $this->row($assignment, $days, $scheduleDays, $corrections, $qrScans, $events))
                 ->values()
                 ->all(),
         ];
@@ -155,7 +157,9 @@ final class WorkforceAttendanceService
                 'employee.middle_name',
                 'department.name as department_label',
                 'position.name as position_label',
+                'schedule.schedule_type',
                 'schedule.hours_per_day',
+                'schedule.week_pattern',
             ])
             ->get();
     }
@@ -209,13 +213,54 @@ final class WorkforceAttendanceService
             ->keyBy(fn (object $record): string => $record->employee_id.':'.$record->work_date.':'.($record->project_id ?? 'all'));
     }
 
-    private function row(object $assignment, array $days, Collection $scheduleDays, Collection $corrections, Collection $qrScans): array
+    private function approvedEventsForPeriod(int $organizationId, array $employeeIds, CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        if (empty($employeeIds)) {
+            return [
+                'absences' => collect(),
+                'business_trips' => collect(),
+            ];
+        }
+
+        $absences = DB::table('workforce_absences as absence')
+            ->join('workforce_absence_types as type', function ($join): void {
+                $join->on('type.id', '=', 'absence.absence_type_id')
+                    ->on('type.organization_id', '=', 'absence.organization_id');
+            })
+            ->where('absence.organization_id', $organizationId)
+            ->whereIn('absence.employee_id', $employeeIds)
+            ->where('absence.status', 'approved')
+            ->whereNull('absence.deleted_at')
+            ->whereDate('absence.start_date', '<=', $end->toDateString())
+            ->whereDate('absence.end_date', '>=', $start->toDateString())
+            ->select('absence.employee_id', 'absence.start_date', 'absence.end_date', 'type.name as label')
+            ->get()
+            ->groupBy('employee_id');
+
+        $businessTrips = DB::table('workforce_business_trips')
+            ->where('organization_id', $organizationId)
+            ->whereIn('employee_id', $employeeIds)
+            ->where('status', 'approved')
+            ->whereNull('deleted_at')
+            ->whereDate('start_date', '<=', $end->toDateString())
+            ->whereDate('end_date', '>=', $start->toDateString())
+            ->select('employee_id', 'start_date', 'end_date')
+            ->get()
+            ->groupBy('employee_id');
+
+        return [
+            'absences' => $absences,
+            'business_trips' => $businessTrips,
+        ];
+    }
+
+    private function row(object $assignment, array $days, Collection $scheduleDays, Collection $corrections, Collection $qrScans, array $events): array
     {
         $rowDays = [];
 
         foreach ($days as $day) {
             $date = (string) $day['date'];
-            $rowDays[$date] = $this->day($assignment, $date, $scheduleDays, $corrections, $qrScans);
+            $rowDays[$date] = $this->day($assignment, $date, $scheduleDays, $corrections, $qrScans, $events);
         }
 
         return [
@@ -227,7 +272,7 @@ final class WorkforceAttendanceService
         ];
     }
 
-    private function day(object $assignment, string $date, Collection $scheduleDays, Collection $corrections, Collection $qrScans): array
+    private function day(object $assignment, string $date, Collection $scheduleDays, Collection $corrections, Collection $qrScans, array $events): array
     {
         $correction = $corrections->get($assignment->employee_id.':'.$date.':'.($assignment->project_id ?? 'all'))
             ?? $corrections->get($assignment->employee_id.':'.$date.':all');
@@ -252,6 +297,18 @@ final class WorkforceAttendanceService
             return $this->presence('not_at_work', $date, 0, 'assignment');
         }
 
+        $absence = $this->periodRecordForDate($events['absences']->get($assignment->employee_id, collect()), $date);
+
+        if ($absence !== null) {
+            return $this->presence('absence', $date, 0, 'absence', (string) $absence->label);
+        }
+
+        $businessTrip = $this->periodRecordForDate($events['business_trips']->get($assignment->employee_id, collect()), $date);
+
+        if ($businessTrip !== null) {
+            return $this->presence('business_trip', $date, 0, 'business_trip');
+        }
+
         if ($assignment->work_schedule_id === null) {
             return $this->presence('not_scheduled', $date, null, 'schedule');
         }
@@ -262,7 +319,24 @@ final class WorkforceAttendanceService
             return $this->presence('scheduled_day_off', $date, 0, 'schedule');
         }
 
-        return $this->presence('at_work', $date, $this->hours($scheduleDay?->planned_hours ?? $assignment->hours_per_day ?? 8), 'schedule');
+        if ($scheduleDay !== null) {
+            return $this->presence('at_work', $date, $this->hours($scheduleDay->planned_hours ?? $assignment->hours_per_day ?? 8), 'schedule');
+        }
+
+        $pattern = WorkforceWeekPattern::hoursByIsoWeekday(
+            isset($assignment->schedule_type) ? (string) $assignment->schedule_type : null,
+            $assignment->week_pattern ?? null,
+            $assignment->hours_per_day ?? null,
+        );
+        $hours = $this->hours($pattern[(string) CarbonImmutable::parse($date)->dayOfWeekIso] ?? 0);
+
+        if ($pattern !== []) {
+            return $hours > 0
+                ? $this->presence('at_work', $date, $hours, 'schedule')
+                : $this->presence('scheduled_day_off', $date, 0, 'schedule');
+        }
+
+        return $this->presence('at_work', $date, $this->hours($assignment->hours_per_day ?? 8), 'schedule');
     }
 
     private function correctionPayload(object $record): array
@@ -283,15 +357,22 @@ final class WorkforceAttendanceService
         ];
     }
 
-    private function presence(string $status, string $date, int|float|null $hours, string $source): array
+    private function presence(string $status, string $date, int|float|null $hours, string $source, ?string $statusLabel = null): array
     {
         return [
             'status' => $status,
-            'status_label' => trans_message("workforce.presence.{$status}"),
+            'status_label' => $statusLabel ?? trans_message("workforce.presence.{$status}"),
             'work_date' => $date,
             'hours' => $hours,
             'source_label' => trans_message("workforce.presence_sources.{$source}"),
         ];
+    }
+
+    private function periodRecordForDate(Collection $records, string $date): ?object
+    {
+        return $records->first(
+            fn (object $record): bool => (string) $record->start_date <= $date && (string) $record->end_date >= $date
+        );
     }
 
     private function days(CarbonImmutable $start, CarbonImmutable $end): array
