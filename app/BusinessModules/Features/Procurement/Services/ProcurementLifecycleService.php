@@ -296,6 +296,14 @@ class ProcurementLifecycleService
 
     private function supplierRequestRespondedSummary(SupplierRequest $supplierRequest): ProcurementLifecycleSummary
     {
+        $acceptedProposal = $supplierRequest->proposals->first(
+            static fn (SupplierProposal $proposal): bool => $proposal->status === SupplierProposalStatusEnum::ACCEPTED
+        );
+
+        if ($acceptedProposal instanceof SupplierProposal) {
+            return $this->forSupplierProposal($acceptedProposal);
+        }
+
         $decision = $supplierRequest->proposalDecision;
         $expiredProposalSummary = $this->expiredProposalSummary($supplierRequest, $decision);
 
