@@ -98,7 +98,9 @@ final class AccessRecertificationItem extends Model
 
     public function latestDecision(): HasOne
     {
-        return $this->hasOne(AccessRecertificationDecision::class, 'item_id')->latestOfMany();
+        return $this->hasOne(AccessRecertificationDecision::class, 'item_id')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
     }
 
     public function revocation(): HasOne
@@ -108,7 +110,9 @@ final class AccessRecertificationItem extends Model
 
     public function exception(): HasOne
     {
-        return $this->hasOne(AccessRecertificationException::class, 'item_id')->latestOfMany();
+        return $this->hasOne(AccessRecertificationException::class, 'item_id')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
     }
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder
