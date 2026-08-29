@@ -25,9 +25,9 @@ Route::prefix('access-recertification')->group(function (): void {
 
     Route::get('/reviews/my', [AccessRecertificationController::class, 'reviewQueue'])
         ->middleware('authorize:access_recertification.reviews.view');
-    Route::post('/items/{item}/decisions', [AccessRecertificationController::class, 'decide'])
+    Route::post('/items/{accessRecertificationItem}/decisions', [AccessRecertificationController::class, 'decide'])
         ->middleware('authorize:access_recertification.reviews.decide');
-    Route::post('/items/{item}/reassign', [AccessRecertificationController::class, 'reassign'])
+    Route::post('/items/{accessRecertificationItem}/reassign', [AccessRecertificationController::class, 'reassign'])
         ->middleware('authorize:access_recertification.campaigns.manage');
 
     Route::get('/revocations', [AccessRecertificationController::class, 'revocations'])
