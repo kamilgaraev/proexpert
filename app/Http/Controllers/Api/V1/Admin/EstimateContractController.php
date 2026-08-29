@@ -15,6 +15,7 @@ use App\Models\Estimate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class EstimateContractController extends Controller
@@ -87,6 +88,15 @@ class EstimateContractController extends Controller
                 trans_message('contract.estimate_linked')
             );
         } catch (\Throwable $e) {
+            Log::error('estimate.contract_link_failed', [
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'estimate_id' => $estimateId,
+                'contract_id' => (int) ($validated['contract_id'] ?? 0),
+                'exception' => $e::class,
+                'error' => $e->getMessage(),
+            ]);
+
             return AdminResponse::error(
                 trans_message('contract.estimate_link_error'),
                 Response::HTTP_UNPROCESSABLE_ENTITY
