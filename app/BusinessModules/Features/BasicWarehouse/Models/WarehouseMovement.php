@@ -84,6 +84,8 @@ class WarehouseMovement extends Model
 
     const CATEGORY_INVENTORY_ADJUSTMENT = 'inventory_adjustment';
 
+    const CATEGORY_PLACEMENT = 'placement';
+
     public function operationCategoryLabel(): ?string
     {
         if (! $this->operation_category) {

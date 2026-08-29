@@ -799,6 +799,10 @@ final class SupplyReportingHardeningTest extends TestCase
 
         self::assertStringContainsString('OrganizationWarehouse::query()', $source);
         self::assertStringContainsString('$warehouseProjectId !== $projectId', $source);
+        self::assertStringContainsString(
+            'WarehouseMovement::CATEGORY_PLACEMENT',
+            $source,
+        );
         self::assertStringNotContainsString(
             "WarehouseBalance::query()\n            ->where('project_id'",
             $source,
