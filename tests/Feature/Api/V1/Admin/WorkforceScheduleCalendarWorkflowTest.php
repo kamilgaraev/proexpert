@@ -11,6 +11,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -18,6 +19,13 @@ use Tests\TestCase;
 final class WorkforceScheduleCalendarWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        Queue::fake();
+    }
 
     public function test_schedule_calendar_marks_workdays_days_off_absences_and_business_trips(): void
     {
@@ -43,8 +51,8 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/work-schedules/' . $scheduleId . '/days', [
                 'work_date' => '2026-05-23',
-                'day_type' => 'weekend',
-                'planned_hours' => 0,
+                'day_type' => 'work',
+                'planned_hours' => 6,
             ])
             ->assertCreated();
 
@@ -87,7 +95,30 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
             ->assertJsonPath('data.employees.0.days.2026-05-18.hours', 8)
             ->assertJsonPath('data.employees.0.days.2026-05-20.status_label', 'Отпуск')
             ->assertJsonPath('data.employees.0.days.2026-05-22.status_label', 'Командировка')
-            ->assertJsonPath('data.employees.0.days.2026-05-23.status_label', 'Выходной');
+            ->assertJsonPath('data.employees.0.days.2026-05-23.status_label', 'Рабочий день')
+            ->assertJsonPath('data.employees.0.days.2026-05-23.hours', 6)
+            ->assertJsonPath('data.employees.0.days.2026-05-24.status_label', 'Выходной')
+            ->assertJsonPath('data.employees.0.days.2026-05-24.hours', 0);
+    }
+
+    public function test_work_schedule_rejects_invalid_week_pattern(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/work-schedules', [
+                'code' => 'INVALID-WEEK-' . uniqid(),
+                'name' => 'Некорректная неделя',
+                'schedule_type' => 'weekly',
+                'hours_per_day' => 8,
+                'week_pattern' => ['work_days' => [1, 1, 8]],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors([
+                'week_pattern.work_days.1',
+                'week_pattern.work_days.2',
+            ]);
     }
 
     private function employee(AdminApiTestContext $context, string $personnelNumber): WorkforceEmployee
@@ -133,7 +164,9 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
             ->postJson('/api/v1/admin/workforce/work-schedules', [
                 'code' => 'CAL-5-2-' . uniqid(),
                 'name' => 'Пятидневка',
+                'schedule_type' => 'weekly',
                 'hours_per_day' => 8,
+                'week_pattern' => ['work_days' => [1, 2, 3, 4, 5]],
             ]);
         $schedule->assertCreated();
 

@@ -134,6 +134,26 @@ final class WorkforceCapacitySnapshotBuilderTest extends TestCase
     }
 
     #[Test]
+    public function weekly_schedule_without_stored_pattern_uses_five_day_default(): void
+    {
+        $source = $this->source();
+        $source['schedules'][0]['week_pattern'] = null;
+        $source['schedules'][0]['hours_per_day'] = '8.00';
+
+        $snapshot = $this->builder()->build(
+            key: new WorkforceCapacityCohortKey(7, '2026-08-15', '2026-08-01', 11, 101),
+            captureKind: 'change_capture',
+            capturedAt: new DateTimeImmutable('2026-08-15T09:00:00+00:00'),
+            actorUserId: null,
+            serviceActor: 'workforce-owner',
+            source: $source,
+        );
+
+        self::assertSame('240.00', $snapshot->scheduledHours);
+        self::assertSame([], $snapshot->gapCodes);
+    }
+
+    #[Test]
     public function production_week_pattern_without_explicit_hours_is_an_invalid_schedule_gap(): void
     {
         $source = $this->source();

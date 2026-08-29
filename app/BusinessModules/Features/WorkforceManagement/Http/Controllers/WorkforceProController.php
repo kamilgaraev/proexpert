@@ -593,6 +593,8 @@ final class WorkforceProController extends Controller
             'schedule_type' => ['nullable', 'string', 'max:40'],
             'hours_per_day' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'week_pattern' => ['nullable', 'array'],
+            'week_pattern.work_days' => ['sometimes', 'required', 'array', 'min:1', 'max:7'],
+            'week_pattern.work_days.*' => ['required', 'integer', 'between:1,7', 'distinct'],
             'is_active' => ['nullable', 'boolean'],
         ];
     }
