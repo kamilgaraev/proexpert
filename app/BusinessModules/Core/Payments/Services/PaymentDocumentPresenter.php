@@ -21,11 +21,6 @@ final class PaymentDocumentPresenter
      */
     public function brief(PaymentDocument $document, ?User $user): array
     {
-        $canBeCancelled = $document->canBeCancelled();
-        if ($user && !$canBeCancelled) {
-            $canBeCancelled = $user->isOrganizationOwner($document->organization_id);
-        }
-
         $problemFlags = $this->buildProblemFlags($document);
 
         return [
@@ -60,7 +55,7 @@ final class PaymentDocumentPresenter
             'problem_flags' => $problemFlags,
             'workflow_summary' => $this->buildWorkflowSummary($document, $problemFlags, []),
             'budget_limit_check' => $this->budgetLimitService->check($document, $user),
-            'can_be_cancelled' => $canBeCancelled,
+            'can_be_cancelled' => $document->canBeCancelled(),
             'created_at' => $document->created_at->toDateTimeString(),
         ];
     }
@@ -169,7 +164,7 @@ final class PaymentDocumentPresenter
     }
 
     /**
-     * @param array<int, PaymentDocument>|\Illuminate\Support\Collection<int, PaymentDocument> $documents
+     * @param  array<int, PaymentDocument>|\Illuminate\Support\Collection<int, PaymentDocument>  $documents
      * @return array<int, array<string, mixed>>
      */
     public function collection(iterable $documents, ?User $user): array
@@ -188,14 +183,14 @@ final class PaymentDocumentPresenter
      */
     private function formatInvoiceable(PaymentDocument $document, ?int $contractId): array
     {
-        if (!$document->invoiceable_type || !$document->invoiceable_id || str_contains($document->invoiceable_type, 'Payments\\Models\\Invoice')) {
+        if (! $document->invoiceable_type || ! $document->invoiceable_id || str_contains($document->invoiceable_type, 'Payments\\Models\\Invoice')) {
             return [];
         }
 
         try {
             $invoiceableModel = $document->invoiceable;
 
-            if (!$invoiceableModel) {
+            if (! $invoiceableModel) {
                 return [];
             }
 
@@ -219,7 +214,7 @@ final class PaymentDocumentPresenter
             }
 
             return $invoiceable;
-        } catch (\Error | \Exception $e) {
+        } catch (\Error|\Exception $e) {
             Log::debug('payment_document.invoiceable_load_failed', [
                 'document_id' => $document->id,
                 'invoiceable_type' => $document->invoiceable_type,
@@ -261,11 +256,11 @@ final class PaymentDocumentPresenter
 
         $flags = [];
 
-        if ($document->document_type->isOutgoing() && (!$document->bank_account || !$document->bank_bik)) {
+        if ($document->document_type->isOutgoing() && (! $document->bank_account || ! $document->bank_bik)) {
             $flags[] = 'missing_bank_details';
         }
 
-        if (!$document->payee_contractor_id && !$document->payee_organization_id) {
+        if (! $document->payee_contractor_id && ! $document->payee_organization_id) {
             $flags[] = 'missing_counterparty';
         }
 
@@ -306,8 +301,8 @@ final class PaymentDocumentPresenter
     }
 
     /**
-     * @param array<int, string> $problemFlags
-     * @param array<int, array<string, mixed>> $relatedSiteRequests
+     * @param  array<int, string>  $problemFlags
+     * @param  array<int, array<string, mixed>>  $relatedSiteRequests
      * @return array<string, mixed>
      */
     private function buildWorkflowSummary(PaymentDocument $document, array $problemFlags, array $relatedSiteRequests): array
@@ -336,7 +331,7 @@ final class PaymentDocumentPresenter
         return [
             'current_stage' => $currentStage,
             'next_action' => $nextAction,
-            'is_blocked' => !empty($problemFlags),
+            'is_blocked' => ! empty($problemFlags),
             'blockers' => $problemFlags,
             'related_site_requests' => $relatedSiteRequests,
             'available_actions' => array_values(array_filter([

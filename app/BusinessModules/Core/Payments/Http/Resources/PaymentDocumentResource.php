@@ -25,13 +25,7 @@ class PaymentDocumentResource extends ModelJsonResource
     {
         $document = $this->typedResource(PaymentDocument::class);
 
-        // Владелец организации может отменять документы в любом статусе
-        $canBeCancelled = $document->canBeCancelled();
         $user = $request->user();
-        if ($user && !$canBeCancelled) {
-            // Если по статусу нельзя отменить, но пользователь владелец - разрешаем
-            $canBeCancelled = $user->isOrganizationOwner($document->organization_id);
-        }
         $hasProcurementChain = $this->hasProcurementChain($document);
         $procurementChainSummary = $hasProcurementChain
             ? app(ProcurementChainService::class)->forPaymentDocument($document, $user)->compact()->toArray()
@@ -73,11 +67,11 @@ class PaymentDocumentResource extends ModelJsonResource
             'days_until_due' => $document->getDaysUntilDue(),
             'is_overdue' => $document->isOverdue(),
             'can_be_paid' => $document->canBePaid(),
-            'can_be_cancelled' => $canBeCancelled,
+            'can_be_cancelled' => $document->canBeCancelled(),
             'can_be_edited' => $document->canBeEdited(),
             'requires_approval' => $document->requiresApproval(),
             'budget_limit_check' => app(PaymentBudgetLimitService::class)->check($document, $user),
-            'site_requests' => $this->whenLoaded('siteRequests', fn() => $this->siteRequests->map(fn($request) => [
+            'site_requests' => $this->whenLoaded('siteRequests', fn () => $this->siteRequests->map(fn ($request) => [
                 'id' => $request->id,
                 'title' => $request->title,
                 'request_type' => $request->request_type->value,
@@ -86,7 +80,7 @@ class PaymentDocumentResource extends ModelJsonResource
                 'status_label' => $request->status->label(),
                 'pivot_amount' => $request->pivot->amount ? (float) $request->pivot->amount : null,
             ])),
-            'site_requests_count' => $this->when($document->relationLoaded('siteRequests'), fn() => $document->siteRequests->count()),
+            'site_requests_count' => $this->when($document->relationLoaded('siteRequests'), fn () => $document->siteRequests->count()),
             'payer_name' => $document->getPayerName(),
             'payee_name' => $document->getPayeeName(),
             'procurement_chain_summary' => $procurementChainSummary,
@@ -155,7 +149,7 @@ class PaymentDocumentResource extends ModelJsonResource
             'primary_action' => $primaryAction,
             'secondary_actions' => [],
             'menu_actions' => [],
-            'blockers' => $primaryAction && !$primaryAction['is_enabled'] ? [[
+            'blockers' => $primaryAction && ! $primaryAction['is_enabled'] ? [[
                 'key' => 'permission_required',
                 'message' => trans_message('payments.blockers.permission_required'),
                 'severity' => 'warning',
@@ -186,7 +180,7 @@ class PaymentDocumentResource extends ModelJsonResource
             'required_permission' => $permission,
             'permission' => $permission,
             'is_enabled' => $isEnabled,
-            'disabled' => !$isEnabled,
+            'disabled' => ! $isEnabled,
             'disabled_reason' => $isEnabled ? null : trans_message('payments.blockers.permission_required'),
             'scope' => 'payment_document',
             'priority' => 'primary',

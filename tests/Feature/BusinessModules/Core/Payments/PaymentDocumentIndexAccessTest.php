@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentPresenter;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\ContractorType;
@@ -89,7 +90,7 @@ final class PaymentDocumentIndexAccessTest extends TestCase
         $this->assertSame(InvoiceType::OTHER->value, $document->getRawOriginal('invoice_type'));
 
         $response = $this->withHeaders($participantContext->authHeaders())
-            ->getJson('/api/v1/admin/payments/documents?' . http_build_query([
+            ->getJson('/api/v1/admin/payments/documents?'.http_build_query([
                 'contract_id' => $contract->id,
                 'contractor_id' => $contractor->id,
                 'project_id' => $project->id,
@@ -103,6 +104,60 @@ final class PaymentDocumentIndexAccessTest extends TestCase
         $response->assertJsonPath('data.0.document_type', PaymentDocumentType::INVOICE->value);
         $response->assertJsonPath('data.0.invoice_type', InvoiceType::OTHER->value);
         $response->assertJsonPath('data.0.direction', InvoiceDirection::OUTGOING->value);
+    }
+
+    public function test_owner_cannot_cancel_documents_in_terminal_statuses(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $this->activatePaymentsModule($context->organization->id);
+
+        $cancelledDocument = PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'document_type' => PaymentDocumentType::INVOICE,
+            'document_number' => 'PAY-DOC-CANCELLED',
+            'document_date' => '2026-08-30',
+            'direction' => InvoiceDirection::OUTGOING,
+            'invoice_type' => InvoiceType::OTHER,
+            'amount' => 1800,
+            'paid_amount' => 0,
+            'remaining_amount' => 1800,
+            'currency' => 'RUB',
+            'status' => PaymentDocumentStatus::CANCELLED,
+        ]);
+        $paidDocument = PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'document_number' => 'PAY-DOC-PAID',
+            'document_date' => '2026-08-30',
+            'direction' => InvoiceDirection::OUTGOING,
+            'invoice_type' => InvoiceType::OTHER,
+            'amount' => 2100,
+            'paid_amount' => 2100,
+            'remaining_amount' => 0,
+            'currency' => 'RUB',
+            'status' => PaymentDocumentStatus::PAID,
+        ]);
+
+        $owner = $context->user->fresh();
+        $this->assertTrue($owner->isOrganizationOwner($context->organization->id));
+        $this->assertSame(PaymentDocumentStatus::CANCELLED, $cancelledDocument->fresh()->status);
+        $this->assertSame(PaymentDocumentStatus::PAID, $paidDocument->fresh()->status);
+        $presenter = app(PaymentDocumentPresenter::class);
+        $this->assertFalse($presenter->brief($cancelledDocument->fresh(), $owner)['can_be_cancelled']);
+        $this->assertFalse($presenter->brief($paidDocument->fresh(), $owner)['can_be_cancelled']);
+
+        $indexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/documents?per_page=50');
+
+        $indexResponse->assertOk();
+        $documents = collect($indexResponse->json('data'))->keyBy('id');
+        $this->assertFalse($documents->get($cancelledDocument->id)['can_be_cancelled']);
+        $this->assertFalse($documents->get($paidDocument->id)['can_be_cancelled']);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/documents/{$cancelledDocument->id}")
+            ->assertOk()
+            ->assertJsonPath('data.can_be_cancelled', false);
     }
 
     private function activatePaymentsModule(int $organizationId): void
