@@ -644,15 +644,72 @@ class PaymentValidationService
         }
     }
 
+    /**
+     * @return array{
+     *     contract_id: int,
+     *     basis: 'procurement_receipts'|'approved_acts',
+     *     performed_amount: float,
+     *     committed_amount: float,
+     *     available_amount: float
+     * }
+     */
+    public function contractAvailability(Contract $contract, ?int $projectId = null): array
+    {
+        if ((bool) $contract->is_multi_project && $projectId !== null) {
+            $basis = [
+                'basis' => 'approved_acts',
+                'amount' => (float) DB::table('contract_performance_acts')
+                    ->where('contract_id', $contract->id)
+                    ->where('project_id', $projectId)
+                    ->where('is_approved', true)
+                    ->sum('amount'),
+            ];
+        } else {
+            $basis = $this->contractPerformedBasis($contract, $projectId);
+        }
+
+        $paymentsQuery = $this->effectiveContractDocumentsQuery($contract);
+        $this->scopePerformedWorkPayments($paymentsQuery);
+
+        if ((bool) $contract->is_multi_project && $projectId !== null) {
+            $paymentsQuery->where('project_id', $projectId);
+        }
+
+        $committedAmount = (float) $paymentsQuery->sum('amount');
+        $performedAmount = (float) $basis['amount'];
+
+        return [
+            'contract_id' => (int) $contract->id,
+            'basis' => $basis['basis'],
+            'performed_amount' => round($performedAmount, 2),
+            'committed_amount' => round($committedAmount, 2),
+            'available_amount' => round(max(0.0, $performedAmount - $committedAmount), 2),
+        ];
+    }
+
     private function contractPerformedAmount(Contract $contract, ?int $projectId = null): float
+    {
+        return $this->contractPerformedBasis($contract, $projectId)['amount'];
+    }
+
+    /**
+     * @return array{basis: 'procurement_receipts'|'approved_acts', amount: float}
+     */
+    private function contractPerformedBasis(Contract $contract, ?int $projectId = null): array
     {
         $procurementAmount = $this->procurementReceivedAmount($contract, $projectId);
 
         if ($procurementAmount > 0.0) {
-            return $procurementAmount;
+            return [
+                'basis' => 'procurement_receipts',
+                'amount' => $procurementAmount,
+            ];
         }
 
-        return (float) ($contract->total_performed_amount ?? 0);
+        return [
+            'basis' => 'approved_acts',
+            'amount' => (float) ($contract->total_performed_amount ?? 0),
+        ];
     }
 
     private function procurementReceivedAmount(Contract $contract, ?int $projectId = null): float

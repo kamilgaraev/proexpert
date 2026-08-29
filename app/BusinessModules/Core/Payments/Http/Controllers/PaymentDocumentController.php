@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Payments\Http\Controllers;
 use App\BusinessModules\Core\Payments\Exceptions\PaymentDocumentDeviationBlockedException;
 use App\BusinessModules\Core\Payments\Http\Requests\BulkActionRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\CancelPaymentDocumentRequest;
+use App\BusinessModules\Core\Payments\Http\Requests\ContractPaymentAvailabilityRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\GeneratePaymentPurposeRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\PaymentDocumentIndexRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\PreviewPaymentDocumentBudgetRequest;
@@ -21,9 +22,11 @@ use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentPresenter;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentQueryService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentWorkflowService;
+use App\BusinessModules\Core\Payments\Services\PaymentValidationService;
 use App\BusinessModules\Core\Payments\Services\PurchaseOrderContractRequirementService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Services\Contract\ContractAccessService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -44,7 +47,35 @@ final class PaymentDocumentController extends Controller
         private readonly PaymentBudgetLimitService $budgetLimits,
         private readonly PaymentOrderPdfService $pdfExport,
         private readonly PurchaseOrderContractRequirementService $contractRequirement,
+        private readonly ContractAccessService $contractAccess,
+        private readonly PaymentValidationService $validation,
     ) {}
+
+    public function contractAvailability(
+        ContractPaymentAvailabilityRequest $request,
+        int|string $contract
+    ): JsonResponse {
+        try {
+            $accessibleContract = $this->contractAccess->findAccessibleOrFail(
+                (int) $contract,
+                $this->organizationId($request),
+                $request->projectId()
+            );
+
+            return AdminResponse::success(
+                $this->validation->contractAvailability($accessibleContract, $request->projectId())
+            );
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
+        } catch (Throwable $e) {
+            Log::error('payment_document.contract_availability.error', [
+                'contract_id' => $contract,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('payments.documents.load_error'), 500);
+        }
+    }
 
     public function bulkAction(BulkActionRequest $request): JsonResponse
     {

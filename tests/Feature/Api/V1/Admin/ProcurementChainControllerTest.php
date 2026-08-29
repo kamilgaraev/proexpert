@@ -32,6 +32,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -326,6 +327,60 @@ final class ProcurementChainControllerTest extends TestCase
             'invoice_type' => InvoiceType::MATERIAL_PURCHASE->value,
             'amount' => 500,
         ]);
+    }
+
+    public function test_contract_payment_availability_uses_posted_procurement_receipts_instead_of_acts(): void
+    {
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Availability supplier',
+            'inn' => '7700000002',
+            'contractor_type' => Contractor::TYPE_MANUAL,
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $purchaseRequest->project_id,
+            'contractor_id' => $contractor->id,
+            'contract_category' => 'procurement',
+            'number' => 'SUP-AVAILABILITY-'.uniqid(),
+            'date' => now()->toDateString(),
+            'subject' => 'Material supply',
+            'work_type_category' => ContractWorkTypeCategoryEnum::SUPPLY,
+            'base_amount' => 5715,
+            'total_amount' => 5715,
+            'status' => ContractStatusEnum::ACTIVE,
+            'is_fixed_amount' => true,
+        ]);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED, [
+            'contract_id' => $contract->id,
+            'total_amount' => 5715,
+        ]);
+        $this->createPostedReceipt($purchaseOrder, 5, 360);
+        DB::table('contract_performance_acts')->insert([
+            'contract_id' => $contract->id,
+            'project_id' => $purchaseRequest->project_id,
+            'act_document_number' => 'KS-2-AVAILABILITY',
+            'act_date' => now()->toDateString(),
+            'amount' => 5715,
+            'status' => 'approved',
+            'is_approved' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/contracts/{$contract->id}/availability");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.contract_id', $contract->id);
+        $response->assertJsonPath('data.basis', 'procurement_receipts');
+        $response->assertJsonPath('data.performed_amount', 1800);
+        $response->assertJsonPath('data.committed_amount', 0);
+        $response->assertJsonPath('data.available_amount', 1800);
     }
 
     public function test_payment_document_endpoint_applies_budget_dimensions_from_request(): void
