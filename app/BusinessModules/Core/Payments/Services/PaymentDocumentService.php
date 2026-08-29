@@ -265,6 +265,9 @@ class PaymentDocumentService
      */
     public function submit(PaymentDocument $document, ?User $user = null, ?string $overrideReason = null): PaymentDocument
     {
+        $effectiveOverrideReason = $overrideReason
+            ?? (is_string($document->budget_limit_override_reason) ? $document->budget_limit_override_reason : null);
+
         DB::beginTransaction();
 
         try {
@@ -275,15 +278,15 @@ class PaymentDocumentService
                 PaymentBudgetLimitService::OPERATION_SUBMIT,
                 (string) $document->amount,
                 $user,
-                $overrideReason
+                $effectiveOverrideReason
             );
 
             // Шаг 1: Переводим в статус "submitted" (отправлен на рассмотрение)
             $this->stateMachine->submit($document);
 
             // Шаг 2: Инициируем процесс утверждения (submitted → pending_approval)
-            $this->approvalWorkflow->initiateApproval($document);
-            $this->budgetLimitService->syncReservation($document->fresh(), $user, $overrideReason);
+            $this->approvalWorkflow->initiateApproval($document, $user, $effectiveOverrideReason);
+            $this->budgetLimitService->syncReservation($document->fresh(), $user, $effectiveOverrideReason);
 
             Log::info('payment_document.submitted', [
                 'document_id' => $document->id,
