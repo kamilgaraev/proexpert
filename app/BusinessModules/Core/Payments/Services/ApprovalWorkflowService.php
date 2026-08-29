@@ -25,8 +25,11 @@ class ApprovalWorkflowService
     /**
      * Инициировать процесс утверждения для документа
      */
-    public function initiateApproval(PaymentDocument $document): Collection
-    {
+    public function initiateApproval(
+        PaymentDocument $document,
+        ?User $user = null,
+        ?string $budgetOverrideReason = null,
+    ): Collection {
         // Найти подходящее правило утверждения
         $rule = $this->findApplicableRule($document);
 
@@ -46,10 +49,12 @@ class ApprovalWorkflowService
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_APPROVAL,
-                (string) $document->amount
+                (string) $document->amount,
+                $user,
+                $budgetOverrideReason
             );
             $this->stateMachine->approve($document);
-            $this->budgetLimitService->syncReservation($document->fresh());
+            $this->budgetLimitService->syncReservation($document->fresh(), $user, $budgetOverrideReason);
 
             return collect();
         }
@@ -59,7 +64,7 @@ class ApprovalWorkflowService
 
         // Меняем статус документа на "ожидает утверждения"
         $this->stateMachine->sendForApproval($document);
-        $this->budgetLimitService->syncReservation($document->fresh());
+        $this->budgetLimitService->syncReservation($document->fresh(), $user, $budgetOverrideReason);
 
         // Уведомляем первый уровень утверждающих
         $this->notifyPendingApprovers($document, 1);
