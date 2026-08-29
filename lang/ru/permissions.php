@@ -130,6 +130,7 @@ return [
         'reports.run' => 'Формирование отчётов',
         'act_reports.approve' => 'Согласование актов выполненных работ',
         'construction-journal.reopen' => 'Возобновление закрытых журналов работ',
+        'workflow.override' => 'Обход мягких блокировок рабочего процесса',
         'reports.create' => 'Создание отчетов',
         'reports.export' => 'Экспорт отчётов',
         'reports.download' => 'Скачивание отчётов',

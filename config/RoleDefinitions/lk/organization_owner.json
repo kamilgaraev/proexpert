@@ -60,6 +60,7 @@
     "erp_controls.policies.manage",
     "erp_controls.override",
     "erp_controls.override.approve",
+    "workflow.override",
     "erp_controls.sod_conflicts.view",
     "erp_controls.sod_conflicts.resolve",
     "admin.*",
