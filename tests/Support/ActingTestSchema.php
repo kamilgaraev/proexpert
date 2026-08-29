@@ -348,6 +348,7 @@ trait ActingTestSchema
             $table->decimal('total_amount', 15, 2)->default(0);
             $table->decimal('total_amount_with_vat', 15, 2)->default(0);
             $table->decimal('vat_rate', 5, 2)->default(0);
+            $table->string('structure_cache_path')->nullable();
             $table->foreignId('current_version_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
@@ -376,12 +377,49 @@ trait ActingTestSchema
             $table->timestamps();
         });
 
+        DB::statement(<<<'SQL'
+            CREATE OR REPLACE FUNCTION guard_sealed_estimate_header()
+            RETURNS trigger AS $$
+            BEGIN
+                IF OLD.current_version_id IS NOT NULL AND OLD.status = 'approved' THEN
+                    IF NEW.structure_cache_path IS DISTINCT FROM OLD.structure_cache_path
+                        AND (to_jsonb(NEW) - ARRAY['structure_cache_path', 'updated_at'])
+                        = (to_jsonb(OLD) - ARRAY['structure_cache_path', 'updated_at']) THEN
+                        RETURN NEW;
+                    END IF;
+
+                    IF NEW.current_version_id IS DISTINCT FROM OLD.current_version_id
+                        AND (to_jsonb(NEW) - ARRAY['current_version_id', 'updated_at'])
+                            = (to_jsonb(OLD) - ARRAY['current_version_id', 'updated_at']) THEN
+                        RETURN NEW;
+                    END IF;
+
+                    IF NEW.status = 'draft'
+                        AND (to_jsonb(NEW) - ARRAY['status', 'approved_by_user_id', 'approved_at', 'updated_at'])
+                            = (to_jsonb(OLD) - ARRAY['status', 'approved_by_user_id', 'approved_at', 'updated_at']) THEN
+                        RETURN NEW;
+                    END IF;
+
+                    RAISE EXCEPTION 'approved_estimate_is_immutable' USING ERRCODE = '23514';
+                END IF;
+
+                RETURN COALESCE(NEW, OLD);
+            END;
+            $$ LANGUAGE plpgsql
+            SQL);
+        DB::statement(<<<'SQL'
+            CREATE TRIGGER estimates_sealed_header_guard
+                BEFORE UPDATE OR DELETE ON estimates
+                FOR EACH ROW EXECUTE FUNCTION guard_sealed_estimate_header()
+            SQL);
+
         Schema::create('estimate_items', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('estimate_id');
             $table->foreignId('parent_work_id')->nullable();
             $table->string('position_number')->nullable();
             $table->string('item_type')->nullable();
+            $table->boolean('is_not_accounted')->default(false);
             $table->string('name');
             $table->foreignId('work_type_id')->nullable();
             $table->foreignId('measurement_unit_id')->nullable();
