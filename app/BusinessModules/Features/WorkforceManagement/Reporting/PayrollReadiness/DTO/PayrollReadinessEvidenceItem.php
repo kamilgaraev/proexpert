@@ -44,7 +44,10 @@ final readonly class PayrollReadinessEvidenceItem
             'evidence_code' => $this->code,
             'evidence_status' => $this->status,
             'content_hash' => $this->contentHash,
-            'lineage' => $this->lineage,
+            'lineage' => json_encode(
+                (object) $this->lineage,
+                JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR,
+            ),
         ];
     }
 
