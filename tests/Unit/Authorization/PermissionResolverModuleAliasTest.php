@@ -9,6 +9,26 @@ use PHPUnit\Framework\TestCase;
 
 class PermissionResolverModuleAliasTest extends TestCase
 {
+    // Regression: ISSUE-083 — owner получал 403 на каталог спецификаций
+    // Found by /qa on 2026-08-29
+    // Report: .gstack/qa-reports/qa-report-most-full-2026-08-28.md
+    public function test_specifications_permission_uses_contract_management_module_alias(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        $this->assertContains('contract-management', $resolver->variants('specifications'));
+        $this->assertContains('contracts', $resolver->variants('contract-management'));
+    }
+
     public function test_estimate_generation_permission_uses_ai_estimates_module_alias(): void
     {
         $resolver = new class extends PermissionResolver {
