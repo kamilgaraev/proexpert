@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Api\V1\Admin\AccessRecertification;
 
+use App\Rules\ActiveOrganizationUser;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -16,6 +17,10 @@ final class AccessRecertificationDecisionRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationUser = new ActiveOrganizationUser(
+            (int) $this->attributes->get('current_organization_id'),
+        );
+
         return [
             'decision' => ['required', 'string', Rule::in(['approve', 'revoke', 'exception'])],
             'reason' => ['required', 'string', 'max:2000'],
@@ -23,7 +28,7 @@ final class AccessRecertificationDecisionRequest extends FormRequest
             'valid_until' => ['required_if:decision,exception', 'nullable', 'date', 'after:today'],
             'next_review_at' => ['sometimes', 'nullable', 'date', 'after:today'],
             'revoke_reason' => ['sometimes', 'nullable', 'string', 'max:2000'],
-            'revoke_executor_user_id' => ['required_if:decision,revoke', 'nullable', 'integer', 'exists:users,id'],
+            'revoke_executor_user_id' => ['required_if:decision,revoke', 'nullable', 'integer', $organizationUser],
             'evidence_notes' => ['sometimes', 'nullable', 'string', 'max:4000'],
             'compensating_controls' => ['required_if:decision,exception', 'array'],
             'compensating_controls.*' => ['string', 'max:500'],
