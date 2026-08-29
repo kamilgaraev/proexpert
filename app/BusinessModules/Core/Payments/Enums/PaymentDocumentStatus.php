@@ -19,7 +19,7 @@ enum PaymentDocumentStatus: string
      */
     public function label(): string
     {
-        return match($this) {
+        return match ($this) {
             self::DRAFT => 'Черновик',
             self::SUBMITTED => 'Отправлен',
             self::PENDING_APPROVAL => 'На согласовании',
@@ -41,7 +41,7 @@ enum PaymentDocumentStatus: string
             self::APPROVED,
             self::SCHEDULED,
             self::PARTIALLY_PAID,
-        ]);
+        ], true);
     }
 
     /**
@@ -55,7 +55,7 @@ enum PaymentDocumentStatus: string
             self::PENDING_APPROVAL,
             self::APPROVED,
             self::SCHEDULED,
-        ]);
+        ], true);
     }
 
     /**
@@ -65,7 +65,7 @@ enum PaymentDocumentStatus: string
     {
         return in_array($this, [
             self::DRAFT,
-        ]);
+        ], true);
     }
 
     /**
@@ -77,7 +77,7 @@ enum PaymentDocumentStatus: string
             self::PAID,
             self::REJECTED,
             self::CANCELLED,
-        ]);
+        ], true);
     }
 
     /**
@@ -91,7 +91,6 @@ enum PaymentDocumentStatus: string
             self::APPROVED,
             self::SCHEDULED,
             self::PARTIALLY_PAID,
-        ]);
+        ], true);
     }
 }
-
