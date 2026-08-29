@@ -86,6 +86,8 @@ final class PaymentDocumentIndexAccessTest extends TestCase
             'due_date' => '2026-06-10',
         ]);
 
+        $this->assertSame(InvoiceType::OTHER->value, $document->getRawOriginal('invoice_type'));
+
         $response = $this->withHeaders($participantContext->authHeaders())
             ->getJson('/api/v1/admin/payments/documents?' . http_build_query([
                 'contract_id' => $contract->id,
@@ -98,6 +100,9 @@ final class PaymentDocumentIndexAccessTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.0.id', $document->id);
+        $response->assertJsonPath('data.0.document_type', PaymentDocumentType::INVOICE->value);
+        $response->assertJsonPath('data.0.invoice_type', InvoiceType::OTHER->value);
+        $response->assertJsonPath('data.0.direction', InvoiceDirection::OUTGOING->value);
     }
 
     private function activatePaymentsModule(int $organizationId): void
