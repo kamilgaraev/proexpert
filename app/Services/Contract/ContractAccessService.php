@@ -17,7 +17,7 @@ class ContractAccessService
 
         $contract = $query->first();
 
-        if (!$contract) {
+        if (! $contract) {
             return null;
         }
 
@@ -28,11 +28,11 @@ class ContractAccessService
         ]);
 
         $isOwnerOrganization = (int) $contract->organization_id === (int) $organizationId;
-        $isContractorOrganization = !$contract->is_self_execution
+        $isContractorOrganization = ! $contract->is_self_execution
             && $contract->contractor !== null
             && (int) ($contract->contractor->source_organization_id ?? 0) === (int) $organizationId;
 
-        if (!$isOwnerOrganization && !$isContractorOrganization) {
+        if (! $isOwnerOrganization && ! $isContractorOrganization) {
             return null;
         }
 
@@ -41,7 +41,7 @@ class ContractAccessService
                 ? $contract->projects()->where('projects.id', $projectId)->exists()
                 : (int) $contract->project_id === (int) $projectId;
 
-            if (!$belongsToProject) {
+            if (! $belongsToProject) {
                 return null;
             }
         }
@@ -59,11 +59,14 @@ class ContractAccessService
             $contract->load([
                 'performanceActs' => fn ($query) => $query->where('project_id', $projectId),
                 'performanceActs.completedWorks',
+                'payments' => fn ($query) => $query->where('project_id', $projectId),
+                'payments.transactions',
             ]);
         } else {
             $contract->load([
                 'performanceActs',
                 'performanceActs.completedWorks',
+                'payments.transactions',
             ]);
         }
 
@@ -75,7 +78,7 @@ class ContractAccessService
         $contract = $this->findAccessible($contractId, $organizationId, $projectId);
 
         if ($contract === null) {
-            throw (new ModelNotFoundException())->setModel(Contract::class, [$contractId]);
+            throw (new ModelNotFoundException)->setModel(Contract::class, [$contractId]);
         }
 
         return $contract;
@@ -96,11 +99,11 @@ class ContractAccessService
         $contract->loadMissing('contractor');
 
         $isOwnerOrganization = (int) $contract->organization_id === (int) $organizationId;
-        $isContractorOrganization = !$contract->is_self_execution
+        $isContractorOrganization = ! $contract->is_self_execution
             && $contract->contractor !== null
             && (int) ($contract->contractor->source_organization_id ?? 0) === (int) $organizationId;
 
-        if (!$isOwnerOrganization && !$isContractorOrganization) {
+        if (! $isOwnerOrganization && ! $isContractorOrganization) {
             return false;
         }
 
