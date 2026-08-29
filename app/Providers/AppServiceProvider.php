@@ -201,7 +201,8 @@ class AppServiceProvider extends ServiceProvider
                 $app->make(\App\Repositories\Interfaces\UserRepositoryInterface::class),
                 $app->make(\App\Domain\Authorization\Services\AuthorizationService::class),
                 $app->make(\App\Helpers\AdminPanelAccessHelper::class),
-                $app->make(\App\Services\Logging\LoggingService::class)
+                $app->make(\App\Services\Logging\LoggingService::class),
+                $app->make(\App\Services\User\AdminUserRolePolicy::class)
             );
         });
 

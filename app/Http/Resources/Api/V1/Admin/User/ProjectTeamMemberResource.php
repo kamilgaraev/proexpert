@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources\Api\V1\Admin\User;
 
 use App\Models\User;
+use App\Services\User\AdminUserRolePolicy;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Collection;
@@ -12,6 +13,8 @@ use Illuminate\Support\Collection;
 class ProjectTeamMemberResource extends JsonResource
 {
     private const ROLE_PRIORITY = [
+        'super_admin',
+        'system_admin',
         'organization_owner',
         'organization_admin',
         'finance_admin',
@@ -29,7 +32,7 @@ class ProjectTeamMemberResource extends JsonResource
 
     public function toArray(Request $request): array
     {
-        if (!$this->resource instanceof User) {
+        if (! $this->resource instanceof User) {
             return [];
         }
 
@@ -37,6 +40,9 @@ class ProjectTeamMemberResource extends JsonResource
             ?? $request->user()?->current_organization_id
             ?? 0);
         $roles = $this->resolveRoles($organizationId);
+        $rolePolicy = app(AdminUserRolePolicy::class);
+        $roleLabels = $rolePolicy->labelsFor($roles);
+        $primaryRole = $this->resolvePrimaryRole($roles);
         $assignedProjects = $this->resolveAssignedProjects();
 
         return [
@@ -49,7 +55,9 @@ class ProjectTeamMemberResource extends JsonResource
             'avatar_url' => $this->resource->avatar_url,
             'is_active' => (bool) $this->resource->is_active,
             'roles' => $roles,
-            'primary_role' => $this->resolvePrimaryRole($roles),
+            'role_labels' => $roleLabels,
+            'primary_role' => $primaryRole,
+            'primary_role_label' => $rolePolicy->labelFor($primaryRole),
             'project_role' => $this->resource->pivot?->role,
             'project_assigned_at' => $this->resource->pivot?->assigned_at,
             'project_access_mode' => $this->resolveProjectAccessMode($organizationId),
@@ -121,7 +129,7 @@ class ProjectTeamMemberResource extends JsonResource
 
     private function resolveAssignedProjects(): Collection
     {
-        if (!$this->resource->relationLoaded('assignedProjects')) {
+        if (! $this->resource->relationLoaded('assignedProjects')) {
             return collect();
         }
 

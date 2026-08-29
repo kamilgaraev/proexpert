@@ -67,6 +67,25 @@ class UserManagementController extends Controller
         }
     }
 
+    public function roleOptions(Request $request): JsonResponse
+    {
+        try {
+            return AdminResponse::success([
+                'roles' => $this->userService->getAssignableRoleOptions($request),
+            ]);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in UserManagementController@roleOptions', [
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'message' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('user.roles_load_error'), 500);
+        }
+    }
+
     public function store(StoreForemanRequest $request): JsonResponse
     {
         try {

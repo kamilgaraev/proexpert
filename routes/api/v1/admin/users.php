@@ -1,9 +1,9 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\CustomerAccessController;
 use App\Http\Controllers\Api\V1\Admin\UserManagementController;
 use App\Http\Controllers\Api\V1\Admin\UserProjectAccessController;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -19,6 +19,9 @@ use App\Http\Controllers\Api\V1\Admin\UserProjectAccessController;
 // User Management (Foremen) - с детальными правами
 Route::get('users/options', [UserManagementController::class, 'options'])
     ->name('users.options');
+Route::get('users/role-options', [UserManagementController::class, 'roleOptions'])
+    ->middleware('authorize:admin.users.view')
+    ->name('users.role-options');
 Route::get('users', [UserManagementController::class, 'index'])
     ->middleware('authorize:admin.users.view')
     ->name('users.index');
@@ -52,4 +55,4 @@ Route::post('users/{user}/block', [UserManagementController::class, 'block'])
     ->name('users.block');
 Route::post('users/{user}/unblock', [UserManagementController::class, 'unblock'])
     ->middleware('authorize:admin.users.block')
-    ->name('users.unblock'); 
+    ->name('users.unblock');
