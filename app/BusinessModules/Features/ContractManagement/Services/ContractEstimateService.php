@@ -6,9 +6,9 @@ namespace App\BusinessModules\Features\ContractManagement\Services;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
 use App\Models\Contract;
+use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
-use App\Models\ContractEstimateItem;
 use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -18,8 +18,7 @@ class ContractEstimateService
 {
     public function __construct(
         private readonly EstimateCacheService $estimateCacheService,
-    ) {
-    }
+    ) {}
 
     public function attachItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
     {
@@ -41,13 +40,13 @@ class ContractEstimateService
                 $item = $items->get($itemId);
                 $link = ContractEstimateItem::updateOrCreate(
                     [
-                        'contract_id'      => $contract->id,
+                        'contract_id' => $contract->id,
                         'estimate_item_id' => $item->id,
                     ],
                     [
                         'estimate_id' => $estimate->id,
-                        'quantity'    => $item->quantity_total,
-                        'amount'      => $this->calculateAmount($item, $estimate, $includeVat),
+                        'quantity' => $item->quantity_total ?? $item->quantity,
+                        'amount' => $this->calculateAmount($item, $estimate, $includeVat),
                     ]
                 );
 
@@ -55,11 +54,11 @@ class ContractEstimateService
             }
 
             Log::info('contract_estimate_items.attached', [
-                'contract_id'  => $contract->id,
-                'estimate_id'  => $estimate->id,
-                'item_ids'     => $allIds,
-                'include_vat'  => $includeVat,
-                'count'        => $attached->count(),
+                'contract_id' => $contract->id,
+                'estimate_id' => $estimate->id,
+                'item_ids' => $allIds,
+                'include_vat' => $includeVat,
+                'count' => $attached->count(),
             ]);
 
             return $attached;
@@ -85,7 +84,7 @@ class ContractEstimateService
 
         Log::info('contract_estimate_items.detached', [
             'contract_id' => $contract->id,
-            'item_ids'    => $allIds,
+            'item_ids' => $allIds,
         ]);
 
         Estimate::query()
@@ -174,17 +173,17 @@ class ContractEstimateService
         $estimates = [];
         foreach ($byEstimate as $estimateId => $group) {
             $estimates[] = [
-                'estimate_id'  => $estimateId,
-                'items_count'  => $group->count(),
+                'estimate_id' => $estimateId,
+                'items_count' => $group->count(),
                 'total_amount' => round($group->sum('amount'), 2),
             ];
         }
 
         return [
-            'contract_id'          => $contract->id,
-            'total_linked_items'   => $links->count(),
-            'total_amount'         => round($links->sum('amount'), 2),
-            'by_estimate'          => $estimates,
+            'contract_id' => $contract->id,
+            'total_linked_items' => $links->count(),
+            'total_amount' => round($links->sum('amount'), 2),
+            'by_estimate' => $estimates,
         ];
     }
 
@@ -224,7 +223,7 @@ class ContractEstimateService
             $amount = (float) $item->total_amount;
         } else {
             $quantity = (float) ($item->quantity_total ?? $item->quantity ?? 0);
-            $price    = (float) ($item->unit_price ?? 0);
+            $price = (float) ($item->unit_price ?? 0);
             $amount = $quantity * $price;
         }
 
