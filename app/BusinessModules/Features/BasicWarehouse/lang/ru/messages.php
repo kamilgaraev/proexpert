@@ -72,6 +72,7 @@ return [
         'damage' => 'Порча',
         'disposal' => 'Утилизация',
         'inventory_adjustment' => 'Инвентаризационная корректировка',
+        'placement' => 'Размещение в ячейке',
     ],
     'validation' => [
         'insufficient_project_stock' => 'На объекте недостаточно материала для выдачи.',

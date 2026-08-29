@@ -1,19 +1,19 @@
 <?php
 
+use App\BusinessModules\Features\BasicWarehouse\Controllers\AdvancedWarehouseController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\AssetController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\InventoryController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectAllocationController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectMaterialDeliveryController;
-use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehousePhotoController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseCustodyController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseIdentifierController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseLogisticUnitController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseOperationsController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehousePhotoController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseScanEventController;
-use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseTaskController;
-use App\BusinessModules\Features\BasicWarehouse\Controllers\AdvancedWarehouseController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseStorageCellController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseTaskController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseZoneController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
@@ -31,7 +31,7 @@ Route::middleware(AdminRouteStack::middleware())
     ->prefix('api/v1/admin')
     ->name('admin.')
     ->group(function () {
-        
+
         Route::prefix('warehouses')->name('warehouses.')->group(function () {
 
             Route::prefix('custody')->name('custody.')->middleware('authorize:warehouse.manage_stock')->group(function () {
@@ -46,14 +46,14 @@ Route::middleware(AdminRouteStack::middleware())
                 Route::post('/return', [WarehouseCustodyController::class, 'returnToProject'])
                     ->name('return');
             });
-            
+
             // Управление складами
             Route::get('/', [WarehouseController::class, 'index']);
             Route::post('/', [WarehouseController::class, 'store']);
             Route::get('/{id}', [WarehouseController::class, 'show'])->whereNumber('id');
             Route::put('/{id}', [WarehouseController::class, 'update'])->whereNumber('id');
             Route::delete('/{id}', [WarehouseController::class, 'destroy'])->whereNumber('id');
-            
+
             // Остатки и движения
             Route::get('/{id}/dashboard', [WarehouseController::class, 'dashboard'])
                 ->whereNumber('id')
@@ -63,7 +63,7 @@ Route::middleware(AdminRouteStack::middleware())
             Route::get('/{warehouseId}/balances/{materialId}/photos', [WarehousePhotoController::class, 'balancePhotos']);
             Route::post('/{warehouseId}/balances/{materialId}/photos', [WarehousePhotoController::class, 'uploadBalancePhotos']);
             Route::delete('/{warehouseId}/balances/{materialId}/photos/{fileId}', [WarehousePhotoController::class, 'deleteBalancePhoto']);
-            
+
             // Экспорт документов движений
             Route::get('/movements/{id}/export-m4', [WarehouseOperationsController::class, 'exportM4'])
                 ->name('movements.export-m4');
@@ -79,11 +79,11 @@ Route::middleware(AdminRouteStack::middleware())
                 ->name('movements.export-m15');
             Route::get('/movements/{id}/export-m7', [WarehouseOperationsController::class, 'exportM7'])
                 ->name('movements.export-m7');
-            
+
             // Карточка учета материала
             Route::get('/materials/{materialId}/export-m17', [WarehouseOperationsController::class, 'exportM17'])
                 ->name('materials.export-m17');
-            
+
             // Операции со складом
             Route::post('/operations/receipt', [WarehouseOperationsController::class, 'receipt'])
                 ->name('operations.receipt');
@@ -94,13 +94,16 @@ Route::middleware(AdminRouteStack::middleware())
                 ->name('operations.write-off');
             Route::post('/operations/transfer', [WarehouseOperationsController::class, 'transfer'])
                 ->name('operations.transfer');
+            Route::post('/operations/place', [WarehouseOperationsController::class, 'place'])
+                ->middleware('authorize:warehouse.manage_stock')
+                ->name('operations.place');
             Route::post('/operations/reserve', [WarehouseOperationsController::class, 'reserve'])
                 ->name('operations.reserve');
             Route::post('/operations/unreserve', [WarehouseOperationsController::class, 'unreserve'])
                 ->name('operations.unreserve');
             Route::post('/operations/transfer-to-contractor', [WarehouseOperationsController::class, 'transferToContractor'])
                 ->name('operations.transfer-to-contractor');
-            
+
             // Инвентаризация
             Route::prefix('inventory')->name('inventory.')->middleware('authorize:warehouse.inventory')->group(function () {
                 Route::get('/', [InventoryController::class, 'index']);
@@ -119,46 +122,46 @@ Route::middleware(AdminRouteStack::middleware())
                 ->name('zones.')
                 ->middleware('authorize:warehouse.advanced.zones')
                 ->group(function () {
-                Route::get('/', [WarehouseZoneController::class, 'index']);
-                Route::post('/', [WarehouseZoneController::class, 'store']);
-                Route::get('/{id}', [WarehouseZoneController::class, 'show']);
-                Route::put('/{id}', [WarehouseZoneController::class, 'update']);
-                Route::delete('/{id}', [WarehouseZoneController::class, 'destroy']);
-            });
+                    Route::get('/', [WarehouseZoneController::class, 'index']);
+                    Route::post('/', [WarehouseZoneController::class, 'store']);
+                    Route::get('/{id}', [WarehouseZoneController::class, 'show']);
+                    Route::put('/{id}', [WarehouseZoneController::class, 'update']);
+                    Route::delete('/{id}', [WarehouseZoneController::class, 'destroy']);
+                });
 
             Route::prefix('{warehouseId}/cells')
                 ->name('cells.')
                 ->middleware('authorize:warehouse.advanced.zones')
                 ->group(function () {
-                Route::get('/', [WarehouseStorageCellController::class, 'index']);
-                Route::post('/', [WarehouseStorageCellController::class, 'store']);
-                Route::get('/{id}', [WarehouseStorageCellController::class, 'show']);
-                Route::put('/{id}', [WarehouseStorageCellController::class, 'update']);
-                Route::delete('/{id}', [WarehouseStorageCellController::class, 'destroy']);
-            });
+                    Route::get('/', [WarehouseStorageCellController::class, 'index']);
+                    Route::post('/', [WarehouseStorageCellController::class, 'store']);
+                    Route::get('/{id}', [WarehouseStorageCellController::class, 'show']);
+                    Route::put('/{id}', [WarehouseStorageCellController::class, 'update']);
+                    Route::delete('/{id}', [WarehouseStorageCellController::class, 'destroy']);
+                });
 
             Route::prefix('{warehouseId}/logistic-units')
                 ->name('logistic-units.')
                 ->middleware('authorize:warehouse.advanced.zones')
                 ->group(function () {
-                Route::get('/', [WarehouseLogisticUnitController::class, 'index']);
-                Route::post('/', [WarehouseLogisticUnitController::class, 'store']);
-                Route::get('/{id}', [WarehouseLogisticUnitController::class, 'show']);
-                Route::put('/{id}', [WarehouseLogisticUnitController::class, 'update']);
-                Route::delete('/{id}', [WarehouseLogisticUnitController::class, 'destroy']);
-            });
+                    Route::get('/', [WarehouseLogisticUnitController::class, 'index']);
+                    Route::post('/', [WarehouseLogisticUnitController::class, 'store']);
+                    Route::get('/{id}', [WarehouseLogisticUnitController::class, 'show']);
+                    Route::put('/{id}', [WarehouseLogisticUnitController::class, 'update']);
+                    Route::delete('/{id}', [WarehouseLogisticUnitController::class, 'destroy']);
+                });
 
             Route::prefix('{warehouseId}/tasks')
                 ->name('tasks.')
                 ->middleware('authorize:warehouse.manage_stock')
                 ->group(function () {
-                Route::get('/', [WarehouseTaskController::class, 'index']);
-                Route::post('/', [WarehouseTaskController::class, 'store']);
-                Route::get('/{id}', [WarehouseTaskController::class, 'show']);
-                Route::put('/{id}', [WarehouseTaskController::class, 'update']);
-                Route::post('/{id}/status', [WarehouseTaskController::class, 'updateStatus']);
-                Route::delete('/{id}', [WarehouseTaskController::class, 'destroy']);
-            });
+                    Route::get('/', [WarehouseTaskController::class, 'index']);
+                    Route::post('/', [WarehouseTaskController::class, 'store']);
+                    Route::get('/{id}', [WarehouseTaskController::class, 'show']);
+                    Route::put('/{id}', [WarehouseTaskController::class, 'update']);
+                    Route::post('/{id}/status', [WarehouseTaskController::class, 'updateStatus']);
+                    Route::delete('/{id}', [WarehouseTaskController::class, 'destroy']);
+                });
         });
 
         Route::prefix('warehouse-identifiers')->name('warehouse-identifiers.')->middleware('authorize:warehouse.manage_stock')->group(function () {
@@ -216,7 +219,7 @@ Route::middleware(AdminRouteStack::middleware())
 
         // Продвинутые функции (Аналитика, Резервирование, Автозаказ)
         Route::prefix('advanced-warehouse')->name('advanced-warehouse.')->group(function () {
-            
+
             // Аналитика и прогнозирование
             Route::get('/analytics/turnover', [AdvancedWarehouseController::class, 'turnoverAnalytics'])
                 ->name('analytics.turnover');
@@ -224,7 +227,7 @@ Route::middleware(AdminRouteStack::middleware())
                 ->name('analytics.forecast');
             Route::get('/analytics/abc-xyz', [AdvancedWarehouseController::class, 'abcXyzAnalysis'])
                 ->name('analytics.abc-xyz');
-            
+
             // Резервирование
             Route::post('/reservations', [AdvancedWarehouseController::class, 'reserve'])
                 ->name('reservations.create');
@@ -234,7 +237,7 @@ Route::middleware(AdminRouteStack::middleware())
                 ->name('reservations.unreserve');
             Route::get('/reservations/{reservationId}/export-m8', [WarehouseOperationsController::class, 'exportM8'])
                 ->name('reservations.export-m8');
-            
+
             // Автопополнение
             Route::post('/auto-reorder/rules', [AdvancedWarehouseController::class, 'createAutoReorderRule'])
                 ->name('auto-reorder.create-rule');
@@ -247,7 +250,7 @@ Route::middleware(AdminRouteStack::middleware())
             Route::post('/auto-reorder/check', [AdvancedWarehouseController::class, 'checkAutoReorder'])
                 ->name('auto-reorder.check');
         });
-        
+
         // Распределение материалов по проектам
         Route::prefix('project-allocations')->name('project-allocations.')->middleware('authorize:warehouse.manage_stock')->group(function () {
             Route::post('/', [ProjectAllocationController::class, 'allocate'])

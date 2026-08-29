@@ -51,6 +51,16 @@ final readonly class InventoryRiskBackfill
         $gaps = 0;
         foreach ($movements as $movement) {
             $metadata = is_array($movement->metadata) ? $movement->metadata : [];
+            if ($movement->operation_category === WarehouseMovement::CATEGORY_PLACEMENT) {
+                $input[] = [
+                    'movement_id' => (int) $movement->id,
+                    'movement_type' => $movement->movement_type,
+                    'movement_date' => $movement->movement_date?->format(DATE_ATOM),
+                    'opening_basis' => null,
+                ];
+
+                continue;
+            }
             $eventType = $this->eventType((string) $movement->movement_type);
             $pairKey = in_array($eventType, ['transfer_in', 'transfer_out'], true)
                 ? ($metadata['transfer_pair_key'] ?? null)

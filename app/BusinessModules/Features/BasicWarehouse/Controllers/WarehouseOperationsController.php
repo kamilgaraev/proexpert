@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\PlaceAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReceiptRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReserveRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferRequest;
@@ -453,6 +454,50 @@ class WarehouseOperationsController extends Controller
             return $this->warehouseError('transfer_validation', $exception, $request, 'warehouse_basic.operation_validation_error', 422);
         } catch (Throwable $exception) {
             return $this->warehouseError('transfer', $exception, $request, 'warehouse_basic.transfer_error');
+        }
+    }
+
+    public function place(PlaceAssetRequest $request): JsonResponse
+    {
+        $validated = $request->validated();
+        $organizationId = (int) $request->user()->current_organization_id;
+        $warehouseId = (int) $validated['warehouse_id'];
+
+        try {
+            $cell = $this->storageCellResolver->resolveForWarehouse(
+                $organizationId,
+                $warehouseId,
+                (int) $validated['cell_id']
+            );
+
+            $result = $this->warehouseService->placeUnlocatedAsset(
+                $organizationId,
+                $warehouseId,
+                (int) $validated['material_id'],
+                (float) $validated['quantity'],
+                array_merge([
+                    'user_id' => (int) $request->user()->id,
+                    'document_number' => $validated['document_number'] ?? null,
+                    'reason' => $validated['reason'] ?? null,
+                    'idempotency_key' => $validated['idempotency_key'],
+                ], $this->storageCellResolver->metadata($cell))
+            );
+
+            return AdminResponse::success([
+                'movement_out' => new WarehouseMovementResource($result['movement_out']),
+                'movement_in' => new WarehouseMovementResource($result['movement_in']),
+                'avg_price' => $result['avg_price'],
+            ], trans_message('warehouse_basic.placement_success'));
+        } catch (InvalidArgumentException $exception) {
+            return $this->warehouseError(
+                'placement_validation',
+                $exception,
+                $request,
+                'warehouse_basic.operation_validation_error',
+                422
+            );
+        } catch (Throwable $exception) {
+            return $this->warehouseError('placement', $exception, $request, 'warehouse_basic.placement_error');
         }
     }
 

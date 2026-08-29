@@ -118,7 +118,8 @@ class WarehouseService implements WarehouseReportDataProvider
         int $materialId,
         float $quantity,
         float $price,
-        array $metadata = []
+        array $metadata = [],
+        bool $recordInventoryEvent = true
     ): array {
         DB::beginTransaction();
         try {
@@ -246,13 +247,15 @@ class WarehouseService implements WarehouseReportDataProvider
                     : (($metadata['operation_category'] ?? null) === WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN
                         ? 'return'
                         : 'receipt'));
-            $this->inventoryEventRecorder->record(
-                $movement,
-                $eventType,
-                in_array($eventType, ['transfer_in', 'transfer_out'], true)
-                    ? (string) ($metadata['transfer_pair_key'] ?? '')
-                    : null,
-            );
+            if ($recordInventoryEvent) {
+                $this->inventoryEventRecorder->record(
+                    $movement,
+                    $eventType,
+                    in_array($eventType, ['transfer_in', 'transfer_out'], true)
+                        ? (string) ($metadata['transfer_pair_key'] ?? '')
+                        : null,
+                );
+            }
 
             $this->logging->business('warehouse.asset.received', [
                 'organization_id' => $organizationId,
@@ -438,7 +441,9 @@ class WarehouseService implements WarehouseReportDataProvider
         int $toWarehouseId,
         int $materialId,
         float $quantity,
-        array $metadata = []
+        array $metadata = [],
+        bool $sourceUnlocatedOnly = false,
+        bool $recordInventoryEvent = true
     ): array {
         DB::beginTransaction();
         try {
@@ -486,7 +491,9 @@ class WarehouseService implements WarehouseReportDataProvider
                 ->where('material_id', $materialId)
                 ->where('available_quantity', '>', 0);
 
-            if (isset($metadata['from_cell_id'])) {
+            if ($sourceUnlocatedOnly) {
+                $sourceBatchesQuery->whereNull('cell_id');
+            } elseif (isset($metadata['from_cell_id'])) {
                 $sourceBatchesQuery->where('cell_id', $metadata['from_cell_id']);
             }
 
@@ -502,8 +509,12 @@ class WarehouseService implements WarehouseReportDataProvider
             $totalAvailable = $sourceBatches->sum('available_quantity');
 
             if ($totalAvailable < $quantity) {
+                $messageKey = $sourceUnlocatedOnly
+                    ? 'warehouse_basic.validation.insufficient_unlocated_stock'
+                    : 'warehouse_basic.validation.insufficient_transfer_stock';
+
                 throw new \InvalidArgumentException(
-                    trans_message('warehouse_basic.validation.insufficient_transfer_stock', [
+                    trans_message($messageKey, [
                         'available' => (float) $totalAvailable,
                         'requested' => (float) $quantity,
                     ])
@@ -541,6 +552,11 @@ class WarehouseService implements WarehouseReportDataProvider
 
             // 2. Приходуем на целевой склад (как одну партию с усредненной ценой)
             // (Можно было бы переносить партиями, но это сильно усложнит логику, обычно при перемещении принимают по учетной стоимости)
+            $targetReason = ($metadata['operation_category'] ?? null) === WarehouseMovement::CATEGORY_PLACEMENT
+                ? ($metadata['reason'] ?? trans_message('warehouse_basic.placement_default_reason'))
+                : trans_message('warehouse_basic.transfer_from_warehouse_reason', [
+                    'warehouse' => $fromWarehouseId,
+                ]);
             $targetResult = $this->receiveAsset(
                 $organizationId,
                 $toWarehouseId,
@@ -548,13 +564,12 @@ class WarehouseService implements WarehouseReportDataProvider
                 $quantity,
                 $transferPrice,
                 array_merge($metadata, [
-                    'reason' => trans_message('warehouse_basic.transfer_from_warehouse_reason', [
-                        'warehouse' => $fromWarehouseId,
-                    ]),
+                    'reason' => $targetReason,
                     'is_transfer' => true,
                     'transfer_pair_key' => $transferPairKey,
                     'from_warehouse_id' => $fromWarehouseId,
-                ])
+                ]),
+                $recordInventoryEvent
             );
 
             $movementIn = $targetResult['movement'];
@@ -579,7 +594,9 @@ class WarehouseService implements WarehouseReportDataProvider
                 'metadata' => array_merge($sourceMetadata, ['source_batches' => $sourceBatchDetails]),
                 'movement_date' => now(),
             ]);
-            $this->inventoryEventRecorder->record($movementOut, 'transfer_out', $transferPairKey);
+            if ($recordInventoryEvent) {
+                $this->inventoryEventRecorder->record($movementOut, 'transfer_out', $transferPairKey);
+            }
 
             $this->logging->business('warehouse.asset.transferred', [
                 'organization_id' => $organizationId,
@@ -607,6 +624,28 @@ class WarehouseService implements WarehouseReportDataProvider
             DB::rollBack();
             throw $e;
         }
+    }
+
+    public function placeUnlocatedAsset(
+        int $organizationId,
+        int $warehouseId,
+        int $materialId,
+        float $quantity,
+        array $metadata = []
+    ): array {
+        return $this->transferAsset(
+            $organizationId,
+            $warehouseId,
+            $warehouseId,
+            $materialId,
+            $quantity,
+            array_merge($metadata, [
+                'operation_category' => WarehouseMovement::CATEGORY_PLACEMENT,
+                'reason' => $metadata['reason'] ?? trans_message('warehouse_basic.placement_default_reason'),
+            ]),
+            true,
+            false
+        );
     }
 
     private function reportingMetadata(

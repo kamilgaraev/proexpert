@@ -9,6 +9,8 @@ use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ContractorType;
@@ -28,6 +30,108 @@ use function trans_message;
 class WarehouseOperationsControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_owner_can_partially_place_only_unlocated_stock_into_a_cell_idempotently(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN-PLACE');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Rebar', 'REBAR-PLACE');
+        $zone = WarehouseZone::query()->create([
+            'warehouse_id' => $warehouse->id,
+            'name' => 'Storage zone',
+            'code' => 'STORAGE-PLACE',
+            'zone_type' => WarehouseZone::TYPE_STORAGE,
+            'is_active' => true,
+        ]);
+        $cell = WarehouseStorageCell::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'zone_id' => $zone->id,
+            'name' => 'Rack A',
+            'code' => 'A-01-01',
+            'cell_type' => WarehouseStorageCell::TYPE_STORAGE,
+            'status' => WarehouseStorageCell::STATUS_AVAILABLE,
+            'is_active' => true,
+        ]);
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'available_quantity' => 10,
+            'reserved_quantity' => 0,
+            'unit_price' => 112,
+        ]);
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'cell_id' => $cell->id,
+            'location_code' => $cell->code,
+            'material_id' => $material->id,
+            'available_quantity' => 4,
+            'reserved_quantity' => 0,
+            'unit_price' => 112,
+        ]);
+        $this->allowAdminAccess();
+
+        $payload = [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'warehouse_id' => $warehouse->id,
+            'cell_id' => $cell->id,
+            'material_id' => $material->id,
+            'quantity' => 6,
+            'reason' => 'Placement after procurement receipt',
+        ];
+
+        $firstResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/place', $payload);
+
+        $firstResponse->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.movement_out.movement_type', WarehouseMovement::TYPE_TRANSFER_OUT)
+            ->assertJsonPath('data.movement_in.movement_type', WarehouseMovement::TYPE_TRANSFER_IN)
+            ->assertJsonPath('data.movement_out.operation_category', WarehouseMovement::CATEGORY_PLACEMENT)
+            ->assertJsonPath('data.movement_in.operation_category', WarehouseMovement::CATEGORY_PLACEMENT)
+            ->assertJsonPath('data.movement_in.cell_id', $cell->id);
+
+        $this->assertSame(4.0, (float) WarehouseBalance::query()
+            ->where('warehouse_id', $warehouse->id)
+            ->where('material_id', $material->id)
+            ->whereNull('cell_id')
+            ->sum('available_quantity'));
+        $this->assertSame(10.0, (float) WarehouseBalance::query()
+            ->where('warehouse_id', $warehouse->id)
+            ->where('material_id', $material->id)
+            ->where('cell_id', $cell->id)
+            ->sum('available_quantity'));
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/place', $payload)
+            ->assertOk();
+
+        $this->assertSame(2, WarehouseMovement::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('operation_category', WarehouseMovement::CATEGORY_PLACEMENT)
+            ->count());
+        $this->assertDatabaseCount('warehouse_inventory_events', 0);
+
+        $payload['quantity'] = 5;
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/place', $payload)
+            ->assertStatus(409)
+            ->assertJsonPath('message', trans_message('warehouse_basic.idempotency_conflict'));
+
+        $payload['idempotency_key'] = (string) \Illuminate\Support\Str::uuid();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/place', $payload)
+            ->assertUnprocessable();
+
+        $this->assertSame(4.0, (float) WarehouseBalance::query()
+            ->where('warehouse_id', $warehouse->id)
+            ->where('material_id', $material->id)
+            ->whereNull('cell_id')
+            ->sum('available_quantity'));
+    }
 
     public function test_write_off_projects_returns_only_active_non_archived_projects_of_current_organization(): void
     {
