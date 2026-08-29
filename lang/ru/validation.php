@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 return [
     'accepted' => 'Подтвердите поле «:attribute».',
+    'after_or_equal' => 'Дата в поле «:attribute» не должна быть раньше начальной даты.',
     'array' => 'Поле «:attribute» должно быть списком.',
     'boolean' => 'Поле «:attribute» должно быть Да или Нет.',
     'date' => 'Укажите корректную дату в поле «:attribute».',
@@ -38,6 +39,8 @@ return [
         'accounting_account' => 'счёт учёта',
         'action' => 'действие',
         'code' => 'код',
+        'date_from' => 'дата начала',
+        'date_to' => 'дата окончания',
         'department_id' => 'подразделение',
         'decision' => 'решение',
         'document_ids' => 'платежные документы',

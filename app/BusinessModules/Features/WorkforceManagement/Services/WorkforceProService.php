@@ -27,15 +27,35 @@ final class WorkforceProService
 
     public function paginateList(string $table, int $organizationId, int $perPage, ?string $search = null): LengthAwarePaginator
     {
-        $query = DB::table($table)
-            ->where('organization_id', $organizationId)
-            ->orderByDesc('id');
+        $query = $this->listQuery($table, $organizationId);
 
         $this->applyListSearch($query, $table, $search);
 
         return $query
             ->paginate($perPage)
             ->through(fn (object $record): array => $this->decorateRecord($table, $organizationId, $record));
+    }
+
+    private function listQuery(string $table, int $organizationId): Builder
+    {
+        if ($table === 'workforce_absences') {
+            return DB::table('workforce_absences as absence')
+                ->leftJoin('workforce_absence_types as absence_type', function (JoinClause $join): void {
+                    $join->on('absence_type.id', '=', 'absence.absence_type_id')
+                        ->on('absence_type.organization_id', '=', 'absence.organization_id');
+                })
+                ->where('absence.organization_id', $organizationId)
+                ->select([
+                    'absence.*',
+                    'absence_type.code as absence_type_code',
+                    'absence_type.name as absence_type_label',
+                ])
+                ->orderByDesc('absence.id');
+        }
+
+        return DB::table($table)
+            ->where('organization_id', $organizationId)
+            ->orderByDesc('id');
     }
 
     public function store(string $table, int $organizationId, array $payload): array
@@ -1495,13 +1515,22 @@ final class WorkforceProService
             return;
         }
 
+        if ($table === 'workforce_absences') {
+            $query->where(function (Builder $nested) use ($search): void {
+                $nested->where('absence_type.code', 'like', "%{$search}%")
+                    ->orWhere('absence_type.name', 'like', "%{$search}%")
+                    ->orWhere('absence.status', 'like', "%{$search}%");
+            });
+
+            return;
+        }
+
         $columns = match ($table) {
             'workforce_departments', 'workforce_positions', 'workforce_work_schedules' => ['code', 'name'],
             'workforce_staff_units' => ['code'],
             'workforce_payroll_periods' => ['status', 'period_start', 'period_end'],
             'workforce_export_packages' => ['package_number', 'status'],
             'workforce_accounting_mappings' => ['account', 'scope_type'],
-            'workforce_absences' => ['absence_type_code', 'status'],
             'workforce_business_trips' => ['destination', 'status'],
             default => [],
         };
