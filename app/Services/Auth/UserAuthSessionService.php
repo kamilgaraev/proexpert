@@ -16,6 +16,7 @@ use App\Models\UserAuthSession;
 use App\Models\UserSecurityEvent;
 use App\Services\Activity\ActivityEventRecorder;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -83,6 +84,14 @@ class UserAuthSessionService
             ->active()
             ->where('session_uuid', $sessionUuid)
             ->first();
+    }
+
+    public function paginateSecurityEvents(User $user, int $page, int $perPage): LengthAwarePaginator
+    {
+        return $user->securityEvents()
+            ->latest('created_at')
+            ->latest('id')
+            ->paginate($perPage, ['*'], 'page', $page);
     }
 
     public function touch(UserAuthSession $session): void
