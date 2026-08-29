@@ -117,10 +117,14 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
 
         // Contract Specifications
         Route::prefix('{contract}/specifications')->group(function () {
-            Route::get('/', [ContractSpecificationController::class, 'index']);
-            Route::post('/', [ContractSpecificationController::class, 'store']);
-            Route::post('/attach', [ContractSpecificationController::class, 'attach']);
-            Route::delete('/{specification}', [ContractSpecificationController::class, 'destroy']);
+            Route::get('/', [ContractSpecificationController::class, 'index'])
+                ->middleware('authorize:specifications.view,project,project');
+            Route::post('/', [ContractSpecificationController::class, 'store'])
+                ->middleware('authorize:specifications.create,project,project');
+            Route::post('/attach', [ContractSpecificationController::class, 'attach'])
+                ->middleware('authorize:specifications.edit,project,project');
+            Route::delete('/{specification}', [ContractSpecificationController::class, 'destroy'])
+                ->middleware('authorize:specifications.edit,project,project');
         });
 
         // Contract State Events (Event Sourcing)
@@ -153,11 +157,16 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
 
     // === SPECIFICATIONS ===
     Route::prefix('specifications')->group(function () {
-        Route::get('/', [SpecificationController::class, 'index']);
-        Route::post('/', [SpecificationController::class, 'store']);
-        Route::get('/{specification}', [SpecificationController::class, 'show']);
-        Route::put('/{specification}', [SpecificationController::class, 'update']);
-        Route::delete('/{specification}', [SpecificationController::class, 'destroy']);
+        Route::get('/', [SpecificationController::class, 'index'])
+            ->middleware('authorize:specifications.view,project,project');
+        Route::post('/', [SpecificationController::class, 'store'])
+            ->middleware('authorize:specifications.create,project,project');
+        Route::get('/{specification}', [SpecificationController::class, 'show'])
+            ->middleware('authorize:specifications.view,project,project');
+        Route::match(['put', 'patch'], '/{specification}', [SpecificationController::class, 'update'])
+            ->middleware('authorize:specifications.edit,project,project');
+        Route::delete('/{specification}', [SpecificationController::class, 'destroy'])
+            ->middleware('authorize:specifications.delete,project,project');
     });
 
     // === AGREEMENTS (в контексте проекта) ===

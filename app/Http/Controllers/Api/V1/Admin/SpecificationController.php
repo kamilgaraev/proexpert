@@ -1,39 +1,51 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
-use App\Services\Contract\SpecificationService;
 use App\Http\Requests\Api\V1\Admin\Specification\StoreSpecificationRequest;
 use App\Http\Requests\Api\V1\Admin\Specification\UpdateSpecificationRequest;
+use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource;
+use App\Http\Responses\AdminResponse;
+use App\Services\Contract\SpecificationService;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 
 class SpecificationController extends Controller
 {
-    public function __construct(private SpecificationService $service) {}
+    public function __construct(private SpecificationService $service)
+    {
+    }
 
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
         try {
-            $projectId = $request->route('project') ?? $request->query('project_id');
-            $perPage = (int) $request->query('per_page', 15);
-
-            if ($projectId !== null) {
-                return $this->service->paginateByProject((int) $projectId, $perPage);
+            $organizationId = $request->user()?->current_organization_id;
+            if ($organizationId === null) {
+                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
             }
 
-            return $this->service->paginate($perPage);
-        } catch (\Throwable $e) {
-            Log::error('SpecificationController@index Exception', [
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'user_id' => $request->user()?->id,
-            ]);
+            $projectId = $request->route('project') ?? $request->query('project_id');
+            $perPage = max(1, min((int) $request->query('per_page', 15), 100));
+            $specifications = $projectId === null
+                ? $this->service->paginateForOrganization((int) $organizationId, $perPage)
+                : $this->service->paginateByProjectForOrganization(
+                    (int) $projectId,
+                    (int) $organizationId,
+                    $perPage,
+                );
+
+            return AdminResponse::paginated(
+                SpecificationResource::collection($specifications->getCollection())->resolve($request),
+                $this->paginationMeta($specifications),
+            );
+        } catch (\Throwable $exception) {
+            $this->logFailure('index', $exception, $request);
+
             return AdminResponse::error(trans_message('specification.internal_error_list'), 500);
         }
     }
@@ -41,71 +53,128 @@ class SpecificationController extends Controller
     public function store(StoreSpecificationRequest $request): JsonResponse
     {
         try {
-            $spec = $this->service->create($request->toDto());
-            return AdminResponse::success($spec, trans_message('specification.created'), 201);
-        } catch (\Throwable $e) {
-            Log::error('SpecificationController@store Exception', [
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'user_id' => $request->user()?->id,
-            ]);
+            $organizationId = $request->user()?->current_organization_id;
+            if ($organizationId === null) {
+                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
+            }
+
+            $specification = $this->service->createForOrganization(
+                $request->toDto(),
+                $request->contractId(),
+                (int) $organizationId,
+            );
+            if ($specification === null) {
+                return AdminResponse::error(trans_message('contract.access_denied'), 404);
+            }
+
+            return AdminResponse::success(
+                new SpecificationResource($specification),
+                trans_message('specification.created'),
+                201,
+            );
+        } catch (\Throwable $exception) {
+            $this->logFailure('store', $exception, $request);
+
             return AdminResponse::error(trans_message('specification.internal_error_create'), 500);
         }
     }
 
-    public function show(Request $request, int $id)
+    public function show(Request $request, int $specification): JsonResponse
     {
         try {
-            $spec = $this->service->getById($id);
-            if (!$spec) {
+            $organizationId = $request->user()?->current_organization_id;
+            if ($organizationId === null) {
+                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
+            }
+
+            $model = $this->service->getByIdForOrganization($specification, (int) $organizationId);
+            if ($model === null) {
                 return AdminResponse::error(trans_message('specification.not_found'), 404);
             }
-            return $spec;
-        } catch (\Throwable $e) {
-            Log::error('SpecificationController@show Exception', [
-                'id' => $id,
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'user_id' => $request->user()?->id,
-            ]);
+
+            return AdminResponse::success(new SpecificationResource($model));
+        } catch (\Throwable $exception) {
+            $this->logFailure('show', $exception, $request, $specification);
+
             return AdminResponse::error(trans_message('specification.internal_error_get'), 500);
         }
     }
 
-    public function update(UpdateSpecificationRequest $request, int $id): JsonResponse
-    {
+    public function update(
+        UpdateSpecificationRequest $request,
+        int $specification,
+    ): JsonResponse {
         try {
-            $this->service->update($id, $request->toDto());
-            $spec = $this->service->getById($id);
-            return AdminResponse::success($spec, trans_message('specification.updated'));
-        } catch (\Throwable $e) {
-            Log::error('SpecificationController@update Exception', [
-                'id' => $id,
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'user_id' => $request->user()?->id,
-            ]);
+            $organizationId = $request->user()?->current_organization_id;
+            if ($organizationId === null) {
+                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
+            }
+
+            $model = $this->service->updateForOrganization(
+                $specification,
+                (int) $organizationId,
+                $request->toPayload(),
+            );
+            if ($model === null) {
+                return AdminResponse::error(trans_message('specification.not_found'), 404);
+            }
+
+            return AdminResponse::success(
+                new SpecificationResource($model),
+                trans_message('specification.updated'),
+            );
+        } catch (\Throwable $exception) {
+            $this->logFailure('update', $exception, $request, $specification);
+
             return AdminResponse::error(trans_message('specification.internal_error_update'), 500);
         }
     }
 
-    public function destroy(Request $request, int $id): JsonResponse
+    public function destroy(Request $request, int $specification): JsonResponse
     {
         try {
-            $this->service->delete($id);
+            $organizationId = $request->user()?->current_organization_id;
+            if ($organizationId === null) {
+                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
+            }
+
+            if (! $this->service->deleteForOrganization($specification, (int) $organizationId)) {
+                return AdminResponse::error(trans_message('specification.not_found'), 404);
+            }
+
             return AdminResponse::success(null, trans_message('specification.deleted'));
-        } catch (\Throwable $e) {
-            Log::error('SpecificationController@destroy Exception', [
-                'id' => $id,
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'user_id' => $request->user()?->id,
-            ]);
+        } catch (\Throwable $exception) {
+            $this->logFailure('destroy', $exception, $request, $specification);
+
             return AdminResponse::error(trans_message('specification.internal_error_delete'), 500);
         }
     }
-} 
+
+    private function paginationMeta(LengthAwarePaginator $paginator): array
+    {
+        return [
+            'current_page' => $paginator->currentPage(),
+            'from' => $paginator->firstItem(),
+            'last_page' => $paginator->lastPage(),
+            'per_page' => $paginator->perPage(),
+            'to' => $paginator->lastItem(),
+            'total' => $paginator->total(),
+        ];
+    }
+
+    private function logFailure(
+        string $action,
+        \Throwable $exception,
+        Request $request,
+        ?int $specificationId = null,
+    ): void {
+        Log::error('SpecificationController action failed', [
+            'action' => $action,
+            'specification_id' => $specificationId,
+            'organization_id' => $request->user()?->current_organization_id,
+            'user_id' => $request->user()?->id,
+            'exception' => $exception::class,
+            'message' => $exception->getMessage(),
+        ]);
+    }
+}
