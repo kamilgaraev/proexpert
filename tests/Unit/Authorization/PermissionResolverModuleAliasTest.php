@@ -14,10 +14,9 @@ class PermissionResolverModuleAliasTest extends TestCase
     // Report: .gstack/qa-reports/qa-report-most-full-2026-08-28.md
     public function test_specifications_permission_uses_contract_management_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function variants(string $module): array
             {
@@ -29,12 +28,27 @@ class PermissionResolverModuleAliasTest extends TestCase
         $this->assertContains('contracts', $resolver->variants('contract-management'));
     }
 
+    public function test_agreements_permission_uses_contract_management_module_alias(): void
+    {
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        $this->assertContains('contract-management', $resolver->variants('agreements'));
+        $this->assertContains('contracts', $resolver->variants('contract-management'));
+    }
+
     public function test_estimate_generation_permission_uses_ai_estimates_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function variants(string $module): array
             {
@@ -48,10 +62,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_act_reports_permission_uses_act_reporting_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function variants(string $module): array
             {
@@ -65,10 +78,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_projects_permission_uses_project_management_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function variants(string $module): array
             {
@@ -82,10 +94,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_warehouse_permission_uses_basic_warehouse_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function variants(string $module): array
             {
@@ -99,10 +110,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_one_c_exchange_permission_uses_basic_exchange_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function variants(string $module): array
             {
@@ -116,10 +126,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_contractor_marketplace_permission_uses_contractor_portal_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function variants(string $module): array
             {
@@ -133,10 +142,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_admin_ai_assistant_permission_uses_ai_assistant_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function normalize(string $module, string $action): array
             {
@@ -158,10 +166,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_admin_projects_permission_uses_project_management_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function normalize(string $module, string $action): array
             {
@@ -183,10 +190,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_legacy_admin_catalog_permissions_use_catalog_management_aliases(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function normalize(string $module, string $action): array
             {
@@ -208,10 +214,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_legacy_admin_contract_and_report_permissions_use_module_aliases(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function normalize(string $module, string $action): array
             {
@@ -238,10 +243,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_legacy_admin_users_permissions_use_users_module_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function normalize(string $module, string $action): array
             {
@@ -263,10 +267,9 @@ class PermissionResolverModuleAliasTest extends TestCase
 
     public function test_legacy_admin_users_system_permission_uses_manage_alias(): void
     {
-        $resolver = new class extends PermissionResolver {
-            public function __construct()
-            {
-            }
+        $resolver = new class extends PermissionResolver
+        {
+            public function __construct() {}
 
             public function systemVariants(string $permission): array
             {
