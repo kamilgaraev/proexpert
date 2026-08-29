@@ -4,14 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\Enums\AuthSecurityEventType;
 use App\Enums\AuthSessionStatus;
-use App\Models\User;
 use App\Models\UserAuthSession;
+use App\Models\UserSecurityEvent;
+use App\Services\Auth\WebAuthTokenService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 class SecuritySessionsControllerTest extends TestCase
 {
@@ -40,8 +41,10 @@ class SecuritySessionsControllerTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.0.device_name', 'macOS, Safari')
-            ->assertJsonPath('data.0.is_current', true);
+            ->assertJsonFragment([
+                'device_name' => 'macOS, Safari',
+                'is_current' => true,
+            ]);
     }
 
     public function test_admin_user_can_revoke_other_sessions_but_not_current_session(): void
@@ -87,9 +90,56 @@ class SecuritySessionsControllerTest extends TestCase
         $this->assertFalse($otherSession->fresh()->isActive());
     }
 
+    public function test_admin_user_can_paginate_own_security_events(): void
+    {
+        $context = AdminApiTestContext::create();
+        $currentSession = $this->createSession($context);
+
+        foreach (range(1, 25) as $offset) {
+            UserSecurityEvent::query()->create([
+                'user_id' => $context->user->id,
+                'organization_id' => $context->organization->id,
+                'auth_session_id' => $currentSession->id,
+                'type' => AuthSecurityEventType::LoginSuccess,
+                'risk_score' => $offset,
+                'risk_flags' => $offset === 25 ? ['new_device'] : [],
+                'ip_address' => "10.0.0.{$offset}",
+                'metadata' => [],
+                'created_at' => now()->subMinutes(25 - $offset),
+                'updated_at' => now()->subMinutes(25 - $offset),
+            ]);
+        }
+
+        $headers = $this->authHeadersForSession($context, $currentSession);
+
+        $this->withHeaders($headers)
+            ->getJson('/api/v1/admin/security/events?per_page=20&page=1')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonCount(20, 'data')
+            ->assertJsonPath('data.0.risk_score', 25)
+            ->assertJsonPath('data.0.risk_flags.0', 'new_device')
+            ->assertJsonPath('meta.current_page', 1)
+            ->assertJsonPath('meta.per_page', 20)
+            ->assertJsonPath('meta.last_page', 2)
+            ->assertJsonPath('meta.total', 25);
+
+        $this->withHeaders($headers)
+            ->getJson('/api/v1/admin/security/events?per_page=20&page=2')
+            ->assertOk()
+            ->assertJsonCount(5, 'data')
+            ->assertJsonPath('data.4.risk_score', 1)
+            ->assertJsonPath('meta.current_page', 2);
+
+        $this->withHeaders($headers)
+            ->getJson('/api/v1/admin/security/events?per_page=101')
+            ->assertUnprocessable();
+    }
+
     public function test_admin_user_can_revoke_all_other_active_sessions(): void
     {
         $context = AdminApiTestContext::create();
+        $contextSession = $context->user->authSessions()->firstOrFail();
 
         $currentSession = $this->createSession($context, [
             'session_uuid' => (string) Str::uuid(),
@@ -108,9 +158,10 @@ class SecuritySessionsControllerTest extends TestCase
             ->postJson('/api/v1/admin/security/sessions/revoke-others')
             ->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.revoked_count', 2);
+            ->assertJsonPath('data.revoked_count', 3);
 
         $this->assertTrue($currentSession->fresh()->isActive());
+        $this->assertFalse($contextSession->fresh()->isActive());
         $this->assertFalse($firstOtherSession->fresh()->isActive());
         $this->assertFalse($secondOtherSession->fresh()->isActive());
     }
@@ -134,12 +185,18 @@ class SecuritySessionsControllerTest extends TestCase
 
     private function authHeadersForSession(AdminApiTestContext $context, UserAuthSession $session): array
     {
+        $token = app(WebAuthTokenService::class)->issue(
+            $context->user,
+            'admin',
+            $session->session_uuid,
+            (int) $context->organization->id,
+            false,
+        )->accessToken;
+
         return [
-            'Authorization' => 'Bearer ' . JWTAuth::claims([
-                'organization_id' => $context->organization->id,
-                'session_uuid' => $session->session_uuid,
-            ])->fromUser($context->user),
+            'Authorization' => 'Bearer '.$token,
             'Accept' => 'application/json',
+            'Origin' => 'https://admin.1мост.рф',
         ];
     }
 }
