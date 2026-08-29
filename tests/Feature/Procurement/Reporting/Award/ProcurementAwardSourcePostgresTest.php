@@ -682,7 +682,12 @@ final class ProcurementAwardSourcePostgresTest extends TestCase
     private function captureQueryException(callable $operation): QueryException
     {
         try {
-            DB::transaction($operation);
+            DB::transaction(function () use ($operation): mixed {
+                $result = $operation();
+                DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
+
+                return $result;
+            });
         } catch (QueryException $exception) {
             return $exception;
         }

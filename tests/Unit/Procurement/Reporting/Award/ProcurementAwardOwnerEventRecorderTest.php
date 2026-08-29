@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\Procureme
 use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\ProcurementAwardSelectionSource;
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardEvidenceEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardEventType;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardSelectionScope;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Services\ProcurementAwardEvidenceRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Services\ProcurementAwardManifestBuilder;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Services\ProcurementAwardOwnerEventRecorder;
@@ -158,6 +159,7 @@ final class ProcurementAwardOwnerEventRecorderTest extends TestCase
         );
 
         self::assertSame(5, $prepared->supplierRequestId);
+        self::assertSame(ProcurementAwardSelectionScope::PURCHASE_REQUEST, $prepared->selectionScope);
         self::assertSame(20, $prepared->manifest->cheapestProposalId);
         self::assertSame(1, $prepared->manifest->selectedRank);
     }

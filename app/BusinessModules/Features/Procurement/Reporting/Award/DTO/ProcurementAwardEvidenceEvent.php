@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Reporting\Award\DTO;
 
 use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardEventType;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardSelectionScope;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardCanonicalizer;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -38,6 +39,7 @@ final readonly class ProcurementAwardEvidenceEvent
         public ?string $reasonDigest,
         public ?string $predecessorEventId = null,
         public ?int $purchaseOrderId = null,
+        public ProcurementAwardSelectionScope $selectionScope = ProcurementAwardSelectionScope::SUPPLIER_REQUEST,
         ?string $forcedSourceHash = null,
     ) {
         if ($decisionRevision < 1
@@ -48,7 +50,7 @@ final readonly class ProcurementAwardEvidenceEvent
             throw new InvalidArgumentException('procurement_award_evidence_event_invalid');
         }
 
-        $calculated = ProcurementAwardCanonicalizer::framedHash([
+        $sourceParts = [
             $this->organizationId,
             $this->projectId,
             $this->purchaseRequestId,
@@ -72,7 +74,11 @@ final readonly class ProcurementAwardEvidenceEvent
             $this->reasonDigest,
             $this->predecessorEventId,
             $this->purchaseOrderId,
-        ]);
+        ];
+        if ($this->selectionScope === ProcurementAwardSelectionScope::PURCHASE_REQUEST) {
+            $sourceParts[] = $this->selectionScope->value;
+        }
+        $calculated = ProcurementAwardCanonicalizer::framedHash($sourceParts);
         $this->sourceHash = $forcedSourceHash ?? $calculated;
         if (preg_match('/^[a-f0-9]{64}$/D', $this->sourceHash) !== 1) {
             throw new InvalidArgumentException('procurement_award_source_hash_invalid');
@@ -110,6 +116,7 @@ final readonly class ProcurementAwardEvidenceEvent
             reasonPresent: $fact->reasonPresent,
             reasonNormalizedLength: $fact->reasonNormalizedLength,
             reasonDigest: $fact->reasonDigest,
+            selectionScope: $fact->selectionScope,
         );
     }
 
@@ -143,12 +150,13 @@ final readonly class ProcurementAwardEvidenceEvent
             reasonDigest: $this->reasonDigest,
             predecessorEventId: $predecessorEventId,
             purchaseOrderId: $purchaseOrderId,
+            selectionScope: $this->selectionScope,
         );
     }
 
     public function canonicalPayload(): array
     {
-        return [
+        $payload = [
             'organization_id' => $this->organizationId,
             'project_id' => $this->projectId,
             'purchase_request_id' => $this->purchaseRequestId,
@@ -173,6 +181,12 @@ final readonly class ProcurementAwardEvidenceEvent
             'predecessor_event_id' => $this->predecessorEventId,
             'purchase_order_id' => $this->purchaseOrderId,
         ];
+
+        if ($this->selectionScope === ProcurementAwardSelectionScope::PURCHASE_REQUEST) {
+            $payload['selection_scope'] = $this->selectionScope->value;
+        }
+
+        return $payload;
     }
 
     public function occurredAtUtc(): string
@@ -204,6 +218,7 @@ final readonly class ProcurementAwardEvidenceEvent
             reasonDigest: $this->reasonDigest,
             predecessorEventId: $this->predecessorEventId,
             purchaseOrderId: $this->purchaseOrderId,
+            selectionScope: $this->selectionScope,
             forcedSourceHash: $sourceHash,
         );
     }

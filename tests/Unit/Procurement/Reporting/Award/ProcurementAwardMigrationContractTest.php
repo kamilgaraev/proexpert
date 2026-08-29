@@ -67,6 +67,20 @@ final class ProcurementAwardMigrationContractTest extends TestCase
         );
     }
 
+    public function test_follow_up_migration_preserves_supplier_scope_and_allows_explicit_purchase_scope(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 5).'/app/BusinessModules/Features/Procurement/migrations/2026_08_29_000001_add_procurement_award_selection_scope.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString("->default('supplier_request')", $source);
+        self::assertStringContainsString("selection_scope IN ('supplier_request', 'purchase_request')", $source);
+        self::assertStringContainsString("checked_event.selection_scope = 'supplier_request'", $source);
+        self::assertStringContainsString('requires multiple supplier requests', $source);
+        self::assertStringContainsString('predecessor.selection_scope <> checked_event.selection_scope', $source);
+    }
+
     private function migration(): string
     {
         $source = file_get_contents(

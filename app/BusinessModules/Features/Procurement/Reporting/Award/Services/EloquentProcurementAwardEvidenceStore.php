@@ -12,6 +12,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwar
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardPolicyDefinition;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardCompleteness;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardEventType;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardSelectionScope;
 use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Support\Facades\DB;
@@ -73,6 +74,7 @@ final class EloquentProcurementAwardEvidenceStore implements ProcurementAwardEvi
             'supplier_request_id' => $event->supplierRequestId,
             'supplier_request_version_id' => $event->supplierRequestVersionId,
             'supplier_request_version_hash' => $event->supplierRequestVersionHash,
+            'selection_scope' => $event->selectionScope->value,
             'decision_id' => $event->decisionId,
             'decision_revision' => $event->decisionRevision,
             'event_sequence' => $event->eventSequence,
@@ -272,6 +274,7 @@ final class EloquentProcurementAwardEvidenceStore implements ProcurementAwardEvi
             reasonDigest: $row->reason_digest,
             predecessorEventId: $row->predecessor_event_id,
             purchaseOrderId: $row->purchase_order_id === null ? null : (int) $row->purchase_order_id,
+            selectionScope: ProcurementAwardSelectionScope::from((string) $row->selection_scope),
             forcedSourceHash: (string) $row->source_hash,
         );
     }
