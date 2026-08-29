@@ -104,7 +104,12 @@ final class PaymentBudgetLimitService
             return $this->neutralPayload((string) $calculation['message']);
         }
 
-        return $this->presentResult($calculation, $user);
+        $payload = $this->presentResult($calculation, $user);
+        $overrideReason = trim((string) ($document->budget_limit_override_reason ?? ''));
+        $payload['override_applied'] = $overrideReason !== '';
+        $payload['override_reason'] = $overrideReason !== '' ? $overrideReason : null;
+
+        return $payload;
     }
 
     public function checkPaymentRegistration(

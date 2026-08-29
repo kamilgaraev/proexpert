@@ -149,6 +149,13 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
                 'payment_document_id' => $document->id,
                 'action' => 'budget_limit_override',
             ]);
+
+            $presentation = $this->service()->check($document->fresh(), $context->user);
+            $this->assertTrue($presentation['override_applied']);
+            $this->assertSame(
+                'Срочная поставка для непрерывности работ',
+                $presentation['override_reason']
+            );
         }
     }
 
