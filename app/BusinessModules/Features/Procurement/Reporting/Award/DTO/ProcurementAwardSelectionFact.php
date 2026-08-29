@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Reporting\Award\DTO;
 
+use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardSelectionScope;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardCanonicalizer;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -26,6 +27,7 @@ final readonly class ProcurementAwardSelectionFact
         public bool $reasonPresent,
         public int $reasonNormalizedLength,
         public ?string $reasonDigest,
+        public ProcurementAwardSelectionScope $selectionScope,
     ) {
         if ($organizationId < 1
             || ($projectId !== null && $projectId < 1)
@@ -55,6 +57,7 @@ final readonly class ProcurementAwardSelectionFact
         ProcurementAwardManifest $manifest,
         ProcurementAwardPolicyDefinition $policy,
         ?string $reason,
+        ProcurementAwardSelectionScope $selectionScope = ProcurementAwardSelectionScope::SUPPLIER_REQUEST,
     ): self {
         $normalizedReason = $reason === null
             ? ''
@@ -76,12 +79,13 @@ final readonly class ProcurementAwardSelectionFact
             reasonPresent: $normalizedReason !== '',
             reasonNormalizedLength: mb_strlen($normalizedReason),
             reasonDigest: $normalizedReason === '' ? null : hash('sha256', $normalizedReason),
+            selectionScope: $selectionScope,
         );
     }
 
     public function canonicalPayload(): array
     {
-        return [
+        $payload = [
             'organization_id' => $this->organizationId,
             'project_id' => $this->projectId,
             'purchase_request_id' => $this->purchaseRequestId,
@@ -100,6 +104,12 @@ final readonly class ProcurementAwardSelectionFact
             'reason_normalized_length' => $this->reasonNormalizedLength,
             'reason_digest' => $this->reasonDigest,
         ];
+
+        if ($this->selectionScope === ProcurementAwardSelectionScope::PURCHASE_REQUEST) {
+            $payload['selection_scope'] = $this->selectionScope->value;
+        }
+
+        return $payload;
     }
 
     public function fingerprint(): string

@@ -15,6 +15,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\Procureme
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardPolicyDefinition;
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardPreparedSelection;
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardSelectionFact;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardSelectionScope;
 use DateTimeImmutable;
 use LogicException;
 
@@ -92,6 +93,7 @@ final class ProcurementAwardOwnerEventRecorder implements ProcurementAwardOwnerE
             manifest: $prepared->manifest,
             policy: ProcurementAwardPolicyDefinition::v1(),
             reason: $reason,
+            selectionScope: $prepared->selectionScope,
         ));
     }
 
@@ -159,6 +161,7 @@ final class ProcurementAwardOwnerEventRecorder implements ProcurementAwardOwnerE
             $supplierRequestId,
             $occurredAt,
         );
+
         return $this->prepareFromRows($candidateRows, $selectedProposalId);
     }
 
@@ -176,6 +179,11 @@ final class ProcurementAwardOwnerEventRecorder implements ProcurementAwardOwnerE
             throw new LogicException('procurement_award_selected_candidate_missing');
         }
 
+        $supplierRequestIds = array_values(array_unique(array_map(
+            static fn (array $row): int => (int) $row['supplier_request_id'],
+            $candidateRows,
+        )));
+
         return new ProcurementAwardPreparedSelection(
             organizationId: $selected->organizationId,
             projectId: $selected->projectId,
@@ -184,6 +192,9 @@ final class ProcurementAwardOwnerEventRecorder implements ProcurementAwardOwnerE
             supplierRequestVersionId: $selected->supplierRequestVersionId,
             supplierRequestVersionHash: $selected->supplierRequestVersionHash,
             manifest: $manifest,
+            selectionScope: count($supplierRequestIds) > 1
+                ? ProcurementAwardSelectionScope::PURCHASE_REQUEST
+                : ProcurementAwardSelectionScope::SUPPLIER_REQUEST,
         );
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Reporting\Award\DTO;
 
+use App\BusinessModules\Features\Procurement\Reporting\Award\Enums\ProcurementAwardSelectionScope;
 use InvalidArgumentException;
 
 final readonly class ProcurementAwardPreparedSelection
@@ -16,6 +17,7 @@ final readonly class ProcurementAwardPreparedSelection
         public ?int $supplierRequestVersionId,
         public ?string $supplierRequestVersionHash,
         public ProcurementAwardManifest $manifest,
+        public ProcurementAwardSelectionScope $selectionScope = ProcurementAwardSelectionScope::SUPPLIER_REQUEST,
     ) {
         if ($organizationId < 1
             || ($projectId !== null && $projectId < 1)
