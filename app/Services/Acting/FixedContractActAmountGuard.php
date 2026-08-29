@@ -32,7 +32,7 @@ final class FixedContractActAmountGuard
             ];
         }
 
-        $contractAmount = BigDecimal::of((string) ($contract->total_amount_with_gp ?? 0))
+        $contractAmount = BigDecimal::of((string) ($contract->total_amount ?? 0))
             ->toScale(2, RoundingMode::HalfUp);
         $remainingAmount = $contractAmount->minus($approvedAmount);
         if ($remainingAmount->isNegative()) {

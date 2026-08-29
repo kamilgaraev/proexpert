@@ -352,6 +352,34 @@ class ActReportsPreviewTest extends TestCase
         $this->assertSame(ContractPerformanceAct::STATUS_DRAFT, $act->fresh()->status);
     }
 
+    public function test_submit_uses_current_contract_total_after_applied_amount_change(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('SUBMIT-AGREEMENT-LIMIT');
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $act = $this->createActWithWork(
+            $organization->id,
+            $user,
+            $contract,
+            $project,
+            'KS-2-SUBMIT-AGREEMENT-LIMIT',
+            5,
+        );
+        $contract->forceFill([
+            'is_fixed_amount' => true,
+            'base_amount' => 2100,
+            'total_amount' => 5715,
+        ])->saveQuietly();
+
+        $response = $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/submit");
+
+        $response->assertOk();
+        $this->assertSame(ContractPerformanceAct::STATUS_PENDING_APPROVAL, $act->fresh()->status);
+    }
+
     public function test_approve_rejects_pending_act_above_fixed_contract_balance(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVE-LIMIT');

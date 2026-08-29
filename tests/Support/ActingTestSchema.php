@@ -201,6 +201,7 @@ trait ActingTestSchema
             $table->date('date');
             $table->text('subject')->nullable();
             $table->decimal('total_amount', 15, 2)->nullable();
+            $table->decimal('base_amount', 15, 2)->nullable();
             $table->char('currency', 3)->default('RUB');
             $table->string('status')->default('draft');
             $table->boolean('is_fixed_amount')->default(false);
