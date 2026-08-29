@@ -21,6 +21,7 @@ final class ModulePermissionAliases
         'report_templates' => 'report-templates',
         'warehouse' => 'basic-warehouse',
         'contracts' => 'contract-management',
+        'specifications' => 'contract-management',
         'mdm' => 'catalog-management',
         'materials' => 'catalog-management',
         'suppliers' => 'catalog-management',
