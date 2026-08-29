@@ -3,6 +3,11 @@
 declare(strict_types=1);
 
 return [
+    'organization_context_missing' => 'Не удалось определить организацию для управления сотрудниками.',
+    'role_assignment_forbidden' => 'Вы не можете назначить выбранную роль.',
+    'role_missing' => 'Без роли',
+    'role_unknown' => 'Роль не определена',
+    'roles_load_error' => 'Не удалось загрузить доступные роли.',
     'created' => 'Пользователь создан.',
     'updated' => 'Пользователь обновлен.',
     'deleted' => 'Пользователь удален.',

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources\Api\V1\Admin\User;
 
 use App\Models\User;
+use App\Services\User\AdminUserRolePolicy;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -28,11 +29,13 @@ class UserOptionResource extends JsonResource
 
     public function toArray(Request $request): array
     {
-        if (!$this->resource instanceof User) {
+        if (! $this->resource instanceof User) {
             return [];
         }
 
         $roles = $this->resolveRoles();
+        $rolePolicy = app(AdminUserRolePolicy::class);
+        $primaryRole = $this->resolvePrimaryRole($roles);
 
         return [
             'id' => $this->resource->id,
@@ -42,13 +45,15 @@ class UserOptionResource extends JsonResource
             'position' => $this->resource->position,
             'is_active' => (bool) $this->resource->is_active,
             'roles' => $roles,
-            'primary_role' => $this->resolvePrimaryRole($roles),
+            'role_labels' => $rolePolicy->labelsFor($roles),
+            'primary_role' => $primaryRole,
+            'primary_role_label' => $rolePolicy->labelFor($primaryRole),
         ];
     }
 
     private function resolveRoles(): array
     {
-        if (!$this->resource->relationLoaded('roleAssignments')) {
+        if (! $this->resource->relationLoaded('roleAssignments')) {
             return [];
         }
 

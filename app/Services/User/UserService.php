@@ -41,18 +41,21 @@ class UserService
     protected AuthorizationService $authorizationService;
     protected AdminPanelAccessHelper $adminPanelHelper;
     protected LoggingService $logging;
+    protected AdminUserRolePolicy $adminUserRolePolicy;
 
     public function __construct(
         UserRepositoryInterface $userRepository,
         AuthorizationService $authorizationService,
         AdminPanelAccessHelper $adminPanelHelper,
-        LoggingService $logging
+        LoggingService $logging,
+        AdminUserRolePolicy $adminUserRolePolicy
     )
     {
         $this->userRepository = $userRepository;
         $this->authorizationService = $authorizationService;
         $this->adminPanelHelper = $adminPanelHelper;
         $this->logging = $logging;
+        $this->adminUserRolePolicy = $adminUserRolePolicy;
     }
 
     // --- Helper Methods ---
@@ -84,6 +87,21 @@ class UserService
             $sortBy,
             $sortDirection
         );
+    }
+
+    /**
+     * @return array<int, array{slug: string, name: string}>
+     */
+    public function getAssignableRoleOptions(Request $request): array
+    {
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+        $actor = $request->user();
+
+        if ($organizationId <= 0 || !$actor instanceof User) {
+            throw new BusinessLogicException(trans_message('user.organization_context_missing'), 422);
+        }
+
+        return $this->adminUserRolePolicy->optionsFor($actor, $organizationId);
     }
 
     public function getUserOptionsForCurrentOrg(Request $request, int $perPage = 100): LengthAwarePaginator
@@ -558,17 +576,56 @@ class UserService
             throw new BusinessLogicException('Пользователь не найден в этой организации.', 404);
         }
 
+        $roleSlug = isset($data['role_slug']) && is_string($data['role_slug'])
+            ? $data['role_slug']
+            : null;
+        unset($data['email'], $data['role_slug']);
+
         if (!empty($data['password'])) {
             $data['password'] = Hash::make($data['password']);
         } else {
             unset($data['password']);
         }
 
-        unset($data['email'], $data['role_slug']);
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+        $actor = $request->user();
 
-        $this->userRepository->update($userId, $data);
+        if ($organizationId <= 0 || !$actor instanceof User) {
+            throw new BusinessLogicException(trans_message('user.organization_context_missing'), 422);
+        }
 
-        return $this->findOrganizationUserById($userId, $request) ?? $organizationUser;
+        return DB::transaction(function () use (
+            $actor,
+            $data,
+            $organizationId,
+            $organizationUser,
+            $request,
+            $roleSlug,
+            $userId
+        ): User {
+            $this->userRepository->update($userId, $data);
+
+            if ($roleSlug !== null && $roleSlug !== '') {
+                $this->adminUserRolePolicy->assertCanAssign($actor, $organizationId, $roleSlug);
+                $editableRoleSlugs = $this->adminUserRolePolicy->assignableRoleSlugsFor(
+                    $actor,
+                    $organizationId
+                );
+                $context = AuthorizationContext::getOrganizationContext($organizationId);
+                $this->syncOrganizationRoleAssignments(
+                    $organizationUser,
+                    $context,
+                    [$roleSlug],
+                    [],
+                    $editableRoleSlugs,
+                    [],
+                    'replace',
+                    $actor
+                );
+            }
+
+            return $this->findOrganizationUserById($userId, $request) ?? $organizationUser->refresh();
+        });
     }
 
     public function blockOrganizationUser(int $userId, Request $request): bool
@@ -900,11 +957,12 @@ class UserService
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
 
-        if ($roleSlug === 'organization_owner') {
-            throw new BusinessLogicException(trans_message('landing_users.owner_generic_assignment_forbidden'), 422);
+        $actor = $request->user();
+        if (!$actor instanceof User) {
+            throw new BusinessLogicException(trans_message('user.organization_context_missing'), 422);
         }
 
-        $this->validateRoleExists($roleSlug, (int) $organizationId);
+        $this->adminUserRolePolicy->assertCanAssign($actor, (int) $organizationId, $roleSlug);
 
         $data['password'] = Hash::make($data['password']);
         // user_type колонка удалена в новой системе авторизации - роли управляются через UserRoleAssignment
