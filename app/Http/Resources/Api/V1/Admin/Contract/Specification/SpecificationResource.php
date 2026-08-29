@@ -16,9 +16,15 @@ class SpecificationResource extends JsonResource
             'total_amount' => (float) ($this->total_amount ?? 0),
             'status' => $this->status,
             'scope_items' => $this->scope_items,
+            'contracts' => $this->whenLoaded('contracts', fn () => $this->contracts->map(
+                static fn ($contract): array => [
+                    'id' => (int) $contract->id,
+                    'number' => (string) $contract->number,
+                ],
+            )->values()),
             'attached_at' => $this->pivot?->attached_at,
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];
     }
-} 
+}

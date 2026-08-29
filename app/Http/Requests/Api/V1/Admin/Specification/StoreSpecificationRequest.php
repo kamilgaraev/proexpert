@@ -4,6 +4,7 @@ namespace App\Http\Requests\Api\V1\Admin\Specification;
 
 use Illuminate\Foundation\Http\FormRequest;
 use App\DTOs\SpecificationDTO;
+use Illuminate\Validation\Rule;
 
 class StoreSpecificationRequest extends FormRequest
 {
@@ -21,6 +22,13 @@ class StoreSpecificationRequest extends FormRequest
             'scope_items' => ['required', 'array'],
             'scope_items.*' => ['string'],
             'status' => ['sometimes', 'in:draft,approved,archived'],
+            'contract_id' => [
+                'required',
+                'integer',
+                Rule::exists('contracts', 'id')
+                    ->where('organization_id', $this->user()?->current_organization_id)
+                    ->whereNull('deleted_at'),
+            ],
         ];
     }
 
@@ -34,4 +42,9 @@ class StoreSpecificationRequest extends FormRequest
             status: $this->validated('status') ?? 'draft',
         );
     }
-} 
+
+    public function contractId(): int
+    {
+        return (int) $this->validated('contract_id');
+    }
+}

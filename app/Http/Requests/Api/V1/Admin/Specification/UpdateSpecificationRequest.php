@@ -3,7 +3,6 @@
 namespace App\Http\Requests\Api\V1\Admin\Specification;
 
 use Illuminate\Foundation\Http\FormRequest;
-use App\DTOs\SpecificationDTO;
 
 class UpdateSpecificationRequest extends FormRequest
 {
@@ -24,14 +23,13 @@ class UpdateSpecificationRequest extends FormRequest
         ];
     }
 
-    public function toDto(): SpecificationDTO
+    public function toPayload(): array
     {
-        return new SpecificationDTO(
-            number: $this->validated('number'),
-            spec_date: $this->validated('spec_date'),
-            total_amount: $this->validated('total_amount') !== null ? (float) $this->validated('total_amount') : 0,
-            scope_items: $this->validated('scope_items') ?? [],
-            status: $this->validated('status') ?? 'draft',
-        );
+        $payload = $this->validated();
+        if (array_key_exists('total_amount', $payload)) {
+            $payload['total_amount'] = (float) $payload['total_amount'];
+        }
+
+        return $payload;
     }
-} 
+}

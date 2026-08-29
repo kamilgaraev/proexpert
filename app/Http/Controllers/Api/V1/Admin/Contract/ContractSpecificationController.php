@@ -322,6 +322,17 @@ class ContractSpecificationController extends Controller
 
             $specificationId = $request->input('specification_id');
 
+            $accessibleSpecification = $this->specificationService->getByIdForOrganization(
+                (int) $specificationId,
+                (int) $organizationId,
+            );
+            if ($accessibleSpecification === null) {
+                return AdminResponse::error(
+                    trans_message('specification.not_found'),
+                    Response::HTTP_NOT_FOUND,
+                );
+            }
+
             if ($contractModel->specifications()->where('specification_id', $specificationId)->exists()) {
                 return AdminResponse::error(trans_message('contract.specification_already_attached'), Response::HTTP_CONFLICT);
             }
