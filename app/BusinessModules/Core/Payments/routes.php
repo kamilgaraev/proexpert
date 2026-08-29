@@ -42,6 +42,10 @@ Route::prefix('api/v1/admin/payments')
             ->middleware('authorize:payments.invoice.create')
             ->name('calculate');
 
+        Route::get('/contracts/{contract}/availability', [PaymentDocumentController::class, 'contractAvailability'])
+            ->middleware('authorize:payments.invoice.view')
+            ->name('contracts.availability');
+
         Route::prefix('transactions')->name('transactions.')->group(function () {
             Route::get('/', [TransactionController::class, 'index'])
                 ->middleware('authorize:payments.transaction.view')
