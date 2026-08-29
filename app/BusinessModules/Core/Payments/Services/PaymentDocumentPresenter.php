@@ -33,6 +33,8 @@ final class PaymentDocumentPresenter
             'document_number' => $document->document_number,
             'document_type' => $document->document_type->value,
             'document_type_label' => $document->document_type->label(),
+            'invoice_type' => $document->invoice_type?->value,
+            'direction' => $document->direction?->value,
             'document_date' => $document->document_date->format('Y-m-d'),
             'due_date' => $document->due_date?->format('Y-m-d'),
             'status' => $document->status->value,
