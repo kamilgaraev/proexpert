@@ -29,6 +29,7 @@ final class AccessRecertificationRevocationResource extends JsonResource
             ]),
             'role_slug' => $this->role_slug,
             'role_type' => $this->role_type,
+            'role_label' => $this->whenLoaded('item', fn (): ?string => $this->item?->role_label),
             'status' => $this->status,
             'reason' => $this->reason,
             'executor' => $this->whenLoaded('executor', fn (): ?array => $this->executor ? [

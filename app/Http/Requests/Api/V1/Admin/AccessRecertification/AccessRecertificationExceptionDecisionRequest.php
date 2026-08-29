@@ -18,7 +18,7 @@ final class AccessRecertificationExceptionDecisionRequest extends FormRequest
     {
         return [
             'status' => ['required', 'string', Rule::in(['approved', 'rejected'])],
-            'reason' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            'reason' => ['required', 'string', 'max:2000'],
             'confirmation' => ['required', 'accepted'],
         ];
     }

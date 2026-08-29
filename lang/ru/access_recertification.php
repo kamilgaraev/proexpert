@@ -57,8 +57,13 @@ return [
         'role_assignment_not_found' => 'Активное назначение роли не найдено.',
         'revocation_not_found' => 'Задача на отзыв доступа не найдена.',
         'revocation_cannot_complete' => 'Эту задачу на отзыв доступа нельзя выполнить.',
+        'revocation_executor_required' => 'Выполнить отзыв доступа может только назначенный ответственный.',
+        'revocation_executor_permission_required' => 'Выбранный ответственный не может выполнять отзыв доступов.',
         'exception_not_found' => 'Исключение по доступу не найдено.',
         'exception_already_decided' => 'По этому исключению уже принято решение.',
+        'exception_decision_not_supported' => 'Выберите доступное решение по исключению.',
+        'exception_decision_reason_required' => 'Укажите комментарий к решению по исключению.',
+        'exception_independent_approver_required' => 'Решение по исключению должен принять другой сотрудник, который не запрашивал исключение и чей доступ не проверяется.',
         'participant_outside_organization' => 'Выбранный сотрудник не найден в текущей организации или неактивен.',
     ],
 ];
