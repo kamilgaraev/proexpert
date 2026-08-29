@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheetEntry;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\BusinessModules\Features\WorkforceManagement\Domain\Scheduling\WorkforceWeekPattern;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacityOwnerMutationBridge;
 use App\Models\Organization;
 use App\Models\Project;
@@ -215,7 +216,9 @@ final class WorkforceProService
                 'employee.middle_name',
                 'department.name as department_label',
                 'position.name as position_label',
+                'schedule.schedule_type',
                 'schedule.hours_per_day',
+                'schedule.week_pattern',
             ])
             ->get();
 
@@ -1128,6 +1131,37 @@ final class WorkforceProService
                     : trans_message('workforce.calendar.day_off'),
                 'hours' => 0,
             ];
+        }
+
+        if ($scheduleDay !== null) {
+            return [
+                'status' => 'workday',
+                'status_label' => trans_message('workforce.calendar.workday'),
+                'hours' => $this->calendarHours($scheduleDay->planned_hours ?? $assignment->hours_per_day ?? 0),
+            ];
+        }
+
+        $pattern = WorkforceWeekPattern::hoursByIsoWeekday(
+            isset($assignment->schedule_type) ? (string) $assignment->schedule_type : null,
+            $assignment->week_pattern ?? null,
+            $assignment->hours_per_day ?? null,
+        );
+        $weekday = (string) CarbonImmutable::parse($date)->dayOfWeekIso;
+
+        if ($pattern !== []) {
+            $hours = $this->calendarHours($pattern[$weekday] ?? 0);
+
+            return $hours > 0
+                ? [
+                    'status' => 'workday',
+                    'status_label' => trans_message('workforce.calendar.workday'),
+                    'hours' => $hours,
+                ]
+                : [
+                    'status' => 'day_off',
+                    'status_label' => trans_message('workforce.calendar.day_off'),
+                    'hours' => 0,
+                ];
         }
 
         return [

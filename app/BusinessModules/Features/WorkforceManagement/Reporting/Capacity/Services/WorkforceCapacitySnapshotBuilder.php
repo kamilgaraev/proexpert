@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services;
 
+use App\BusinessModules\Features\WorkforceManagement\Domain\Scheduling\WorkforceWeekPattern;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityCohortKey;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityEvidenceItem;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\DTO\WorkforceCapacityFrozenCapturePins;
@@ -296,7 +297,11 @@ final readonly class WorkforceCapacitySnapshotBuilder
                 continue;
             }
 
-            $pattern = $this->weekPattern($schedule);
+            $pattern = WorkforceWeekPattern::hoursByIsoWeekday(
+                isset($schedule['schedule_type']) ? (string) $schedule['schedule_type'] : null,
+                $schedule['week_pattern'] ?? null,
+                $schedule['hours_per_day'] ?? null,
+            );
             $assignmentHours = 0;
             foreach (new DatePeriod($monthStart, new DateInterval('P1D'), $monthEndExclusive) as $date) {
                 $day = $date->format('Y-m-d');
@@ -421,44 +426,6 @@ final readonly class WorkforceCapacitySnapshotBuilder
         }
 
         return $items;
-    }
-
-    private function weekPattern(array $schedule): array
-    {
-        $value = $schedule['week_pattern'] ?? null;
-        if (is_string($value)) {
-            $value = json_decode($value, true);
-        }
-
-        if (! is_array($value)) {
-            return [];
-        }
-
-        if (isset($value['work_days'])) {
-            $workDays = $value['work_days'];
-            $hoursPerDay = $schedule['hours_per_day'] ?? null;
-            if (! is_array($workDays) || $hoursPerDay === null || $hoursPerDay === '') {
-                return [];
-            }
-
-            $normalizedWorkDays = [];
-            foreach ($workDays as $workDay) {
-                $weekday = (int) $workDay;
-                if ($weekday < 1 || $weekday > 7) {
-                    return [];
-                }
-                $normalizedWorkDays[$weekday] = true;
-            }
-
-            $pattern = [];
-            for ($weekday = 1; $weekday <= 7; $weekday++) {
-                $pattern[(string) $weekday] = isset($normalizedWorkDays[$weekday]) ? $hoursPerDay : '0.00';
-            }
-
-            return $pattern;
-        }
-
-        return $value;
     }
 
     private function scheduleHours(mixed $value): ?int
