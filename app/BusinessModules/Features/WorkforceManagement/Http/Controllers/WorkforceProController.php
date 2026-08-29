@@ -215,7 +215,10 @@ final class WorkforceProController extends Controller
     public function storeAbsence(Request $request): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->storeAbsence($this->organizationId($request), $request->validate($this->absenceRules())), trans_message('workforce.messages.record_created'), 201);
+            return AdminResponse::success($this->service->storeAbsence(
+                $this->organizationId($request),
+                $request->validate($this->absenceRules(), $this->dateRangeMessages())
+            ), trans_message('workforce.messages.record_created'), 201);
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
         } catch (DomainException $exception) {
@@ -255,7 +258,10 @@ final class WorkforceProController extends Controller
     public function storeBusinessTrip(Request $request): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->storeBusinessTrip($this->organizationId($request), $request->validate($this->businessTripRules())), trans_message('workforce.messages.record_created'), 201);
+            return AdminResponse::success($this->service->storeBusinessTrip(
+                $this->organizationId($request),
+                $request->validate($this->businessTripRules(), $this->dateRangeMessages())
+            ), trans_message('workforce.messages.record_created'), 201);
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
         } catch (DomainException $exception) {
@@ -622,6 +628,13 @@ final class WorkforceProController extends Controller
             'destination' => ['required', 'string', 'max:255'],
             'purpose' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', Rule::in(['draft', 'approved', 'cancelled'])],
+        ];
+    }
+
+    private function dateRangeMessages(): array
+    {
+        return [
+            'end_date.after_or_equal' => trans_message('workforce.validation.date_range_invalid'),
         ];
     }
 
