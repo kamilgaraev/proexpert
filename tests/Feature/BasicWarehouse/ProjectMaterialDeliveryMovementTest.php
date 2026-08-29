@@ -76,6 +76,10 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('success', true);
+        $response->assertJsonPath(
+            'data.project_warehouse.name',
+            'Объектовый склад: '.$setup['project']->name,
+        );
 
         $this->assertDatabaseHas('warehouse_balances', [
             'warehouse_id' => $setup['sourceWarehouse']->id,
@@ -94,6 +98,10 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
             ->where('warehouse_type', OrganizationWarehouse::TYPE_EXTERNAL)
             ->where('settings->purpose', 'project_delivery_transit')
             ->firstOrFail();
+        $this->assertSame(
+            'Доставка на объект: '.$setup['project']->name,
+            $transitWarehouse->name,
+        );
 
         $this->assertDatabaseHas('warehouse_movements', [
             'id' => $delivery->outbound_movement_id,

@@ -225,6 +225,8 @@ return [
         'shipped' => 'Материал переведен в доставку на объект.',
         'cancelled' => 'Доставка материала отменена.',
         'in_transit_from_purchase_order' => 'Доставка создана из заказа поставщику.',
+        'project_warehouse_name' => 'Объектовый склад: :project',
+        'transit_warehouse_name' => 'Доставка на объект: :project',
         'statuses' => [
             'requested' => 'Запрошено',
             'processing' => 'В обработке',
