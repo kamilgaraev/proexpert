@@ -75,10 +75,15 @@ final class WarehouseCustodyFlowTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.movement_out.operation_category', WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE);
-        $response->assertJsonPath('data.movement_out.operation_category_label', trans_message('basic_warehouse.operation_categories.responsible_issue'));
+        $response->assertJsonPath('data.movement_out.operation_category_label', 'Выдача ответственному');
         $response->assertJsonPath('data.movement_out.related_user.id', $setup['responsibleUser']->id);
         $response->assertJsonPath('data.movement_in.operation_category', WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE);
+        $response->assertJsonPath('data.movement_in.operation_category_label', 'Выдача ответственному');
         $response->assertJsonPath('data.movement_in.related_user.id', $setup['responsibleUser']->id);
+        $response->assertJsonPath(
+            'data.custody_warehouse.name',
+            'Ответственное хранение: '.$setup['project']->name.', '.$setup['responsibleUser']->name,
+        );
 
         $custodyWarehouse = OrganizationWarehouse::query()
             ->where('warehouse_type', OrganizationWarehouse::TYPE_CUSTODY)
@@ -153,6 +158,7 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.movement_out.operation_category_label', 'Возврат на объект');
 
         $this->assertDatabaseHas('warehouse_balances', [
             'warehouse_id' => $setup['projectWarehouse']->id,
