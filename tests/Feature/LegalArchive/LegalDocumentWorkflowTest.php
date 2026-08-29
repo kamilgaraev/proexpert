@@ -359,6 +359,23 @@ final class LegalDocumentWorkflowTest extends TestCase
         self::assertFalse($reassign['input_schema']['properties']['due_at']['required']);
     }
 
+    public function test_action_resolver_disables_submit_when_no_template_can_be_resolved(): void
+    {
+        [$document] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $resolver = new LegalWorkflowActionResolver(
+            new LegalWorkflowAuthorization,
+            new LegalWorkflowActorResolver(
+                roleLookup: static fn (User $user, string $role): bool => in_array($role, $user->workflowRoles, true),
+            ),
+        );
+
+        $submit = $resolver->for($actor, $document)->action('submit');
+
+        self::assertFalse($submit->enabled);
+        self::assertContains('legal_archive.workflow.blockers.route_not_configured', $submit->blockers);
+    }
+
     public function test_bulk_action_summaries_are_safe_and_permission_checks_are_bounded(): void
     {
         $actor = $this->actor(8, []);
@@ -1284,6 +1301,12 @@ final class LegalDocumentWorkflowTest extends TestCase
     private function createSchema(): void
     {
         $schema = $this->database->schema();
+        $schema->create('legal_archive_document_type_profiles', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->unsignedBigInteger('organization_id');
+            $table->string('code');
+            $table->boolean('is_active')->default(true);
+        });
         $schema->create('legal_archive_documents', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');

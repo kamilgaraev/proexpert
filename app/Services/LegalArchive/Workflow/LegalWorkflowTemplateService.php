@@ -15,9 +15,10 @@ use App\Services\LegalArchive\Workflow\DTO\WorkflowSnapshot;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
-final class LegalWorkflowTemplateService
+final class LegalWorkflowTemplateService implements LegalWorkflowTemplateAvailability
 {
     private const ACTOR_TYPES = ['user', 'role', 'party', 'external'];
 
@@ -158,11 +159,7 @@ final class LegalWorkflowTemplateService
                 return $template;
             }
         }
-        $candidateCodes = array_values(array_unique(array_filter([
-            $profileCode,
-            Str::before($profileCode, '.'),
-            'default',
-        ])));
+        $candidateCodes = $this->candidateCodes($profileCode);
         foreach ($candidateCodes as $code) {
             $templateId = $this->database()->table('legal_workflow_template_heads')
                 ->where('organization_id', $organizationId)
@@ -182,6 +179,152 @@ final class LegalWorkflowTemplateService
         }
 
         throw new DomainException('legal_workflow_template_not_found');
+    }
+
+    public function isAvailable(LegalArchiveDocument $document): bool
+    {
+        return ($this->forMany(collect([$document]))[(int) $document->id] ?? false) === true;
+    }
+
+    /**
+     * @param  Collection<int, LegalArchiveDocument>  $documents
+     * @return array<int, bool>
+     */
+    public function forMany(Collection $documents): array
+    {
+        if ($documents->isEmpty()) {
+            return [];
+        }
+
+        $codesByOrganization = [];
+        $candidateCodesByOrganization = [];
+        foreach ($documents as $document) {
+            $organizationId = (int) $document->organization_id;
+            $profileCode = trim((string) $document->type_profile_code);
+            if ($organizationId < 1) {
+                continue;
+            }
+            if ($profileCode !== '') {
+                $codesByOrganization[$organizationId][] = $profileCode;
+            }
+            $candidateCodesByOrganization[$organizationId] = array_values(array_unique([
+                ...($candidateCodesByOrganization[$organizationId] ?? []),
+                ...$this->candidateCodes($profileCode),
+            ]));
+        }
+
+        $profiles = $this->profiles->findManyForOrganizations($codesByOrganization);
+        $heads = $this->templateHeads($candidateCodesByOrganization);
+        $templateIds = [];
+        foreach ($profiles as $organizationProfiles) {
+            foreach ($organizationProfiles as $profile) {
+                if ($profile->workflowTemplateId !== null) {
+                    $templateIds[] = $profile->workflowTemplateId;
+                }
+            }
+        }
+        foreach ($heads as $organizationHeads) {
+            foreach ($organizationHeads as $templateId) {
+                $templateIds[] = $templateId;
+            }
+        }
+        $templates = $templateIds === []
+            ? collect()
+            : $this->templateQuery()
+                ->whereIn('id', array_values(array_unique($templateIds)))
+                ->with('steps')
+                ->get()
+                ->keyBy(static fn (LegalWorkflowTemplate $template): string => ((int) $template->organization_id).':'.((int) $template->id));
+
+        $result = [];
+        foreach ($documents as $document) {
+            $documentId = (int) $document->id;
+            $organizationId = (int) $document->organization_id;
+            $profileCode = trim((string) $document->type_profile_code);
+            $profile = $profiles[$organizationId][$profileCode] ?? null;
+            $explicitTemplateId = $profile?->workflowTemplateId;
+            if ($organizationId < 1) {
+                $result[$documentId] = false;
+
+                continue;
+            }
+            if ($profileCode !== '' && $profile === null) {
+                $result[$documentId] = false;
+
+                continue;
+            }
+            if ($explicitTemplateId !== null) {
+                $template = $templates->get($organizationId.':'.$explicitTemplateId);
+                $result[$documentId] = $template instanceof LegalWorkflowTemplate
+                    && $this->hasValidIntegrity($template);
+
+                continue;
+            }
+
+            $result[$documentId] = false;
+            foreach ($this->candidateCodes($profileCode) as $candidateCode) {
+                $templateId = $heads[$organizationId][$candidateCode] ?? null;
+                if ($templateId === null) {
+                    continue;
+                }
+                $template = $templates->get($organizationId.':'.$templateId);
+                if (! $template instanceof LegalWorkflowTemplate) {
+                    continue;
+                }
+                $result[$documentId] = $this->hasValidIntegrity($template);
+
+                break;
+            }
+        }
+
+        return $result;
+    }
+
+    /** @return list<string> */
+    private function candidateCodes(string $profileCode): array
+    {
+        return array_values(array_unique(array_filter([
+            $profileCode,
+            Str::before($profileCode, '.'),
+            'default',
+        ])));
+    }
+
+    /**
+     * @param  array<int, list<string>>  $candidateCodesByOrganization
+     * @return array<int, array<string, int>>
+     */
+    private function templateHeads(array $candidateCodesByOrganization): array
+    {
+        if ($candidateCodesByOrganization === []) {
+            return [];
+        }
+        $rows = $this->database()->table('legal_workflow_template_heads')
+            ->where(static function ($query) use ($candidateCodesByOrganization): void {
+                foreach ($candidateCodesByOrganization as $organizationId => $codes) {
+                    $query->orWhere(static fn ($pair) => $pair
+                        ->where('organization_id', $organizationId)
+                        ->whereIn('code', $codes));
+                }
+            })
+            ->get(['organization_id', 'code', 'template_id']);
+        $heads = [];
+        foreach ($rows as $row) {
+            $heads[(int) $row->organization_id][(string) $row->code] = (int) $row->template_id;
+        }
+
+        return $heads;
+    }
+
+    private function hasValidIntegrity(LegalWorkflowTemplate $template): bool
+    {
+        try {
+            $this->assertIntegrity($template);
+
+            return true;
+        } catch (DomainException) {
+            return false;
+        }
     }
 
     public function snapshot(LegalWorkflowTemplate $template, WorkflowOverride $override): WorkflowSnapshot

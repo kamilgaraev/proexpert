@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\LegalArchive\Workflow;
 
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentComment;
@@ -23,17 +24,22 @@ final readonly class LegalWorkflowActionResolver
 
     private LegalDocumentWorkflowReadinessGuard $readiness;
 
+    private LegalWorkflowTemplateAvailability $templateAvailability;
+
     public function __construct(
         private LegalWorkflowAuthorization $authorization,
         private LegalWorkflowActorResolver $actors,
         ?LegalDocumentBlockingCommentGuard $blockingComments = null,
         ?LegalDocumentWorkflowReadinessGuard $readiness = null,
+        ?LegalWorkflowTemplateAvailability $templateAvailability = null,
     ) {
         $this->blockingComments = $blockingComments ?? new LegalDocumentBlockingCommentGuard;
         $this->readiness = $readiness ?? new LegalDocumentWorkflowReadinessGuard(
             new \App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry,
             new \App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator,
         );
+        $this->templateAvailability = $templateAvailability
+            ?? new LegalWorkflowTemplateService(new ImmutableAuditIntegrityService);
     }
 
     public function for(User $actor, LegalArchiveDocument $document): WorkflowSummary
@@ -44,7 +50,19 @@ final readonly class LegalWorkflowActionResolver
             $permissions[$permission] = $this->authorization->can($actor, $document, $permission);
         }
 
-        return $this->summary($actor, $document, $permissions, [], null, $this->readiness->blocker($document));
+        $routeAvailable = ($permissions[LegalWorkflowPermissions::SUBMIT] ?? false)
+            ? $this->templateAvailability->isAvailable($document)
+            : false;
+
+        return $this->summary(
+            $actor,
+            $document,
+            $permissions,
+            [],
+            null,
+            $this->readiness->blocker($document),
+            $routeAvailable,
+        );
     }
 
     /**
@@ -58,6 +76,7 @@ final readonly class LegalWorkflowActionResolver
         array $actorAssignments,
         ?bool $hasBlockingComments = null,
         ?string $readinessBlocker = null,
+        bool $routeAvailable = false,
     ): WorkflowSummary {
         if (! ($permissions[LegalWorkflowPermissions::VIEW] ?? false)) {
             return $this->deniedSummary($document);
@@ -85,7 +104,16 @@ final readonly class LegalWorkflowActionResolver
 
         $details = $instance instanceof LegalWorkflowInstance && $instance->status === 'in_progress'
             ? $this->decisionActions($actor, $document, $instance, $version, $permissions, $actorAssignments, $hasBlockingComments)
-            : [$this->submitAction($actor, $document, $version, $instance, $permissions, $hasBlockingComments, $readinessBlocker)];
+            : [$this->submitAction(
+                $actor,
+                $document,
+                $version,
+                $instance,
+                $permissions,
+                $hasBlockingComments,
+                $readinessBlocker,
+                $routeAvailable,
+            )];
         $currentSteps = $instance instanceof LegalWorkflowInstance
             ? $instance->steps
                 ->where('status', 'active')
@@ -139,6 +167,13 @@ final readonly class LegalWorkflowActionResolver
         $actorAssignments = $this->actors->forMany($actor, $documents);
         $blockingComments = $this->blockingCommentsForMany($documents, $permissionMaps);
         $readinessBlockers = $this->readiness->blockersFor($documents);
+        $routeCandidates = $documents->filter(static function (LegalArchiveDocument $document) use ($permissionMaps): bool {
+            $permissions = $permissionMaps[(int) $document->id] ?? [];
+
+            return ($permissions[LegalWorkflowPermissions::VIEW] ?? false)
+                && ($permissions[LegalWorkflowPermissions::SUBMIT] ?? false);
+        });
+        $routeAvailability = $this->templateAvailability->forMany($routeCandidates);
         $summaries = [];
         foreach ($documents as $document) {
             $documentId = (int) $document->id;
@@ -149,6 +184,7 @@ final readonly class LegalWorkflowActionResolver
                 $actorAssignments,
                 $blockingComments[$documentId] ?? false,
                 $readinessBlockers[$documentId] ?? null,
+                $routeAvailability[$documentId] ?? false,
             );
         }
 
@@ -252,6 +288,7 @@ final readonly class LegalWorkflowActionResolver
         array $permissions,
         ?bool $hasBlockingComments,
         ?string $readinessBlocker,
+        bool $routeAvailable,
     ): WorkflowActionDetail {
         $permission = LegalWorkflowPermissions::SUBMIT;
         $canSubmit = $permissions[$permission] ?? false;
@@ -265,6 +302,7 @@ final readonly class LegalWorkflowActionResolver
             $canSubmit ? null : $this->label('blockers.permission_denied'),
             $ready ? null : $this->label('blockers.version_not_ready'),
             $readinessBlocker,
+            $canSubmit && ! $routeAvailable ? $this->label('blockers.route_not_configured') : null,
             $hasBlockingComments ? $this->label('blockers.open_blocking_comments') : null,
             $latest?->status === 'in_progress' ? $this->label('blockers.active_workflow_exists') : null,
             LegalWorkflowResubmissionPolicy::requiresNewVersion($latest, $version)

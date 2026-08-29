@@ -260,7 +260,11 @@ final class LegalArchiveApiContractTest extends TestCase
 
         $actions = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42/available-actions', 'GET'), $actor);
         self::assertSame(200, $actions->getStatusCode());
-        self::assertSame('submit', $actions->getData(true)['data']['workflow_summary']['available_action_details'][0]['action']);
+        $submitAction = $actions->getData(true)['data']['workflow_summary']['available_action_details'][0];
+        self::assertSame('submit', $submitAction['action']);
+        self::assertFalse($submitAction['enabled']);
+        self::assertContains('Для этого вида документа не настроен маршрут согласования', $submitAction['blockers']);
+        self::assertNotContains('legal_archive.workflow.blockers.route_not_configured', $submitAction['blockers']);
 
         $this->permissionAllowed = false;
         $denied = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42/available-actions', 'GET'), $actor);
