@@ -19,9 +19,12 @@ class EstimateContractIntegrationService
         return $this->coverageService->createFromContract($contract, $additionalData);
     }
 
-    public function validateContractAmount(Estimate $estimate, ?int $contractId = null): array
-    {
-        return $this->coverageService->validateContractAmount($estimate, $contractId);
+    public function validateContractAmount(
+        Estimate $estimate,
+        ?Contract $contract = null,
+        bool $includeVat = false
+    ): array {
+        return $this->coverageService->validateContractAmount($estimate, $contract, $includeVat);
     }
 
     public function linkToContract(Estimate $estimate, int $contractId, bool $includeVat = false): array

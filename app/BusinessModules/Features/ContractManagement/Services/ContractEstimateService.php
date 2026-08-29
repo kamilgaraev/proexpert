@@ -142,6 +142,27 @@ class ContractEstimateService
         return round((float) $query->sum('amount'), 2);
     }
 
+    public function calculateItemsTotal(Estimate $estimate, array $itemIds, bool $includeVat = false): float
+    {
+        $allIds = $this->resolveWithChildren($estimate->id, $itemIds);
+        if ($allIds === []) {
+            return 0.0;
+        }
+
+        $items = EstimateItem::query()
+            ->where('estimate_id', $estimate->id)
+            ->whereIn('id', $allIds)
+            ->get();
+
+        if ($items->count() !== count($allIds)) {
+            throw new DomainException('contract_estimate_items_invalid');
+        }
+
+        return round((float) $items->sum(
+            fn (EstimateItem $item): float => $this->calculateAmount($item, $estimate, $includeVat)
+        ), 2);
+    }
+
     public function getSummary(Contract $contract): array
     {
         $links = ContractEstimateItem::where('contract_id', $contract->id)

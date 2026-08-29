@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateContractIntegrationService;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Estimate\ValidateEstimateContractAmountRequest;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateCoverageResource;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
 use App\Http\Responses\AdminResponse;
@@ -121,8 +122,11 @@ class EstimateContractController extends Controller
         );
     }
 
-    public function validateContractAmount(Request $request, int $projectId, int $estimateId): JsonResponse
-    {
+    public function validateContractAmount(
+        ValidateEstimateContractAmountRequest $request,
+        int $projectId,
+        int $estimateId
+    ): JsonResponse {
         $organizationId = $request->attributes->get('current_organization_id');
 
         $estimate = Estimate::query()
@@ -131,10 +135,18 @@ class EstimateContractController extends Controller
             ->where('organization_id', $organizationId)
             ->firstOrFail();
 
-        $contractId = $request->query('contract_id');
+        $validated = $request->validated();
+        $contract = isset($validated['contract_id'])
+            ? Contract::query()
+                ->where('id', $validated['contract_id'])
+                ->where('project_id', $projectId)
+                ->where('organization_id', $organizationId)
+                ->firstOrFail()
+            : null;
         $validation = $this->integrationService->validateContractAmount(
             $estimate,
-            $contractId ? (int) $contractId : null
+            $contract,
+            (bool) ($validated['include_vat'] ?? false)
         );
 
         return AdminResponse::success([
