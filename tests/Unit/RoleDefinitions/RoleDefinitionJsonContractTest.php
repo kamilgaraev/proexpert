@@ -121,6 +121,25 @@ class RoleDefinitionJsonContractTest extends TestCase
         $this->assertNotContains('notifications.receive.procurement', $viewer['module_permissions']['notifications']);
     }
 
+    public function test_workflow_override_is_published_and_translated(): void
+    {
+        $manifest = json_decode(
+            (string) file_get_contents($this->basePath . '/config/ModuleList/features/workflow-management.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+        $owner = $this->roleDefinition('lk/organization_owner.json');
+        $translations = require $this->basePath . '/lang/ru/permissions.php';
+
+        $this->assertContains('workflow.override', $manifest['permissions']);
+        $this->assertContains('workflow.override', $owner['system_permissions']);
+        $this->assertSame(
+            'Обход мягких блокировок рабочего процесса',
+            $translations['values']['workflow.override'] ?? null,
+        );
+    }
+
     public function test_role_translations_cover_all_role_definitions(): void
     {
         $translations = require $this->basePath . '/lang/ru/roles.php';

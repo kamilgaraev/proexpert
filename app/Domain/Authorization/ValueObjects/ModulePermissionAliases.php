@@ -34,6 +34,7 @@ final class ModulePermissionAliases
         'cost-categories' => 'catalog-management',
         'completed_works' => 'workflow-management',
         'completed-works' => 'workflow-management',
+        'workflow' => 'workflow-management',
         'workforce' => 'workforce-management',
         'one_c_exchange' => 'one-c-basic-exchange',
         'one-c-exchange' => 'one-c-basic-exchange',
