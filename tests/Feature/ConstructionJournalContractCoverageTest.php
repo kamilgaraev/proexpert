@@ -133,7 +133,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         ]);
         $estimate->update(['current_version_id' => $version->id]);
 
-        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $journal = $this->createJournal($organization, $project, null, $user);
         $entry = app(ConstructionJournalService::class)->createEntry($journal, [
             'estimate_id' => $estimate->id,
             'entry_date' => '2026-04-28',
