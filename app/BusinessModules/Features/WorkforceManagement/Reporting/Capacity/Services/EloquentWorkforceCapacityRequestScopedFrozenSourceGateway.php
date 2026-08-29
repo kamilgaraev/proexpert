@@ -34,6 +34,7 @@ final readonly class EloquentWorkforceCapacityRequestScopedFrozenSourceGateway i
     {
         $commandCanonical = $pins->commandCanonical();
         $policyCanonical = $pins->policyCanonical();
+        $capturedAt = $this->databaseTimestamp($pins->capturedAt);
         $inserted = $this->database->table(self::REQUESTS)->insertOrIgnore([
             'organization_id' => $pins->command->organizationId,
             'mutation_id' => $pins->command->mutationId,
@@ -52,14 +53,14 @@ final readonly class EloquentWorkforceCapacityRequestScopedFrozenSourceGateway i
             'source_schema_version' => $pins->sourceSchemaVersion,
             'formula_version' => $pins->formulaVersion,
             'business_date' => $pins->businessDate,
-            'captured_at' => $pins->capturedAt,
+            'captured_at' => $capturedAt,
             'range_count' => 0,
             'source_row_count' => 0,
             'available_at' => null,
             'claim_token' => null,
             'claimed_at' => null,
             'last_error_code' => null,
-            'started_at' => $pins->capturedAt,
+            'started_at' => $capturedAt,
             'frozen_at' => null,
             'completed_at' => null,
             'dead_lettered_at' => null,
@@ -279,7 +280,7 @@ SQL, [$employeeId, $captureRequestId, $organizationId]);
         if ($captureRequestId < 1 || $rangeCount < 0 || $sourceRowCount < 0) {
             throw new InvalidArgumentException('workforce_capacity_frozen_seal_invalid');
         }
-        $sealedAt = $this->now();
+        $sealedAt = $this->databaseTimestamp($this->now());
         $query = $this->database->table(self::REQUESTS)
             ->where('id', $captureRequestId)
             ->where('status', 'preparing')
@@ -691,5 +692,10 @@ SQL,
     private function now(): DateTimeImmutable
     {
         return new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    }
+
+    private function databaseTimestamp(DateTimeImmutable $value): string
+    {
+        return $value->format('Y-m-d H:i:s.uP');
     }
 }
