@@ -57,35 +57,39 @@ class EstimateCoverageService
 
         $itemIds = $this->getCoveredItemIds($estimate)->all();
 
-        $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
-        $this->estimateCacheService->invalidateStructure($estimate);
-        $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
+        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat): Collection {
+            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
+            $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
 
-        return $links;
+            return $links;
+        });
     }
 
     public function syncCoverageItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
     {
         $this->assertOwnership($contract, $estimate);
 
-        $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
-        $this->estimateCacheService->invalidateStructure($estimate);
-        $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
+        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat): Collection {
+            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
+            $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
 
-        return $links;
+            return $links;
+        });
     }
 
     public function detachCoverage(Contract $contract, Estimate $estimate): void
     {
         $this->assertOwnership($contract, $estimate);
 
-        ContractEstimateItem::query()
-            ->where('contract_id', $contract->id)
-            ->where('estimate_id', $estimate->id)
-            ->delete();
+        DB::transaction(function () use ($contract, $estimate): void {
+            ContractEstimateItem::query()
+                ->where('contract_id', $contract->id)
+                ->where('estimate_id', $estimate->id)
+                ->delete();
 
-        $this->estimateCacheService->invalidateStructure($estimate);
-        $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate);
+            $this->estimateCacheService->invalidateStructure($estimate);
+            $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate);
+        });
     }
 
     public function getCoverageForEstimate(Estimate $estimate): array

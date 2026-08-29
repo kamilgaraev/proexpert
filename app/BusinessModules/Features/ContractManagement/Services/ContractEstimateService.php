@@ -61,36 +61,38 @@ class ContractEstimateService
                 'count' => $attached->count(),
             ]);
 
+            $this->estimateCacheService->invalidateStructure($estimate);
+
             return $attached;
         });
-
-        DB::afterCommit(fn () => $this->estimateCacheService->invalidateStructure($estimate));
 
         return $attached;
     }
 
     public function detachItems(Contract $contract, array $itemIds): void
     {
-        $allIds = $this->resolveChildrenForDetach($contract->id, $itemIds);
-        $estimateIds = ContractEstimateItem::where('contract_id', $contract->id)
-            ->whereIn('estimate_item_id', $allIds)
-            ->pluck('estimate_id')
-            ->unique()
-            ->values();
+        DB::transaction(function () use ($contract, $itemIds): void {
+            $allIds = $this->resolveChildrenForDetach($contract->id, $itemIds);
+            $estimateIds = ContractEstimateItem::where('contract_id', $contract->id)
+                ->whereIn('estimate_item_id', $allIds)
+                ->pluck('estimate_id')
+                ->unique()
+                ->values();
 
-        ContractEstimateItem::where('contract_id', $contract->id)
-            ->whereIn('estimate_item_id', $allIds)
-            ->delete();
+            ContractEstimateItem::where('contract_id', $contract->id)
+                ->whereIn('estimate_item_id', $allIds)
+                ->delete();
 
-        Log::info('contract_estimate_items.detached', [
-            'contract_id' => $contract->id,
-            'item_ids' => $allIds,
-        ]);
+            Log::info('contract_estimate_items.detached', [
+                'contract_id' => $contract->id,
+                'item_ids' => $allIds,
+            ]);
 
-        Estimate::query()
-            ->whereIn('id', $estimateIds)
-            ->get()
-            ->each(fn (Estimate $estimate) => $this->estimateCacheService->invalidateStructure($estimate));
+            Estimate::query()
+                ->whereIn('id', $estimateIds)
+                ->get()
+                ->each(fn (Estimate $estimate) => $this->estimateCacheService->invalidateStructure($estimate));
+        });
     }
 
     public function syncItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection

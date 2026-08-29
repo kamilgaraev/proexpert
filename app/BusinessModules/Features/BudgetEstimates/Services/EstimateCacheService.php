@@ -4,16 +4,19 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
 use App\Models\Estimate;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class EstimateCacheService
 {
     private const TTL = 3600; // 1 час
+
     private const TAG_PREFIX = 'budget_estimates';
 
     public function __construct(
         private readonly EstimateStructureSnapshotStorage $structureSnapshotStorage
-    ) {
-    }
+    ) {}
 
     /**
      * Кешировать итоговые суммы сметы
@@ -21,7 +24,7 @@ class EstimateCacheService
     public function rememberTotals(Estimate $estimate, callable $callback): array
     {
         // Кешируем только утвержденные сметы
-        if (!$estimate->isApproved()) {
+        if (! $estimate->isApproved()) {
             return $callback();
         }
 
@@ -63,7 +66,7 @@ class EstimateCacheService
     public function rememberOrganizationList(int $organizationId, array $filters, callable $callback)
     {
         $filterKey = md5(json_encode($filters));
-        
+
         return Cache::tags($this->getOrganizationTags($organizationId))
             ->remember(
                 "estimates_list_{$organizationId}_{$filterKey}",
@@ -78,13 +81,13 @@ class EstimateCacheService
     private function remember(string $key, Estimate $estimate, callable $callback, ?int $ttl = null)
     {
         $driver = config('cache.default');
-        
+
         // Если Redis поддерживает теги
         if ($driver === 'redis') {
             return Cache::tags($this->getTags($estimate))
                 ->remember($key, $ttl ?? self::TTL, $callback);
         }
-        
+
         // Fallback для драйверов без тегов
         return Cache::remember($key, $ttl ?? self::TTL, $callback);
     }
@@ -95,7 +98,7 @@ class EstimateCacheService
     public function invalidateEstimate(Estimate $estimate): void
     {
         $driver = config('cache.default');
-        
+
         if ($driver === 'redis') {
             Cache::tags($this->getTags($estimate))->flush();
         } else {
@@ -110,7 +113,7 @@ class EstimateCacheService
     public function invalidateOrganization(int $organizationId): void
     {
         $driver = config('cache.default');
-        
+
         if ($driver === 'redis') {
             Cache::tags($this->getOrganizationTags($organizationId))->flush();
         } else {
@@ -133,16 +136,39 @@ class EstimateCacheService
      */
     public function invalidateStructure(Estimate $estimate): void
     {
-        Cache::forget("estimate_structure_{$estimate->id}");
-        $this->invalidateStructureSnapshot($estimate);
+        $path = $this->invalidateStructureSnapshot($estimate);
+        $cleanup = function () use ($estimate, $path): void {
+            try {
+                Cache::forget("estimate_structure_{$estimate->id}");
+
+                if ($path) {
+                    $this->structureSnapshotStorage->delete($path);
+                }
+            } catch (Throwable $exception) {
+                Log::error('estimate.structure_cache_cleanup_failed', [
+                    'estimate_id' => $estimate->id,
+                    'organization_id' => $estimate->organization_id,
+                    'exception_class' => $exception::class,
+                    'exception_message' => $exception->getMessage(),
+                ]);
+            }
+        };
+
+        if (DB::transactionLevel() > 0) {
+            DB::afterCommit($cleanup);
+
+            return;
+        }
+
+        $cleanup();
     }
 
-    public function invalidateStructureSnapshot(Estimate $estimate): void
+    public function invalidateStructureSnapshot(Estimate $estimate): ?string
     {
         $path = $estimate->structure_cache_path;
 
-        if (!$path) {
-            return;
+        if (! $path) {
+            return null;
         }
 
         $estimate->structure_cache_path = null;
@@ -151,7 +177,7 @@ class EstimateCacheService
             $estimate->saveQuietly();
         }
 
-        $this->structureSnapshotStorage->delete($path);
+        return (string) $path;
     }
 
     /**
@@ -169,8 +195,8 @@ class EstimateCacheService
     {
         return [
             self::TAG_PREFIX,
-            self::TAG_PREFIX . "_org_{$estimate->organization_id}",
-            self::TAG_PREFIX . "_estimate_{$estimate->id}",
+            self::TAG_PREFIX."_org_{$estimate->organization_id}",
+            self::TAG_PREFIX."_estimate_{$estimate->id}",
         ];
     }
 
@@ -181,7 +207,7 @@ class EstimateCacheService
     {
         return [
             self::TAG_PREFIX,
-            self::TAG_PREFIX . "_org_{$organizationId}",
+            self::TAG_PREFIX."_org_{$organizationId}",
         ];
     }
 
@@ -199,7 +225,7 @@ class EstimateCacheService
         foreach ($patterns as $key) {
             Cache::forget($key);
         }
-        
+
         $this->invalidateOrganization($estimate->organization_id);
     }
 
@@ -220,15 +246,15 @@ class EstimateCacheService
     {
         // Для Redis можно получить статистику
         $driver = config('cache.default');
-        
+
         if ($driver === 'redis') {
             try {
                 $store = Cache::store('redis')->getStore();
                 $connection = method_exists($store, 'connection') ? $store->connection() : null;
                 $keys = $connection && method_exists($connection, 'keys')
-                    ? $connection->keys(self::TAG_PREFIX . '*')
+                    ? $connection->keys(self::TAG_PREFIX.'*')
                     : [];
-                
+
                 return [
                     'driver' => $driver,
                     'total_keys' => count($keys),
@@ -241,11 +267,10 @@ class EstimateCacheService
                 ];
             }
         }
-        
+
         return [
             'driver' => $driver,
             'supports_tags' => false,
         ];
     }
 }
-

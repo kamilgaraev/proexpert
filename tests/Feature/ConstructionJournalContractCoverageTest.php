@@ -17,6 +17,7 @@ use App\Models\ContractEstimateItem;
 use App\Models\Contractor;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\EstimateVersion;
 use App\Models\JournalWorkVolume;
 use App\Models\Organization;
 use App\Models\Project;
@@ -27,7 +28,9 @@ use App\Services\CompletedWork\CompletedWorkFactService;
 use App\Services\Logging\LoggingService;
 use App\Services\Workflow\WorkflowGuardService;
 use DomainException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use Tests\Support\ActingTestSchema;
 use Tests\TestCase;
 
@@ -95,6 +98,112 @@ class ConstructionJournalContractCoverageTest extends TestCase
             ->assertJsonCount(0, 'data.available_works')
             ->assertJsonCount(1, 'data.blocked_works')
             ->assertJsonPath('data.blocked_works.0.blockers.0.code', 'schedule_missing');
+    }
+
+    public function test_approved_estimate_coverage_is_saved_atomically_and_restores_journal_fact(): void
+    {
+        Storage::fake('s3');
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $estimateItem->update([
+            'quantity' => 100,
+            'quantity_total' => null,
+            'unit_price' => 952.5,
+            'total_amount' => 95250,
+        ]);
+
+        $snapshotPath = "org-{$organization->id}/estimates/{$estimate->id}/structure_snapshot.json";
+        $estimate->update(['structure_cache_path' => $snapshotPath]);
+        Storage::disk('s3')->put($snapshotPath, '{"sections":[]}');
+
+        $version = EstimateVersion::create([
+            'estimate_id' => $estimate->id,
+            'organization_id' => $organization->id,
+            'created_by_user_id' => $user->id,
+            'approved_by_user_id' => $user->id,
+            'approved_at' => now(),
+            'version_number' => 1,
+            'snapshot_type' => 'approval',
+            'estimate_status' => 'approved',
+            'snapshot' => [],
+            'snapshot_hash' => hash('sha256', 'approved-estimate-coverage'),
+            'total_amount' => 95250,
+            'total_amount_with_vat' => 95250,
+            'total_direct_costs' => 95250,
+            'status' => 'approved',
+        ]);
+        $estimate->update(['current_version_id' => $version->id]);
+
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id,
+            'entry_date' => '2026-04-28',
+            'work_description' => 'Монтаж арматуры',
+            'status' => 'approved',
+            'work_volumes' => [
+                [
+                    'estimate_item_id' => $estimateItem->id,
+                    'quantity' => 5,
+                ],
+            ],
+        ], $user);
+        $volume = $entry->workVolumes()->firstOrFail();
+        $entry->update(['status' => 'approved']);
+        CompletedWork::query()->where('journal_work_volume_id', $volume->id)->forceDelete();
+
+        app(EstimateCoverageService::class)->attachFullCoverage($contract, $estimate);
+
+        $this->assertDatabaseHas('contract_estimate_items', [
+            'contract_id' => $contract->id,
+            'estimate_item_id' => $estimateItem->id,
+            'quantity' => 100,
+            'amount' => 95250,
+        ]);
+        $this->assertDatabaseHas('completed_works', [
+            'journal_work_volume_id' => $volume->id,
+            'contract_id' => $contract->id,
+            'estimate_item_id' => $estimateItem->id,
+            'status' => 'confirmed',
+        ]);
+        $this->assertNull($estimate->fresh()->structure_cache_path);
+        Storage::disk('s3')->assertMissing($snapshotPath);
+
+        try {
+            $estimate->fresh()->update(['name' => 'Изменённая утверждённая смета']);
+            self::fail('Approved estimate business fields must remain immutable.');
+        } catch (QueryException $exception) {
+            $this->assertStringContainsString('approved_estimate_is_immutable', $exception->getMessage());
+        }
+    }
+
+    public function test_coverage_changes_roll_back_when_journal_fact_sync_fails(): void
+    {
+        Storage::fake('s3');
+        [$organization, , $contract, , $estimate, $estimateItem] = $this->createJournalFixture();
+        $snapshotPath = "org-{$organization->id}/estimates/{$estimate->id}/structure_snapshot.json";
+        $estimate->update(['structure_cache_path' => $snapshotPath]);
+        Storage::disk('s3')->put($snapshotPath, '{"sections":[]}');
+        $this->coverEstimateItem($contract, $estimate, $estimateItem, 1, 1000);
+        $this->mock(CompletedWorkFactService::class, function ($mock): void {
+            $mock->shouldReceive('syncJournalEntriesForContractEstimateCoverage')
+                ->once()
+                ->andThrow(new DomainException('journal_fact_sync_failed'));
+        });
+
+        try {
+            app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id]);
+            self::fail('Coverage sync failure must be propagated.');
+        } catch (DomainException $exception) {
+            $this->assertSame('journal_fact_sync_failed', $exception->getMessage());
+        }
+
+        $this->assertDatabaseHas('contract_estimate_items', [
+            'contract_id' => $contract->id,
+            'estimate_item_id' => $estimateItem->id,
+            'quantity' => 1,
+            'amount' => 1000,
+        ]);
+        $this->assertSame($snapshotPath, $estimate->fresh()->structure_cache_path);
+        Storage::disk('s3')->assertExists($snapshotPath);
     }
 
     public function test_without_auto_attach_flag_uncovered_estimate_item_does_not_create_coverage_or_contract_fact(): void
