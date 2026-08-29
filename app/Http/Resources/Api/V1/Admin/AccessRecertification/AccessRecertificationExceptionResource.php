@@ -21,6 +21,12 @@ final class AccessRecertificationExceptionResource extends JsonResource
             ] : null),
             'item_id' => $this->item_id,
             'decision_id' => $this->decision_id,
+            'subject' => $this->whenLoaded('item', fn (): ?array => $this->item?->subject ? [
+                'id' => $this->item->subject->id,
+                'name' => $this->item->subject->name,
+            ] : null),
+            'role_slug' => $this->whenLoaded('item', fn (): ?string => $this->item?->role_slug),
+            'role_label' => $this->whenLoaded('item', fn (): ?string => $this->item?->role_label),
             'status' => $this->status,
             'reason' => $this->reason,
             'valid_until' => $this->valid_until?->toISOString(),

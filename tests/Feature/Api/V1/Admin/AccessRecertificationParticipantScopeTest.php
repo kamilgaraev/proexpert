@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\BusinessModules\Core\AccessRecertification\Services\AccessRecertificationService;
 use App\Http\Requests\Api\V1\Admin\AccessRecertification\AccessRecertificationCampaignRequest;
 use App\Http\Requests\Api\V1\Admin\AccessRecertification\AccessRecertificationDecisionRequest;
+use App\Http\Requests\Api\V1\Admin\AccessRecertification\AccessRecertificationExceptionDecisionRequest;
 use App\Http\Requests\Api\V1\Admin\AccessRecertification\AccessRecertificationReassignRequest;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Validator;
@@ -105,5 +106,24 @@ final class AccessRecertificationParticipantScopeTest extends TestCase
                 'due_at' => now()->addWeek()->toDateString(),
             ],
         );
+    }
+
+    public function test_exception_decision_requires_a_reason_and_explicit_confirmation(): void
+    {
+        $request = new AccessRecertificationExceptionDecisionRequest();
+
+        $missingReason = Validator::make([
+            'status' => 'approved',
+            'confirmation' => true,
+        ], $request->rules());
+        $this->assertTrue($missingReason->fails());
+        $this->assertArrayHasKey('reason', $missingReason->errors()->toArray());
+
+        $missingConfirmation = Validator::make([
+            'status' => 'rejected',
+            'reason' => 'Независимая проверка завершена',
+        ], $request->rules());
+        $this->assertTrue($missingConfirmation->fails());
+        $this->assertArrayHasKey('confirmation', $missingConfirmation->errors()->toArray());
     }
 }

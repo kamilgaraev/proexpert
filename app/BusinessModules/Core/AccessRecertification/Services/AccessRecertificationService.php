@@ -333,10 +333,13 @@ final class AccessRecertificationService
         $this->decisionPolicy->assertCanDecide((int) $actor->id, (int) $item->subject_user_id, $decisionType, $data);
 
         if ($decisionType === 'revoke') {
+            $executorUserId = (int) ($data['revoke_executor_user_id'] ?? 0);
             $this->participants->assertActiveOrganizationUsers(
                 $organizationId,
-                [$data['revoke_executor_user_id'] ?? null],
+                [$executorUserId],
             );
+            $executor = User::query()->findOrFail($executorUserId);
+            $this->assertRevocationExecutorCanExecute($executor, $organizationId);
         }
 
         return DB::transaction(function () use ($item, $organizationId, $actor, $data, $decisionType): AccessRecertificationDecision {
@@ -441,7 +444,12 @@ final class AccessRecertificationService
     {
         return AccessRecertificationRevocation::query()
             ->forOrganization($organizationId)
-            ->with(['campaign:id,name,status', 'item:id,risk_level,status', 'subject:id,name', 'executor:id,name'])
+            ->with([
+                'campaign:id,name,status',
+                'item:id,role_label,role_slug,risk_level,status',
+                'subject:id,name',
+                'executor:id,name',
+            ])
             ->when($filters['status'] ?? null, fn (Builder $query, string $status) => $query->where('status', $status))
             ->when($filters['campaign_id'] ?? null, fn (Builder $query, string $campaignId) => $query->where('campaign_id', $campaignId))
             ->orderBy('due_at')
@@ -452,38 +460,52 @@ final class AccessRecertificationService
     {
         $this->assertRevocationOrganization($revocation, $organizationId);
 
-        if ($revocation->status === 'completed') {
-            return $revocation->load(['campaign', 'item', 'subject', 'executor']);
-        }
-
-        if ($revocation->status !== 'pending') {
+        if (!in_array($revocation->status, ['pending', 'completed'], true)) {
             throw new InvalidArgumentException('revocation_cannot_complete');
         }
 
+        $this->assertAssignedRevocationExecutor($revocation, $actor);
+
         return DB::transaction(function () use ($revocation, $organizationId, $actor, $data): AccessRecertificationRevocation {
-            $subject = User::query()->findOrFail($revocation->subject_user_id);
-            $context = $revocation->role_context_id
-                ? AuthorizationContext::query()->find($revocation->role_context_id)
+            $lockedRevocation = AccessRecertificationRevocation::query()
+                ->whereKey($revocation->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $this->assertRevocationOrganization($lockedRevocation, $organizationId);
+            $this->assertAssignedRevocationExecutor($lockedRevocation, $actor);
+
+            if ($lockedRevocation->status === 'completed') {
+                return $lockedRevocation->load(['campaign', 'item', 'subject', 'executor']);
+            }
+
+            if ($lockedRevocation->status !== 'pending') {
+                throw new InvalidArgumentException('revocation_cannot_complete');
+            }
+
+            $lockedRevocation->loadMissing('item');
+            $subject = User::query()->findOrFail($lockedRevocation->subject_user_id);
+            $context = $lockedRevocation->role_context_id
+                ? AuthorizationContext::query()->find($lockedRevocation->role_context_id)
                 : null;
 
             if ($context === null) {
                 throw new InvalidArgumentException('role_context_not_found');
             }
 
-            $revoked = $this->authorization->revokeRole($subject, $revocation->role_slug, $context, $actor);
+            $revoked = $this->authorization->revokeRole($subject, $lockedRevocation->role_slug, $context, $actor);
 
             if (!$revoked) {
                 throw new InvalidArgumentException('role_assignment_not_found');
             }
 
-            $revocation->forceFill([
+            $lockedRevocation->forceFill([
                 'status' => 'completed',
-                'executor_user_id' => $actor->id,
                 'completed_at' => now(),
                 'failure_reason' => null,
             ])->save();
 
-            $revocation->item?->forceFill(['status' => 'revoked'])->save();
+            $lockedRevocation->item?->forceFill(['status' => 'revoked'])->save();
 
             $audit = $this->recordAudit(
                 $organizationId,
@@ -491,18 +513,18 @@ final class AccessRecertificationService
                 'access_recertification.revocation.completed',
                 'complete_revocation',
                 'access_recertification_revocation',
-                $revocation->id,
-                $revocation->role_slug,
-                $revocation->item?->correlation_id,
-                'arc:revocation:' . $revocation->id . ':completed',
-                $data['reason'] ?? $revocation->reason,
+                $lockedRevocation->id,
+                $lockedRevocation->role_slug,
+                $lockedRevocation->item?->correlation_id,
+                'arc:revocation:' . $lockedRevocation->id . ':completed',
+                $data['reason'] ?? $lockedRevocation->reason,
                 ['status' => 'pending'],
-                ['status' => 'completed', 'assignment_id' => $revocation->assignment_id],
+                ['status' => 'completed', 'assignment_id' => $lockedRevocation->assignment_id],
             );
 
-            $revocation->forceFill(['audit_event_id' => $audit->id])->save();
+            $lockedRevocation->forceFill(['audit_event_id' => $audit->id])->save();
 
-            return $revocation->refresh()->load(['campaign', 'item', 'subject', 'executor']);
+            return $lockedRevocation->refresh()->load(['campaign', 'item', 'subject', 'executor']);
         });
     }
 
@@ -510,7 +532,14 @@ final class AccessRecertificationService
     {
         return AccessRecertificationException::query()
             ->forOrganization($organizationId)
-            ->with(['campaign:id,name,status', 'item:id,role_label,role_slug,risk_level,status', 'requestedBy:id,name'])
+            ->with([
+                'campaign:id,name,status',
+                'item:id,subject_user_id,role_label,role_slug,risk_level,status',
+                'item.subject:id,name',
+                'requestedBy:id,name',
+                'approvedBy:id,name',
+                'rejectedBy:id,name',
+            ])
             ->when($filters['status'] ?? null, fn (Builder $query, string $status) => $query->where('status', $status))
             ->when($filters['campaign_id'] ?? null, fn (Builder $query, string $campaignId) => $query->where('campaign_id', $campaignId))
             ->orderBy('valid_until')
@@ -525,26 +554,49 @@ final class AccessRecertificationService
         ?string $reason
     ): AccessRecertificationException {
         $this->assertExceptionOrganization($exception, $organizationId);
+        $exception->loadMissing('item');
+        $this->assertIndependentExceptionApprover($exception, $actor);
 
         if ($exception->status !== 'requested') {
             throw new InvalidArgumentException('exception_already_decided');
         }
 
+        if (!in_array($status, ['approved', 'rejected'], true)) {
+            throw new InvalidArgumentException('exception_decision_not_supported');
+        }
+
+        if ($reason === null || trim($reason) === '') {
+            throw new InvalidArgumentException('exception_decision_reason_required');
+        }
+
         return DB::transaction(function () use ($exception, $organizationId, $actor, $status, $reason): AccessRecertificationException {
+            $lockedException = AccessRecertificationException::query()
+                ->whereKey($exception->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $lockedException->loadMissing('item.subject');
+            $this->assertExceptionOrganization($lockedException, $organizationId);
+            $this->assertIndependentExceptionApprover($lockedException, $actor);
+
+            if ($lockedException->status !== 'requested') {
+                throw new InvalidArgumentException('exception_already_decided');
+            }
+
             if ($status === 'approved') {
-                $exception->forceFill([
+                $lockedException->forceFill([
                     'status' => 'approved',
                     'approved_by_user_id' => $actor->id,
                     'approved_at' => now(),
                 ])->save();
-                $exception->item?->forceFill(['status' => 'exception_approved'])->save();
+                $lockedException->item?->forceFill(['status' => 'exception_approved'])->save();
             } else {
-                $exception->forceFill([
+                $lockedException->forceFill([
                     'status' => 'rejected',
                     'rejected_by_user_id' => $actor->id,
                     'rejected_at' => now(),
                 ])->save();
-                $exception->item?->forceFill(['status' => 'exception_rejected'])->save();
+                $lockedException->item?->forceFill(['status' => 'exception_rejected'])->save();
             }
 
             $audit = $this->recordAudit(
@@ -553,18 +605,24 @@ final class AccessRecertificationService
                 'access_recertification.exception.' . $status,
                 $status,
                 'access_recertification_exception',
-                $exception->id,
-                $exception->item?->role_label ?? $exception->item?->role_slug,
-                $exception->item?->correlation_id,
-                'arc:exception:' . $exception->id . ':' . $status,
+                $lockedException->id,
+                $lockedException->item?->role_label ?? $lockedException->item?->role_slug,
+                $lockedException->item?->correlation_id,
+                'arc:exception:' . $lockedException->id . ':' . $status,
                 $reason,
                 ['status' => 'requested'],
                 ['status' => $status]
             );
 
-            $exception->forceFill(['audit_event_id' => $audit->id])->save();
+            $lockedException->forceFill(['audit_event_id' => $audit->id])->save();
 
-            return $exception->refresh()->load(['campaign', 'item', 'requestedBy', 'approvedBy', 'rejectedBy']);
+            return $lockedException->refresh()->load([
+                'campaign',
+                'item.subject',
+                'requestedBy',
+                'approvedBy',
+                'rejectedBy',
+            ]);
         });
     }
 
@@ -1024,6 +1082,34 @@ final class AccessRecertificationService
     {
         if ((int) $exception->organization_id !== $organizationId) {
             throw new InvalidArgumentException('exception_not_found');
+        }
+    }
+
+    private function assertAssignedRevocationExecutor(AccessRecertificationRevocation $revocation, User $actor): void
+    {
+        if ((int) $revocation->executor_user_id !== (int) $actor->id) {
+            throw new InvalidArgumentException('revocation_executor_required');
+        }
+    }
+
+    private function assertRevocationExecutorCanExecute(User $executor, int $organizationId): void
+    {
+        if (!$this->authorization->can(
+            $executor,
+            'access_recertification.revocations.execute',
+            ['organization_id' => $organizationId],
+        )) {
+            throw new InvalidArgumentException('revocation_executor_permission_required');
+        }
+    }
+
+    private function assertIndependentExceptionApprover(AccessRecertificationException $exception, User $actor): void
+    {
+        $actorId = (int) $actor->id;
+        $subjectUserId = (int) ($exception->item?->subject_user_id ?? 0);
+
+        if ($actorId === (int) $exception->requested_by_user_id || $actorId === $subjectUserId) {
+            throw new InvalidArgumentException('exception_independent_approver_required');
         }
     }
 
