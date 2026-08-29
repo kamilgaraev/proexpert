@@ -245,7 +245,9 @@ class CompletedWorkFactService
             ])
             ->chunkById(100, function ($entries) use ($contract, &$syncedCount): void {
                 foreach ($entries as $entry) {
-                    if ((int) ($entry->journal?->contract_id ?? 0) !== (int) $contract->id) {
+                    $journalContractId = $entry->journal?->contract_id;
+
+                    if ($journalContractId !== null && (int) $journalContractId !== (int) $contract->id) {
                         continue;
                     }
 
