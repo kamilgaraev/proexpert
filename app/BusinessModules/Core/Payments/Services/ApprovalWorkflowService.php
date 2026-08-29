@@ -30,6 +30,18 @@ class ApprovalWorkflowService
         ?User $user = null,
         ?string $budgetOverrideReason = null,
     ): Collection {
+        if (! $document->requiresApproval()) {
+            Log::info('payment_approval.not_required_for_document_type', [
+                'document_id' => $document->id,
+                'document_number' => $document->document_number,
+                'document_type' => $document->document_type->value,
+            ]);
+
+            $this->approveWithoutWorkflow($document, $user, $budgetOverrideReason);
+
+            return collect();
+        }
+
         // Найти подходящее правило утверждения
         $rule = $this->findApplicableRule($document);
 
@@ -45,16 +57,7 @@ class ApprovalWorkflowService
                 'document_number' => $document->document_number,
             ]);
 
-            // Автоматически утверждаем
-            $this->budgetLimitService->assertAllowed(
-                $document,
-                PaymentBudgetLimitService::OPERATION_APPROVAL,
-                (string) $document->amount,
-                $user,
-                $budgetOverrideReason
-            );
-            $this->stateMachine->approve($document);
-            $this->budgetLimitService->syncReservation($document->fresh(), $user, $budgetOverrideReason);
+            $this->approveWithoutWorkflow($document, $user, $budgetOverrideReason);
 
             return collect();
         }
@@ -78,6 +81,22 @@ class ApprovalWorkflowService
         ]);
 
         return $approvals;
+    }
+
+    private function approveWithoutWorkflow(
+        PaymentDocument $document,
+        ?User $user,
+        ?string $budgetOverrideReason,
+    ): void {
+        $this->budgetLimitService->assertAllowed(
+            $document,
+            PaymentBudgetLimitService::OPERATION_APPROVAL,
+            (string) $document->amount,
+            $user,
+            $budgetOverrideReason
+        );
+        $this->stateMachine->approve($document);
+        $this->budgetLimitService->syncReservation($document->fresh(), $user, $budgetOverrideReason);
     }
 
     /**
