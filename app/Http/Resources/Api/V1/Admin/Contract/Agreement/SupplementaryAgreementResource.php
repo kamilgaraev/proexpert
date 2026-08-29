@@ -17,8 +17,9 @@ class SupplementaryAgreementResource extends JsonResource
             'change_amount' => (float) ($this->change_amount ?? 0),
             'subject_changes' => $this->subject_changes,
             'supersede_agreement_ids' => $this->supersede_agreement_ids,
+            'is_applied' => $this->financial_applied_at !== null,
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];
     }
-} 
+}
