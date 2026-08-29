@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\Contract\ContractSideTypeEnum;
@@ -112,6 +116,62 @@ class ContractCoreExperienceControllerTest extends TestCase
 
         $deleteResponse->assertNoContent();
         $this->assertSoftDeleted('contracts', ['id' => $contract->id]);
+    }
+
+    public function test_contract_details_include_effective_payment_documents_in_financial_summary(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+        ]);
+        $contractor = $this->createContractor($context->organization, 'Payment Summary Contractor');
+        $contract = $this->createContract($context->organization, $project, $contractor);
+
+        $paidDocument = PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'source_type' => Contract::class,
+            'source_id' => $contract->id,
+            'document_type' => PaymentDocumentType::INVOICE,
+            'document_number' => 'CONTRACT-PAID-001',
+            'document_date' => '2026-06-10',
+            'direction' => InvoiceDirection::OUTGOING,
+            'amount' => 1800,
+            'paid_amount' => 1800,
+            'remaining_amount' => 0,
+            'currency' => 'RUB',
+            'status' => PaymentDocumentStatus::PAID,
+            'due_date' => '2026-06-10',
+        ]);
+        PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'source_type' => Contract::class,
+            'source_id' => $contract->id,
+            'document_type' => PaymentDocumentType::INVOICE,
+            'document_number' => 'CONTRACT-CANCELLED-001',
+            'document_date' => '2026-06-11',
+            'direction' => InvoiceDirection::OUTGOING,
+            'amount' => 900,
+            'paid_amount' => 0,
+            'remaining_amount' => 900,
+            'currency' => 'RUB',
+            'status' => PaymentDocumentStatus::CANCELLED,
+            'due_date' => '2026-06-11',
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.financial_summary.payments_count', 1);
+        $response->assertJsonPath('data.financial_summary.payments_total_amount', 1800);
+        $response->assertJsonPath('data.payments.0.id', $paidDocument->id);
     }
 
     public function test_contract_update_and_delete_are_hidden_when_contract_belongs_to_another_project(): void
@@ -327,8 +387,8 @@ class ContractCoreExperienceControllerTest extends TestCase
             'organization_id' => $organization->id,
             'source_organization_id' => $sourceOrganization?->id,
             'name' => $name,
-            'contact_person' => $name . ' Manager',
-            'email' => strtolower(str_replace(' ', '.', $name)) . '@example.test',
+            'contact_person' => $name.' Manager',
+            'email' => strtolower(str_replace(' ', '.', $name)).'@example.test',
             'inn' => (string) random_int(1000000000, 9999999999),
             'contractor_type' => $sourceOrganization
                 ? ContractorType::INVITED_ORGANIZATION->value
@@ -348,7 +408,7 @@ class ContractCoreExperienceControllerTest extends TestCase
             'project_id' => $project->id,
             'contractor_id' => $contractor->id,
             'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
-            'number' => 'CON-' . random_int(10000, 99999),
+            'number' => 'CON-'.random_int(10000, 99999),
             'date' => '2026-06-01',
             'subject' => 'Contract subject',
             'work_type_category' => ContractWorkTypeCategoryEnum::SMR->value,
