@@ -206,10 +206,17 @@ final class AccessRecertificationController extends Controller
         }
     }
 
-    public function decide(AccessRecertificationDecisionRequest $request, AccessRecertificationItem $item): JsonResponse
-    {
+    public function decide(
+        AccessRecertificationDecisionRequest $request,
+        AccessRecertificationItem $accessRecertificationItem
+    ): JsonResponse {
         try {
-            $decision = $this->service->decide($item, $this->organizationId($request), $request->user(), $request->validated());
+            $decision = $this->service->decide(
+                $accessRecertificationItem,
+                $this->organizationId($request),
+                $request->user(),
+                $request->validated()
+            );
 
             return AdminResponse::success(
                 new AccessRecertificationDecisionResource($decision),
@@ -220,11 +227,13 @@ final class AccessRecertificationController extends Controller
         }
     }
 
-    public function reassign(AccessRecertificationReassignRequest $request, AccessRecertificationItem $item): JsonResponse
-    {
+    public function reassign(
+        AccessRecertificationReassignRequest $request,
+        AccessRecertificationItem $accessRecertificationItem
+    ): JsonResponse {
         try {
             $updated = $this->service->reassign(
-                $item,
+                $accessRecertificationItem,
                 $this->organizationId($request),
                 $request->user(),
                 (int) $request->validated('reviewer_user_id'),
@@ -360,16 +369,16 @@ final class AccessRecertificationController extends Controller
 
     private function fail(Request $request, Throwable $e, string $operation, string $messageKey): JsonResponse
     {
-        Log::error('access_recertification.' . $operation . '.error', [
+        Log::error('access_recertification.'.$operation.'.error', [
             'user_id' => $request->user()?->id,
             'organization_id' => $request->attributes->get('current_organization_id'),
             'message' => $e->getMessage(),
         ]);
 
         if ($e instanceof InvalidArgumentException) {
-            return AdminResponse::error(trans_message('access_recertification.errors.' . $e->getMessage()), 422);
+            return AdminResponse::error(trans_message('access_recertification.errors.'.$e->getMessage()), 422);
         }
 
-        return AdminResponse::error(trans_message('access_recertification.' . $messageKey), 500);
+        return AdminResponse::error(trans_message('access_recertification.'.$messageKey), 500);
     }
 }
