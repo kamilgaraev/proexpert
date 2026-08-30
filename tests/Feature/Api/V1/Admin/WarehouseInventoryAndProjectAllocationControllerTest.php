@@ -7,6 +7,8 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDeliveryEvent;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
@@ -42,6 +44,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
 
         $firstAllocationResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/project-allocations', [
+                'idempotency_key' => '11111111-1111-4111-8111-111111111111',
                 'warehouse_id' => $warehouse->id,
                 'material_id' => $material->id,
                 'project_id' => $project->id,
@@ -63,6 +66,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
 
         $tooMuchResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/project-allocations', [
+                'idempotency_key' => '22222222-2222-4222-8222-222222222222',
                 'warehouse_id' => $warehouse->id,
                 'material_id' => $material->id,
                 'project_id' => $project->id,
@@ -114,6 +118,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
 
         $foreignProjectResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/project-allocations', [
+                'idempotency_key' => '33333333-3333-4333-8333-333333333333',
                 'warehouse_id' => $warehouse->id,
                 'material_id' => $material->id,
                 'project_id' => $foreignProject->id,
@@ -124,6 +129,7 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
 
         $foreignMaterialResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/project-allocations', [
+                'idempotency_key' => '44444444-4444-4444-8444-444444444444',
                 'warehouse_id' => $warehouse->id,
                 'material_id' => $foreignMaterial->id,
                 'project_id' => $foreignProject->id,
@@ -135,6 +141,100 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $this->assertDatabaseMissing('warehouse_project_allocations', [
             'organization_id' => $context->organization->id,
         ]);
+    }
+
+    public function test_project_allocation_requires_idempotency_key(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN-IDEMP-REQ');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Cement', 'CEM-IDEMP-REQ');
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Idempotency project',
+        ]);
+        $this->createBalance($context->organization->id, $warehouse->id, $material->id, 10, 250);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/project-allocations', [
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'project_id' => $project->id,
+                'quantity' => 2,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('idempotency_key');
+
+        $this->assertDatabaseCount('warehouse_project_allocations', 0);
+    }
+
+    public function test_project_allocation_is_idempotent_and_keeps_delivery_quantity_in_sync(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN-IDEMP');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Cement', 'CEM-IDEMP');
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Idempotent allocation project',
+        ]);
+        $this->createBalance($context->organization->id, $warehouse->id, $material->id, 10, 250);
+        $this->allowAdminAccess();
+
+        $firstPayload = [
+            'idempotency_key' => '55555555-5555-4555-8555-555555555555',
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'project_id' => $project->id,
+            'quantity' => 2,
+            'notes' => 'First allocation',
+        ];
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/project-allocations', $firstPayload)
+            ->assertCreated();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/project-allocations', $firstPayload)
+            ->assertCreated();
+
+        $allocation = WarehouseProjectAllocation::query()->firstOrFail();
+        $delivery = ProjectMaterialDelivery::query()->firstOrFail();
+        $this->assertSame(2.0, (float) $allocation->allocated_quantity);
+        $this->assertSame(2.0, (float) $delivery->requested_quantity);
+        $this->assertSame(2.0, (float) $delivery->reserved_quantity);
+        $this->assertDatabaseCount('project_material_delivery_events', 1);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/project-allocations', [
+                ...$firstPayload,
+                'quantity' => 3,
+            ])
+            ->assertStatus(409);
+
+        $secondPayload = [
+            ...$firstPayload,
+            'idempotency_key' => '66666666-6666-4666-8666-666666666666',
+            'quantity' => 3,
+            'notes' => 'Second allocation',
+        ];
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/project-allocations', $secondPayload)
+            ->assertCreated();
+
+        $this->assertSame(5.0, (float) $allocation->fresh()->allocated_quantity);
+        $this->assertSame(5.0, (float) $delivery->fresh()->requested_quantity);
+        $this->assertSame(5.0, (float) $delivery->fresh()->reserved_quantity);
+        $this->assertSame(
+            [2.0, 3.0],
+            ProjectMaterialDeliveryEvent::query()->orderBy('id')->pluck('quantity')->map(fn ($value) => (float) $value)->all()
+        );
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/project-allocations', $firstPayload)
+            ->assertCreated();
+        $this->assertSame(5.0, (float) $allocation->fresh()->allocated_quantity);
+        $this->assertDatabaseCount('project_material_delivery_events', 2);
     }
 
     public function test_inventory_lifecycle_builds_items_from_current_stock_and_approval_updates_balances(): void
