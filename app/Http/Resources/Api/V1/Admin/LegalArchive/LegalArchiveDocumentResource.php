@@ -35,7 +35,7 @@ final class LegalArchiveDocumentResource extends JsonResource
                 'signing',
                 'partially_signed',
                 'signed',
-                'active',
+                'effective',
                 'completed',
                 'archived',
             ], true);
