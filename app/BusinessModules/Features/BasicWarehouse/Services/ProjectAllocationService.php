@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services;
 use App\BusinessModules\Features\BasicWarehouse\DTOs\ProjectAllocationResult;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\ProjectAllocationException;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDeliveryEvent;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
@@ -119,6 +120,101 @@ final class ProjectAllocationService
                 $allocation->load(['project', 'material', 'warehouse']),
                 $delivery,
             );
+        });
+    }
+
+    public function deallocate(int $organizationId, User $actor, int $allocationId, array $data): void
+    {
+        DB::transaction(function () use ($organizationId, $actor, $allocationId, $data): void {
+            Organization::query()->lockForUpdate()->findOrFail($organizationId);
+
+            $fingerprint = WarehouseOperationIdempotency::fingerprint('project_allocation_remove', [
+                ...$data,
+                'allocation_id' => $allocationId,
+            ]);
+            $existingEvent = ProjectMaterialDeliveryEvent::query()
+                ->where('metadata->organization_id', $organizationId)
+                ->where('metadata->deallocation_idempotency_key', $data['idempotency_key'])
+                ->first();
+
+            if ($existingEvent !== null) {
+                if (($existingEvent->metadata['deallocation_idempotency_fingerprint'] ?? null) !== $fingerprint) {
+                    throw new WarehouseOperationIdempotencyConflictException(
+                        trans_message('warehouse_basic.idempotency_conflict')
+                    );
+                }
+
+                return;
+            }
+
+            $allocation = WarehouseProjectAllocation::query()
+                ->where('organization_id', $organizationId)
+                ->lockForUpdate()
+                ->findOrFail($allocationId);
+            $delivery = ProjectMaterialDelivery::query()
+                ->where('organization_id', $organizationId)
+                ->where('warehouse_project_allocation_id', $allocation->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($delivery === null) {
+                $delivery = $this->deliveryService->createFromAllocation($allocation, $actor, [
+                    'quantity' => (float) $allocation->allocated_quantity,
+                    'total_quantity' => (float) $allocation->allocated_quantity,
+                ]);
+            }
+
+            $allocatedQuantity = (float) $allocation->allocated_quantity;
+            $removedQuantity = array_key_exists('quantity', $data) && $data['quantity'] !== null
+                ? (float) $data['quantity']
+                : $allocatedQuantity;
+
+            if ($removedQuantity > $allocatedQuantity) {
+                throw new ProjectAllocationException(
+                    trans_message('basic_warehouse.project_allocations.quantity_exceeds_allocated'),
+                    'QUANTITY_EXCEEDS_ALLOCATED',
+                );
+            }
+
+            $remainingQuantity = max(0.0, $allocatedQuantity - $removedQuantity);
+            $minimumQuantity = max(
+                (float) $delivery->shipped_quantity,
+                (float) $delivery->accepted_quantity,
+            );
+            if ($remainingQuantity < $minimumQuantity) {
+                throw new ProjectAllocationException(
+                    trans_message('basic_warehouse.project_allocations.quantity_below_shipped', [
+                        'quantity' => $minimumQuantity,
+                    ]),
+                    'ALLOCATION_BELOW_SHIPPED_QUANTITY',
+                    ['minimum_quantity' => $minimumQuantity],
+                );
+            }
+
+            $this->deliveryService->syncAfterDeallocation(
+                $delivery,
+                $actor,
+                $removedQuantity,
+                $remainingQuantity,
+                [
+                    'organization_id' => $organizationId,
+                    'deallocation_idempotency_key' => $data['idempotency_key'],
+                    'deallocation_idempotency_fingerprint' => $fingerprint,
+                    'allocation_id' => $allocationId,
+                ],
+            );
+
+            if ($remainingQuantity <= 0) {
+                $allocation->delete();
+
+                return;
+            }
+
+            $allocation->forceFill([
+                'allocated_quantity' => $remainingQuantity,
+                'allocated_by_user_id' => $actor->id,
+                'allocated_at' => now(),
+            ])->save();
         });
     }
 }
