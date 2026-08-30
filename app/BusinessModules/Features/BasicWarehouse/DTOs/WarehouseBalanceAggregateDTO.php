@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\DTOs;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
 use App\Models\Material;
 
 final readonly class WarehouseBalanceAggregateDTO
@@ -15,6 +14,7 @@ final readonly class WarehouseBalanceAggregateDTO
         public int $warehouseId,
         public float $availableQuantity,
         public float $reservedQuantity,
+        public float $allocatedQuantity,
         public float $averagePrice,
         public float $totalValue,
         public ?string $lastMovementAt,
@@ -28,9 +28,7 @@ final readonly class WarehouseBalanceAggregateDTO
      */
     public function getAllocatedQuantity(): float
     {
-        return (float)WarehouseProjectAllocation::where('warehouse_id', $this->warehouseId)
-            ->where('material_id', $this->materialId)
-            ->sum('allocated_quantity');
+        return $this->allocatedQuantity;
     }
 
     /**
@@ -40,7 +38,8 @@ final readonly class WarehouseBalanceAggregateDTO
     public function getAvailableForAllocation(): float
     {
         $allocated = $this->getAllocatedQuantity();
-        return max(0, (float)$this->availableQuantity - $allocated);
+
+        return max(0.0, $this->availableQuantity - $allocated);
     }
 
     /**
@@ -62,7 +61,7 @@ final readonly class WarehouseBalanceAggregateDTO
 
         return [
             'can_allocate' => $requestedQuantity <= $availableForAllocation,
-            'warehouse_quantity' => (float)$this->availableQuantity,
+            'warehouse_quantity' => $this->availableQuantity,
             'already_allocated' => $allocated,
             'available_for_allocation' => $availableForAllocation,
             'requested_quantity' => $requestedQuantity,
@@ -77,6 +76,8 @@ final readonly class WarehouseBalanceAggregateDTO
             'warehouse_id' => $this->warehouseId,
             'available_quantity' => $this->availableQuantity,
             'reserved_quantity' => $this->reservedQuantity,
+            'allocated_quantity' => $this->allocatedQuantity,
+            'available_for_allocation' => $this->getAvailableForAllocation(),
             'average_price' => $this->averagePrice,
             'total_value' => $this->totalValue,
             'last_movement_at' => $this->lastMovementAt,
