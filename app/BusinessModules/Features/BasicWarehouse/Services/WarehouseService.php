@@ -23,6 +23,7 @@ use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
 use chillerlan\QRCode\QRCode;
 use chillerlan\QRCode\QROptions;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -1170,10 +1171,50 @@ class WarehouseService implements WarehouseReportDataProvider
      */
     public function getMovementsData(int $organizationId, array $filters = []): array
     {
-        $query = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('organization_id', $organizationId)
+        return $this->movementQuery($organizationId, $filters)
+            ->orderByDesc('movement_date')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (WarehouseMovement $movement): array => $this->serializeMovement($movement))
+            ->all();
+    }
+
+    public function paginateMovementsData(
+        int $organizationId,
+        array $filters = [],
+        int $perPage = 20,
+        int $page = 1,
+    ): LengthAwarePaginator {
+        $paginator = $this->movementQuery($organizationId, $filters)
+            ->orderByDesc('movement_date')
+            ->orderByDesc('id')
+            ->paginate(
+                perPage: max(1, min($perPage, 100)),
+                page: max(1, $page),
+            );
+
+        $paginator->setCollection(
+            $paginator->getCollection()
+                ->map(fn (WarehouseMovement $movement): array => $this->serializeMovement($movement))
+        );
+        $paginator->appends(array_filter([
+            'material_id' => $filters['material_id'] ?? null,
+            'movement_type' => $filters['movement_type'] ?? null,
+            'date_from' => $filters['date_from'] ?? null,
+            'date_to' => $filters['date_to'] ?? null,
+            'search' => $filters['search'] ?? null,
+            'per_page' => $paginator->perPage(),
+        ], static fn (mixed $value): bool => $value !== null && $value !== ''));
+
+        return $paginator;
+    }
+
+    private function movementQuery(int $organizationId, array $filters): Builder
+    {
+        $query = WarehouseMovement::query()
+            ->where('organization_id', $organizationId)
             ->with(['material.measurementUnit', 'warehouse', 'cell.zone', 'project', 'user', 'relatedUser', 'photos']);
 
-        // Применяем фильтры
         if (isset($filters['warehouse_id'])) {
             $query->where('warehouse_id', $filters['warehouse_id']);
         }
@@ -1195,66 +1236,88 @@ class WarehouseService implements WarehouseReportDataProvider
         }
 
         if (isset($filters['asset_type'])) {
-            $query->whereHas('material', function ($q) use ($filters) {
-                $driver = $q->getConnection()->getDriverName();
+            $query->whereHas('material', function (Builder $materialQuery) use ($filters): void {
+                $driver = $materialQuery->getConnection()->getDriverName();
                 if ($driver === 'pgsql') {
-                    $q->whereRaw("additional_properties->>'asset_type' = ?", [$filters['asset_type']]);
+                    $materialQuery->whereRaw("additional_properties->>'asset_type' = ?", [$filters['asset_type']]);
                 } else {
-                    $q->whereRaw("JSON_EXTRACT(additional_properties, '$.asset_type') = ?", [$filters['asset_type']]);
+                    $materialQuery->whereRaw("JSON_EXTRACT(additional_properties, '$.asset_type') = ?", [$filters['asset_type']]);
                 }
             });
         }
 
-        $movements = $query->orderBy('movement_date', 'desc')->get();
+        $search = trim((string) ($filters['search'] ?? ''));
+        if ($search !== '') {
+            $pattern = '%'.$search.'%';
+            $query->where(function (Builder $searchQuery) use ($pattern): void {
+                $searchQuery
+                    ->whereLike('document_number', $pattern)
+                    ->orWhereLike('reason', $pattern)
+                    ->orWhereHas('material', static function (Builder $materialQuery) use ($pattern): void {
+                        $materialQuery
+                            ->whereLike('name', $pattern)
+                            ->orWhereLike('code', $pattern);
+                    })
+                    ->orWhereHas('project', static function (Builder $projectQuery) use ($pattern): void {
+                        $projectQuery->whereLike('name', $pattern);
+                    })
+                    ->orWhereHas('user', static function (Builder $userQuery) use ($pattern): void {
+                        $userQuery->whereLike('name', $pattern);
+                    });
+            });
+        }
 
-        return $movements->map(function ($movement) {
-            return [
-                'movement_id' => $movement->id,
-                'movement_type' => $movement->movement_type,
-                'transfer_pair_key' => $movement->metadata['transfer_pair_key'] ?? null,
-                'operation_category' => $movement->operation_category,
-                'operation_category_label' => $movement->operationCategoryLabel(),
-                'warehouse_id' => $movement->warehouse_id,
-                'warehouse_name' => $movement->warehouse->name,
-                'cell_id' => $movement->cell_id,
-                'cell' => $movement->cell ? [
-                    'id' => $movement->cell->id,
-                    'code' => $movement->cell->code,
-                    'name' => $movement->cell->name,
-                    'full_address' => $movement->cell->full_address,
-                    'zone' => $movement->cell->zone ? [
-                        'id' => $movement->cell->zone->id,
-                        'code' => $movement->cell->zone->code,
-                        'name' => $movement->cell->zone->name,
-                    ] : null,
+        return $query;
+    }
+
+    private function serializeMovement(WarehouseMovement $movement): array
+    {
+        return [
+            'movement_id' => $movement->id,
+            'movement_type' => $movement->movement_type,
+            'transfer_pair_key' => $movement->metadata['transfer_pair_key'] ?? null,
+            'operation_category' => $movement->operation_category,
+            'operation_category_label' => $movement->operationCategoryLabel(),
+            'warehouse_id' => $movement->warehouse_id,
+            'warehouse_name' => $movement->warehouse->name,
+            'cell_id' => $movement->cell_id,
+            'cell' => $movement->cell ? [
+                'id' => $movement->cell->id,
+                'code' => $movement->cell->code,
+                'name' => $movement->cell->name,
+                'full_address' => $movement->cell->full_address,
+                'zone' => $movement->cell->zone ? [
+                    'id' => $movement->cell->zone->id,
+                    'code' => $movement->cell->zone->code,
+                    'name' => $movement->cell->zone->name,
                 ] : null,
-                'storage_address' => $movement->cell?->full_address ?? $movement->metadata['storage_address'] ?? null,
-                'material_id' => $movement->material_id,
-                'material_name' => $movement->material->name,
-                'material_code' => $movement->material->code,
-                'quantity' => (float) $movement->quantity,
-                'price' => (float) $movement->price,
-                'total_value' => (float) $movement->quantity * (float) $movement->price,
-                'measurement_unit' => $movement->material->measurementUnit->short_name
-                    ?? $movement->material->measurementUnit->name
-                    ?? null,
-                'project_id' => $movement->project_id,
-                'project_name' => $movement->project->name ?? null,
-                'user_name' => $movement->user->name ?? null,
-                'related_user_id' => $movement->related_user_id,
-                'related_user_name' => $movement->relatedUser->name ?? null,
-                'related_user' => $movement->relatedUser ? [
-                    'id' => $movement->relatedUser->id,
-                    'name' => $movement->relatedUser->name,
-                    'email' => $movement->relatedUser->email,
-                ] : null,
-                'project_material_delivery_id' => $movement->project_material_delivery_id,
-                'document_number' => $movement->document_number,
-                'reason' => $movement->reason,
-                'movement_date' => $movement->movement_date->toDateTimeString(),
-                'photo_gallery' => $movement->photo_gallery,
-            ];
-        })->toArray();
+            ] : null,
+            'storage_address' => $movement->cell?->full_address ?? $movement->metadata['storage_address'] ?? null,
+            'material_id' => $movement->material_id,
+            'material_name' => $movement->material->name,
+            'material_code' => $movement->material->code,
+            'quantity' => (float) $movement->quantity,
+            'price' => (float) $movement->price,
+            'total_value' => (float) $movement->quantity * (float) $movement->price,
+            'measurement_unit' => $movement->material->measurementUnit->short_name
+                ?? $movement->material->measurementUnit->name
+                ?? null,
+            'project_id' => $movement->project_id,
+            'project_name' => $movement->project->name ?? null,
+            'user_name' => $movement->user->name ?? null,
+            'related_user_id' => $movement->related_user_id,
+            'related_user_name' => $movement->relatedUser->name ?? null,
+            'related_user' => $movement->relatedUser ? [
+                'id' => $movement->relatedUser->id,
+                'name' => $movement->relatedUser->name,
+                'email' => $movement->relatedUser->email,
+            ] : null,
+            'project_material_delivery_id' => $movement->project_material_delivery_id,
+            'document_number' => $movement->document_number,
+            'reason' => $movement->reason,
+            'movement_date' => $movement->movement_date->toDateTimeString(),
+            'photo_gallery' => $movement->photo_gallery,
+        ];
     }
 
     private function makeQrDataUri(string $payload): string
