@@ -32,6 +32,7 @@ class WarehouseExportManager
             Forms\M4\M4ExportStrategy::class,
             Forms\M11\M11ExportStrategy::class,
             Forms\M15\M15ExportStrategy::class,
+            Forms\WriteOffAct\WriteOffActExportStrategy::class,
             Forms\INV3\INV3ExportStrategy::class,
             Forms\M7\M7ExportStrategy::class,
             Forms\M17\M17ExportStrategy::class,
@@ -61,7 +62,7 @@ class WarehouseExportManager
     {
         $strategy = $this->strategies->get($type);
 
-        if (!$strategy) {
+        if (! $strategy) {
             throw new InvalidArgumentException("Стратегия для типа документа '{$type}' не найдена.");
         }
 
