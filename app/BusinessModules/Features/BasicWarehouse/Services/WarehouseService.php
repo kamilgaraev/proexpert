@@ -43,6 +43,7 @@ class WarehouseService implements WarehouseReportDataProvider
         LoggingService $logging,
         private readonly WarehouseInventoryEventRecorder $inventoryEventRecorder,
         private readonly CanonicalWarehouseReportingIdentity $reportingIdentity,
+        private readonly ReservationQuantityService $reservationQuantityService,
     ) {
         $this->logging = $logging;
     }
@@ -2120,28 +2121,61 @@ class WarehouseService implements WarehouseReportDataProvider
         DB::beginTransaction();
 
         try {
-            $reservation = AssetReservation::where('id', $reservationId)
-                ->where('status', 'active')
-                ->when(
-                    $terminalStatus === AssetReservation::STATUS_EXPIRED,
-                    static fn ($query) => $query->where('expires_at', '<=', now())
-                )
+            $candidate = AssetReservation::query()->findOrFail($reservationId);
+            $activeReservations = AssetReservation::query()
+                ->where('organization_id', $candidate->organization_id)
+                ->where('warehouse_id', $candidate->warehouse_id)
+                ->where('material_id', $candidate->material_id)
+                ->where('status', AssetReservation::STATUS_ACTIVE)
+                ->orderBy('id')
                 ->lockForUpdate()
-                ->firstOrFail();
+                ->get();
+            $reservation = $activeReservations->firstWhere('id', $reservationId);
 
-            $consumedQuantity = (float) WarehouseMovement::query()
+            if ($reservation === null
+                || ($terminalStatus === AssetReservation::STATUS_EXPIRED && ! $reservation->isExpired())) {
+                $reservation = AssetReservation::query()
+                    ->where('id', $reservationId)
+                    ->where('status', AssetReservation::STATUS_ACTIVE)
+                    ->when(
+                        $terminalStatus === AssetReservation::STATUS_EXPIRED,
+                        static fn ($query) => $query->where('expires_at', '<=', now())
+                    )
+                    ->firstOrFail();
+            }
+
+            $quantitiesByReservation = $this->reservationQuantityService
+                ->quantitiesForReservations($activeReservations);
+            $remainingQuantity = $quantitiesByReservation[$reservation->id]['remaining_quantity'] ?? 0.0;
+            $otherReservationsQuantity = $activeReservations
+                ->where('id', '!=', $reservation->id)
+                ->sum(
+                    static fn (AssetReservation $item): float => $quantitiesByReservation[$item->id]['remaining_quantity'] ?? 0.0
+                );
+            $reservedQuantity = (float) WarehouseBalance::query()
                 ->where('organization_id', $reservation->organization_id)
-                ->where('movement_type', WarehouseMovement::TYPE_RESERVED_ISSUE)
-                ->where('metadata->asset_reservation_id', $reservation->id)
-                ->sum('quantity');
-            $remainingQuantity = max((float) $reservation->quantity - $consumedQuantity, 0.0);
+                ->where('warehouse_id', $reservation->warehouse_id)
+                ->where('material_id', $reservation->material_id)
+                ->where('reserved_quantity', '>', 0)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->reduce(
+                    static fn (float $total, WarehouseBalance $balance): float => $total + (float) $balance->reserved_quantity,
+                    0.0,
+                );
+            $releasedQuantity = min(
+                $remainingQuantity,
+                max($reservedQuantity - $otherReservationsQuantity, 0.0),
+            );
+            $shortfallQuantity = max($remainingQuantity - $releasedQuantity, 0.0);
 
-            if ($remainingQuantity > 0) {
+            if ($releasedQuantity > 0) {
                 $this->unreserveQuantity(
                     $reservation->organization_id,
                     $reservation->warehouse_id,
                     $reservation->material_id,
-                    $remainingQuantity,
+                    $releasedQuantity,
                     [
                         'asset_reservation_id' => $reservation->id,
                         'project_id' => $reservation->project_id,
@@ -2150,9 +2184,20 @@ class WarehouseService implements WarehouseReportDataProvider
                 );
             }
 
+            $metadata = $reservation->metadata ?? [];
+            if ($shortfallQuantity > 0.000001) {
+                $metadata['release_reconciliation'] = [
+                    'expected_quantity' => round($remainingQuantity, 3),
+                    'released_quantity' => round($releasedQuantity, 3),
+                    'shortfall_quantity' => round($shortfallQuantity, 3),
+                    'recorded_at' => now()->toIso8601String(),
+                ];
+            }
+
             $reservation->update(array_filter([
                 'status' => $terminalStatus,
                 'cancelled_at' => $terminalStatus === AssetReservation::STATUS_CANCELLED ? now() : null,
+                'metadata' => $metadata,
             ], static fn (mixed $value): bool => $value !== null));
 
             $this->logging->business(
@@ -2163,7 +2208,8 @@ class WarehouseService implements WarehouseReportDataProvider
                     'reservation_id' => $reservationId,
                     'organization_id' => $reservation->organization_id,
                     'quantity' => $reservation->quantity,
-                    'released_quantity' => $remainingQuantity,
+                    'released_quantity' => $releasedQuantity,
+                    'release_shortfall_quantity' => $shortfallQuantity,
                 ]
             );
 
