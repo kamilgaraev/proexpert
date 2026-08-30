@@ -14,7 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UnreserveRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WriteOffRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
-use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseMovementDocumentResolver;
+use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseMovementFormExportService;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WriteOffActExportService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
@@ -43,7 +43,7 @@ class WarehouseOperationsController extends Controller
         protected WarehousePhotoService $warehousePhotoService,
         protected WarehouseStorageCellResolver $storageCellResolver,
         protected ProjectService $projectService,
-        protected WarehouseMovementDocumentResolver $movementDocumentResolver,
+        protected WarehouseMovementFormExportService $movementFormExportService,
         protected WriteOffActExportService $writeOffActExportService,
         protected \App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager $exportManager
     ) {}
@@ -77,24 +77,7 @@ class WarehouseOperationsController extends Controller
      */
     public function exportM4(int $id, Request $request): JsonResponse
     {
-        $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
-
-        if ($movement->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
-        }
-
-        try {
-            $dataToExport = $this->movementDocumentResolver->resolve($movement);
-
-            $path = $this->exportManager->export('m4', $dataToExport);
-            $url = $this->exportManager->getTemporaryUrl($path);
-
-            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (Throwable $exception) {
-            return $this->warehouseError('m4_export', $exception, $request, 'warehouse_basic.m4_export_error', 500, [
-                'movement_id' => $id,
-            ]);
-        }
+        return $this->exportMovementForm('m4', $id, $request, 'warehouse_basic.m4_export_error');
     }
 
     /**
@@ -102,24 +85,7 @@ class WarehouseOperationsController extends Controller
      */
     public function exportM11(int $id, Request $request): JsonResponse
     {
-        $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
-
-        if ($movement->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
-        }
-
-        try {
-            $dataToExport = $this->movementDocumentResolver->resolve($movement);
-
-            $path = $this->exportManager->export('m11', $dataToExport);
-            $url = $this->exportManager->getTemporaryUrl($path);
-
-            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (Throwable $exception) {
-            return $this->warehouseError('m11_export', $exception, $request, 'warehouse_basic.m11_export_error', 500, [
-                'movement_id' => $id,
-            ]);
-        }
+        return $this->exportMovementForm('m11', $id, $request, 'warehouse_basic.m11_export_error');
     }
 
     /**
@@ -127,24 +93,7 @@ class WarehouseOperationsController extends Controller
      */
     public function exportM15(int $id, Request $request): JsonResponse
     {
-        $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
-
-        if ($movement->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
-        }
-
-        try {
-            $dataToExport = $this->movementDocumentResolver->resolve($movement);
-
-            $path = $this->exportManager->export('m15', $dataToExport);
-            $url = $this->exportManager->getTemporaryUrl($path);
-
-            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (Throwable $exception) {
-            return $this->warehouseError('m15_export', $exception, $request, 'warehouse_basic.m15_export_error', 500, [
-                'movement_id' => $id,
-            ]);
-        }
+        return $this->exportMovementForm('m15', $id, $request, 'warehouse_basic.m15_export_error');
     }
 
     public function exportWriteOffAct(int $id, Request $request): JsonResponse
@@ -177,24 +126,7 @@ class WarehouseOperationsController extends Controller
      */
     public function exportM7(int $id, Request $request): JsonResponse
     {
-        $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::findOrFail($id);
-
-        if ($movement->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
-        }
-
-        try {
-            $dataToExport = $this->movementDocumentResolver->resolve($movement);
-
-            $path = $this->exportManager->export('m7', $dataToExport);
-            $url = $this->exportManager->getTemporaryUrl($path);
-
-            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
-        } catch (Throwable $exception) {
-            return $this->warehouseError('m7_export', $exception, $request, 'warehouse_basic.m7_export_error', 500, [
-                'movement_id' => $id,
-            ]);
-        }
+        return $this->exportMovementForm('m7', $id, $request, 'warehouse_basic.m7_export_error');
     }
 
     /**
@@ -598,6 +530,36 @@ class WarehouseOperationsController extends Controller
 
         } catch (Throwable $exception) {
             return $this->warehouseError('transfer_to_contractor', $exception, $request, 'warehouse_basic.transfer_to_contractor_error');
+        }
+    }
+
+    private function exportMovementForm(
+        string $form,
+        int $movementId,
+        Request $request,
+        string $errorMessageKey,
+    ): JsonResponse {
+        try {
+            $url = $this->movementFormExportService->temporaryUrl(
+                $form,
+                $movementId,
+                (int) $request->user()->current_organization_id,
+            );
+
+            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
+        } catch (InvalidArgumentException) {
+            return AdminResponse::error(trans_message('warehouse_basic.document_form_unavailable'), 422);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('warehouse_basic.movement_not_found'), 404);
+        } catch (Throwable $exception) {
+            return $this->warehouseError(
+                $form.'_export',
+                $exception,
+                $request,
+                $errorMessageKey,
+                500,
+                ['movement_id' => $movementId],
+            );
         }
     }
 

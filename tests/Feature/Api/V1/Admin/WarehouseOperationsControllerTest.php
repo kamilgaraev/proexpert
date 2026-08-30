@@ -543,7 +543,6 @@ class WarehouseOperationsControllerTest extends TestCase
                 'quantity' => 2,
                 'project_id' => $project->id,
                 'document_number' => 'M-15-001',
-                'reason' => 'Issue to contractor',
             ]);
 
         $transferResponse->assertOk();
@@ -551,6 +550,14 @@ class WarehouseOperationsControllerTest extends TestCase
         $this->assertSame(3.0, $this->availableQuantity($context->organization->id, $warehouse->id, $material->id));
         $contractorWarehouseId = (int) $transferResponse->json('data.contractor_warehouse_id');
         $this->assertSame(2.0, $this->availableQuantity($context->organization->id, $contractorWarehouseId, $material->id));
+        $contractorWarehouse = OrganizationWarehouse::query()->findOrFail($contractorWarehouseId);
+        $this->assertSame('CTR-SITE-CONTRACTOR', $contractorWarehouse->code);
+        $this->assertSame(
+            'Автоматически созданный склад подрядчика «Site Contractor»',
+            $contractorWarehouse->description,
+        );
+        $this->assertStringNotContainsString((string) $contractor->id, $contractorWarehouse->code);
+        $this->assertStringNotContainsString('ID:', (string) $contractorWarehouse->description);
 
         $this->assertDatabaseHas('warehouse_movements', [
             'organization_id' => $context->organization->id,
@@ -561,6 +568,14 @@ class WarehouseOperationsControllerTest extends TestCase
             'project_id' => $project->id,
             'document_number' => 'M-15-001',
         ]);
+        $movement = WarehouseMovement::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_OUT)
+            ->where('document_number', 'M-15-001')
+            ->firstOrFail();
+        $this->assertSame('Передача материалов подрядчику «Site Contractor»', $movement->reason);
+        $this->assertSame('Site Contractor', $movement->metadata['contractor_name'] ?? null);
+        $this->assertStringNotContainsString('ID:', (string) $movement->reason);
         $this->assertDatabaseHas('warehouse_movements', [
             'organization_id' => $context->organization->id,
             'warehouse_id' => $contractorWarehouseId,
