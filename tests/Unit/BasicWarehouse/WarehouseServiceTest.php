@@ -59,6 +59,7 @@ class WarehouseServiceTest extends TestCase
             'document_number' => 'RCPT-1',
             'reason' => 'Initial receipt',
             'movement_date' => '2026-05-01 10:00:00',
+            'metadata' => ['transfer_pair_key' => 'PAIR-001'],
         ]);
         $otherMaterial = $material->replicate();
         $otherMaterial->name = 'Другой материал';
@@ -84,6 +85,7 @@ class WarehouseServiceTest extends TestCase
         $this->assertCount(1, $data);
         $this->assertSame($movement->id, $data[0]['movement_id']);
         $this->assertSame(WarehouseMovement::TYPE_RECEIPT, $data[0]['movement_type']);
+        $this->assertSame('PAIR-001', $data[0]['transfer_pair_key']);
         $this->assertSame(WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE, $data[0]['operation_category']);
         $this->assertSame(trans_message('basic_warehouse.operation_categories.responsible_issue'), $data[0]['operation_category_label']);
         $this->assertSame($warehouse->id, $data[0]['warehouse_id']);
