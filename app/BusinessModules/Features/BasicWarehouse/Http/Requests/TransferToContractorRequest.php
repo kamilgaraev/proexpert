@@ -17,6 +17,7 @@ class TransferToContractorRequest extends FormRequest
         $organizationId = $this->user()?->current_organization_id;
 
         return [
+            'idempotency_key' => ['required', 'uuid'],
             'from_warehouse_id' => [
                 'required',
                 Rule::exists('organization_warehouses', 'id')
