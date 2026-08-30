@@ -103,6 +103,15 @@ final class WarehouseSerializedAssetTest extends TestCase
             MachineryAsset::query()->orderBy('inventory_number')->pluck('organization_asset_id')->all(),
         );
 
+        $this
+            ->getJson('/api/v1/admin/assets?warehouse_id='.$warehouse->id)
+            ->assertOk()
+            ->assertJsonPath('data.0.serialized_summary.total_count', 2)
+            ->assertJsonPath('data.0.serialized_summary.active_count', 2)
+            ->assertJsonPath('data.0.serialized_summary.in_warehouse_count', 2)
+            ->assertJsonPath('data.0.serialized_summary.with_responsible_count', 0)
+            ->assertJsonPath('data.0.serialized_summary.retired_count', 0);
+
         $registry = app(MachineryAssetReadRepository::class)->paginate((int) $context->organization->id, 20);
         self::assertSame(2, $registry->total());
         $registryAsset = $registry->items()[0];
@@ -184,6 +193,14 @@ final class WarehouseSerializedAssetTest extends TestCase
         self::assertNotNull($issueEvent->metadata['expected_return_at']);
 
         $this
+            ->getJson("/api/v1/admin/organization-assets/{$assetId}/events")
+            ->assertOk()
+            ->assertJsonPath('meta.total', 2)
+            ->assertJsonPath('data.0.event_type', 'issued')
+            ->assertJsonPath('data.0.to_user.id', $responsible->id)
+            ->assertJsonPath('data.0.metadata.reason', 'Выдано монтажнику');
+
+        $this
             ->getJson('/api/v1/admin/organization-assets?responsible_user_id='.$responsible->id)
             ->assertOk()
             ->assertJsonPath('meta.total', 1)
@@ -199,6 +216,79 @@ final class WarehouseSerializedAssetTest extends TestCase
             ->assertJsonPath('data.responsible_user_id', null);
 
         self::assertSame(['created', 'issued', 'returned'], $issued->custodyEvents()->orderBy('id')->pluck('event_type')->all());
+
+        $this
+            ->postJson("/api/v1/admin/organization-assets/{$assetId}/retire", [
+                'outcome' => 'retired',
+                'reason' => 'Износ после эксплуатации',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.lifecycle_status', 'retired')
+            ->assertJsonPath('data.current_warehouse_id', null)
+            ->assertJsonPath('data.responsible_user_id', null);
+
+        self::assertSame(
+            ['created', 'issued', 'returned', 'retired'],
+            $issued->custodyEvents()->orderBy('id')->pluck('event_type')->all(),
+        );
+        self::assertSame(
+            'Износ после эксплуатации',
+            $issued->custodyEvents()->latest('id')->firstOrFail()->metadata['reason'],
+        );
+        self::assertNull($issued->custodyEvents()->latest('id')->firstOrFail()->to_warehouse_id);
+        self::assertNull($issued->custodyEvents()->latest('id')->firstOrFail()->to_project_id);
+        self::assertNull($issued->custodyEvents()->latest('id')->firstOrFail()->to_user_id);
+
+        $this
+            ->postJson("/api/v1/admin/organization-assets/{$assetId}/retire", [
+                'outcome' => 'lost',
+                'reason' => 'Повторная операция',
+            ])
+            ->assertStatus(422);
+
+        $this
+            ->getJson('/api/v1/admin/assets?warehouse_id='.$warehouse->id)
+            ->assertOk()
+            ->assertJsonPath('data.0.serialized_summary.total_count', 1)
+            ->assertJsonPath('data.0.serialized_summary.active_count', 0)
+            ->assertJsonPath('data.0.serialized_summary.in_warehouse_count', 0)
+            ->assertJsonPath('data.0.serialized_summary.retired_count', 1);
+    }
+
+    public function test_serialized_history_and_retirement_are_scoped_to_current_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $foreignUnit = $this->createUnit((int) $foreignContext->organization->id);
+        $foreignMaterial = $this->createSerializedMaterial(
+            (int) $foreignContext->organization->id,
+            (int) $foreignUnit->id,
+        );
+        $foreignAsset = OrganizationAsset::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'material_id' => $foreignMaterial->id,
+            'name' => 'Чужой экземпляр',
+            'inventory_number' => 'FOREIGN-ASSET-001',
+            'accounting_mode' => 'serialized',
+            'ownership_type' => 'owned',
+            'lifecycle_status' => 'active',
+            'technical_status' => 'serviceable',
+        ]);
+
+        $this->allowAdminAccess();
+        $this->actingAs($context->user, 'api_admin');
+
+        $this
+            ->getJson("/api/v1/admin/organization-assets/{$foreignAsset->id}/events")
+            ->assertNotFound();
+        $this
+            ->postJson("/api/v1/admin/organization-assets/{$foreignAsset->id}/retire", [
+                'outcome' => 'retired',
+                'reason' => 'Недопустимая межорганизационная операция',
+            ])
+            ->assertStatus(422);
+
+        self::assertSame('active', $foreignAsset->fresh()->lifecycle_status->value);
     }
 
     private function createUnit(int $organizationId): MeasurementUnit

@@ -60,9 +60,24 @@ class WarehouseServiceTest extends TestCase
             'reason' => 'Initial receipt',
             'movement_date' => '2026-05-01 10:00:00',
         ]);
+        $otherMaterial = $material->replicate();
+        $otherMaterial->name = 'Другой материал';
+        $otherMaterial->code = 'OTHER-MATERIAL';
+        $otherMaterial->save();
+        WarehouseMovement::create([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $otherMaterial->id,
+            'movement_type' => WarehouseMovement::TYPE_RECEIPT,
+            'quantity' => 1,
+            'price' => 10,
+            'user_id' => $user->id,
+            'movement_date' => '2026-05-01 11:00:00',
+        ]);
 
         $data = $this->service->getMovementsData($organization->id, [
             'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
             'movement_type' => WarehouseMovement::TYPE_RECEIPT,
         ]);
 

@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\CreateSerializedAssetInstancesRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ExportAssetLabelsRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\IssueSerializedAssetRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\RetireSerializedAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReturnSerializedAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\StoreAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UpdateAssetRequest;
@@ -280,6 +281,59 @@ class AssetController extends Controller
             return AdminResponse::success($asset, trans_message('basic_warehouse.serialized.returned'));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
+        }
+    }
+
+    public function retireInstance(RetireSerializedAssetRequest $request, int $id): JsonResponse
+    {
+        try {
+            $asset = $this->serializedAssets->retire(
+                (int) $request->user()->current_organization_id,
+                $id,
+                (int) $request->user()->id,
+                $request->validated(),
+            );
+            $messageKey = $request->validated('outcome') === 'lost'
+                ? 'basic_warehouse.serialized.lost'
+                : 'basic_warehouse.serialized.retired';
+
+            return AdminResponse::success($asset, trans_message($messageKey));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('AssetController::retireInstance error', [
+                'organization_id' => $request->user()->current_organization_id,
+                'user_id' => $request->user()->id,
+                'organization_asset_id' => $id,
+                'outcome' => $request->validated('outcome'),
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('basic_warehouse.serialized.operation_failed'), 500);
+        }
+    }
+
+    public function instanceHistory(Request $request, int $id): JsonResponse
+    {
+        try {
+            $events = $this->serializedAssets->history(
+                (int) $request->user()->current_organization_id,
+                $id,
+                $request->integer('per_page', 50),
+            );
+
+            return $this->paginatedResponse($events);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 404);
+        } catch (\Throwable $exception) {
+            Log::error('AssetController::instanceHistory error', [
+                'organization_id' => $request->user()->current_organization_id,
+                'user_id' => $request->user()->id,
+                'organization_asset_id' => $id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('basic_warehouse.serialized.operation_failed'), 500);
         }
     }
 
