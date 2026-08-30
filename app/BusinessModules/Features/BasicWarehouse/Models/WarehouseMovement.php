@@ -68,6 +68,8 @@ class WarehouseMovement extends Model
 
     const TYPE_RETURN = 'return';
 
+    const TYPE_RESERVED_ISSUE = 'reserved_issue';
+
     const CATEGORY_PROJECT_DELIVERY = 'project_delivery';
 
     const CATEGORY_RESPONSIBLE_ISSUE = 'responsible_issue';

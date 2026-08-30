@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ConsumeReservationRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\PlaceAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReceiptRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReserveRequest;
@@ -16,6 +17,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovement
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseMovementFormExportService;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WriteOffActExportService;
+use App\BusinessModules\Features\BasicWarehouse\Services\ReservationLifecycleService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseStorageCellResolver;
@@ -45,6 +47,7 @@ class WarehouseOperationsController extends Controller
         protected ProjectService $projectService,
         protected WarehouseMovementFormExportService $movementFormExportService,
         protected WriteOffActExportService $writeOffActExportService,
+        protected ReservationLifecycleService $reservationLifecycleService,
         protected \App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager $exportManager
     ) {}
 
@@ -181,19 +184,12 @@ class WarehouseOperationsController extends Controller
      */
     public function exportM8(int $reservationId, Request $request): JsonResponse
     {
-        $reservation = \App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation::findOrFail($reservationId);
-
-        if ($reservation->organization_id !== $request->user()->current_organization_id) {
-            return AdminResponse::error(trans_message('warehouse_basic.access_denied'), 403);
-        }
-
         try {
-            // Получаем движения, связанные с этим резервом (списания)
-            $movements = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('material_id', $reservation->material_id)
-                ->where('warehouse_id', $reservation->warehouse_id)
-                ->where('movement_type', \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::TYPE_WRITE_OFF)
-                ->where('movement_date', '>=', $reservation->created_at)
-                ->get();
+            $reservation = $this->reservationLifecycleService->findForOrganization(
+                (int) $request->user()->current_organization_id,
+                $reservationId,
+            );
+            $movements = $this->reservationLifecycleService->movementsForExport($reservation);
 
             $path = $this->exportManager->export('m8', [
                 'reservation' => $reservation,
@@ -202,10 +198,52 @@ class WarehouseOperationsController extends Controller
             $url = $this->exportManager->getTemporaryUrl($path);
 
             return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('basic_warehouse.reservation.not_found'), 404);
         } catch (Throwable $exception) {
             return $this->warehouseError('m8_export', $exception, $request, 'warehouse_basic.m8_export_error', 500, [
                 'reservation_id' => $reservationId,
             ]);
+        }
+    }
+
+    public function consumeReservation(
+        int $reservationId,
+        ConsumeReservationRequest $request,
+    ): JsonResponse {
+        try {
+            $validated = $request->validated();
+            $movement = $this->reservationLifecycleService->consume(
+                (int) $request->user()->current_organization_id,
+                $reservationId,
+                (float) $validated['quantity'],
+                [
+                    'user_id' => (int) $request->user()->id,
+                    'document_number' => $validated['document_number'] ?? null,
+                    'reason' => $validated['reason'] ?? null,
+                    'idempotency_key' => $validated['idempotency_key'],
+                ],
+            );
+
+            return AdminResponse::success(
+                new WarehouseMovementResource($movement),
+                trans_message('basic_warehouse.reservation.consumed')
+            );
+        } catch (WarehouseOperationIdempotencyConflictException $exception) {
+            return AdminResponse::error($exception->getMessage(), 409);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('basic_warehouse.reservation.not_found'), 404);
+        } catch (InvalidArgumentException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (Throwable $exception) {
+            return $this->warehouseError(
+                'reservation_consume',
+                $exception,
+                $request,
+                'basic_warehouse.reservation.consume_error',
+                500,
+                ['reservation_id' => $reservationId]
+            );
         }
     }
 

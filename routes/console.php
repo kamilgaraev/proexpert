@@ -171,6 +171,14 @@ Schedule::command('restrictions:lift-expired')
     })
     ->appendOutputTo(storage_path('logs/schedule-restrictions-lift.log'));
 
+Schedule::command('warehouse:expire-reservations --limit=200')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onOneServer()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled warehouse reservation expiration failed.');
+    });
+
 // ============================================
 // PAYMENTS MODULE - Автоматизация платежей
 // ============================================

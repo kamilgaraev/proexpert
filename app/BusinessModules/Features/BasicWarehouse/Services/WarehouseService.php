@@ -1985,12 +1985,14 @@ class WarehouseService implements WarehouseReportDataProvider
                 'organization_id' => $organizationId,
                 'warehouse_id' => $warehouseId,
                 'material_id' => $materialId,
-                'movement_type' => 'reserved_issue',
+                'movement_type' => WarehouseMovement::TYPE_RESERVED_ISSUE,
                 'quantity' => $quantity,
                 'price' => $quantity > 0 ? $cost / $quantity : 0,
                 'project_id' => $metadata['project_id'] ?? null,
                 'user_id' => $metadata['user_id'] ?? null,
+                'document_number' => $reportingMetadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,
+                'operation_category' => WarehouseMovement::CATEGORY_PRODUCTION_USAGE,
                 'metadata' => $reportingMetadata,
                 'movement_date' => now(),
             ]);
@@ -2101,33 +2103,69 @@ class WarehouseService implements WarehouseReportDataProvider
      */
     public function unreserveAssets(int $reservationId): bool
     {
+        return $this->transitionReservation($reservationId, AssetReservation::STATUS_CANCELLED);
+    }
+
+    public function expireReservation(int $reservationId): bool
+    {
+        return $this->transitionReservation($reservationId, AssetReservation::STATUS_EXPIRED);
+    }
+
+    private function transitionReservation(int $reservationId, string $terminalStatus): bool
+    {
+        if (! in_array($terminalStatus, [AssetReservation::STATUS_CANCELLED, AssetReservation::STATUS_EXPIRED], true)) {
+            throw new \InvalidArgumentException('Unsupported reservation terminal status.');
+        }
+
         DB::beginTransaction();
 
         try {
             $reservation = AssetReservation::where('id', $reservationId)
                 ->where('status', 'active')
+                ->when(
+                    $terminalStatus === AssetReservation::STATUS_EXPIRED,
+                    static fn ($query) => $query->where('expires_at', '<=', now())
+                )
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            // Возвращаем количество в доступные (распределяем по партиям)
-            $this->unreserveQuantity(
-                $reservation->organization_id,
-                $reservation->warehouse_id,
-                $reservation->material_id,
-                $reservation->quantity
+            $consumedQuantity = (float) WarehouseMovement::query()
+                ->where('organization_id', $reservation->organization_id)
+                ->where('movement_type', WarehouseMovement::TYPE_RESERVED_ISSUE)
+                ->where('metadata->asset_reservation_id', $reservation->id)
+                ->sum('quantity');
+            $remainingQuantity = max((float) $reservation->quantity - $consumedQuantity, 0.0);
+
+            if ($remainingQuantity > 0) {
+                $this->unreserveQuantity(
+                    $reservation->organization_id,
+                    $reservation->warehouse_id,
+                    $reservation->material_id,
+                    $remainingQuantity,
+                    [
+                        'asset_reservation_id' => $reservation->id,
+                        'project_id' => $reservation->project_id,
+                        'reason' => $reservation->reason,
+                    ],
+                );
+            }
+
+            $reservation->update(array_filter([
+                'status' => $terminalStatus,
+                'cancelled_at' => $terminalStatus === AssetReservation::STATUS_CANCELLED ? now() : null,
+            ], static fn (mixed $value): bool => $value !== null));
+
+            $this->logging->business(
+                $terminalStatus === AssetReservation::STATUS_EXPIRED
+                    ? 'warehouse.asset.reservation_expired'
+                    : 'warehouse.asset.unreserved',
+                [
+                    'reservation_id' => $reservationId,
+                    'organization_id' => $reservation->organization_id,
+                    'quantity' => $reservation->quantity,
+                    'released_quantity' => $remainingQuantity,
+                ]
             );
-
-            // Обновляем статус резервации
-            $reservation->update([
-                'status' => 'cancelled',
-                'cancelled_at' => now(),
-            ]);
-
-            $this->logging->business('warehouse.asset.unreserved', [
-                'reservation_id' => $reservationId,
-                'organization_id' => $reservation->organization_id,
-                'quantity' => $reservation->quantity,
-            ]);
 
             DB::commit();
 
