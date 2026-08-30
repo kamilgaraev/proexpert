@@ -246,13 +246,17 @@ final class ProcurementChainServiceTest extends TestCase
         $purchaseRequest = $this->createPurchaseRequest($organization);
         $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::DELIVERED);
         $this->createPaymentDocument($purchaseOrder, PaymentDocumentStatus::PAID, 500.0);
-        $this->createReceipt($purchaseOrder);
+        $receipt = $this->createReceipt($purchaseOrder);
 
         $summary = app(ProcurementChainService::class)->forPurchaseOrder($purchaseOrder);
 
         $this->assertSame('completed', $summary->currentStage->key);
         $this->assertNull($summary->nextAction);
         $this->assertFalse($summary->compact()->isBlocked);
+        $this->assertSame(
+            "/procurement/purchase-orders/{$purchaseOrder->id}?receipt_id={$receipt->id}",
+            $summary->linkedDocuments->firstWhere('type', 'purchase_receipt')?->href
+        );
     }
 
     public function test_permission_missing_disables_next_action_without_hiding_blocker_context(): void
