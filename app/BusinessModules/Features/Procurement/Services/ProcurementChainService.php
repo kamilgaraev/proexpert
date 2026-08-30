@@ -715,7 +715,7 @@ final class ProcurementChainService
             number: $receipt->receipt_number,
             status: $receipt->status->value,
             statusLabel: $receipt->status->label(),
-            href: '/warehouse',
+            href: '/procurement/purchase-orders/'.$receipt->purchase_order_id.'?receipt_id='.$receipt->id,
         );
     }
 
