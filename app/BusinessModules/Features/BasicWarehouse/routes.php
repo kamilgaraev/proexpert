@@ -263,6 +263,10 @@ Route::middleware(AdminRouteStack::middleware())
                 ->whereNumber('reservationId')
                 ->middleware('authorize:warehouse.advanced.reservations')
                 ->name('reservations.export-m8');
+            Route::post('/reservations/{reservationId}/consume', [WarehouseOperationsController::class, 'consumeReservation'])
+                ->whereNumber('reservationId')
+                ->middleware('authorize:warehouse.advanced.reservations')
+                ->name('reservations.consume');
 
             // Автопополнение
             Route::post('/auto-reorder/rules', [AdvancedWarehouseController::class, 'createAutoReorderRule'])

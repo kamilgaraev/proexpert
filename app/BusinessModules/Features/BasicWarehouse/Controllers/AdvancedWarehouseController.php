@@ -11,6 +11,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReserveAssetReques
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TurnoverAnalyticsRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
 use App\BusinessModules\Features\BasicWarehouse\Models\AutoReorderRule;
+use App\BusinessModules\Features\BasicWarehouse\Services\ReservationLifecycleService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -23,7 +24,8 @@ use Illuminate\Support\Facades\Log;
 class AdvancedWarehouseController extends Controller
 {
     public function __construct(
-        protected WarehouseService $warehouseService
+        protected WarehouseService $warehouseService,
+        protected ReservationLifecycleService $reservationLifecycleService,
     ) {}
 
     public function turnoverAnalytics(TurnoverAnalyticsRequest $request): JsonResponse
@@ -174,10 +176,16 @@ class AdvancedWarehouseController extends Controller
             $reservations = $reservationsQuery
                 ->orderByDesc('reserved_at')
                 ->paginate($perPage);
+            $quantities = $this->reservationLifecycleService->quantitiesForReservations(
+                $reservations->getCollection()
+            );
 
             $reservations->setCollection(
                 $reservations->getCollection()->map(
-                    fn (AssetReservation $reservation) => $this->makeReservationPayload($reservation)
+                    fn (AssetReservation $reservation) => $this->makeReservationPayload(
+                        $reservation,
+                        $quantities[$reservation->id] ?? null,
+                    )
                 )
             );
 
@@ -407,13 +415,24 @@ class AdvancedWarehouseController extends Controller
         };
     }
 
-    private function makeReservationPayload(AssetReservation $reservation): array
+    /** @param array{consumed_quantity: float, remaining_quantity: float}|null $quantities */
+    private function makeReservationPayload(AssetReservation $reservation, ?array $quantities = null): array
     {
+        if ($quantities === null) {
+            $consumedQuantity = $this->reservationLifecycleService->consumedQuantity($reservation);
+            $quantities = [
+                'consumed_quantity' => $consumedQuantity,
+                'remaining_quantity' => max((float) $reservation->quantity - $consumedQuantity, 0.0),
+            ];
+        }
+
         return [
             'id' => $reservation->id,
             'warehouse_id' => $reservation->warehouse_id,
             'material_id' => $reservation->material_id,
             'quantity' => (float) $reservation->quantity,
+            'consumed_quantity' => $quantities['consumed_quantity'],
+            'remaining_quantity' => $quantities['remaining_quantity'],
             'status' => $this->mapReservationStatus($reservation),
             'project_id' => $reservation->project_id,
             'reserved_by_id' => $reservation->reserved_by,
