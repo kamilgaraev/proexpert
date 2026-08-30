@@ -26,6 +26,22 @@ final class LegalArchiveDocumentResource extends JsonResource
         $signatureDriver = (string) config('legal-document-signatures.driver', 'disabled');
         $signatureDrivers = (array) config('legal-document-signatures.drivers', []);
         $providerClass = $signatureDrivers[$signatureDriver] ?? null;
+        $lifecycleStatus = (string) $this->lifecycle_status;
+        $approvalStatus = (string) $this->approval_status;
+        $signatureStatus = (string) $this->signature_status;
+        $editingFrozen = $approvalStatus === 'approved'
+            || in_array($lifecycleStatus, [
+                'approved',
+                'signing',
+                'partially_signed',
+                'signed',
+                'active',
+                'completed',
+                'archived',
+            ], true);
+        $canActivate = $lifecycleStatus === 'signed'
+            && $approvalStatus === 'approved'
+            && $signatureStatus === 'signed';
 
         return [
             'id' => $this->id,
@@ -55,6 +71,13 @@ final class LegalArchiveDocumentResource extends JsonResource
             ],
             'status' => $this->status,
             'status_label' => LegalArchiveDictionary::label('statuses', $this->status),
+            'lifecycle' => [
+                'status' => $lifecycleStatus,
+                'approval_status' => $approvalStatus,
+                'signature_status' => $signatureStatus,
+                'editing_frozen' => $editingFrozen,
+                'can_activate' => $canActivate,
+            ],
             'source_create_status' => $this->source_create_status,
             'source_create_failed_at' => $this->source_create_failed_at?->toISOString(),
             'create_recovery' => [
