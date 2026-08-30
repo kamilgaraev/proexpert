@@ -48,6 +48,7 @@ final class WarehouseReservationProjectionRegressionTest extends TestCase
         $this->assertSame(10.0, $before[0]['total_quantity']);
         $this->assertSame(180.0, (float) $before[0]['total_value']);
         $this->assertSame(18.0, $before[0]['average_price']);
+        $this->assertSame('кг', $before[0]['measurement_unit']);
 
         $service->reserveAssets(
             $context->organization->id,
@@ -67,6 +68,13 @@ final class WarehouseReservationProjectionRegressionTest extends TestCase
         $this->assertSame(10.0, $fullyReserved[0]['total_quantity']);
         $this->assertSame(180.0, (float) $fullyReserved[0]['total_value']);
         $this->assertSame(18.0, $fullyReserved[0]['average_price']);
+
+        $movements = $service->getMovementsData(
+            $context->organization->id,
+            ['warehouse_id' => $warehouse->id]
+        );
+        $this->assertNotEmpty($movements);
+        $this->assertSame('кг', $movements[0]['measurement_unit']);
 
         $service->releaseReservedAssets(
             $context->organization->id,

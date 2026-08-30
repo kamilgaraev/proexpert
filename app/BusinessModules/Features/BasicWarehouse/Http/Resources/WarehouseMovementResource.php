@@ -38,10 +38,12 @@ class WarehouseMovementResource extends JsonResource
             'material_name' => $this->material->name ?? null,
             'material_code' => $this->material->code ?? null,
             'project_material_delivery_id' => $this->project_material_delivery_id,
-            'quantity' => (float)$this->quantity,
-            'price' => (float)$this->price,
-            'total_value' => (float)($this->quantity * $this->price),
-            'measurement_unit' => $this->material->measurementUnit->name ?? null,
+            'quantity' => (float) $this->quantity,
+            'price' => (float) $this->price,
+            'total_value' => (float) ($this->quantity * $this->price),
+            'measurement_unit' => $this->material->measurementUnit->short_name
+                ?? $this->material->measurementUnit->name
+                ?? null,
             'project_id' => $this->project_id,
             'project_name' => $this->project->name ?? null,
             'user_id' => $this->user_id,

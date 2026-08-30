@@ -212,7 +212,8 @@ class WarehouseOperationsControllerTest extends TestCase
                     'price' => 100,
                     'reason' => 'First batch',
                 ])
-            ->assertCreated();
+            ->assertCreated()
+            ->assertJsonPath('data.measurement_unit', 'pcs');
 
         $this->withHeaders($context->authHeaders())
             ->postJson(
