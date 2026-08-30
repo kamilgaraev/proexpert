@@ -26,6 +26,23 @@ final class ProjectAllocationAvailabilityService
             return collect();
         }
 
+        $outstandingByAllocation = $this->outstandingForAllocations($organizationId, $allocations);
+
+        return $allocations
+            ->groupBy('material_id')
+            ->map(static fn (Collection $materialAllocations): float => (float) $materialAllocations->sum(
+                static fn (WarehouseProjectAllocation $allocation): float => (float) (
+                    $outstandingByAllocation->get($allocation->id) ?? 0
+                ),
+            ));
+    }
+
+    public function outstandingForAllocations(int $organizationId, Collection $allocations): Collection
+    {
+        if ($allocations->isEmpty()) {
+            return collect();
+        }
+
         $departedByAllocation = ProjectMaterialDelivery::query()
             ->where('organization_id', $organizationId)
             ->whereIn('warehouse_project_allocation_id', $allocations->pluck('id'))
@@ -36,18 +53,16 @@ final class ProjectAllocationAvailabilityService
             ->groupBy('warehouse_project_allocation_id')
             ->pluck('departed_quantity', 'warehouse_project_allocation_id');
 
-        return $allocations
-            ->groupBy('material_id')
-            ->map(static fn (Collection $materialAllocations): float => (float) $materialAllocations->sum(
-                static function (WarehouseProjectAllocation $allocation) use ($departedByAllocation): float {
-                    $allocated = (float) $allocation->allocated_quantity;
-                    $departed = min(
-                        $allocated,
-                        (float) ($departedByAllocation->get($allocation->id) ?? 0),
-                    );
+        return $allocations->mapWithKeys(
+            static function (WarehouseProjectAllocation $allocation) use ($departedByAllocation): array {
+                $allocated = (float) $allocation->allocated_quantity;
+                $departed = min(
+                    $allocated,
+                    (float) ($departedByAllocation->get($allocation->id) ?? 0),
+                );
 
-                    return max(0.0, $allocated - $departed);
-                },
-            ));
+                return [$allocation->id => max(0.0, $allocated - $departed)];
+            },
+        );
     }
 }

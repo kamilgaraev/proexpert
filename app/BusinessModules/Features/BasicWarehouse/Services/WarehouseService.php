@@ -12,6 +12,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseItemGallery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\CanonicalWarehouseReportingIdentity;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\WarehouseInventoryEventRecorder;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseReceiptStatusEnum;
@@ -972,6 +973,19 @@ class WarehouseService implements WarehouseReportDataProvider
 
         // Группируем по материалам
         $grouped = $allBatches->groupBy('material_id');
+        $stockAllocations = WarehouseProjectAllocation::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('warehouse_id', $allBatches->pluck('warehouse_id')->unique())
+            ->whereIn('material_id', $allBatches->pluck('material_id')->unique())
+            ->with('project:id,name')
+            ->get();
+        $outstandingByAllocation = $this->allocationAvailabilityService->outstandingForAllocations(
+            $organizationId,
+            $stockAllocations,
+        );
+        $allocationsByStockPosition = $stockAllocations->groupBy(
+            static fn (WarehouseProjectAllocation $allocation): string => $allocation->warehouse_id.':'.$allocation->material_id,
+        );
 
         $resultData = [];
 
@@ -1068,28 +1082,23 @@ class WarehouseService implements WarehouseReportDataProvider
                 'qr_code_image_url' => $this->makeQrDataUri($qrCode),
             ];
 
-            // Добавляем информацию о распределении по проектам (она общая для всех партий)
-            $allocations = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation::where('warehouse_id', $first->warehouse_id)
-                ->where('material_id', $first->material_id)
-                ->with('project:id,name')
-                ->get();
-
-            if ($allocations->isNotEmpty()) {
-                $item['project_allocations'] = $allocations->map(function ($allocation) {
+            $allocations = $allocationsByStockPosition->get($galleryKey, collect());
+            $projectAllocations = $allocations
+                ->map(function (WarehouseProjectAllocation $allocation) use ($outstandingByAllocation): array {
                     return [
                         'project_id' => $allocation->project_id,
                         'project_name' => $allocation->project->name,
-                        'allocated_quantity' => (float) $allocation->allocated_quantity,
+                        'allocated_quantity' => (float) ($outstandingByAllocation->get($allocation->id) ?? 0),
+                        'planned_quantity' => (float) $allocation->allocated_quantity,
                     ];
-                })->toArray();
+                })
+                ->filter(static fn (array $allocation): bool => $allocation['allocated_quantity'] > 0)
+                ->values();
 
-                $item['allocated_total'] = $allocations->sum('allocated_quantity');
-                $item['unallocated_quantity'] = (float) $totalQty - $item['allocated_total'];
-            } else {
-                $item['project_allocations'] = [];
-                $item['allocated_total'] = 0;
-                $item['unallocated_quantity'] = (float) $totalQty;
-            }
+            $item['project_allocations'] = $projectAllocations->all();
+            $item['allocated_total'] = (float) $projectAllocations->sum('allocated_quantity');
+            $item['unallocated_quantity'] = max(0.0, (float) $totalQty - $item['allocated_total']);
+            $item['available_for_allocation'] = $item['unallocated_quantity'];
 
             $resultData[] = $item;
         }
