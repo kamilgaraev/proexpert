@@ -27,6 +27,7 @@ final class WarehouseMovementDocumentResolver
             ->where('related_user_id', $movement->related_user_id)
             ->where('user_id', $movement->user_id)
             ->where('operation_category', $movement->operation_category)
+            ->where('reason', $movement->reason)
             ->whereDate('movement_date', $movement->movement_date)
             ->orderBy('id')
             ->get();

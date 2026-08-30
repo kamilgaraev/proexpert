@@ -15,6 +15,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WriteOffRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseMovementDocumentResolver;
+use App\BusinessModules\Features\BasicWarehouse\Services\Export\WriteOffActExportService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseStorageCellResolver;
@@ -22,6 +23,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
 use App\Services\Project\ProjectService;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -42,6 +44,7 @@ class WarehouseOperationsController extends Controller
         protected WarehouseStorageCellResolver $storageCellResolver,
         protected ProjectService $projectService,
         protected WarehouseMovementDocumentResolver $movementDocumentResolver,
+        protected WriteOffActExportService $writeOffActExportService,
         protected \App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager $exportManager
     ) {}
 
@@ -141,6 +144,31 @@ class WarehouseOperationsController extends Controller
             return $this->warehouseError('m15_export', $exception, $request, 'warehouse_basic.m15_export_error', 500, [
                 'movement_id' => $id,
             ]);
+        }
+    }
+
+    public function exportWriteOffAct(int $id, Request $request): JsonResponse
+    {
+        try {
+            $url = $this->writeOffActExportService->temporaryUrl(
+                $id,
+                (int) $request->user()->current_organization_id
+            );
+
+            return AdminResponse::success(['url' => $url], trans_message('warehouse_basic.export_success'));
+        } catch (InvalidArgumentException) {
+            return AdminResponse::error(trans_message('warehouse_basic.write_off_act_unavailable'), 422);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('warehouse_basic.movement_not_found'), 404);
+        } catch (Throwable $exception) {
+            return $this->warehouseError(
+                'write_off_act_export',
+                $exception,
+                $request,
+                'warehouse_basic.write_off_act_export_error',
+                500,
+                ['movement_id' => $id]
+            );
         }
     }
 

@@ -77,6 +77,10 @@ Route::middleware(AdminRouteStack::middleware())
                 ->name('movements.export-m11');
             Route::get('/movements/{id}/export-m15', [WarehouseOperationsController::class, 'exportM15'])
                 ->name('movements.export-m15');
+            Route::get('/movements/{id}/export-write-off-act', [WarehouseOperationsController::class, 'exportWriteOffAct'])
+                ->whereNumber('id')
+                ->middleware('authorize:warehouse.write_offs')
+                ->name('movements.export-write-off-act');
             Route::get('/movements/{id}/export-m7', [WarehouseOperationsController::class, 'exportM7'])
                 ->name('movements.export-m7');
 
