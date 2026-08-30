@@ -34,6 +34,20 @@ class ProjectMaterialDeliveryService
 
             $eventQuantity = (float) ($data['quantity'] ?? $allocation->allocated_quantity);
             $totalQuantity = (float) ($data['total_quantity'] ?? $allocation->allocated_quantity);
+            $fromStatus = $delivery->exists ? $delivery->status : null;
+            $status = $delivery->exists
+                ? $delivery->status
+                : ProjectMaterialDeliveryStatusEnum::RESERVED;
+
+            if ($delivery->exists && $delivery->status?->isFinal()) {
+                $status = (float) $delivery->accepted_quantity > 0
+                    ? ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED
+                    : ProjectMaterialDeliveryStatusEnum::RESERVED;
+            }
+
+            if ($fromStatus === ProjectMaterialDeliveryStatusEnum::CANCELLED) {
+                $delivery->shipped_quantity = $delivery->accepted_quantity;
+            }
 
             $delivery->fill([
                 'organization_id' => $allocation->organization_id,
@@ -42,7 +56,7 @@ class ProjectMaterialDeliveryService
                 'warehouse_id' => $allocation->warehouse_id,
                 'warehouse_project_allocation_id' => $allocation->id,
                 'source_type' => 'warehouse',
-                'status' => ProjectMaterialDeliveryStatusEnum::RESERVED,
+                'status' => $status,
                 'requested_quantity' => $totalQuantity,
                 'reserved_quantity' => $totalQuantity,
                 'responsible_user_id' => $user->id,
@@ -53,6 +67,9 @@ class ProjectMaterialDeliveryService
                     'allocation_id' => $allocation->id,
                 ])),
             ]);
+            if ($fromStatus?->isFinal() && $status !== $fromStatus) {
+                $delivery->accepted_at = null;
+            }
 
             $this->assertDeliveryCanBeSaved($delivery);
             $delivery->save();
@@ -61,7 +78,7 @@ class ProjectMaterialDeliveryService
                 $delivery,
                 $user,
                 $delivery->wasRecentlyCreated ? 'created_from_allocation' : 'updated_from_allocation',
-                null,
+                $fromStatus,
                 $delivery->status,
                 $eventQuantity,
                 $data['notes'] ?? null,
@@ -353,6 +370,10 @@ class ProjectMaterialDeliveryService
             }
 
             $newAcceptedQuantity = (float) $delivery->accepted_quantity + $quantity;
+            $expectedQuantity = max(
+                (float) $delivery->requested_quantity,
+                (float) $delivery->reserved_quantity,
+            );
 
             if ($quantity <= 0 || $newAcceptedQuantity > (float) $delivery->shipped_quantity) {
                 throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.invalid_accepted_quantity'));
@@ -374,8 +395,8 @@ class ProjectMaterialDeliveryService
                 'project_warehouse_id' => $movement->warehouse_id,
                 'receiver_user_id' => $user->id,
                 'delivered_at' => $delivery->delivered_at ?? now(),
-                'accepted_at' => $newAcceptedQuantity >= (float) $delivery->shipped_quantity ? now() : null,
-                'status' => $newAcceptedQuantity >= (float) $delivery->shipped_quantity
+                'accepted_at' => $newAcceptedQuantity >= $expectedQuantity ? now() : null,
+                'status' => $newAcceptedQuantity >= $expectedQuantity
                     ? ProjectMaterialDeliveryStatusEnum::ACCEPTED
                     : ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED,
                 'notes' => $notes ?? $delivery->notes,

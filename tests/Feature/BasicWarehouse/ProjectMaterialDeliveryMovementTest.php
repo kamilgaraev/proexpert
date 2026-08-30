@@ -10,6 +10,8 @@ use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -120,6 +122,71 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
             'material_id' => $setup['material']->id,
             'available_quantity' => 30,
         ]);
+
+        $balance = app(WarehouseService::class)->getAssetBalance(
+            $context->organization->id,
+            $setup['sourceWarehouse']->id,
+            $setup['material']->id,
+        );
+
+        $this->assertNotNull($balance);
+        $this->assertSame(0.0, $balance->getAllocatedQuantity());
+        $this->assertSame(70.0, $balance->getAvailableForAllocation());
+    }
+
+    public function test_additional_allocation_preserves_active_delivery_progress(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createDeliveryContext($context);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                'quantity' => 20,
+            ])
+            ->assertOk();
+
+        $setup['allocation']->forceFill(['allocated_quantity' => 40])->save();
+
+        $delivery = app(ProjectMaterialDeliveryService::class)->createFromAllocation(
+            $setup['allocation']->fresh(),
+            $context->user,
+            [
+                'quantity' => 10,
+                'total_quantity' => 40,
+            ],
+        );
+
+        $this->assertSame(ProjectMaterialDeliveryStatusEnum::IN_TRANSIT, $delivery->status);
+        $this->assertSame(40.0, (float) $delivery->requested_quantity);
+        $this->assertSame(40.0, (float) $delivery->reserved_quantity);
+        $this->assertSame(20.0, (float) $delivery->shipped_quantity);
+        $this->assertSame(20.0, $delivery->remainingQuantityToShip());
+    }
+
+    public function test_additional_allocation_reopens_cancelled_delivery_without_counting_returned_stock_as_shipped(): void
+    {
+        $context = AdminApiTestContext::create();
+        $setup = $this->createDeliveryContext($context);
+        $setup['delivery']->forceFill([
+            'status' => ProjectMaterialDeliveryStatusEnum::CANCELLED,
+            'shipped_quantity' => 10,
+            'accepted_quantity' => 0,
+        ])->save();
+        $setup['allocation']->forceFill(['allocated_quantity' => 40])->save();
+
+        $delivery = app(ProjectMaterialDeliveryService::class)->createFromAllocation(
+            $setup['allocation']->fresh(),
+            $context->user,
+            [
+                'quantity' => 10,
+                'total_quantity' => 40,
+            ],
+        );
+
+        $this->assertSame(ProjectMaterialDeliveryStatusEnum::RESERVED, $delivery->status);
+        $this->assertSame(0.0, (float) $delivery->shipped_quantity);
+        $this->assertSame(40.0, $delivery->remainingQuantityToShip());
     }
 
     public function test_admin_receiving_delivery_creates_inbound_movement_and_increases_project_stock(): void
@@ -230,6 +297,33 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
             'material_id' => $setup['material']->id,
             'available_quantity' => 11,
         ]);
+    }
+
+    public function test_accepting_current_shipment_keeps_delivery_active_when_more_is_reserved(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createDeliveryContext($context);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                'quantity' => 10,
+            ])
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/receive", [
+                'idempotency_key' => '55555555-5555-4555-8555-555555555555',
+                'quantity' => 10,
+            ])
+            ->assertOk();
+
+        $delivery = $setup['delivery']->fresh();
+
+        $this->assertSame(ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED, $delivery->status);
+        $this->assertNull($delivery->accepted_at);
+        $this->assertSame(20.0, $delivery->remainingQuantityToShip());
+        $this->assertSame(0.0, $delivery->remainingQuantityToAccept());
     }
 
     public function test_cancelling_partially_received_delivery_returns_only_unaccepted_transit_stock(): void

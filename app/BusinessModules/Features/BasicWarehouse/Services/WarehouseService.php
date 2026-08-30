@@ -44,6 +44,7 @@ class WarehouseService implements WarehouseReportDataProvider
         private readonly WarehouseInventoryEventRecorder $inventoryEventRecorder,
         private readonly CanonicalWarehouseReportingIdentity $reportingIdentity,
         private readonly ReservationQuantityService $reservationQuantityService,
+        private readonly ProjectAllocationAvailabilityService $allocationAvailabilityService,
     ) {
         $this->logging = $logging;
     }
@@ -762,12 +763,18 @@ class WarehouseService implements WarehouseReportDataProvider
 
         $totalValue = $batches->sum(fn ($b) => $b->available_quantity * $b->unit_price);
         $avgPrice = $totalQty > 0 ? $totalValue / $totalQty : 0;
+        $allocatedByMaterial = $this->allocationAvailabilityService->outstandingByMaterial(
+            $organizationId,
+            $warehouseId,
+            [$materialId],
+        );
 
         return new WarehouseBalanceAggregateDTO(
             materialId: $materialId,
             warehouseId: $warehouseId,
             availableQuantity: (float) $totalQty,
             reservedQuantity: (float) $totalReserved,
+            allocatedQuantity: (float) ($allocatedByMaterial->get($materialId) ?? 0),
             averagePrice: (float) $avgPrice,
             totalValue: (float) $totalValue,
             lastMovementAt: $batches->max('last_movement_at')?->toDateTimeString(),
@@ -822,6 +829,11 @@ class WarehouseService implements WarehouseReportDataProvider
 
         // Группируем по материалам
         $grouped = $allBatches->groupBy('material_id');
+        $allocatedByMaterial = $this->allocationAvailabilityService->outstandingByMaterial(
+            $organizationId,
+            $warehouseId,
+            $grouped->keys()->map(static fn ($materialId): int => (int) $materialId)->all(),
+        );
 
         $aggregatedCollection = new Collection;
 
@@ -837,6 +849,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 warehouseId: $warehouseId,
                 availableQuantity: (float) $totalQty,
                 reservedQuantity: (float) $totalReserved,
+                allocatedQuantity: (float) ($allocatedByMaterial->get($materialId) ?? 0),
                 averagePrice: (float) $avgPrice,
                 totalValue: (float) $totalValue,
                 lastMovementAt: $batches->max('last_movement_at')?->toDateTimeString(),
