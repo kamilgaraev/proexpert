@@ -10,9 +10,11 @@ use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Models\Material;
 use App\Models\Organization;
+use App\Models\Project;
 use App\Models\User;
 use Tests\TestCase;
 
@@ -37,6 +39,68 @@ class WarehouseServiceTest extends TestCase
         $data = $this->service->getStockData(1, []);
 
         $this->assertIsArray($data);
+    }
+
+    public function test_get_stock_data_keeps_same_material_separate_across_warehouses(): void
+    {
+        [$organization, $mainWarehouse, $material] = $this->createWarehouseContext();
+        $secondaryWarehouse = OrganizationWarehouse::create([
+            'organization_id' => $organization->id,
+            'name' => 'Secondary warehouse',
+            'code' => 'SECONDARY',
+            'warehouse_type' => OrganizationWarehouse::TYPE_EXTERNAL,
+            'is_main' => false,
+            'is_active' => true,
+        ]);
+
+        $this->createBalance($organization->id, $mainWarehouse->id, $material->id, 10);
+        $this->createBalance($organization->id, $secondaryWarehouse->id, $material->id, 20);
+
+        $stockByWarehouse = collect($this->service->getStockData($organization->id))
+            ->keyBy('warehouse_id');
+
+        $this->assertCount(2, $stockByWarehouse);
+        $this->assertSame('Main warehouse', $stockByWarehouse[$mainWarehouse->id]['warehouse_name']);
+        $this->assertSame(10.0, $stockByWarehouse[$mainWarehouse->id]['available_quantity']);
+        $this->assertSame('Secondary warehouse', $stockByWarehouse[$secondaryWarehouse->id]['warehouse_name']);
+        $this->assertSame(20.0, $stockByWarehouse[$secondaryWarehouse->id]['available_quantity']);
+    }
+
+    public function test_get_stock_data_project_filter_returns_only_allocated_warehouse_position(): void
+    {
+        [$organization, $mainWarehouse, $material, $user] = $this->createWarehouseContext();
+        $secondaryWarehouse = OrganizationWarehouse::create([
+            'organization_id' => $organization->id,
+            'name' => 'Allocated warehouse',
+            'code' => 'ALLOCATED',
+            'warehouse_type' => OrganizationWarehouse::TYPE_EXTERNAL,
+            'is_main' => false,
+            'is_active' => true,
+        ]);
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+        ]);
+
+        $this->createBalance($organization->id, $mainWarehouse->id, $material->id, 10);
+        $this->createBalance($organization->id, $secondaryWarehouse->id, $material->id, 20);
+        WarehouseProjectAllocation::create([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $secondaryWarehouse->id,
+            'material_id' => $material->id,
+            'project_id' => $project->id,
+            'allocated_quantity' => 5,
+            'allocated_by_user_id' => $user->id,
+            'allocated_at' => now(),
+        ]);
+
+        $stock = $this->service->getStockData($organization->id, [
+            'project_id' => $project->id,
+        ]);
+
+        $this->assertCount(1, $stock);
+        $this->assertSame($secondaryWarehouse->id, $stock[0]['warehouse_id']);
+        $this->assertSame(20.0, $stock[0]['available_quantity']);
+        $this->assertSame(5.0, $stock[0]['allocated_total']);
     }
 
     public function test_get_movements_data_returns_warehouse_movements(): void
@@ -264,7 +328,7 @@ class WarehouseServiceTest extends TestCase
             'quantity' => $quantity,
             'price' => $price,
             'user_id' => $userId,
-            'document_number' => 'WO-' . str_replace('.', '-', (string) microtime(true)),
+            'document_number' => 'WO-'.str_replace('.', '-', (string) microtime(true)),
             'reason' => 'Write off for analytics',
             'movement_date' => now()->subDay(),
         ]);
