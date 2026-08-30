@@ -117,6 +117,8 @@ class TransactionControllerWorkflowTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('data.original_transaction.status', PaymentTransactionStatus::COMPLETED->value);
         $response->assertJsonPath('data.refund_transaction.amount', -200);
+        $response->assertJsonPath('data.original_transaction.refundable_amount', 100);
+        $response->assertJsonPath('data.original_transaction.can_be_refunded', true);
 
         $document->refresh();
         $this->assertEquals(300.0, (float) $document->paid_amount);
@@ -153,9 +155,25 @@ class TransactionControllerWorkflowTest extends TestCase
 
         $secondResponse->assertOk();
         $secondResponse->assertJsonPath('data.original_transaction.status', PaymentTransactionStatus::COMPLETED->value);
+        $secondResponse->assertJsonPath('data.original_transaction.refundable_amount', 0);
+        $secondResponse->assertJsonPath('data.original_transaction.can_be_refunded', false);
         $document->refresh();
         $this->assertEquals(200.0, (float) $document->paid_amount);
         $this->assertEquals(800.0, (float) $document->remaining_amount);
+
+        $exhaustedResponse = $this->withHeaders(array_merge($context->authHeaders(), [
+            'Idempotency-Key' => 'refund-payment-20260823-0003',
+        ]))
+            ->postJson("/api/v1/admin/payments/transactions/{$transaction->id}/refund", [
+                'reason' => 'Повторный возврат',
+                'refund_date' => now()->toDateString(),
+            ]);
+
+        $exhaustedResponse->assertStatus(422);
+        $exhaustedResponse->assertJsonPath(
+            'message',
+            'Сумма возврата должна быть больше нуля и не превышать доступный остаток платежа.'
+        );
     }
 
     public function test_transaction_index_filters_by_current_organization_document_and_preserves_meta(): void
@@ -190,6 +208,26 @@ class TransactionControllerWorkflowTest extends TestCase
         $response->assertJsonCount(1, 'data');
         $response->assertJsonPath('meta.total', 1);
         $response->assertJsonPath('meta.per_page', 25);
+    }
+
+    public function test_transaction_index_exposes_remaining_refundable_amount(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $document = $this->createDocument($context);
+        $transaction = $this->createTransaction($document, PaymentTransactionStatus::COMPLETED, 700);
+        $this->createTransaction($document, PaymentTransactionStatus::COMPLETED, -250, [
+            'reverses_transaction_id' => $transaction->id,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/transactions?payment_document_id={$document->id}&per_page=25&page=1");
+
+        $response->assertOk();
+        $original = collect($response->json('data'))->firstWhere('id', $transaction->id);
+
+        self::assertSame(450, $original['refundable_amount']);
+        self::assertTrue($original['can_be_refunded']);
     }
 
     private function createDocument(AdminApiTestContext $context, array $overrides = []): PaymentDocument
