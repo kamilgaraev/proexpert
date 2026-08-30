@@ -66,6 +66,19 @@ final class LegalDocumentStructuredFieldsContractTest extends TestCase
         self::assertStringContainsString('withStatus(403)', $controller);
     }
 
+    public function test_lifecycle_state_is_exposed_and_cannot_be_changed_by_generic_update(): void
+    {
+        $request = $this->source('app/Http/Requests/Api/V1/Admin/LegalArchive/UpdateLegalArchiveDocumentRequest.php');
+        $resource = $this->source('app/Http/Resources/Api/V1/Admin/LegalArchive/LegalArchiveDocumentResource.php');
+
+        self::assertStringContainsString("'status' => ['prohibited']", $request);
+        self::assertStringContainsString("'lifecycle' => [", $resource);
+        self::assertStringContainsString("'editing_frozen' =>", $resource);
+        self::assertStringContainsString("'can_activate' =>", $resource);
+        self::assertStringContainsString("'approval_status' =>", $resource);
+        self::assertStringContainsString("'signature_status' =>", $resource);
+    }
+
     private function source(string $relativePath): string
     {
         $source = file_get_contents(dirname(__DIR__, 3).DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relativePath));
