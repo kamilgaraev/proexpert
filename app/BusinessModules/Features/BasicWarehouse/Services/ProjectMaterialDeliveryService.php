@@ -125,6 +125,50 @@ class ProjectMaterialDeliveryService
         });
     }
 
+    public function syncAfterDeallocation(
+        ProjectMaterialDelivery $delivery,
+        User $user,
+        float $removedQuantity,
+        float $remainingQuantity,
+        array $eventMetadata,
+    ): ProjectMaterialDelivery {
+        return DB::transaction(function () use (
+            $delivery,
+            $user,
+            $removedQuantity,
+            $remainingQuantity,
+            $eventMetadata,
+        ): ProjectMaterialDelivery {
+            $delivery = ProjectMaterialDelivery::query()
+                ->where('organization_id', $delivery->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($delivery->id);
+            $fromStatus = $delivery->status;
+            $toStatus = $remainingQuantity <= 0
+                ? ProjectMaterialDeliveryStatusEnum::CANCELLED
+                : $fromStatus;
+
+            $delivery->forceFill([
+                'requested_quantity' => $remainingQuantity,
+                'reserved_quantity' => $remainingQuantity,
+                'status' => $toStatus,
+            ])->save();
+
+            $this->recordEvent(
+                $delivery,
+                $user,
+                $remainingQuantity <= 0 ? 'cancelled_from_allocation' : 'allocation_reduced',
+                $fromStatus,
+                $toStatus,
+                $removedQuantity,
+                null,
+                $eventMetadata,
+            );
+
+            return $delivery->refresh();
+        });
+    }
+
     public function createOrLinkWarehouseFromSiteRequest(
         SiteRequest $siteRequest,
         User $user,

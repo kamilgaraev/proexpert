@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\ProjectAllocationException;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\RemoveProjectAllocationRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\StoreProjectAllocationRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\ProjectMaterialDeliveryResource;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
@@ -16,9 +17,7 @@ use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\ValidationException;
 
 use function trans_message;
 
@@ -80,62 +79,37 @@ class ProjectAllocationController extends Controller
         }
     }
 
-    public function deallocate(Request $request, int $allocationId): JsonResponse
+    public function deallocate(RemoveProjectAllocationRequest $request, int $allocationId): JsonResponse
     {
-        try {
-            $validated = $request->validate([
-                'quantity' => 'nullable|numeric|min:0.001',
-            ]);
-        } catch (ValidationException $e) {
-            return AdminResponse::error(trans_message('errors.validation_failed'), 422, $e->errors());
-        }
-
-        $organizationId = $request->user()->current_organization_id;
-
-        DB::beginTransaction();
+        $organizationId = (int) $request->user()->current_organization_id;
+        $validated = $request->validated();
 
         try {
-            $allocation = WarehouseProjectAllocation::where('organization_id', $organizationId)
-                ->findOrFail($allocationId);
-
-            if (isset($validated['quantity'])) {
-                if ($validated['quantity'] > $allocation->allocated_quantity) {
-                    DB::rollBack();
-
-                    return AdminResponse::error(
-                        trans_message('basic_warehouse.project_allocations.quantity_exceeds_allocated'),
-                        422
-                    );
-                }
-
-                $allocation->allocated_quantity -= $validated['quantity'];
-
-                if ($allocation->allocated_quantity <= 0) {
-                    $allocation->delete();
-                } else {
-                    $allocation->save();
-                }
-            } else {
-                $allocation->delete();
-            }
-
-            DB::commit();
+            $this->allocationService->deallocate(
+                $organizationId,
+                $request->user(),
+                $allocationId,
+                $validated,
+            );
 
             return AdminResponse::success(null, trans_message('basic_warehouse.project_allocations.deleted'));
+        } catch (ProjectAllocationException $exception) {
+            return AdminResponse::error(
+                $exception->getMessage(),
+                422,
+                null,
+                array_merge(['error_code' => $exception->errorCode], $exception->details ?? []),
+            );
+        } catch (WarehouseOperationIdempotencyConflictException $exception) {
+            return AdminResponse::error($exception->getMessage(), 409);
         } catch (ModelNotFoundException) {
-            DB::rollBack();
-
             return AdminResponse::error(trans_message('basic_warehouse.project_allocations.not_found'), 404);
-        } catch (\Exception $e) {
-            DB::rollBack();
-
+        } catch (\Throwable $exception) {
             Log::error('warehouse.project_allocations.deallocate.error', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
                 'allocation_id' => $allocationId,
-                'payload' => $request->all(),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'exception' => $exception,
             ]);
 
             return AdminResponse::error(trans_message('basic_warehouse.project_allocations.delete_error'), 500);

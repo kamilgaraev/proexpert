@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
@@ -63,6 +64,9 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
             ->firstOrFail();
 
         $this->assertSame(6.0, (float) $allocation->allocated_quantity);
+        $delivery = ProjectMaterialDelivery::query()
+            ->where('warehouse_project_allocation_id', $allocation->id)
+            ->firstOrFail();
 
         $tooMuchResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/project-allocations', [
@@ -83,21 +87,74 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $listResponse->assertJsonPath('success', true);
         $this->assertSame([$allocation->id], collect($listResponse->json('data'))->pluck('id')->all());
 
+        $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/project-allocations/{$allocation->id}", ['quantity' => 2])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('idempotency_key');
+
+        $delivery->forceFill([
+            'status' => ProjectMaterialDeliveryStatusEnum::IN_TRANSIT,
+            'shipped_quantity' => 3,
+        ])->save();
+        $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/project-allocations/{$allocation->id}", [
+                'idempotency_key' => '77777777-7777-4777-8777-777777777777',
+                'quantity' => 4,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message(
+                'basic_warehouse.project_allocations.quantity_below_shipped',
+                ['quantity' => 3],
+            ));
+        $this->assertSame(6.0, (float) $allocation->fresh()->allocated_quantity);
+        $delivery->forceFill([
+            'status' => ProjectMaterialDeliveryStatusEnum::RESERVED,
+            'shipped_quantity' => 0,
+        ])->save();
+
         $partialDeallocateResponse = $this->withHeaders($context->authHeaders())
             ->deleteJson("/api/v1/admin/project-allocations/{$allocation->id}", [
+                'idempotency_key' => '88888888-8888-4888-8888-888888888888',
                 'quantity' => 2,
             ]);
 
         $partialDeallocateResponse->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/project-allocations/{$allocation->id}", [
+                'idempotency_key' => '88888888-8888-4888-8888-888888888888',
+                'quantity' => 2,
+            ])
+            ->assertOk();
         $this->assertSame(4.0, (float) $allocation->fresh()->allocated_quantity);
+        $this->assertSame(4.0, (float) $delivery->fresh()->requested_quantity);
+        $this->assertSame(4.0, (float) $delivery->fresh()->reserved_quantity);
+
+        $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/project-allocations/{$allocation->id}", [
+                'idempotency_key' => '88888888-8888-4888-8888-888888888888',
+                'quantity' => 1,
+            ])
+            ->assertStatus(409);
 
         $fullDeallocateResponse = $this->withHeaders($context->authHeaders())
-            ->deleteJson("/api/v1/admin/project-allocations/{$allocation->id}");
+            ->deleteJson("/api/v1/admin/project-allocations/{$allocation->id}", [
+                'idempotency_key' => '99999999-9999-4999-8999-999999999999',
+            ]);
 
         $fullDeallocateResponse->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/project-allocations/{$allocation->id}", [
+                'idempotency_key' => '99999999-9999-4999-8999-999999999999',
+            ])
+            ->assertOk();
         $this->assertDatabaseMissing('warehouse_project_allocations', [
             'id' => $allocation->id,
         ]);
+        $this->assertSame(ProjectMaterialDeliveryStatusEnum::CANCELLED, $delivery->fresh()->status);
+        $this->assertSame(0.0, (float) $delivery->fresh()->requested_quantity);
+        $this->assertSame(0.0, (float) $delivery->fresh()->reserved_quantity);
+        $this->assertNull($delivery->fresh()->warehouse_project_allocation_id);
+        $this->assertDatabaseCount('project_material_delivery_events', 3);
     }
 
     public function test_project_allocation_rejects_foreign_project_and_foreign_material_before_mutation(): void
