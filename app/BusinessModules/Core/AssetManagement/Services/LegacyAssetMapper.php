@@ -6,6 +6,7 @@ namespace App\BusinessModules\Core\AssetManagement\Services;
 
 use App\BusinessModules\Core\AssetManagement\DTO\AssetPlacementData;
 use App\BusinessModules\Core\AssetManagement\DTO\CreateOrganizationAssetData;
+use App\BusinessModules\Core\AssetManagement\Enums\AssetAccountingMode;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetLifecycleStatus;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetOperationalMode;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
@@ -483,13 +484,29 @@ final readonly class LegacyAssetMapper
             ->forOrganization((int) $legacy->organization_id)
             ->find((int) $legacy->organization_asset_id);
 
-        return $canonical !== null
-            && $this->machineryFieldsMatch($legacy, $canonical)
-            && $canonical->lifecycle_status === AssetLifecycleStatus::Active
+        if ($canonical === null || ! $this->machineryFieldsMatch($legacy, $canonical)) {
+            return null;
+        }
+
+        $isActiveMachineryAsset = $canonical->lifecycle_status === AssetLifecycleStatus::Active
             && ($canonical->metadata['asset_type'] ?? null) === 'machinery'
-            && ($canonical->metadata['canonical_source'] ?? null) === 'machinery_operations'
+            && ($canonical->metadata['canonical_source'] ?? null) === 'machinery_operations';
+
+        return $isActiveMachineryAsset || $this->isWarehouseRegistryProjection($legacy, $canonical)
             ? $canonical
             : null;
+    }
+
+    private function isWarehouseRegistryProjection(object $legacy, OrganizationAsset $canonical): bool
+    {
+        $legacyMetadata = is_array($legacy->metadata)
+            ? $legacy->metadata
+            : (json_decode((string) ($legacy->metadata ?? ''), true) ?: []);
+
+        return ($legacyMetadata['registry_projection'] ?? false) === true
+            && ($legacyMetadata['canonical_source'] ?? null) === 'warehouse_receipt'
+            && $canonical->accounting_mode === AssetAccountingMode::Serialized
+            && is_array($canonical->metadata['warehouse_receipt'] ?? null);
     }
 
     private function hasWarehouseMovementLinkConflict(object $legacy, ?OrganizationAsset $canonical): bool

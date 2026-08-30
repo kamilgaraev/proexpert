@@ -349,6 +349,50 @@ final class BackfillOrganizationAssetsTest extends TestCase
         self::assertSame($canonical->id, $legacy->fresh()->organization_asset_id);
     }
 
+    public function test_warehouse_registry_projection_links_are_idempotently_accepted_for_every_lifecycle_state(): void
+    {
+        $context = AdminApiTestContext::create();
+
+        foreach ([
+            AssetLifecycleStatus::Active,
+            AssetLifecycleStatus::Retired,
+            AssetLifecycleStatus::Lost,
+        ] as $index => $lifecycleStatus) {
+            $legacy = $this->createMachineryAsset(
+                (int) $context->organization->id,
+                'BF-WAREHOUSE-PROJECTION-'.$index,
+                'INV-BF-WAREHOUSE-PROJECTION-'.$index,
+            );
+            $canonical = OrganizationAsset::query()->create([
+                'organization_id' => $context->organization->id,
+                'name' => $legacy->name,
+                'inventory_number' => $legacy->inventory_number,
+                'accounting_mode' => 'serialized',
+                'ownership_type' => $legacy->ownership_type,
+                'machinery_id' => $legacy->machinery_id,
+                'lifecycle_status' => $lifecycleStatus,
+                'metadata' => [
+                    'warehouse_receipt' => ['material_id' => 1746],
+                ],
+            ]);
+            $legacy->update([
+                'organization_asset_id' => $canonical->id,
+                'metadata' => [
+                    'registry_projection' => true,
+                    'canonical_source' => 'warehouse_receipt',
+                ],
+            ]);
+        }
+
+        self::assertSame(0, Artisan::call('assets:backfill', ['--format' => 'json']));
+        $report = $this->jsonOutput();
+
+        self::assertSame(0, $report['conflicts']);
+        self::assertSame(0, $report['created']);
+        self::assertSame(0, $report['links_updated']);
+        self::assertSame(3, $report['already_linked']);
+    }
+
     public function test_serialized_warehouse_balance_is_imported_and_explicit_movements_are_linked(): void
     {
         $context = AdminApiTestContext::create();
