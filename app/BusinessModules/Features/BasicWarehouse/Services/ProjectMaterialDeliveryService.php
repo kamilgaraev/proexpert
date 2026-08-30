@@ -32,7 +32,8 @@ class ProjectMaterialDeliveryService
                 'warehouse_project_allocation_id' => $allocation->id,
             ]);
 
-            $quantity = (float) ($data['quantity'] ?? $allocation->allocated_quantity);
+            $eventQuantity = (float) ($data['quantity'] ?? $allocation->allocated_quantity);
+            $totalQuantity = (float) ($data['total_quantity'] ?? $allocation->allocated_quantity);
 
             $delivery->fill([
                 'organization_id' => $allocation->organization_id,
@@ -42,15 +43,15 @@ class ProjectMaterialDeliveryService
                 'warehouse_project_allocation_id' => $allocation->id,
                 'source_type' => 'warehouse',
                 'status' => ProjectMaterialDeliveryStatusEnum::RESERVED,
-                'requested_quantity' => $quantity,
-                'reserved_quantity' => $quantity,
+                'requested_quantity' => $totalQuantity,
+                'reserved_quantity' => $totalQuantity,
                 'responsible_user_id' => $user->id,
                 'planned_delivery_date' => $data['planned_delivery_date'] ?? $delivery->planned_delivery_date,
                 'notes' => $data['notes'] ?? $delivery->notes,
-                'metadata' => array_filter([
+                'metadata' => array_filter(array_merge($delivery->metadata ?? [], [
                     'created_from' => 'warehouse_project_allocation',
                     'allocation_id' => $allocation->id,
-                ]),
+                ])),
             ]);
 
             $this->assertDeliveryCanBeSaved($delivery);
@@ -62,8 +63,9 @@ class ProjectMaterialDeliveryService
                 $delivery->wasRecentlyCreated ? 'created_from_allocation' : 'updated_from_allocation',
                 null,
                 $delivery->status,
-                $quantity,
-                $data['notes'] ?? null
+                $eventQuantity,
+                $data['notes'] ?? null,
+                $data['event_metadata'] ?? [],
             );
 
             return $delivery->load(['project', 'material.measurementUnit', 'warehouse', 'latestEvent']);
@@ -429,9 +431,10 @@ class ProjectMaterialDeliveryService
         ?ProjectMaterialDeliveryStatusEnum $fromStatus = null,
         ?ProjectMaterialDeliveryStatusEnum $toStatus = null,
         ?float $quantity = null,
-        ?string $notes = null
+        ?string $notes = null,
+        array $metadata = [],
     ): void {
-        $delivery->events()->create([
+        $event = [
             'user_id' => $user->id,
             'event_type' => $eventType,
             'from_status' => $fromStatus?->value,
@@ -439,6 +442,12 @@ class ProjectMaterialDeliveryService
             'quantity' => $quantity,
             'notes' => $notes,
             'occurred_at' => now(),
-        ]);
+        ];
+
+        if ($metadata !== []) {
+            $event['metadata'] = $metadata;
+        }
+
+        $delivery->events()->create($event);
     }
 }

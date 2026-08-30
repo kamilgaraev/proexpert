@@ -1,11 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\ProjectAllocationException;
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\StoreProjectAllocationRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\ProjectMaterialDeliveryResource;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectAllocationService;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
-use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -13,7 +18,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -21,147 +25,55 @@ use function trans_message;
 class ProjectAllocationController extends Controller
 {
     public function __construct(
-        protected WarehouseService $warehouseService,
+        protected ProjectAllocationService $allocationService,
         protected ProjectMaterialDeliveryService $deliveryService
     ) {}
 
-    public function allocate(Request $request): JsonResponse
+    public function allocate(StoreProjectAllocationRequest $request): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
+        $validated = $request->validated();
 
         try {
-            $validated = $request->validate([
-                'warehouse_id' => [
-                    'required',
-                    'integer',
-                    Rule::exists('organization_warehouses', 'id')->where(
-                        fn ($query) => $query->where('organization_id', $organizationId)
-                    ),
-                ],
-                'material_id' => [
-                    'required',
-                    'integer',
-                    Rule::exists('materials', 'id')->where(
-                        fn ($query) => $query->where('organization_id', $organizationId)
-                    ),
-                ],
-                'project_id' => [
-                    'required',
-                    'integer',
-                    Rule::exists('projects', 'id')->where(
-                        fn ($query) => $query->where('organization_id', $organizationId)
-                    ),
-                ],
-                'quantity' => 'required|numeric|min:0.001',
-                'notes' => 'nullable|string',
-            ]);
-        } catch (ValidationException $e) {
-            return AdminResponse::error(trans_message('errors.validation_failed'), 422, $e->errors());
-        }
-
-        DB::beginTransaction();
-
-        try {
-            $balance = $this->warehouseService->getAssetBalance(
+            $result = $this->allocationService->allocate(
                 $organizationId,
-                $validated['warehouse_id'],
-                $validated['material_id']
+                $request->user(),
+                $validated,
             );
-
-            if (!$balance) {
-                DB::rollBack();
-
-                return AdminResponse::error(
-                    trans_message('basic_warehouse.project_allocations.material_not_in_warehouse'),
-                    422,
-                    null,
-                    ['error_code' => 'MATERIAL_NOT_IN_WAREHOUSE']
-                );
-            }
-
-            if ($balance->availableQuantity <= 0) {
-                DB::rollBack();
-
-                return AdminResponse::error(
-                    trans_message('basic_warehouse.project_allocations.insufficient_stock'),
-                    422,
-                    null,
-                    [
-                        'error_code' => 'INSUFFICIENT_STOCK',
-                        'available_quantity' => 0,
-                    ]
-                );
-            }
-
-            $availabilityCheck = $balance->checkAllocationAvailability($validated['quantity']);
-
-            if (!$availabilityCheck['can_allocate']) {
-                DB::rollBack();
-
-                return AdminResponse::error(
-                    trans_message('basic_warehouse.project_allocations.insufficient_available_quantity', [
-                        'quantity' => $availabilityCheck['available_for_allocation'],
-                    ]),
-                    422,
-                    null,
-                    [
-                        'error_code' => 'INSUFFICIENT_AVAILABLE_QUANTITY',
-                        'details' => $availabilityCheck,
-                    ]
-                );
-            }
-
-            $allocation = WarehouseProjectAllocation::firstOrNew([
-                'warehouse_id' => $validated['warehouse_id'],
-                'material_id' => $validated['material_id'],
-                'project_id' => $validated['project_id'],
-            ]);
-
-            if ($allocation->exists) {
-                $allocation->allocated_quantity += $validated['quantity'];
-            } else {
-                $allocation->organization_id = $organizationId;
-                $allocation->allocated_quantity = $validated['quantity'];
-            }
-
-            $allocation->allocated_by_user_id = $request->user()->id;
-            $allocation->allocated_at = now();
-            $allocation->notes = $validated['notes'] ?? $allocation->notes;
-            $allocation->save();
-
-            $delivery = $this->deliveryService->createFromAllocation($allocation, $request->user(), [
-                'quantity' => $validated['quantity'],
-                'notes' => $validated['notes'] ?? null,
-            ]);
-
-            DB::commit();
 
             return AdminResponse::success(
                 [
-                    'allocation' => $allocation->load(['project', 'material', 'warehouse']),
-                    'delivery' => new ProjectMaterialDeliveryResource($delivery),
+                    'allocation' => $result->allocation,
+                    'delivery' => new ProjectMaterialDeliveryResource($result->delivery),
                 ],
                 trans_message('basic_warehouse.project_allocations.created'),
                 201
             );
+        } catch (ProjectAllocationException $exception) {
+            return AdminResponse::error(
+                $exception->getMessage(),
+                422,
+                null,
+                array_merge(['error_code' => $exception->errorCode], $exception->details ?? []),
+            );
+        } catch (WarehouseOperationIdempotencyConflictException $exception) {
+            return AdminResponse::error($exception->getMessage(), 409);
         } catch (ModelNotFoundException) {
-            DB::rollBack();
-
             return AdminResponse::error(
                 trans_message('basic_warehouse.project_allocations.material_not_in_warehouse'),
                 422,
                 null,
-                ['error_code' => 'MATERIAL_NOT_IN_WAREHOUSE']
+                ['error_code' => 'MATERIAL_NOT_IN_WAREHOUSE'],
             );
-        } catch (\Exception $e) {
-            DB::rollBack();
+        } catch (\Throwable $exception) {
 
             Log::error('warehouse.project_allocations.allocate.error', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
-                'payload' => $request->all(),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'warehouse_id' => $validated['warehouse_id'] ?? null,
+                'material_id' => $validated['material_id'] ?? null,
+                'project_id' => $validated['project_id'] ?? null,
+                'exception' => $exception,
             ]);
 
             return AdminResponse::error(trans_message('basic_warehouse.project_allocations.create_error'), 500);
