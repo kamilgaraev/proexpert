@@ -13,6 +13,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReturnSerializedAs
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\StoreAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UpdateAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
+use App\BusinessModules\Features\BasicWarehouse\Services\AssetCreationService;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetLabelExportService;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\BusinessModules\Features\BasicWarehouse\Services\SerializedAssetReceiptService;
@@ -31,6 +32,7 @@ class AssetController extends Controller
 {
     public function __construct(
         protected AssetService $assetService,
+        protected AssetCreationService $assetCreationService,
         protected AssetLabelExportService $assetLabelExportService,
         protected SerializedAssetReceiptService $serializedAssets,
     ) {}
@@ -70,22 +72,31 @@ class AssetController extends Controller
     {
         try {
             $organizationId = $request->user()->current_organization_id;
-            $asset = $this->assetService->createAsset($organizationId, $request->validated());
+            $asset = $this->assetCreationService->create(
+                (int) $organizationId,
+                (int) $request->user()->id,
+                $request->validated(),
+            );
 
             return AdminResponse::success(
                 $this->assetService->getAssetById($organizationId, $asset->id),
                 trans_message('basic_warehouse.asset.created'),
                 201
             );
-        } catch (\Exception $exception) {
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            $validated = $request->validated();
             Log::error('AssetController::store error', [
                 'organization_id' => $request->user()->current_organization_id ?? null,
                 'user_id' => $request->user()->id ?? null,
-                'data' => $request->validated(),
+                'asset_type' => $validated['asset_type'] ?? null,
+                'accounting_mode' => $validated['accounting_mode'] ?? null,
+                'instance_count' => count($validated['instances'] ?? []),
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('basic_warehouse.asset.create_error').': '.$exception->getMessage(), 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.create_error'), 500);
         }
     }
 

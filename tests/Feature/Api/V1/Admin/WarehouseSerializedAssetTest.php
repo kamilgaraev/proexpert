@@ -8,6 +8,7 @@ use App\BusinessModules\Core\AssetManagement\Models\AssetCustodyEvent;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetReadRepository;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryWorkflowPolicy;
@@ -58,6 +59,100 @@ final class WarehouseSerializedAssetTest extends TestCase
             ])
             ->assertStatus(422);
         self::assertSame(0, OrganizationAsset::query()->count());
+    }
+
+    public function test_store_atomically_creates_serialized_catalog_and_instances(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit((int) $context->organization->id);
+        $warehouse = $this->createWarehouse((int) $context->organization->id, 'ATOMIC');
+        $this->allowAdminAccess();
+        $this->actingAs($context->user, 'api_admin');
+
+        $response = $this->postJson('/api/v1/admin/assets', [
+            'name' => 'Шуруповёрт атомарный',
+            'code' => 'ATOMIC-DRILL',
+            'measurement_unit_id' => $unit->id,
+            'asset_type' => Asset::TYPE_EQUIPMENT,
+            'accounting_mode' => 'serialized',
+            'warehouse_id' => $warehouse->id,
+            'instances' => [
+                ['inventory_number' => 'ATOMIC-001', 'serial_number' => 'SN-001'],
+                ['inventory_number' => 'ATOMIC-002'],
+            ],
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.accounting_mode', 'serialized');
+
+        self::assertSame(2, OrganizationAsset::query()->count());
+        self::assertSame(2, AssetCustodyEvent::query()->where('event_type', 'created')->count());
+        self::assertSame(2, MachineryAsset::query()->count());
+        self::assertSame(1, WarehouseBalance::query()->where('warehouse_id', $warehouse->id)->count());
+
+        $this->getJson('/api/v1/admin/assets?warehouse_id='.$warehouse->id)
+            ->assertOk()
+            ->assertJsonPath('data.0.serialized_summary.total_count', 2)
+            ->assertJsonPath('data.0.serialized_summary.in_warehouse_count', 2);
+    }
+
+    public function test_store_rolls_back_catalog_and_balance_when_initial_instances_conflict(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit((int) $context->organization->id);
+        $warehouse = $this->createWarehouse((int) $context->organization->id, 'ROLLBACK');
+        $existingMaterial = $this->createSerializedMaterial((int) $context->organization->id, (int) $unit->id);
+        $this->allowAdminAccess();
+        $this->actingAs($context->user, 'api_admin');
+
+        $this->postJson("/api/v1/admin/assets/{$existingMaterial->id}/instances", [
+            'warehouse_id' => $warehouse->id,
+            'instances' => [['inventory_number' => 'ROLLBACK-DUPLICATE']],
+        ])->assertCreated();
+
+        $materialsBefore = Material::query()->count();
+        $balancesBefore = WarehouseBalance::query()->count();
+
+        $this->postJson('/api/v1/admin/assets', [
+            'name' => 'Не должен сохраниться',
+            'code' => 'ATOMIC-ROLLBACK',
+            'measurement_unit_id' => $unit->id,
+            'asset_type' => Asset::TYPE_EQUIPMENT,
+            'accounting_mode' => 'serialized',
+            'warehouse_id' => $warehouse->id,
+            'instances' => [['inventory_number' => 'ROLLBACK-DUPLICATE']],
+        ])->assertStatus(422)
+            ->assertJsonPath('message', trans_message('asset_management.errors.duplicate_identity'));
+
+        self::assertSame($materialsBefore, Material::query()->count());
+        self::assertSame($balancesBefore, WarehouseBalance::query()->count());
+        self::assertFalse(Material::query()->where('code', 'ATOMIC-ROLLBACK')->exists());
+    }
+
+    public function test_store_rejects_instances_for_quantitative_assets_with_human_readable_fields(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit((int) $context->organization->id);
+        $this->allowAdminAccess();
+        $this->actingAs($context->user, 'api_admin');
+
+        $response = $this->postJson('/api/v1/admin/assets', [
+            'name' => str_repeat('А', 256),
+            'measurement_unit_id' => $unit->id,
+            'asset_type' => Asset::TYPE_TOOL,
+            'accounting_mode' => 'quantitative',
+            'default_price' => -1,
+            'instances' => [['inventory_number' => 'NOT-ALLOWED']],
+        ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors(['name', 'default_price', 'instances']);
+
+        $messages = implode(' ', array_merge(...array_values($response->json('errors'))));
+        self::assertStringContainsString('название', $messages);
+        self::assertStringContainsString('цена по умолчанию', $messages);
+        self::assertStringContainsString('экземпляры', mb_strtolower($messages));
+        self::assertStringNotContainsString('default price', $messages);
     }
 
     public function test_serialized_receipt_creates_exact_instances_with_stable_unique_qr_codes(): void
