@@ -1211,6 +1211,7 @@ class WarehouseService implements WarehouseReportDataProvider
             return [
                 'movement_id' => $movement->id,
                 'movement_type' => $movement->movement_type,
+                'transfer_pair_key' => $movement->metadata['transfer_pair_key'] ?? null,
                 'operation_category' => $movement->operation_category,
                 'operation_category_label' => $movement->operationCategoryLabel(),
                 'warehouse_id' => $movement->warehouse_id,
