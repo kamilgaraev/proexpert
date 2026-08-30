@@ -559,6 +559,7 @@ class WarehouseOperationsController extends Controller
                 $validated['material_id'],
                 $validated['quantity'],
                 $request->user()->id,
+                $validated['idempotency_key'],
                 $validated['project_id'] ?? null,
                 $validated['document_number'] ?? null,
                 $validated['reason'] ?? null

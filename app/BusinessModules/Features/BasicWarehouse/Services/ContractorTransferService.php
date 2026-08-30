@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\Models\Contractor;
 use App\Models\Material;
 use App\Models\Organization;
 use App\Models\Project;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 use function trans_message;
@@ -29,41 +32,80 @@ class ContractorTransferService
         int $materialId,
         float $quantity,
         int $userId,
+        string $idempotencyKey,
         ?int $projectId = null,
         ?string $documentNumber = null,
         ?string $reason = null
     ): array {
-        $contractor = Contractor::query()
-            ->where('organization_id', $sourceOrganizationId)
-            ->findOrFail($contractorId);
+        return DB::transaction(function () use (
+            $sourceOrganizationId,
+            $fromWarehouseId,
+            $contractorId,
+            $materialId,
+            $quantity,
+            $userId,
+            $idempotencyKey,
+            $projectId,
+            $documentNumber,
+            $reason
+        ): array {
+            Organization::query()->whereKey($sourceOrganizationId)->lockForUpdate()->firstOrFail();
+            $fingerprint = WarehouseOperationIdempotency::fingerprint('transfer_to_contractor', [
+                'from_warehouse_id' => $fromWarehouseId,
+                'contractor_id' => $contractorId,
+                'material_id' => $materialId,
+                'quantity' => $quantity,
+                'project_id' => $projectId,
+                'document_number' => $documentNumber,
+                'reason' => $reason,
+            ]);
+            $existingMovement = WarehouseMovement::query()
+                ->where('organization_id', $sourceOrganizationId)
+                ->where('metadata->idempotency_key', $idempotencyKey)
+                ->where('metadata->is_contractor_transfer', true)
+                ->first();
 
-        // Сценарий 1: Подрядчик - это другая организация в системе (Holding Member / Invited Organization)
-        if ($contractor->source_organization_id) {
-            return $this->handleCrossOrganizationTransfer(
+            if ($existingMovement !== null
+                && ($existingMovement->metadata['contractor_transfer_fingerprint'] ?? null) !== $fingerprint) {
+                throw new WarehouseOperationIdempotencyConflictException(
+                    trans_message('warehouse_basic.idempotency_conflict')
+                );
+            }
+
+            $contractor = Contractor::query()
+                ->where('organization_id', $sourceOrganizationId)
+                ->findOrFail($contractorId);
+
+            if ($contractor->source_organization_id) {
+                return $this->handleCrossOrganizationTransfer(
+                    $sourceOrganizationId,
+                    $fromWarehouseId,
+                    $contractor,
+                    $materialId,
+                    $quantity,
+                    $userId,
+                    $idempotencyKey,
+                    $fingerprint,
+                    $projectId,
+                    $documentNumber,
+                    $reason
+                );
+            }
+
+            return $this->handleInternalTransferToVirtualWarehouse(
                 $sourceOrganizationId,
                 $fromWarehouseId,
                 $contractor,
                 $materialId,
                 $quantity,
                 $userId,
+                $idempotencyKey,
+                $fingerprint,
                 $projectId,
                 $documentNumber,
                 $reason
             );
-        }
-
-        // Сценарий 2: "Ручной" подрядчик без организации в системе (внутренний учет)
-        return $this->handleInternalTransferToVirtualWarehouse(
-            $sourceOrganizationId,
-            $fromWarehouseId,
-            $contractor,
-            $materialId,
-            $quantity,
-            $userId,
-            $projectId,
-            $documentNumber,
-            $reason
-        );
+        });
     }
 
     /**
@@ -76,6 +118,8 @@ class ContractorTransferService
         int $materialId,
         float $quantity,
         int $userId,
+        string $idempotencyKey,
+        string $fingerprint,
         ?int $projectId,
         ?string $documentNumber,
         ?string $reason
@@ -90,6 +134,8 @@ class ContractorTransferService
             $quantity,
             [
                 'user_id' => $userId,
+                'idempotency_key' => $idempotencyKey,
+                'contractor_transfer_fingerprint' => $fingerprint,
                 'project_id' => $projectId,
                 'document_number' => $documentNumber,
                 'reason' => $reason ?? trans_message('warehouse_basic.transfer_to_contractor_default_reason', [
@@ -127,6 +173,8 @@ class ContractorTransferService
             $avgPrice,
             [
                 'user_id' => null, // Системная операция
+                'idempotency_key' => $idempotencyKey,
+                'contractor_transfer_fingerprint' => $fingerprint,
                 'project_id' => $targetProjectId,
                 'document_number' => $documentNumber,
                 'reason' => trans_message('warehouse_basic.received_from_customer_reason', [
@@ -157,6 +205,8 @@ class ContractorTransferService
         int $materialId,
         float $quantity,
         int $userId,
+        string $idempotencyKey,
+        string $fingerprint,
         ?int $projectId,
         ?string $documentNumber,
         ?string $reason
@@ -172,6 +222,8 @@ class ContractorTransferService
             $quantity,
             [
                 'user_id' => $userId,
+                'idempotency_key' => $idempotencyKey,
+                'contractor_transfer_fingerprint' => $fingerprint,
                 'project_id' => $projectId,
                 'document_number' => $documentNumber,
                 'reason' => $reason ?? trans_message('warehouse_basic.transfer_to_contractor_default_reason', [

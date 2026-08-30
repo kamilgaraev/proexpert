@@ -11,6 +11,8 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Services\ContractorTransferService;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ContractorType;
@@ -516,6 +518,7 @@ class WarehouseOperationsControllerTest extends TestCase
             ->assertCreated();
 
         $foreignPayload = [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
             'from_warehouse_id' => $foreignWarehouse->id,
             'contractor_id' => $foreignContractor->id,
             'material_id' => $foreignMaterial->id,
@@ -537,6 +540,7 @@ class WarehouseOperationsControllerTest extends TestCase
 
         $transferResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
                 'from_warehouse_id' => $warehouse->id,
                 'contractor_id' => $contractor->id,
                 'material_id' => $material->id,
@@ -630,6 +634,7 @@ class WarehouseOperationsControllerTest extends TestCase
 
         $transferResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
                 'from_warehouse_id' => $warehouse->id,
                 'contractor_id' => $contractor->id,
                 'material_id' => $material->id,
@@ -662,6 +667,165 @@ class WarehouseOperationsControllerTest extends TestCase
             $targetWarehouseId,
             $targetMaterial->id
         ));
+    }
+
+    public function test_transfer_to_contractor_is_idempotent_for_the_same_request(): void
+    {
+        $context = AdminApiTestContext::create();
+        $recipientContext = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Cement', 'CEM-IDEMPOTENT');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN-IDEMPOTENT');
+        $contractor = $this->createContractor($context->organization->id, 'Idempotent Contractor');
+        $crossOrganizationContractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'source_organization_id' => $recipientContext->organization->id,
+            'name' => 'Different recipient organization',
+            'contractor_type' => ContractorType::INVITED_ORGANIZATION->value,
+        ]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 5,
+                'price' => 100,
+                'reason' => 'Initial idempotent contractor stock',
+            ])
+            ->assertCreated();
+
+        $payload = [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'from_warehouse_id' => $warehouse->id,
+            'contractor_id' => $contractor->id,
+            'material_id' => $material->id,
+            'quantity' => 2,
+            'document_number' => 'M-IDEMPOTENT',
+        ];
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', $payload)
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', $payload)
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', [
+                ...$payload,
+                'quantity' => 1,
+            ])
+            ->assertStatus(409);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', [
+                ...$payload,
+                'contractor_id' => $crossOrganizationContractor->id,
+            ])
+            ->assertStatus(409);
+
+        $this->assertSame(3.0, $this->availableQuantity($context->organization->id, $warehouse->id, $material->id));
+        $this->assertSame(1, WarehouseMovement::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('movement_type', WarehouseMovement::TYPE_TRANSFER_OUT)
+            ->where('document_number', 'M-IDEMPOTENT')
+            ->count());
+    }
+
+    public function test_transfer_to_contractor_requires_an_idempotency_key(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer-to-contractor', [])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('idempotency_key');
+    }
+
+    public function test_cross_organization_transfer_rolls_back_source_write_off_when_recipient_setup_fails(): void
+    {
+        $context = AdminApiTestContext::create();
+        $recipientContext = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Rollback cement', 'CEM-ROLLBACK');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN-ROLLBACK');
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'source_organization_id' => $recipientContext->organization->id,
+            'name' => 'Recipient with conflicting catalog',
+            'contractor_type' => ContractorType::INVITED_ORGANIZATION->value,
+        ]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 5,
+                'price' => 100,
+                'reason' => 'Initial rollback stock',
+            ])
+            ->assertCreated();
+
+        $warehouseService = $this->app->make(WarehouseService::class);
+        $failingWarehouseService = new class($warehouseService) extends WarehouseService
+        {
+            public function __construct(private readonly WarehouseService $delegate) {}
+
+            public function writeOffAsset(
+                int $organizationId,
+                int $warehouseId,
+                int $materialId,
+                float $quantity,
+                array $metadata = []
+            ): array {
+                return $this->delegate->writeOffAsset(
+                    $organizationId,
+                    $warehouseId,
+                    $materialId,
+                    $quantity,
+                    $metadata,
+                );
+            }
+
+            public function receiveAsset(
+                int $organizationId,
+                int $warehouseId,
+                int $materialId,
+                float $quantity,
+                float $price,
+                array $metadata = [],
+                bool $recordInventoryEvent = true
+            ): array {
+                throw new \RuntimeException('Simulated recipient failure');
+            }
+        };
+        $service = new ContractorTransferService($failingWarehouseService);
+
+        try {
+            $service->transferToContractor(
+                $context->organization->id,
+                $warehouse->id,
+                $contractor->id,
+                $material->id,
+                2,
+                $context->user->id,
+                (string) \Illuminate\Support\Str::uuid(),
+                documentNumber: 'M-ROLLBACK',
+            );
+            self::fail('Recipient failure was not propagated.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('Simulated recipient failure', $exception->getMessage());
+        }
+
+        $this->assertSame(5.0, $this->availableQuantity($context->organization->id, $warehouse->id, $material->id));
+        $this->assertDatabaseMissing('warehouse_movements', [
+            'organization_id' => $context->organization->id,
+            'movement_type' => WarehouseMovement::TYPE_WRITE_OFF,
+            'document_number' => 'M-ROLLBACK',
+        ]);
     }
 
     public function test_operations_reject_insufficient_available_stock_without_mutating_balances(): void
