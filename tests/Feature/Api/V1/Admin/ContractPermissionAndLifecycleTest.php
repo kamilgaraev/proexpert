@@ -20,6 +20,7 @@ use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\UpdateContractRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
 use App\Models\ContractStateEvent;
 use App\Models\User;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
@@ -591,7 +592,68 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             'Приостановка договора: Активен → Приостановлен. Основание: Плановая пауза.',
             $payload['data']['events'][0]['description']
         );
+        self::assertSame('Изменение статуса', $payload['data']['events'][0]['event_type_label']);
+        self::assertSame('Вы', $payload['data']['events'][0]['created_by']);
         self::assertNotSame('status_transition', $payload['data']['events'][0]['description']);
+    }
+
+    public function test_timeline_presents_contract_events_and_performance_acts_for_the_current_user(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(83, 11);
+        $user = $this->user(7)->forceFill(['name' => 'Иван Петров']);
+        $event = ContractStateEvent::query()->create([
+            'contract_id' => $contract->id,
+            'event_type' => ContractStateEventTypeEnum::CREATED,
+            'triggered_by_type' => Contract::class,
+            'triggered_by_id' => $contract->id,
+            'amount_delta' => 2100,
+            'effective_from' => '2026-07-19',
+            'metadata' => [],
+            'created_by_user_id' => $user->id,
+        ]);
+        $event->setRelation('createdBy', $user);
+        $event->setRelation('specification', null);
+
+        $act = new ContractPerformanceAct([
+            'act_document_number' => 'АКТ-01',
+            'amount' => 5715,
+            'act_date' => '2026-07-20',
+            'created_by_user_id' => $user->id,
+            'is_approved' => true,
+        ]);
+        $act->id = 501;
+        $act->created_at = $event->created_at->copy()->addMinute();
+        $act->setRelation('createdBy', $user);
+
+        $contractService = \Mockery::mock(ContractService::class);
+        $contractService->shouldReceive('getContractById')->once()->with(83, 7)->andReturn($contract);
+        $eventService = \Mockery::mock(ContractStateEventService::class);
+        $eventService->shouldReceive('getTimeline')->once()->with($contract, null)->andReturn(collect([$event]));
+        $performanceActs = \Mockery::mock(ContractPerformanceActRepositoryInterface::class);
+        $performanceActs->shouldReceive('getActsForContract')->once()->with(83)
+            ->andReturn(new \Illuminate\Database\Eloquent\Collection([$act]));
+        $controller = new ContractStateEventController(
+            $contractService,
+            $eventService,
+            \Mockery::mock(ContractStateCalculatorService::class),
+            $performanceActs
+        );
+
+        $request = Request::create('/__review/projects/11/contracts/83/state-events/timeline', 'GET');
+        $request->setUserResolver(static fn (): User => $user);
+        $route = new LaravelRoute(['GET'], '__review/projects/{project}/contracts/{contract}/state-events/timeline', static fn () => null);
+        $route->bind($request);
+        $request->setRouteResolver(static fn () => $route);
+
+        $payload = json_decode($controller->timeline($request, 11, 83)->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame('Создание', $payload['data']['events'][0]['event_type_label']);
+        self::assertSame('Создание договора на сумму 2 100,00 ₽', $payload['data']['events'][0]['description']);
+        self::assertSame('Вы', $payload['data']['events'][0]['created_by']);
+        self::assertSame('Акт выполненных работ', $payload['data']['events'][1]['event_type_label']);
+        self::assertSame('Акт выполненных работ №АКТ-01 на сумму 5 715,00 ₽', $payload['data']['events'][1]['description']);
+        self::assertSame('Вы', $payload['data']['events'][1]['created_by']);
     }
 
     public function test_http_invalid_transition_and_legacy_delete_return_conflict(): void

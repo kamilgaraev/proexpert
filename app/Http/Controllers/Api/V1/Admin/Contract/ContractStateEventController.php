@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\V1\Admin\Contract;
 
 use App\Http\Controllers\Controller;
@@ -10,9 +12,11 @@ use App\Services\Contract\ContractStateCalculatorService;
 use App\Services\Contract\ContractStateEventService;
 use Carbon\Carbon;
 use Exception;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 
 class ContractStateEventController extends Controller
 {
@@ -146,6 +150,9 @@ class ContractStateEventController extends Controller
 
             // Получаем акты
             $performanceActs = $this->performanceActRepository->getActsForContract($contractModel->id);
+            if ($performanceActs instanceof EloquentCollection) {
+                $performanceActs->loadMissing('createdBy');
+            }
 
             // Фильтруем акты по дате если указано
             if ($asOfDate) {
@@ -155,16 +162,21 @@ class ContractStateEventController extends Controller
             }
 
             // Формируем массив событий
-            $events = $timeline->map(function ($event) {
+            $events = $timeline->map(function ($event) use ($request) {
                 return [
                     'type' => 'event',
                     'id' => $event->id,
                     'event_type' => $event->event_type->value,
+                    'event_type_label' => $this->getEventTypeLabel($event->event_type->value),
                     'description' => $this->getEventDescription($event),
                     'amount_delta' => $event->amount_delta,
                     'effective_from' => $event->effective_from?->format('Y-m-d'),
                     'created_at' => $event->created_at?->toIso8601String(),
-                    'created_by' => $event->createdBy?->name ?? 'System',
+                    'created_by' => $this->formatActor(
+                        $event->created_by_user_id,
+                        $event->createdBy?->name,
+                        $request->user()?->id
+                    ),
                     'specification' => $event->specification ? [
                         'id' => $event->specification->id,
                         'number' => $event->specification->number,
@@ -175,16 +187,21 @@ class ContractStateEventController extends Controller
             })->toArray();
 
             // Формируем массив актов
-            $acts = $performanceActs->map(function ($act) {
+            $acts = $performanceActs->map(function ($act) use ($request) {
                 return [
                     'type' => 'performance_act',
                     'id' => $act->id,
                     'event_type' => 'performance_act',
-                    'description' => "Акт выполненных работ №{$act->act_document_number} на сумму ".number_format($act->amount, 2, '.', ' ').' руб.',
+                    'event_type_label' => $this->getEventTypeLabel('performance_act'),
+                    'description' => "Акт выполненных работ №{$act->act_document_number} на сумму ".$this->formatMoney($act->amount),
                     'amount_delta' => $act->amount,
                     'effective_from' => $act->act_date?->format('Y-m-d'),
                     'created_at' => $act->created_at?->toIso8601String(),
-                    'created_by' => 'System',
+                    'created_by' => $this->formatActor(
+                        $act->created_by_user_id,
+                        $act->createdBy?->name,
+                        $request->user()?->id
+                    ),
                     'act_document_number' => $act->act_document_number,
                     'is_approved' => $act->is_approved,
                     'approval_date' => $act->approval_date?->format('Y-m-d'),
@@ -212,8 +229,46 @@ class ContractStateEventController extends Controller
                 'events' => $combined,
             ]);
         } catch (Exception $e) {
-            return AdminResponse::error(trans_message('contract.timeline_error').': '.$e->getMessage(), Response::HTTP_BAD_REQUEST);
+            Log::error('Failed to build contract timeline', [
+                'organization_id' => $organizationId,
+                'project_id' => $project,
+                'contract_id' => $contract,
+                'exception' => $e::class,
+            ]);
+
+            return AdminResponse::error(trans_message('contract.timeline_error'), Response::HTTP_BAD_REQUEST);
         }
+    }
+
+    private function getEventTypeLabel(string $eventType): string
+    {
+        $key = "contract.timeline.event_types.{$eventType}";
+        $label = trans_message($key);
+
+        return $label === $key
+            ? trans_message('contract.timeline.event_types.unknown')
+            : $label;
+    }
+
+    private function formatActor(?int $actorId, ?string $actorName, ?int $viewerId): string
+    {
+        if ($actorId !== null && $actorId === $viewerId) {
+            return trans_message('contract.timeline.current_actor');
+        }
+
+        return $actorName ?: trans_message('contract.timeline.system_actor');
+    }
+
+    private function formatMoney(float|int|string|null $amount): string
+    {
+        return number_format((float) $amount, 2, ',', ' ').' ₽';
+    }
+
+    private function formatSignedMoney(float|int|string|null $amount): string
+    {
+        $numericAmount = (float) $amount;
+
+        return ($numericAmount >= 0 ? '+' : '').$this->formatMoney($numericAmount);
     }
 
     /**
@@ -323,11 +378,11 @@ class ContractStateEventController extends Controller
     private function getEventDescription($event): string
     {
         $type = $event->event_type->value;
-        $delta = number_format($event->amount_delta, 2, '.', ' ');
+        $delta = $this->formatMoney($event->amount_delta);
 
         switch ($type) {
             case 'created':
-                return "Создание договора на сумму {$delta} руб.";
+                return "Создание договора на сумму {$delta}";
             case 'amended':
                 $agreementNumber = $event->metadata['agreement_number'] ?? null;
                 $reason = $event->metadata['reason'] ?? null;
@@ -340,19 +395,19 @@ class ContractStateEventController extends Controller
                     $newAmount = $event->metadata['new_total_amount'] ?? null;
 
                     if ($actNumber) {
-                        $formattedDelta = ($event->amount_delta >= 0 ? '+' : '').number_format($event->amount_delta, 2, '.', ' ');
+                        $formattedDelta = $this->formatSignedMoney($event->amount_delta);
                         if ($oldAmount !== null && $newAmount !== null) {
-                            $formattedOldAmount = number_format($oldAmount, 2, '.', ' ');
-                            $formattedNewAmount = number_format($newAmount, 2, '.', ' ');
+                            $formattedOldAmount = $this->formatMoney($oldAmount);
+                            $formattedNewAmount = $this->formatMoney($newAmount);
 
-                            return "Акт №{$actNumber}: {$formattedOldAmount} → {$formattedNewAmount} руб. ({$formattedDelta} руб.)";
+                            return "Акт №{$actNumber}: {$formattedOldAmount} → {$formattedNewAmount} ({$formattedDelta})";
                         }
 
-                        return "Акт №{$actNumber}: {$formattedDelta} руб.";
+                        return "Акт №{$actNumber}: {$formattedDelta}";
                     }
-                    $formattedDelta = ($event->amount_delta >= 0 ? '+' : '').number_format($event->amount_delta, 2, '.', ' ');
+                    $formattedDelta = $this->formatSignedMoney($event->amount_delta);
 
-                    return "Акт выполненных работ: {$formattedDelta} руб.";
+                    return "Акт выполненных работ: {$formattedDelta}";
                 }
 
                 // Автоматический пересчет из-за дополнительного соглашения
@@ -361,24 +416,24 @@ class ContractStateEventController extends Controller
                     $newAmount = $event->metadata['new_total_amount'] ?? null;
 
                     if ($agreementNumber) {
-                        $formattedDelta = ($event->amount_delta >= 0 ? '+' : '').number_format($event->amount_delta, 2, '.', ' ');
+                        $formattedDelta = $this->formatSignedMoney($event->amount_delta);
                         if ($oldAmount !== null && $newAmount !== null) {
-                            $formattedOldAmount = number_format($oldAmount, 2, '.', ' ');
-                            $formattedNewAmount = number_format($newAmount, 2, '.', ' ');
+                            $formattedOldAmount = $this->formatMoney($oldAmount);
+                            $formattedNewAmount = $this->formatMoney($newAmount);
 
-                            return "ДС №{$agreementNumber}: {$formattedOldAmount} → {$formattedNewAmount} руб. ({$formattedDelta} руб.)";
+                            return "ДС №{$agreementNumber}: {$formattedOldAmount} → {$formattedNewAmount} ({$formattedDelta})";
                         }
 
-                        return "ДС №{$agreementNumber}: {$formattedDelta} руб.";
+                        return "ДС №{$agreementNumber}: {$formattedDelta}";
                     }
-                    $formattedDelta = ($event->amount_delta >= 0 ? '+' : '').number_format($event->amount_delta, 2, '.', ' ');
+                    $formattedDelta = $this->formatSignedMoney($event->amount_delta);
 
-                    return "Дополнительное соглашение: {$formattedDelta} руб.";
+                    return "Дополнительное соглашение: {$formattedDelta}";
                 }
 
                 // Обычное дополнительное соглашение
                 if ($agreementNumber) {
-                    return "Создание дополнительного соглашения №{$agreementNumber} на сумму {$delta} руб.";
+                    return "Создание дополнительного соглашения №{$agreementNumber} на сумму {$delta}";
                 }
 
                 // Изменение суммы контракта вручную
@@ -386,18 +441,18 @@ class ContractStateEventController extends Controller
                     $oldAmount = $event->metadata['old_amount'] ?? null;
                     $newAmount = $event->metadata['new_amount'] ?? null;
                     if ($oldAmount !== null && $newAmount !== null) {
-                        $formattedOldAmount = number_format($oldAmount, 2, '.', ' ');
-                        $formattedNewAmount = number_format($newAmount, 2, '.', ' ');
-                        $formattedDelta = ($event->amount_delta >= 0 ? '+' : '').number_format($event->amount_delta, 2, '.', ' ');
+                        $formattedOldAmount = $this->formatMoney($oldAmount);
+                        $formattedNewAmount = $this->formatMoney($newAmount);
+                        $formattedDelta = $this->formatSignedMoney($event->amount_delta);
 
-                        return "Изменение договора: {$formattedOldAmount} → {$formattedNewAmount} руб. ({$formattedDelta} руб.)";
+                        return "Изменение договора: {$formattedOldAmount} → {$formattedNewAmount} ({$formattedDelta})";
                     }
-                    $formattedDelta = ($event->amount_delta >= 0 ? '+' : '').number_format($event->amount_delta, 2, '.', ' ');
+                    $formattedDelta = $this->formatSignedMoney($event->amount_delta);
 
-                    return "Изменение договора: {$formattedDelta} руб.";
+                    return "Изменение договора: {$formattedDelta}";
                 }
 
-                return "Изменение договора: +{$delta} руб.";
+                return "Изменение договора: +{$delta}";
             case 'superseded':
                 // Получаем информацию об аннулированном событии
                 $supersedesEvent = $event->supersedesEvent;
@@ -415,7 +470,7 @@ class ContractStateEventController extends Controller
                 if ($supersedesEvent) {
                     // Определяем тип аннулированного события
                     $supersededType = $supersedesEvent->event_type->value;
-                    $supersededDelta = number_format(abs($supersedesEvent->amount_delta), 2, '.', ' ');
+                    $supersededDelta = $this->formatMoney(abs((float) $supersedesEvent->amount_delta));
 
                     if ($supersededType === 'supplementary_agreement_created' || $supersededType === 'amended') {
                         // Пытаемся получить номер из metadata или из связанного ДС
@@ -431,11 +486,11 @@ class ContractStateEventController extends Controller
                             $description .= 'дополнительного соглашения ';
                         }
 
-                        $description .= "на сумму {$supersededDelta} руб.";
+                        $description .= "на сумму {$supersededDelta}";
                     } elseif ($supersededType === 'created') {
-                        $description .= "создания договора на сумму {$supersededDelta} руб.";
+                        $description .= "создания договора на сумму {$supersededDelta}";
                     } else {
-                        $description .= "события типа '{$supersededType}' на сумму {$supersededDelta} руб.";
+                        $description .= "события типа '{$supersededType}' на сумму {$supersededDelta}";
                     }
 
                     // Добавляем информацию о том, каким ДС было аннулировано или удалено
@@ -453,7 +508,7 @@ class ContractStateEventController extends Controller
                     if ($reason) {
                         $description .= $reason;
                     } else {
-                        $description .= 'на сумму '.number_format(abs($delta), 2, '.', ' ').' руб.';
+                        $description .= 'на сумму '.$this->formatMoney(abs((float) $event->amount_delta));
                     }
                     if ($supersedingAgreement) {
                         $description .= " (аннулировано ДС №{$supersedingAgreement->number})";
@@ -462,19 +517,19 @@ class ContractStateEventController extends Controller
 
                 return $description;
             case 'cancelled':
-                return "Отмена: {$delta} руб.";
+                return "Отмена: {$delta}";
             case 'supplementary_agreement_created':
                 $agreementNumber = $event->metadata['agreement_number'] ?? null;
                 if ($agreementNumber) {
-                    return "Создание дополнительного соглашения №{$agreementNumber} на сумму {$delta} руб.";
+                    return "Создание дополнительного соглашения №{$agreementNumber} на сумму {$delta}";
                 }
 
-                return "Создание дополнительного соглашения на сумму {$delta} руб.";
+                return "Создание дополнительного соглашения на сумму {$delta}";
             case 'payment_created':
                 $paymentType = $event->metadata['payment_type'] ?? null;
                 $paymentTypeLabel = $paymentType === 'advance' ? 'Авансовый' : 'Обычный';
 
-                return "Создание {$paymentTypeLabel} платежа на сумму {$delta} руб.";
+                return "Создание {$paymentTypeLabel} платежа на сумму {$delta}";
             case 'status_transition':
                 $metadata = $event->metadata ?? [];
                 $reason = trim((string) ($metadata['reason'] ?? ''));

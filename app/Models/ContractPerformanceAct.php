@@ -93,6 +93,11 @@ class ContractPerformanceAct extends Model
         return $this->belongsTo(EstimateVersion::class);
     }
 
+    public function createdBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
     /**
      * Выполненные работы включенные в данный акт
      */

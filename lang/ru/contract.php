@@ -65,6 +65,21 @@ return [
     'project_estimates_loaded' => 'Сметы проекта загружены.',
     'project_estimates_load_error' => 'Не удалось загрузить сметы проекта.',
     'state_date_required' => 'Укажите дату состояния договора.',
+    'timeline' => [
+        'current_actor' => 'Вы',
+        'system_actor' => 'Система',
+        'event_types' => [
+            'created' => 'Создание',
+            'amended' => 'Изменение договора',
+            'superseded' => 'Аннулирование',
+            'cancelled' => 'Отмена',
+            'supplementary_agreement_created' => 'Дополнительное соглашение',
+            'payment_created' => 'Платёж',
+            'status_transition' => 'Изменение статуса',
+            'performance_act' => 'Акт выполненных работ',
+            'unknown' => 'Событие договора',
+        ],
+    ],
     'statuses' => [
         'draft' => 'Черновик',
         'active' => 'Активен',
