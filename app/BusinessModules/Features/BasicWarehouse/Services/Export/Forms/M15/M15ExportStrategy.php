@@ -86,7 +86,13 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
         $this->setCenter($sheet, 'H11:I12');
 
         $sheet->setCellValue('A14', 'Основание: '.($movement->metadata['reason'] ?? 'Бухгалтерская справка'));
-        $sheet->setCellValue('A15', 'Кому: '.($movement->toWarehouse->name ?? $movement->metadata['recipient'] ?? 'Сторонняя организация'));
+        $sheet->setCellValue(
+            'A15',
+            'Кому: '.($movement->toWarehouse->name
+                ?? $movement->metadata['contractor_name']
+                ?? $movement->metadata['recipient']
+                ?? 'Сторонняя организация')
+        );
         $sheet->setCellValue('A16', 'Через кого: '.($movement->user->name ?? ''));
     }
 

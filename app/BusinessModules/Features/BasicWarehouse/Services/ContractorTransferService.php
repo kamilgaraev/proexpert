@@ -1,12 +1,17 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\Models\Contractor;
 use App\Models\Material;
+use App\Models\Organization;
 use App\Models\Project;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+
+use function trans_message;
 
 class ContractorTransferService
 {
@@ -27,9 +32,10 @@ class ContractorTransferService
         ?int $projectId = null,
         ?string $documentNumber = null,
         ?string $reason = null
-    ): array
-    {
-        $contractor = Contractor::findOrFail($contractorId);
+    ): array {
+        $contractor = Contractor::query()
+            ->where('organization_id', $sourceOrganizationId)
+            ->findOrFail($contractorId);
 
         // Сценарий 1: Подрядчик - это другая организация в системе (Holding Member / Invited Organization)
         if ($contractor->source_organization_id) {
@@ -73,8 +79,9 @@ class ContractorTransferService
         ?int $projectId,
         ?string $documentNumber,
         ?string $reason
-    ): array
-    {
+    ): array {
+        $sourceOrganization = Organization::query()->findOrFail($sourceOrganizationId);
+
         // 1. Списываем с нашего склада
         $writeOffResult = $this->warehouseService->writeOffAsset(
             $sourceOrganizationId,
@@ -85,9 +92,12 @@ class ContractorTransferService
                 'user_id' => $userId,
                 'project_id' => $projectId,
                 'document_number' => $documentNumber,
-                'reason' => $reason ?? "Передача материалов подрядчику {$contractor->name} (Орг. ID: {$contractor->source_organization_id})",
+                'reason' => $reason ?? trans_message('warehouse_basic.transfer_to_contractor_default_reason', [
+                    'contractor' => $contractor->name,
+                ]),
                 'is_contractor_transfer' => true,
                 'contractor_id' => $contractor->id,
+                'contractor_name' => $contractor->name,
                 'target_organization_id' => $contractor->source_organization_id,
             ]
         );
@@ -101,7 +111,11 @@ class ContractorTransferService
         $targetWarehouse = $this->findOrCreateTargetWarehouse($contractor->source_organization_id);
 
         // 3. Синхронизируем материал
-        $targetMaterial = $this->syncMaterial($materialId, $contractor->source_organization_id);
+        $targetMaterial = $this->syncMaterial(
+            $sourceOrganizationId,
+            $materialId,
+            $contractor->source_organization_id,
+        );
         $targetProjectId = $this->resolveTargetProjectId($projectId, $contractor->source_organization_id);
 
         // 4. Приходуем в целевой организации
@@ -115,9 +129,12 @@ class ContractorTransferService
                 'user_id' => null, // Системная операция
                 'project_id' => $targetProjectId,
                 'document_number' => $documentNumber,
-                'reason' => "Получено от заказчика (Орг. ID: {$sourceOrganizationId})",
+                'reason' => trans_message('warehouse_basic.received_from_customer_reason', [
+                    'organization' => $sourceOrganization->legal_name ?? $sourceOrganization->name,
+                ]),
                 'is_customer_transfer' => true,
                 'source_organization_id' => $sourceOrganizationId,
+                'source_organization_name' => $sourceOrganization->legal_name ?? $sourceOrganization->name,
                 'source_project_id' => $projectId,
                 'source_movement_ids' => [$writeOffResult['movement']->id],
             ]
@@ -143,22 +160,8 @@ class ContractorTransferService
         ?int $projectId,
         ?string $documentNumber,
         ?string $reason
-    ): array
-    {
-        // 1. Ищем или создаем склад подрядчика
-        $contractorWarehouse = OrganizationWarehouse::firstOrCreate(
-            [
-                'organization_id' => $organizationId,
-                'name' => 'Склад подрядчика: ' . $contractor->name,
-                'warehouse_type' => OrganizationWarehouse::TYPE_EXTERNAL,
-            ],
-            [
-                'code' => 'CTR-' . $contractor->id . '-' . time(),
-                'description' => "Автоматически созданный склад для подрядчика ID: {$contractor->id}",
-                'is_active' => true,
-                'settings' => ['contractor_id' => $contractor->id],
-            ]
-        );
+    ): array {
+        $contractorWarehouse = $this->findOrCreateContractorWarehouse($organizationId, $contractor);
 
         // 2. Выполняем перемещение
         $result = $this->warehouseService->transferAsset(
@@ -171,9 +174,12 @@ class ContractorTransferService
                 'user_id' => $userId,
                 'project_id' => $projectId,
                 'document_number' => $documentNumber,
-                'reason' => $reason ?? "Передача материалов подрядчику {$contractor->name}",
+                'reason' => $reason ?? trans_message('warehouse_basic.transfer_to_contractor_default_reason', [
+                    'contractor' => $contractor->name,
+                ]),
                 'is_contractor_transfer' => true,
                 'contractor_id' => $contractor->id,
+                'contractor_name' => $contractor->name,
             ]
         );
 
@@ -190,17 +196,17 @@ class ContractorTransferService
             ->where('is_main', true)
             ->first();
 
-        if (!$warehouse) {
+        if (! $warehouse) {
             $warehouse = OrganizationWarehouse::where('organization_id', $organizationId)
                 ->where('is_active', true)
                 ->first();
         }
 
-        if (!$warehouse) {
+        if (! $warehouse) {
             $warehouse = OrganizationWarehouse::create([
                 'organization_id' => $organizationId,
-                'name' => 'Основной склад',
-                'code' => 'MAIN-' . $organizationId,
+                'name' => trans_message('warehouse_basic.main_warehouse_name'),
+                'code' => 'MAIN',
                 'is_main' => true,
                 'is_active' => true,
                 'warehouse_type' => 'central',
@@ -224,22 +230,74 @@ class ContractorTransferService
         return $isAccessible ? $projectId : null;
     }
 
-    protected function syncMaterial(int $sourceMaterialId, int $targetOrganizationId): Material
-    {
-        $sourceMaterial = Material::find($sourceMaterialId);
-        
+    protected function syncMaterial(
+        int $sourceOrganizationId,
+        int $sourceMaterialId,
+        int $targetOrganizationId,
+    ): Material {
+        $sourceMaterial = Material::query()
+            ->where('organization_id', $sourceOrganizationId)
+            ->findOrFail($sourceMaterialId);
+
         $targetMaterial = Material::where('organization_id', $targetOrganizationId)
             ->where('name', $sourceMaterial->name)
             ->first();
-        
-        if (!$targetMaterial) {
+
+        if (! $targetMaterial) {
             $targetMaterial = $sourceMaterial->replicate();
             $targetMaterial->organization_id = $targetOrganizationId;
-            $targetMaterial->code = $sourceMaterial->code ? ($sourceMaterial->code . '-EXT') : null;
+            $targetMaterial->code = $sourceMaterial->code ? ($sourceMaterial->code.'-EXT') : null;
             $targetMaterial->push();
             $targetMaterial->save();
         }
 
         return $targetMaterial;
+    }
+
+    private function findOrCreateContractorWarehouse(
+        int $organizationId,
+        Contractor $contractor,
+    ): OrganizationWarehouse {
+        $existing = OrganizationWarehouse::query()
+            ->where('organization_id', $organizationId)
+            ->where('warehouse_type', OrganizationWarehouse::TYPE_EXTERNAL)
+            ->where('settings->contractor_id', $contractor->id)
+            ->first();
+
+        if ($existing instanceof OrganizationWarehouse) {
+            return $existing;
+        }
+
+        return OrganizationWarehouse::query()->create([
+            'organization_id' => $organizationId,
+            'name' => trans_message('warehouse_basic.contractor_warehouse_name', [
+                'contractor' => $contractor->name,
+            ]),
+            'warehouse_type' => OrganizationWarehouse::TYPE_EXTERNAL,
+            'code' => $this->uniqueContractorWarehouseCode($organizationId, $contractor->name),
+            'description' => trans_message('warehouse_basic.contractor_warehouse_description', [
+                'contractor' => $contractor->name,
+            ]),
+            'is_active' => true,
+            'settings' => ['contractor_id' => $contractor->id],
+        ]);
+    }
+
+    private function uniqueContractorWarehouseCode(int $organizationId, string $contractorName): string
+    {
+        $slug = Str::upper(Str::slug($contractorName));
+        $base = mb_substr('CTR-'.($slug !== '' ? $slug : 'CONTRACTOR'), 0, 42);
+        $candidate = $base;
+        $suffix = 2;
+
+        while (OrganizationWarehouse::query()
+            ->where('organization_id', $organizationId)
+            ->where('code', $candidate)
+            ->exists()) {
+            $candidate = mb_substr($base, 0, 42 - strlen((string) $suffix)).'-'.$suffix;
+            $suffix++;
+        }
+
+        return $candidate;
     }
 }

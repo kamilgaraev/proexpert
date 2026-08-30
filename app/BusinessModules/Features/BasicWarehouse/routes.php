@@ -66,6 +66,8 @@ Route::middleware(AdminRouteStack::middleware())
 
             // Экспорт документов движений
             Route::get('/movements/{id}/export-m4', [WarehouseOperationsController::class, 'exportM4'])
+                ->whereNumber('id')
+                ->middleware('authorize:warehouse.receipts')
                 ->name('movements.export-m4');
             Route::get('/movements/{id}/photos', [WarehousePhotoController::class, 'movementPhotos'])
                 ->name('movements.photos.index');
@@ -74,18 +76,26 @@ Route::middleware(AdminRouteStack::middleware())
             Route::delete('/movements/{id}/photos/{fileId}', [WarehousePhotoController::class, 'deleteMovementPhoto'])
                 ->name('movements.photos.destroy');
             Route::get('/movements/{id}/export-m11', [WarehouseOperationsController::class, 'exportM11'])
+                ->whereNumber('id')
+                ->middleware('authorize:warehouse.manage_stock')
                 ->name('movements.export-m11');
             Route::get('/movements/{id}/export-m15', [WarehouseOperationsController::class, 'exportM15'])
+                ->whereNumber('id')
+                ->middleware('authorize:warehouse.transfers')
                 ->name('movements.export-m15');
             Route::get('/movements/{id}/export-write-off-act', [WarehouseOperationsController::class, 'exportWriteOffAct'])
                 ->whereNumber('id')
                 ->middleware('authorize:warehouse.write_offs')
                 ->name('movements.export-write-off-act');
             Route::get('/movements/{id}/export-m7', [WarehouseOperationsController::class, 'exportM7'])
+                ->whereNumber('id')
+                ->middleware('authorize:warehouse.receipts')
                 ->name('movements.export-m7');
 
             // Карточка учета материала
             Route::get('/materials/{materialId}/export-m17', [WarehouseOperationsController::class, 'exportM17'])
+                ->whereNumber('materialId')
+                ->middleware('authorize:warehouse.reports')
                 ->name('materials.export-m17');
 
             // Операции со складом
@@ -250,6 +260,8 @@ Route::middleware(AdminRouteStack::middleware())
             Route::delete('/reservations/{reservationId}', [AdvancedWarehouseController::class, 'unreserve'])
                 ->name('reservations.unreserve');
             Route::get('/reservations/{reservationId}/export-m8', [WarehouseOperationsController::class, 'exportM8'])
+                ->whereNumber('reservationId')
+                ->middleware('authorize:warehouse.advanced.reservations')
                 ->name('reservations.export-m8');
 
             // Автопополнение
