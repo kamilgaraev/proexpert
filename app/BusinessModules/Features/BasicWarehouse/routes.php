@@ -200,6 +200,9 @@ Route::middleware(AdminRouteStack::middleware())
             Route::get('/{id}', [AssetController::class, 'show'])->name('show');
             Route::put('/{id}', [AssetController::class, 'update'])->name('update');
             Route::delete('/{id}', [AssetController::class, 'destroy'])->name('destroy');
+            Route::post('/{id}/activate', [AssetController::class, 'activate'])
+                ->whereNumber('id')
+                ->name('activate');
             Route::get('/{id}/photos', [WarehousePhotoController::class, 'assetPhotos'])->name('photos.index');
             Route::post('/{id}/photos', [WarehousePhotoController::class, 'uploadAssetPhotos'])->name('photos.store');
             Route::delete('/{id}/photos/{fileId}', [WarehousePhotoController::class, 'deleteAssetPhoto'])->name('photos.destroy');

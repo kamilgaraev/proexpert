@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -210,6 +211,66 @@ class WarehouseAssetCatalogTest extends TestCase
         $statsResponse->assertOk();
         $statsResponse->assertJsonPath('data.material.count', 1);
         $this->assertSame(1000.0, (float) $statsResponse->json('data.material.total_value'));
+    }
+
+    public function test_assets_can_be_filtered_by_archive_status_and_restored_within_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id, 'Piece', 'pcs');
+        $foreignUnit = $this->createUnit($foreignContext->organization->id, 'Foreign piece', 'fpcs');
+        $activeAsset = $this->createAsset($context->organization->id, $unit->id, 'Active asset', 'ACTIVE');
+        $archivedAsset = $this->createAsset($context->organization->id, $unit->id, 'Archived asset', 'ARCHIVED');
+        $foreignAsset = $this->createAsset($foreignContext->organization->id, $foreignUnit->id, 'Foreign asset', 'FOREIGN');
+        $archivedAsset->update(['is_active' => false]);
+        $foreignAsset->update(['is_active' => false]);
+        $this->allowAdminAccess();
+
+        $this->assertTrue((bool) $activeAsset->fresh()->is_active);
+        $this->assertFalse((bool) $archivedAsset->fresh()->is_active);
+        $this->assertSame(
+            [$archivedAsset->id],
+            collect(app(AssetService::class)->getAssets(
+                $context->organization->id,
+                ['status' => 'inactive'],
+                20
+            )->items())->pluck('id')->all()
+        );
+
+        $defaultResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/assets?per_page=20');
+        $defaultResponse->assertOk();
+        $this->assertSame([$activeAsset->id], collect($defaultResponse->json('data'))->pluck('id')->all());
+
+        $archiveResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/assets?status=inactive&per_page=20');
+        $archiveResponse->assertOk();
+        $this->assertSame([$archivedAsset->id], collect($archiveResponse->json('data'))->pluck('id')->all());
+
+        $allResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/assets?status=all&per_page=20');
+        $allResponse->assertOk();
+        $this->assertEqualsCanonicalizing(
+            [$activeAsset->id, $archivedAsset->id],
+            collect($allResponse->json('data'))->pluck('id')->all()
+        );
+
+        $invalidStatusResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/assets?status=deleted');
+        $invalidStatusResponse->assertUnprocessable();
+
+        $foreignRestoreResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/assets/{$foreignAsset->id}/activate");
+        $foreignRestoreResponse->assertNotFound();
+        $this->assertFalse((bool) $foreignAsset->fresh()->is_active);
+
+        $restoreResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/assets/{$archivedAsset->id}/activate");
+        $restoreResponse->assertOk();
+        $restoreResponse->assertJsonPath('data.id', $archivedAsset->id);
+        $restoreResponse->assertJsonPath('data.is_active', true);
+        $restoreResponse->assertJsonPath('message', 'Актив восстановлен из архива.');
+        $this->assertTrue((bool) $archivedAsset->fresh()->is_active);
     }
 
     public function test_asset_created_from_selected_warehouse_remains_visible_in_that_warehouse_catalog(): void

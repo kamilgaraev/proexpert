@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\CreateSerializedAssetInstancesRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ExportAssetLabelsRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\IndexAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\IssueSerializedAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\RetireSerializedAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReturnSerializedAssetRequest;
@@ -34,21 +35,23 @@ class AssetController extends Controller
         protected SerializedAssetReceiptService $serializedAssets,
     ) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(IndexAssetRequest $request): JsonResponse
     {
         try {
             $organizationId = $request->user()->current_organization_id;
+            $validated = $request->validated();
 
             $filters = array_filter([
-                'asset_type' => $request->input('asset_type'),
-                'asset_category' => $request->input('asset_category'),
-                'warehouse_id' => $request->integer('warehouse_id') ?: null,
-                'search' => $request->input('search', $request->input('q')),
-                'sort_by' => $request->input('sort_by', 'name'),
-                'sort_order' => $request->input('sort_order', 'asc'),
+                'asset_type' => $validated['asset_type'] ?? null,
+                'asset_category' => $validated['asset_category'] ?? null,
+                'warehouse_id' => $validated['warehouse_id'] ?? null,
+                'search' => $validated['search'] ?? $validated['q'] ?? null,
+                'status' => $validated['status'] ?? 'active',
+                'sort_by' => $validated['sort_by'] ?? 'name',
+                'sort_order' => $validated['sort_order'] ?? 'asc',
             ], fn ($value) => $value !== null);
 
-            $perPage = (int) $request->input('per_page', 15);
+            $perPage = (int) ($validated['per_page'] ?? 15);
             $assets = $this->assetService->getAssets($organizationId, $filters, $perPage);
 
             return $this->paginatedResponse($assets);
@@ -147,6 +150,30 @@ class AssetController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('basic_warehouse.asset.deactivate_error'), 500);
+        }
+    }
+
+    public function activate(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = $request->user()->current_organization_id;
+            $asset = $this->assetService->activateAsset($organizationId, $id);
+
+            return AdminResponse::success(
+                $this->assetService->getAssetById($organizationId, $asset->id),
+                trans_message('basic_warehouse.asset.activated')
+            );
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return AdminResponse::error(trans_message('basic_warehouse.asset.not_found'), 404);
+        } catch (\Exception $exception) {
+            Log::error('AssetController::activate error', [
+                'organization_id' => $request->user()->current_organization_id ?? null,
+                'user_id' => $request->user()->id ?? null,
+                'asset_id' => $id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('basic_warehouse.asset.activate_error'), 500);
         }
     }
 
