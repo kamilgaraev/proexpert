@@ -207,6 +207,9 @@ Route::middleware(AdminRouteStack::middleware())
 
         Route::prefix('organization-assets')->name('organization-assets.')->group(function () {
             Route::get('/', [AssetController::class, 'organizationAssets'])->name('index');
+            Route::get('/{id}/events', [AssetController::class, 'instanceHistory'])
+                ->whereNumber('id')
+                ->name('events.index');
             Route::post('/{id}/issue', [AssetController::class, 'issueInstance'])
                 ->middleware('authorize:warehouse.manage_stock')
                 ->whereNumber('id')
@@ -215,6 +218,10 @@ Route::middleware(AdminRouteStack::middleware())
                 ->middleware('authorize:warehouse.manage_stock')
                 ->whereNumber('id')
                 ->name('return');
+            Route::post('/{id}/retire', [AssetController::class, 'retireInstance'])
+                ->middleware('authorize:warehouse.write_offs')
+                ->whereNumber('id')
+                ->name('retire');
         });
 
         // Продвинутые функции (Аналитика, Резервирование, Автозаказ)

@@ -279,6 +279,7 @@ class WarehouseController extends Controller
 
             $filters = [
                 'warehouse_id' => $warehouseId,
+                'material_id' => $request->integer('material_id') ?: null,
                 'movement_type' => $request->input('movement_type'),
                 'date_from' => $request->input('date_from'),
                 'date_to' => $request->input('date_to'),
@@ -294,7 +295,7 @@ class WarehouseController extends Controller
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
                 'warehouse_id' => $warehouseId,
-                'filters' => $request->only(['movement_type', 'date_from', 'date_to']),
+                'filters' => $request->only(['material_id', 'movement_type', 'date_from', 'date_to']),
                 'error' => $exception->getMessage(),
             ]);
 

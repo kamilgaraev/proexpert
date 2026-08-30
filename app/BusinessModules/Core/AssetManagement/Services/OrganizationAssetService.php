@@ -109,6 +109,59 @@ final readonly class OrganizationAssetService
         });
     }
 
+    public function retire(
+        OrganizationAsset $asset,
+        int $actorId,
+        AssetLifecycleStatus $outcome,
+        string $reason,
+    ): OrganizationAsset {
+        if (! in_array($outcome, [AssetLifecycleStatus::Retired, AssetLifecycleStatus::Lost], true)) {
+            throw new DomainException(trans_message('asset_management.errors.invalid_lifecycle_status'));
+        }
+
+        return DB::transaction(function () use ($asset, $actorId, $outcome, $reason): OrganizationAsset {
+            $lockedAsset = OrganizationAsset::query()->lockForUpdate()->find($asset->getKey());
+
+            if ($lockedAsset === null) {
+                throw new DomainException(trans_message('asset_management.errors.asset_not_found'));
+            }
+
+            if ($lockedAsset->lifecycle_status !== AssetLifecycleStatus::Active) {
+                throw new DomainException(trans_message('basic_warehouse.serialized.already_inactive'));
+            }
+
+            $organizationId = (int) $lockedAsset->organization_id;
+            $this->assertOrganizationUser($actorId, $organizationId);
+            $from = [
+                'from_warehouse_id' => $lockedAsset->current_warehouse_id,
+                'from_project_id' => $lockedAsset->current_project_id,
+                'from_user_id' => $lockedAsset->responsible_user_id,
+            ];
+
+            $lockedAsset->update([
+                'lifecycle_status' => $outcome,
+                'current_warehouse_id' => null,
+                'current_project_id' => null,
+                'responsible_user_id' => null,
+            ]);
+            $this->recordCustodyEvent(
+                $lockedAsset,
+                new AssetPlacementData,
+                $actorId,
+                $outcome->value,
+                $from,
+                ['reason' => trim($reason)],
+            );
+
+            return $lockedAsset->refresh()->load([
+                'operationProfile',
+                'currentWarehouse',
+                'currentProject',
+                'responsibleUser',
+            ]);
+        });
+    }
+
     /**
      * @return list<string>
      */

@@ -7,9 +7,11 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services;
 use App\BusinessModules\Core\AssetManagement\DTO\AssetPlacementData;
 use App\BusinessModules\Core\AssetManagement\DTO\CreateOrganizationAssetData;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetAccountingMode;
+use App\BusinessModules\Core\AssetManagement\Enums\AssetLifecycleStatus;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Core\AssetManagement\Services\OrganizationAssetService;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetRegistryProjector;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -48,6 +50,21 @@ final readonly class SerializedAssetReceiptService
             if ($material->accounting_mode !== AssetAccountingMode::Serialized->value) {
                 throw new DomainException(trans_message('basic_warehouse.serialized.quantitative_has_no_instances'));
             }
+
+            WarehouseBalance::query()->firstOrCreate(
+                [
+                    'organization_id' => $organizationId,
+                    'warehouse_id' => $warehouseId,
+                    'material_id' => $materialId,
+                ],
+                [
+                    'available_quantity' => 0,
+                    'reserved_quantity' => 0,
+                    'unit_price' => (float) ($material->default_price ?? 0),
+                    'min_stock_level' => 0,
+                    'max_stock_level' => 0,
+                ],
+            );
 
             $created = new Collection;
 
@@ -128,6 +145,53 @@ final readonly class SerializedAssetReceiptService
                 isset($data['reason']) ? ['reason' => $data['reason']] : null,
             );
         });
+    }
+
+    /** @param array{outcome: string, reason: string} $data */
+    public function retire(int $organizationId, int $assetId, int $actorId, array $data): OrganizationAsset
+    {
+        return DB::transaction(function () use ($organizationId, $assetId, $actorId, $data): OrganizationAsset {
+            $asset = $this->lockedAsset($organizationId, $assetId);
+
+            if ($asset->accounting_mode !== AssetAccountingMode::Serialized) {
+                throw new DomainException(trans_message('basic_warehouse.serialized.quantitative_has_no_custody'));
+            }
+
+            return $this->organizationAssets->retire(
+                $asset,
+                $actorId,
+                AssetLifecycleStatus::from($data['outcome']),
+                $data['reason'],
+            );
+        });
+    }
+
+    public function history(
+        int $organizationId,
+        int $assetId,
+        int $perPage,
+    ): LengthAwarePaginator {
+        $asset = OrganizationAsset::query()
+            ->forOrganization($organizationId)
+            ->find($assetId);
+
+        if ($asset === null) {
+            throw new DomainException(trans_message('basic_warehouse.serialized.instance_not_found'));
+        }
+
+        return $asset->custodyEvents()
+            ->with([
+                'actor:id,name,email',
+                'fromWarehouse:id,name,code',
+                'toWarehouse:id,name,code',
+                'fromProject:id,name',
+                'toProject:id,name',
+                'fromUser:id,name,email',
+                'toUser:id,name,email',
+            ])
+            ->orderByDesc('occurred_at')
+            ->orderByDesc('id')
+            ->paginate(min(max($perPage, 1), 100));
     }
 
     /**

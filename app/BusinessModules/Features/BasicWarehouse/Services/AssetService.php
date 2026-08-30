@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
+use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\Models\MeasurementUnit;
@@ -188,7 +189,64 @@ class AssetService
         $sortOrder = $filters['sort_order'] ?? 'asc';
         $query->orderBy($sortBy, $sortOrder);
 
-        return $query->paginate($perPage);
+        $assets = $query->paginate($perPage);
+        $this->attachSerializedSummaries(
+            $assets,
+            $organizationId,
+            isset($filters['warehouse_id']) ? (int) $filters['warehouse_id'] : null,
+        );
+
+        return $assets;
+    }
+
+    private function attachSerializedSummaries(
+        LengthAwarePaginator $assets,
+        int $organizationId,
+        ?int $warehouseId,
+    ): void {
+        $serializedAssets = collect($assets->items())
+            ->filter(static fn (Asset $asset): bool => $asset->accounting_mode === 'serialized');
+        $materialIds = $serializedAssets->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+
+        if ($materialIds === []) {
+            return;
+        }
+
+        $warehouseCondition = $warehouseId === null
+            ? 'current_warehouse_id IS NOT NULL'
+            : 'current_warehouse_id = ?';
+        $warehouseBindings = $warehouseId === null ? [] : [$warehouseId];
+
+        $summaries = OrganizationAsset::query()
+            ->forOrganization($organizationId)
+            ->whereIn('material_id', $materialIds)
+            ->select('material_id')
+            ->selectRaw('COUNT(*) AS total_count')
+            ->selectRaw("SUM(CASE WHEN lifecycle_status = 'active' THEN 1 ELSE 0 END) AS active_count")
+            ->selectRaw(
+                "SUM(CASE WHEN lifecycle_status = 'active' AND {$warehouseCondition} THEN 1 ELSE 0 END) AS in_warehouse_count",
+                $warehouseBindings,
+            )
+            ->selectRaw("SUM(CASE WHEN lifecycle_status = 'active' AND responsible_user_id IS NOT NULL THEN 1 ELSE 0 END) AS with_responsible_count")
+            ->selectRaw("SUM(CASE WHEN lifecycle_status = 'active' AND current_project_id IS NOT NULL THEN 1 ELSE 0 END) AS on_project_count")
+            ->selectRaw("SUM(CASE WHEN lifecycle_status = 'retired' THEN 1 ELSE 0 END) AS retired_count")
+            ->selectRaw("SUM(CASE WHEN lifecycle_status = 'lost' THEN 1 ELSE 0 END) AS lost_count")
+            ->groupBy('material_id')
+            ->get()
+            ->keyBy('material_id');
+
+        $serializedAssets->each(static function (Asset $asset) use ($summaries): void {
+            $summary = $summaries->get($asset->id);
+            $asset->setAttribute('serialized_summary', [
+                'total_count' => (int) ($summary?->total_count ?? 0),
+                'active_count' => (int) ($summary?->active_count ?? 0),
+                'in_warehouse_count' => (int) ($summary?->in_warehouse_count ?? 0),
+                'with_responsible_count' => (int) ($summary?->with_responsible_count ?? 0),
+                'on_project_count' => (int) ($summary?->on_project_count ?? 0),
+                'retired_count' => (int) ($summary?->retired_count ?? 0),
+                'lost_count' => (int) ($summary?->lost_count ?? 0),
+            ]);
+        });
     }
 
     /**

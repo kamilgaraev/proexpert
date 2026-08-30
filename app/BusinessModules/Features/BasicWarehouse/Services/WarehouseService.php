@@ -1178,6 +1178,10 @@ class WarehouseService implements WarehouseReportDataProvider
             $query->where('warehouse_id', $filters['warehouse_id']);
         }
 
+        if (isset($filters['material_id'])) {
+            $query->where('material_id', $filters['material_id']);
+        }
+
         if (isset($filters['movement_type'])) {
             $query->where('movement_type', $filters['movement_type']);
         }
