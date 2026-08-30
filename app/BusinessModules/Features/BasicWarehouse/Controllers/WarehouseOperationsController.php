@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UnreserveRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WriteOffRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
+use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseMovementDocumentResolver;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseStorageCellResolver;
@@ -40,6 +41,7 @@ class WarehouseOperationsController extends Controller
         protected WarehousePhotoService $warehousePhotoService,
         protected WarehouseStorageCellResolver $storageCellResolver,
         protected ProjectService $projectService,
+        protected WarehouseMovementDocumentResolver $movementDocumentResolver,
         protected \App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager $exportManager
     ) {}
 
@@ -79,13 +81,7 @@ class WarehouseOperationsController extends Controller
         }
 
         try {
-            $dataToExport = $movement;
-            if ($movement->document_number) {
-                $dataToExport = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('document_number', $movement->document_number)
-                    ->where('organization_id', $movement->organization_id)
-                    ->where('movement_type', $movement->movement_type)
-                    ->get();
-            }
+            $dataToExport = $this->movementDocumentResolver->resolve($movement);
 
             $path = $this->exportManager->export('m4', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
@@ -110,13 +106,7 @@ class WarehouseOperationsController extends Controller
         }
 
         try {
-            $dataToExport = $movement;
-            if ($movement->document_number) {
-                $dataToExport = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('document_number', $movement->document_number)
-                    ->where('organization_id', $movement->organization_id)
-                    ->where('movement_type', $movement->movement_type)
-                    ->get();
-            }
+            $dataToExport = $this->movementDocumentResolver->resolve($movement);
 
             $path = $this->exportManager->export('m11', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
@@ -141,13 +131,7 @@ class WarehouseOperationsController extends Controller
         }
 
         try {
-            $dataToExport = $movement;
-            if ($movement->document_number) {
-                $dataToExport = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('document_number', $movement->document_number)
-                    ->where('organization_id', $movement->organization_id)
-                    ->where('movement_type', $movement->movement_type)
-                    ->get();
-            }
+            $dataToExport = $this->movementDocumentResolver->resolve($movement);
 
             $path = $this->exportManager->export('m15', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
@@ -172,13 +156,7 @@ class WarehouseOperationsController extends Controller
         }
 
         try {
-            $dataToExport = $movement;
-            if ($movement->document_number) {
-                $dataToExport = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('document_number', $movement->document_number)
-                    ->where('organization_id', $movement->organization_id)
-                    ->where('movement_type', $movement->movement_type)
-                    ->get();
-            }
+            $dataToExport = $this->movementDocumentResolver->resolve($movement);
 
             $path = $this->exportManager->export('m7', $dataToExport);
             $url = $this->exportManager->getTemporaryUrl($path);
