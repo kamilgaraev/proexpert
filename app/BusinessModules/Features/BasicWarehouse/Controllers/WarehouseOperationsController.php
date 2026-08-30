@@ -259,7 +259,7 @@ class WarehouseOperationsController extends Controller
             // Получаем движения, связанные с этим резервом (списания)
             $movements = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('material_id', $reservation->material_id)
                 ->where('warehouse_id', $reservation->warehouse_id)
-                ->where('movement_type', 'write-off')
+                ->where('movement_type', \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::TYPE_WRITE_OFF)
                 ->where('movement_date', '>=', $reservation->created_at)
                 ->get();
 

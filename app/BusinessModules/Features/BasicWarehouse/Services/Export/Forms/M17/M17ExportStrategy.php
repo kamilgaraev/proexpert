@@ -25,8 +25,6 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $warehouse = $data['warehouse'] ?? null;
         /** @var Collection<int, WarehouseMovement> $movements */
         $movements = $data['movements'];
-        $warehouseId = (int) ($warehouse?->id ?? $data['warehouse_id']);
-
         $material->loadMissing(['organization', 'measurementUnit']);
 
         $spreadsheet = new Spreadsheet;
@@ -38,7 +36,9 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
         $lastRow = $this->setTable($sheet, $movements);
         $this->applyStyles($sheet, $lastRow);
 
-        $filename = "M17_{$material->id}_W{$warehouseId}.xlsx";
+        $materialCode = $this->filenameFragment($material->code ?? $material->name, 'material');
+        $warehouseCode = $this->filenameFragment($warehouse?->code ?? $warehouse?->name, 'warehouse');
+        $filename = "M17_{$materialCode}_{$warehouseCode}_".now()->format('Ymd').'.xlsx';
         $path = "exports/warehouse/m17/{$filename}";
 
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $material->organization);
@@ -214,7 +214,7 @@ class M17ExportStrategy extends BaseWarehouseExportStrategy
             }
 
             $sheet->setCellValue("A{$row}", $movement->movement_date?->format('d.m.Y'));
-            $sheet->setCellValue("B{$row}", $movement->document_number ?: $movement->id);
+            $sheet->setCellValue("B{$row}", $this->documentNumber($movement->document_number));
             $sheet->setCellValue("C{$row}", $number);
             $sheet->mergeCells("D{$row}:L{$row}");
             $sheet->setCellValue("D{$row}", $this->movementSourceText($movement, $isIncome));

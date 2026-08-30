@@ -7,21 +7,20 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Contracts\WarehouseExportStrategyInterface;
 use App\Models\Organization;
 use App\Services\Storage\FileService;
+use DateTimeInterface;
+use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\Font;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 /**
  * Базовая стратегия экспорта
  */
 abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInterface
 {
-    public function __construct(protected FileService $fileService)
-    {}
+    public function __construct(protected FileService $fileService) {}
 
     /**
      * Сохранение Spreadsheet в S3
@@ -29,18 +28,39 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
     protected function saveSpreadsheetToS3(Spreadsheet $spreadsheet, string $path, Organization|int|string $organization): string
     {
         $writer = new Xlsx($spreadsheet);
-        
+
         ob_start();
         $writer->save('php://output');
         $content = ob_get_clean();
-        
+
         $organizationModel = $organization instanceof Organization ? $organization : null;
         $orgId = $organizationModel?->id ?? $organization;
         $s3Path = "org-{$orgId}/{$path}";
-        
+
         $this->fileService->disk($organizationModel)->put($s3Path, $content);
 
         return $s3Path;
+    }
+
+    protected function documentNumber(mixed $number): string
+    {
+        $normalized = trim((string) $number);
+
+        return $normalized !== '' ? $normalized : trans_message('warehouse_basic.document_without_number');
+    }
+
+    protected function documentFileSuffix(mixed $number, DateTimeInterface $date): string
+    {
+        $businessNumber = Str::slug(trim((string) $number));
+
+        return $businessNumber !== '' ? $businessNumber : $date->format('Ymd_His');
+    }
+
+    protected function filenameFragment(mixed $value, string $fallback): string
+    {
+        $fragment = Str::slug(trim((string) $value));
+
+        return $fragment !== '' ? $fragment : $fallback;
     }
 
     /**

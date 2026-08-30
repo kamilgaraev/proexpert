@@ -7,7 +7,6 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\Writ
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Str;
 use InvalidArgumentException;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -36,10 +35,10 @@ final class WriteOffActExportStrategy extends BaseWarehouseExportStrategy
         $this->setFooter($sheet, $firstMovement, $lastItemRow);
         $this->applyStyles($sheet, $lastItemRow);
 
-        $businessNumber = Str::slug((string) $firstMovement->document_number);
-        $fileSuffix = $businessNumber !== ''
-            ? $businessNumber
-            : $firstMovement->movement_date->format('Ymd_His');
+        $fileSuffix = $this->documentFileSuffix(
+            $firstMovement->document_number,
+            $firstMovement->movement_date
+        );
         $filename = 'akt-spisaniya_'.$fileSuffix.'.xlsx';
 
         return $this->saveSpreadsheetToS3(
@@ -58,8 +57,7 @@ final class WriteOffActExportStrategy extends BaseWarehouseExportStrategy
     {
         $organizationName = $movement->organization->legal_name
             ?? $movement->organization->name;
-        $documentNumber = trim((string) $movement->document_number);
-        $documentNumber = $documentNumber !== '' ? $documentNumber : 'б/н';
+        $documentNumber = $this->documentNumber($movement->document_number);
 
         $sheet->mergeCells('A1:G1');
         $sheet->setCellValue('A1', $organizationName);
