@@ -219,6 +219,52 @@ final class WarehouseReservationLifecycleTest extends TestCase
         self::assertNull($reservation->fresh()->cancelled_at);
     }
 
+    public function test_expiry_reconciles_a_legacy_shortfall_without_releasing_another_active_reservation(): void
+    {
+        [$context, $material, $warehouse] = $this->warehouseContext(10);
+        $expiredReservation = AssetReservation::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'quantity' => 8,
+            'reserved_by' => $context->user->id,
+            'status' => AssetReservation::STATUS_ACTIVE,
+            'reserved_at' => now()->subHours(2),
+            'expires_at' => now()->subHour(),
+            'metadata' => ['source' => 'legacy'],
+        ]);
+        $activeReservation = AssetReservation::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'quantity' => 8,
+            'reserved_by' => $context->user->id,
+            'status' => AssetReservation::STATUS_ACTIVE,
+            'reserved_at' => now(),
+            'expires_at' => now()->addDay(),
+            'metadata' => [],
+        ]);
+
+        $service = app(ReservationLifecycleService::class);
+
+        self::assertSame(1, $service->expireDue(100));
+
+        $balance = WarehouseBalance::query()->firstOrFail();
+        $expiredReservation->refresh();
+        self::assertSame(8.0, (float) $balance->reserved_quantity);
+        self::assertSame(2.0, (float) $balance->available_quantity);
+        self::assertSame(AssetReservation::STATUS_EXPIRED, $expiredReservation->status);
+        self::assertSame(AssetReservation::STATUS_ACTIVE, $activeReservation->fresh()->status);
+        self::assertSame(6.0, (float) data_get(
+            $expiredReservation->metadata,
+            'release_reconciliation.shortfall_quantity',
+        ));
+        self::assertSame(2.0, (float) data_get(
+            $expiredReservation->metadata,
+            'release_reconciliation.released_quantity',
+        ));
+    }
+
     public function test_m8_contains_only_issues_linked_to_the_selected_reservation_and_foreign_id_is_hidden(): void
     {
         Storage::fake('s3');
