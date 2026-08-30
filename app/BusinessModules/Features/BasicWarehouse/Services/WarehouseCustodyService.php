@@ -34,6 +34,21 @@ final class WarehouseCustodyService
         $search = trim((string) $search);
 
         return WarehouseBalance::query()
+            ->selectRaw(
+                'MAX(id) AS id,
+                organization_id,
+                warehouse_id,
+                material_id,
+                SUM(available_quantity) AS available_quantity,
+                SUM(reserved_quantity) AS reserved_quantity,
+                CASE
+                    WHEN SUM(available_quantity + reserved_quantity) > 0
+                    THEN SUM((available_quantity + reserved_quantity) * unit_price)
+                        / SUM(available_quantity + reserved_quantity)
+                    ELSE 0
+                END AS unit_price,
+                MAX(last_movement_at) AS last_movement_at'
+            )
             ->where('organization_id', $organizationId)
             ->where(static function ($query): void {
                 $query->where('available_quantity', '>', 0)
@@ -70,6 +85,7 @@ final class WarehouseCustodyService
                 'warehouse.responsibleUser:id,name,email',
                 'material.measurementUnit:id,name,short_name',
             ])
+            ->groupBy('organization_id', 'warehouse_id', 'material_id')
             ->orderByDesc('last_movement_at')
             ->orderByDesc('id')
             ->get();
