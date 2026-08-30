@@ -146,8 +146,12 @@ class AssetService
         int $perPage = 15
     ): LengthAwarePaginator {
         $query = Asset::where('organization_id', $organizationId)
-            ->where('is_active', true)
             ->with(['measurementUnit', 'warehouseBalances', 'photos']);
+
+        $status = $filters['status'] ?? 'active';
+        if ($status !== 'all') {
+            $query->where('is_active', $status === 'active');
+        }
 
         // Фильтр по типу актива
         if (isset($filters['asset_type'])) {
@@ -380,9 +384,9 @@ class AssetService
     /**
      * Активировать актив
      */
-    public function activateAsset(int $assetId): Asset
+    public function activateAsset(int $organizationId, int $assetId): Asset
     {
-        $asset = Asset::findOrFail($assetId);
+        $asset = $this->findAssetForOrganization($organizationId, $assetId);
         $asset->update(['is_active' => true]);
 
         $this->logging->business('asset.activated', [
@@ -391,7 +395,7 @@ class AssetService
             'asset_type' => $asset->asset_type,
         ]);
 
-        $this->clearAssetCache($asset->organization_id);
+        $this->clearAssetCache($organizationId);
 
         return $asset;
     }
