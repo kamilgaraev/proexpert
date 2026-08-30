@@ -132,6 +132,15 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $this->assertNotNull($balance);
         $this->assertSame(0.0, $balance->getAllocatedQuantity());
         $this->assertSame(70.0, $balance->getAvailableForAllocation());
+
+        $stock = app(WarehouseService::class)->getStockData(
+            $context->organization->id,
+            ['warehouse_id' => $setup['sourceWarehouse']->id],
+        );
+
+        $this->assertSame(0.0, (float) $stock[0]['allocated_total']);
+        $this->assertSame(70.0, (float) $stock[0]['unallocated_quantity']);
+        $this->assertSame([], $stock[0]['project_allocations']);
     }
 
     public function test_additional_allocation_preserves_active_delivery_progress(): void
@@ -145,6 +154,16 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
                 'quantity' => 20,
             ])
             ->assertOk();
+
+        $stock = app(WarehouseService::class)->getStockData(
+            $context->organization->id,
+            ['warehouse_id' => $setup['sourceWarehouse']->id],
+        );
+
+        $this->assertSame(10.0, (float) $stock[0]['allocated_total']);
+        $this->assertSame(70.0, (float) $stock[0]['unallocated_quantity']);
+        $this->assertSame(10.0, (float) $stock[0]['project_allocations'][0]['allocated_quantity']);
+        $this->assertSame(30.0, (float) $stock[0]['project_allocations'][0]['planned_quantity']);
 
         $setup['allocation']->forceFill(['allocated_quantity' => 40])->save();
 
