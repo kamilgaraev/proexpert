@@ -50,6 +50,7 @@ class TransactionController extends Controller
 
             $query = PaymentTransaction::query()
                 ->where('organization_id', $organizationId)
+                ->withRefundAvailability()
                 ->with(['paymentDocument']);
 
             $paymentDocumentId = $validated['payment_document_id'] ?? $validated['invoice_id'] ?? null;
@@ -107,6 +108,7 @@ class TransactionController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $transaction = PaymentTransaction::query()
                 ->where('organization_id', $organizationId)
+                ->withRefundAvailability()
                 ->with(['paymentDocument', 'createdBy', 'approvedBy'])
                 ->findOrFail((int) $id);
 
@@ -300,11 +302,14 @@ class TransactionController extends Controller
 
     private function formatTransaction(PaymentTransaction $transaction, bool $detailed = false): array
     {
+        $refundableAmount = $transaction->refundableAmount();
         $data = [
             'id' => $transaction->id,
             'payment_document_id' => $transaction->payment_document_id,
             'project_id' => $transaction->project_id,
             'amount' => (float) $transaction->amount,
+            'refundable_amount' => $refundableAmount,
+            'can_be_refunded' => $refundableAmount > 0,
             'currency' => $transaction->currency,
             'status' => $transaction->status instanceof PaymentTransactionStatus ? $transaction->status->value : $transaction->status,
             'payment_method' => is_object($transaction->payment_method) ? $transaction->payment_method->value : $transaction->payment_method,
@@ -339,6 +344,7 @@ class TransactionController extends Controller
     private function findTransactionForResponse(int $transactionId): PaymentTransaction
     {
         return PaymentTransaction::query()
+            ->withRefundAvailability()
             ->with(['paymentDocument', 'createdBy', 'approvedBy'])
             ->findOrFail($transactionId);
     }

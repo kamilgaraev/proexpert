@@ -12,6 +12,7 @@ use App\Traits\Immutable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PaymentTransaction extends Model
 {
@@ -115,6 +116,11 @@ class PaymentTransaction extends Model
         return $this->belongsTo(User::class, 'approved_by_user_id');
     }
 
+    public function refunds(): HasMany
+    {
+        return $this->hasMany(self::class, 'reverses_transaction_id');
+    }
+
     // ==========================================
     // SCOPES
     // ==========================================
@@ -137,6 +143,14 @@ class PaymentTransaction extends Model
     public function scopeByMethod($query, PaymentMethod $method)
     {
         return $query->where('payment_method', $method);
+    }
+
+    public function scopeWithRefundAvailability($query)
+    {
+        return $query->withSum([
+            'refunds as refunded_amount' => static fn ($refunds) => $refunds
+                ->where('status', PaymentTransactionStatus::COMPLETED->value),
+        ], 'amount');
     }
 
     // ==========================================
@@ -164,6 +178,23 @@ class PaymentTransaction extends Model
      */
     public function canBeRefunded(): bool
     {
-        return $this->status === PaymentTransactionStatus::COMPLETED;
+        return $this->refundableAmount() > 0;
+    }
+
+    public function refundableAmount(): float
+    {
+        $amount = (float) $this->amount;
+        if ($this->status !== PaymentTransactionStatus::COMPLETED || $amount <= 0) {
+            return 0.0;
+        }
+
+        $refundedAmount = $this->getAttribute('refunded_amount');
+        if ($refundedAmount === null) {
+            $refundedAmount = $this->refunds()
+                ->where('status', PaymentTransactionStatus::COMPLETED->value)
+                ->sum('amount');
+        }
+
+        return max(round($amount - abs((float) $refundedAmount), 2), 0.0);
     }
 }
