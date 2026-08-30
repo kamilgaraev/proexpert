@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\IndexWarehouseMovementRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseDashboardService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
@@ -268,7 +269,7 @@ class WarehouseController extends Controller
         }
     }
 
-    public function movements(Request $request, string|int $id): JsonResponse
+    public function movements(IndexWarehouseMovementRequest $request, string|int $id): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
         $warehouseId = is_int($id) ? $id : (ctype_digit($id) ? (int) $id : null);
@@ -277,17 +278,41 @@ class WarehouseController extends Controller
             $warehouseId = $this->normalizeWarehouseId($id);
             $this->findWarehouse($organizationId, $warehouseId);
 
+            $validated = $request->validated();
             $filters = [
                 'warehouse_id' => $warehouseId,
-                'material_id' => $request->integer('material_id') ?: null,
-                'movement_type' => $request->input('movement_type'),
-                'date_from' => $request->input('date_from'),
-                'date_to' => $request->input('date_to'),
+                'material_id' => $validated['material_id'] ?? null,
+                'movement_type' => $validated['movement_type'] ?? null,
+                'date_from' => $validated['date_from'] ?? null,
+                'date_to' => $validated['date_to'] ?? null,
+                'search' => $validated['search'] ?? null,
             ];
 
-            $movements = $this->warehouseService->getMovementsData($organizationId, $filters);
+            $movements = $this->warehouseService->paginateMovementsData(
+                $organizationId,
+                $filters,
+                (int) ($validated['per_page'] ?? 20),
+                (int) ($validated['page'] ?? 1),
+            );
 
-            return AdminResponse::success($movements);
+            return AdminResponse::paginated(
+                $movements->items(),
+                [
+                    'current_page' => $movements->currentPage(),
+                    'from' => $movements->firstItem(),
+                    'last_page' => $movements->lastPage(),
+                    'path' => $movements->path(),
+                    'per_page' => $movements->perPage(),
+                    'to' => $movements->lastItem(),
+                    'total' => $movements->total(),
+                ],
+                links: [
+                    'first' => $movements->url(1),
+                    'last' => $movements->url($movements->lastPage()),
+                    'prev' => $movements->previousPageUrl(),
+                    'next' => $movements->nextPageUrl(),
+                ],
+            );
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('basic_warehouse.warehouse.not_found'), 404);
         } catch (\Throwable $exception) {
@@ -295,7 +320,15 @@ class WarehouseController extends Controller
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
                 'warehouse_id' => $warehouseId,
-                'filters' => $request->only(['material_id', 'movement_type', 'date_from', 'date_to']),
+                'filters' => $request->only([
+                    'material_id',
+                    'movement_type',
+                    'date_from',
+                    'date_to',
+                    'search',
+                    'page',
+                    'per_page',
+                ]),
                 'error' => $exception->getMessage(),
             ]);
 
