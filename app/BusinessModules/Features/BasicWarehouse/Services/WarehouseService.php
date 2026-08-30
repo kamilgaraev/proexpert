@@ -921,12 +921,15 @@ class WarehouseService implements WarehouseReportDataProvider
             $query->lowStock();
         }
 
-        // Фильтр по проекту (для партионного учета сложнее, так как распределение - отдельная таблица)
-        // Но аллокации не привязаны к партиям, они привязаны к "Склад + Материал"
-        // Поэтому фильтрация по аллокациям работает на уровне материала
         if (isset($filters['project_id'])) {
-            $query->whereHas('projectAllocations', function ($q) use ($filters) {
-                $q->where('project_id', $filters['project_id']);
+            $query->whereExists(function ($allocationQuery) use ($filters): void {
+                $allocationQuery
+                    ->selectRaw('1')
+                    ->from('warehouse_project_allocations as project_filter_allocations')
+                    ->whereColumn('project_filter_allocations.organization_id', 'warehouse_balances.organization_id')
+                    ->whereColumn('project_filter_allocations.warehouse_id', 'warehouse_balances.warehouse_id')
+                    ->whereColumn('project_filter_allocations.material_id', 'warehouse_balances.material_id')
+                    ->where('project_filter_allocations.project_id', $filters['project_id']);
             });
         }
 
@@ -971,8 +974,9 @@ class WarehouseService implements WarehouseReportDataProvider
             ->map(static fn ($identifiers) => $identifiers->first())
             ->all();
 
-        // Группируем по материалам
-        $grouped = $allBatches->groupBy('material_id');
+        $grouped = $allBatches->groupBy(
+            static fn (WarehouseBalance $batch): string => $batch->warehouse_id.':'.$batch->material_id
+        );
         $stockAllocations = WarehouseProjectAllocation::query()
             ->where('organization_id', $organizationId)
             ->whereIn('warehouse_id', $allBatches->pluck('warehouse_id')->unique())
@@ -989,7 +993,7 @@ class WarehouseService implements WarehouseReportDataProvider
 
         $resultData = [];
 
-        foreach ($grouped as $materialId => $batches) {
+        foreach ($grouped as $stockPositionKey => $batches) {
             $totalQty = $batches->sum('available_quantity');
             $totalReserved = $batches->sum('reserved_quantity');
             $totalPhysicalQuantity = $totalQty + $totalReserved;
@@ -1040,7 +1044,7 @@ class WarehouseService implements WarehouseReportDataProvider
 
             $first = $batches->first();
             $qrCode = $identifierMap[$first->material_id]->code ?? sprintf('AST-%d-%06d', $organizationId, $first->material_id);
-            $galleryKey = $first->warehouse_id.':'.$first->material_id;
+            $galleryKey = (string) $stockPositionKey;
             $balancePhotos = $photoMap[$galleryKey] ?? [];
             $receiptPhotos = $receiptPhotoMap[$galleryKey] ?? [];
 
