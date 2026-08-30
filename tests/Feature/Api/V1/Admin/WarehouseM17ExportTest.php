@@ -75,6 +75,18 @@ class WarehouseM17ExportTest extends TestCase
             'metadata' => [],
             'movement_date' => '2026-05-02 10:00:00',
         ]);
+        $movementWithoutBusinessNumber = WarehouseMovement::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'movement_type' => WarehouseMovement::TYPE_RETURN,
+            'quantity' => 1,
+            'price' => 100,
+            'document_number' => null,
+            'reason' => 'Возврат материала',
+            'metadata' => [],
+            'movement_date' => '2026-05-03 10:00:00',
+        ]);
 
         $path = app(M17ExportStrategy::class)->export([
             'material' => $material,
@@ -102,6 +114,10 @@ class WarehouseM17ExportTest extends TestCase
         $this->assertSame(1, (int) $sheet->getCell('C28')->getValue());
         $this->assertSame(5.0, (float) $sheet->getCell('N28')->getValue());
         $this->assertSame(2.0, (float) $sheet->getCell('P29')->getValue());
+        $this->assertSame('б/н', $sheet->getCell('B30')->getValue());
+        $this->assertStringContainsString('u0000000022_main_', $path);
+        $this->assertStringNotContainsString("M17_{$material->id}_W{$warehouse->id}.xlsx", $path);
+        $this->assertNotSame((string) $movementWithoutBusinessNumber->id, (string) $sheet->getCell('B30')->getValue());
         $this->assertContains('D22:L24', $sheet->getMergeCells());
         $this->assertContains('D25:L25', $sheet->getMergeCells());
         $this->assertContains('Q25:R25', $sheet->getMergeCells());

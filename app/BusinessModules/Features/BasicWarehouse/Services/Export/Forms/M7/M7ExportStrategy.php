@@ -4,10 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M7;
 
-use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Style\Border;
 
 /**
  * Стратегия экспорта Акта о приемке материалов (Форма № М-7)
@@ -16,24 +15,27 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
 {
     public function export($movementOrCollection): string
     {
-        $movements = $movementOrCollection instanceof \Illuminate\Database\Eloquent\Collection 
-            ? $movementOrCollection 
+        $movements = $movementOrCollection instanceof \Illuminate\Database\Eloquent\Collection
+            ? $movementOrCollection
             : collect([$movementOrCollection]);
-            
+
         /** @var WarehouseMovement $firstMovement */
         $firstMovement = $movements->first();
-        
-        $spreadsheet = new Spreadsheet();
+
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
-        
+
         $this->setHeader($sheet, $firstMovement);
         $this->setTable($sheet, $movements);
         $this->setFooter($sheet, $firstMovement);
         $this->applyStyles($sheet);
-        
-        $filename = "M7_" . ($firstMovement->document_number ?: $firstMovement->id) . ".xlsx";
+
+        $filename = 'M7_'.$this->documentFileSuffix(
+            $firstMovement->document_number,
+            $firstMovement->movement_date
+        ).'.xlsx';
         $path = "exports/warehouse/m7/{$filename}";
-        
+
         return $this->saveSpreadsheetToS3($spreadsheet, $path, $firstMovement->organization);
     }
 
@@ -45,12 +47,12 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
     protected function setHeader($sheet, WarehouseMovement $movement): void
     {
         $org = $movement->organization;
-        
+
         $sheet->setCellValue('J1', 'Унифицированная форма № М-7');
         $sheet->setCellValue('J2', 'Утверждена постановлением Госкомстата');
         $sheet->setCellValue('J3', 'России от 30.10.97 № 71а');
         $sheet->getStyle('J1:L3')->getFont()->setSize(8);
-        
+
         $sheet->mergeCells('A5:G5');
         $sheet->setCellValue('A5', $org->legal_name ?? $org->name);
         $this->setUnderline($sheet, 'A5:G5');
@@ -65,23 +67,23 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue('I7', $org->okpo ?? '');
         $this->applyTableStyle($sheet, 'H5:I7');
         $this->setCenter($sheet, 'H5:I7');
-        
+
         $sheet->mergeCells('A9:I9');
-        $sheet->setCellValue('A9', 'АКТ О ПРИЕМКЕ МАТЕРИАЛОВ № ' . ($movement->document_number ?: $movement->id));
+        $sheet->setCellValue('A9', 'АКТ О ПРИЕМКЕ МАТЕРИАЛОВ № '.$this->documentNumber($movement->document_number));
         $this->setBold($sheet, 'A9');
         $this->setCenter($sheet, 'A9');
         $sheet->getStyle('A9')->getFont()->setSize(12);
-        
+
         $sheet->setCellValue('H10', 'Номер документа');
         $sheet->setCellValue('I10', 'Дата составления');
-        $sheet->setCellValue('H11', $movement->document_number ?: $movement->id);
+        $sheet->setCellValue('H11', $this->documentNumber($movement->document_number));
         $sheet->setCellValue('I11', $movement->movement_date->format('d.m.Y'));
         $this->applyTableStyle($sheet, 'H10:I11');
         $this->setCenter($sheet, 'H10:I11');
-        
-        $sheet->setCellValue('A13', 'Место приемки: ' . ($movement->warehouse->name ?? ''));
-        $sheet->setCellValue('A14', 'Поставщик: ' . ($movement->metadata['supplier_name'] ?? ''));
-        $sheet->setCellValue('A15', 'Сопроводительный документ: ' . ($movement->metadata['invoice_number'] ?? ''));
+
+        $sheet->setCellValue('A13', 'Место приемки: '.($movement->warehouse->name ?? ''));
+        $sheet->setCellValue('A14', 'Поставщик: '.($movement->metadata['supplier_name'] ?? ''));
+        $sheet->setCellValue('A15', 'Сопроводительный документ: '.($movement->metadata['invoice_number'] ?? ''));
     }
 
     protected function setTable($sheet, $movements): void
@@ -94,26 +96,26 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue("G{$row}", 'Фактически');
         $sheet->setCellValue("H{$row}", 'Недостача');
         $sheet->setCellValue("I{$row}", 'Излишки');
-        
+
         $this->setBold($sheet, "A{$row}:I{$row}");
         $this->setCenter($sheet, "A{$row}:I{$row}");
         $sheet->getStyle("A{$row}:I{$row}")->getAlignment()->setWrapText(true);
-        
+
         foreach ($movements as $m) {
             $row++;
             $sheet->setCellValue("A{$row}", $m->material->name);
             $sheet->setCellValue("E{$row}", $m->material->measurementUnit->name ?? '');
-            
-            $supplierQty = (float)($m->metadata['supplier_quantity'] ?? $m->quantity);
-            $actualQty = (float)$m->quantity;
+
+            $supplierQty = (float) ($m->metadata['supplier_quantity'] ?? $m->quantity);
+            $actualQty = (float) $m->quantity;
             $diff = $actualQty - $supplierQty;
-            
+
             $sheet->setCellValue("F{$row}", $supplierQty);
             $sheet->setCellValue("G{$row}", $actualQty);
             $sheet->setCellValue("H{$row}", $diff < 0 ? abs($diff) : '');
             $sheet->setCellValue("I{$row}", $diff > 0 ? $diff : '');
         }
-        
+
         $this->applyTableStyle($sheet, "A17:I{$row}");
     }
 
@@ -134,7 +136,7 @@ class M7ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->getColumnDimension('G')->setWidth(12);
         $sheet->getColumnDimension('H')->setWidth(12);
         $sheet->getColumnDimension('I')->setWidth(25);
-        
+
         $sheet->getStyle('A1:L50')->getAlignment()->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
     }
 }
