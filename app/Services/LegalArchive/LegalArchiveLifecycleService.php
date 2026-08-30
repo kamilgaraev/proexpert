@@ -65,7 +65,7 @@ final readonly class LegalArchiveLifecycleService
                 throw new DomainException('activation_requirements_not_met');
             }
 
-            return ['status' => 'active', 'lifecycle_status' => 'active', 'activated_at' => now()];
+            return ['status' => 'active', 'lifecycle_status' => 'effective', 'activated_at' => now()];
         }, 'activated', function (LegalArchiveDocument $locked): void {
             $this->obligations->syncFromEffectiveDocument($locked);
         });
