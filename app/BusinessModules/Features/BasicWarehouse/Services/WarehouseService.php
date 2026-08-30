@@ -1023,7 +1023,9 @@ class WarehouseService implements WarehouseReportDataProvider
                 'material_code' => $first->material->code,
                 'asset_type' => $first->material->additional_properties['asset_type'] ?? 'material',
                 'category' => $first->material->category,
-                'measurement_unit' => $first->material->measurementUnit->name ?? null,
+                'measurement_unit' => $first->material->measurementUnit->short_name
+                    ?? $first->material->measurementUnit->name
+                    ?? null,
                 'available_quantity' => (float) $totalQty,
                 'reserved_quantity' => (float) $totalReserved,
                 'total_quantity' => (float) $totalPhysicalQuantity,
@@ -1228,7 +1230,9 @@ class WarehouseService implements WarehouseReportDataProvider
                 'quantity' => (float) $movement->quantity,
                 'price' => (float) $movement->price,
                 'total_value' => (float) $movement->quantity * (float) $movement->price,
-                'measurement_unit' => $movement->material->measurementUnit->name ?? null,
+                'measurement_unit' => $movement->material->measurementUnit->short_name
+                    ?? $movement->material->measurementUnit->name
+                    ?? null,
                 'project_id' => $movement->project_id,
                 'project_name' => $movement->project->name ?? null,
                 'user_name' => $movement->user->name ?? null,
