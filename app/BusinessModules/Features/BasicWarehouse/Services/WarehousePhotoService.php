@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehousePhotoException;
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehousePhotoTargetNotFoundException;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseItemGallery;
@@ -18,7 +20,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 class WarehousePhotoService
 {
@@ -132,7 +133,7 @@ class WarehousePhotoService
         $existingCount = $owner->photos()->count();
 
         if ($existingCount + count($photoFiles) > self::MAX_PHOTOS) {
-            throw new RuntimeException(trans_message('warehouse_basic.photo_limit_exceeded', [], 'ru'));
+            throw new WarehousePhotoException(trans_message('warehouse_basic.photo_limit_exceeded', [], 'ru'));
         }
 
         $organization = Organization::findOrFail((int) $user->current_organization_id);
@@ -144,7 +145,7 @@ class WarehousePhotoService
                 $path = $this->fileService->upload($photo, $directory, null, 'public', $organization);
 
                 if ($path === false) {
-                    throw new RuntimeException(trans_message('warehouse_basic.photo_upload_failed', [], 'ru'));
+                    throw new WarehousePhotoException(trans_message('warehouse_basic.photo_upload_failed', [], 'ru'));
                 }
 
                 $file = $owner->files()->create([
@@ -185,7 +186,7 @@ class WarehousePhotoService
         }
 
         if ($result === []) {
-            throw new RuntimeException(trans_message('warehouse_basic.photo_upload_empty', [], 'ru'));
+            throw new WarehousePhotoException(trans_message('warehouse_basic.photo_upload_empty', [], 'ru'));
         }
 
         return $result;
@@ -197,7 +198,7 @@ class WarehousePhotoService
         $materialExists = Material::where('organization_id', $organizationId)->whereKey($materialId)->exists();
 
         if (!$warehouseExists || !$materialExists) {
-            throw new RuntimeException(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'));
+            throw new WarehousePhotoTargetNotFoundException();
         }
     }
 

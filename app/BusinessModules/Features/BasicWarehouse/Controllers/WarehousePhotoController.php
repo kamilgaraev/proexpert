@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehousePhotoException;
+use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehousePhotoTargetNotFoundException;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehousePhotoUploadRequest;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class WarehousePhotoController extends Controller
 {
@@ -51,13 +55,10 @@ class WarehousePhotoController extends Controller
 
             return AdminResponse::success($photos, trans_message('warehouse_basic.photo_upload_success', [], 'ru'));
         } catch (\Throwable $exception) {
-            Log::error('WarehousePhotoController::uploadAssetPhotos', [
+            return $this->uploadFailureResponse('uploadAssetPhotos', $exception, [
                 'asset_id' => $assetId,
                 'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
             ]);
-
-            return AdminResponse::error($exception->getMessage(), 422);
         }
     }
 
@@ -121,14 +122,11 @@ class WarehousePhotoController extends Controller
 
             return AdminResponse::success($photos, trans_message('warehouse_basic.photo_upload_success', [], 'ru'));
         } catch (\Throwable $exception) {
-            Log::error('WarehousePhotoController::uploadBalancePhotos', [
+            return $this->uploadFailureResponse('uploadBalancePhotos', $exception, [
                 'warehouse_id' => $warehouseId,
                 'material_id' => $materialId,
                 'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
             ]);
-
-            return AdminResponse::error($exception->getMessage(), 422);
         }
     }
 
@@ -188,13 +186,10 @@ class WarehousePhotoController extends Controller
 
             return AdminResponse::success($photos, trans_message('warehouse_basic.photo_upload_success', [], 'ru'));
         } catch (\Throwable $exception) {
-            Log::error('WarehousePhotoController::uploadMovementPhotos', [
+            return $this->uploadFailureResponse('uploadMovementPhotos', $exception, [
                 'movement_id' => $movementId,
                 'user_id' => $request->user()?->id,
-                'error' => $exception->getMessage(),
             ]);
-
-            return AdminResponse::error($exception->getMessage(), 422);
         }
     }
 
@@ -218,5 +213,24 @@ class WarehousePhotoController extends Controller
 
             return AdminResponse::error(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'), 404);
         }
+    }
+
+    private function uploadFailureResponse(string $operation, Throwable $exception, array $context): JsonResponse
+    {
+        if ($exception instanceof ModelNotFoundException || $exception instanceof WarehousePhotoTargetNotFoundException) {
+            return AdminResponse::error(trans_message('warehouse_basic.photo_target_not_found', [], 'ru'), 404);
+        }
+
+        if ($exception instanceof WarehousePhotoException) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        }
+
+        Log::error('WarehousePhotoController::'.$operation, [
+            ...$context,
+            'exception' => $exception::class,
+            'error' => $exception->getMessage(),
+        ]);
+
+        return AdminResponse::error(trans_message('warehouse_basic.photo_upload_failed', [], 'ru'), 500);
     }
 }
