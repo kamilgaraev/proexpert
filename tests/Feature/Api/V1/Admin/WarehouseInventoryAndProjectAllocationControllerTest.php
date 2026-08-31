@@ -222,6 +222,46 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
             ->assertJsonPath('data.data.0.summary.total_difference_value', 100);
     }
 
+    public function test_inventory_item_rejects_invalid_actual_quantity_as_a_validation_error(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Основной склад', 'INV-VALIDATION');
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Материал сверки', 'INV-VALIDATION');
+        $this->allowAdminAccess();
+
+        $act = InventoryAct::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'act_number' => 'INV-20260831-VALIDATION',
+            'status' => InventoryAct::STATUS_IN_PROGRESS,
+            'inventory_date' => now()->toDateString(),
+            'created_by' => $context->user->id,
+            'commission_members' => [],
+        ]);
+        $item = InventoryActItem::query()->create([
+            'inventory_act_id' => $act->id,
+            'material_id' => $material->id,
+            'expected_quantity' => 5,
+            'actual_quantity' => null,
+            'unit_price' => 100,
+            'batch_number' => 'INV-VALIDATION-ITEM',
+        ]);
+
+        foreach ([
+            [[], 'Укажите фактическое количество.'],
+            [['actual_quantity' => 'не число'], 'Фактическое количество должно быть числом.'],
+            [['actual_quantity' => -0.001], 'Фактическое количество не может быть меньше нуля.'],
+        ] as [$payload, $message]) {
+            $this->withHeaders($context->authHeaders())
+                ->putJson("/api/v1/admin/warehouses/inventory/{$act->id}/items/{$item->id}", $payload)
+                ->assertUnprocessable()
+                ->assertJsonPath('errors.actual_quantity.0', $message);
+        }
+
+        self::assertNull($item->fresh()->actual_quantity);
+    }
+
     public function test_project_allocation_respects_stock_availability_and_can_be_partially_deallocated(): void
     {
         $context = AdminApiTestContext::create();
