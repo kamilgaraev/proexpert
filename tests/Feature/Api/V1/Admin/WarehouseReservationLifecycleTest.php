@@ -15,6 +15,7 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
@@ -27,6 +28,87 @@ use Tests\TestCase;
 final class WarehouseReservationLifecycleTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_reservation_search_finds_an_m8_number_beyond_the_first_page(): void
+    {
+        [$context, $material, $warehouse] = $this->warehouseContext(0);
+        $this->allowAdminAccess();
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Северный корпус',
+        ]);
+
+        $target = AssetReservation::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'quantity' => 1,
+            'project_id' => $project->id,
+            'reserved_by' => $context->user->id,
+            'status' => AssetReservation::STATUS_ACTIVE,
+            'reserved_at' => now()->subDays(2),
+            'expires_at' => now()->addDay(),
+            'reason' => 'Монтаж силовой линии',
+            'metadata' => ['document_number' => 'М8-2026-041'],
+        ]);
+        $distractorMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Песок строительный',
+            'code' => 'ПЕСОК',
+            'measurement_unit_id' => $material->measurement_unit_id,
+            'additional_properties' => ['asset_type' => Asset::TYPE_MATERIAL],
+            'is_active' => true,
+        ]);
+
+        foreach (range(1, 20) as $offset) {
+            AssetReservation::query()->create([
+                'organization_id' => $context->organization->id,
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $distractorMaterial->id,
+                'quantity' => 1,
+                'reserved_by' => $context->user->id,
+                'status' => AssetReservation::STATUS_ACTIVE,
+                'reserved_at' => now()->subMinutes($offset),
+                'expires_at' => now()->addDay(),
+                'metadata' => ['document_number' => "М8-ДРУГОЙ-{$offset}"],
+            ]);
+        }
+
+        [$foreignContext, $foreignMaterial, $foreignWarehouse] = $this->warehouseContext(0);
+        AssetReservation::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'warehouse_id' => $foreignWarehouse->id,
+            'material_id' => $foreignMaterial->id,
+            'quantity' => 1,
+            'reserved_by' => $foreignContext->user->id,
+            'status' => AssetReservation::STATUS_ACTIVE,
+            'reserved_at' => now(),
+            'expires_at' => now()->addDay(),
+            'metadata' => ['document_number' => 'М8-2026-041'],
+        ]);
+
+        $firstPage = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/advanced-warehouse/reservations?status=active&warehouse_id={$warehouse->id}")
+            ->assertOk();
+        self::assertNotContains(
+            $target->id,
+            collect($firstPage->json('data.data'))->pluck('id')->all(),
+        );
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/advanced-warehouse/reservations?status=active&warehouse_id={$warehouse->id}&search=".urlencode('м8-2026-041'))
+            ->assertOk()
+            ->assertJsonPath('data.total', 1)
+            ->assertJsonPath('data.data.0.id', $target->id)
+            ->assertJsonPath('data.data.0.document_number', 'М8-2026-041');
+
+        foreach (['каб-ввг', 'северный корпус', 'силовой линии'] as $search) {
+            $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/advanced-warehouse/reservations?status=active&warehouse_id={$warehouse->id}&search=".urlencode($search))
+                ->assertOk()
+                ->assertJsonPath('data.data.0.id', $target->id);
+        }
+    }
 
     public function test_reservation_creation_persists_and_returns_the_business_m8_number(): void
     {

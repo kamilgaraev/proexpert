@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\AbcXyzAnalysisRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\AutoReorderRuleRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ForecastRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReservationIndexRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReserveAssetRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TurnoverAnalyticsRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
@@ -160,17 +161,19 @@ class AdvancedWarehouseController extends Controller
         }
     }
 
-    public function reservations(Request $request): JsonResponse
+    public function reservations(ReservationIndexRequest $request): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
 
         try {
+            $validated = $request->validated();
             $perPage = min(max((int) $request->integer('per_page', 20), 1), 100);
 
             $reservationsQuery = AssetReservation::query()
                 ->where('organization_id', $organizationId)
                 ->with(['material.measurementUnit', 'warehouse', 'project', 'reservedBy'])
-                ->when($request->filled('warehouse_id'), fn (Builder $query) => $query->where('warehouse_id', (int) $request->input('warehouse_id')));
+                ->when($request->filled('warehouse_id'), fn (Builder $query) => $query->where('warehouse_id', (int) $request->input('warehouse_id')))
+                ->search($validated['search'] ?? null);
 
             $this->applyReservationStatusFilter($reservationsQuery, $request->input('status'));
 
@@ -195,7 +198,7 @@ class AdvancedWarehouseController extends Controller
             Log::error('AdvancedWarehouseController::reservations error', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
-                'filters' => $request->only(['status', 'warehouse_id', 'page', 'per_page']),
+                'filters' => $request->only(['status', 'warehouse_id', 'search', 'page', 'per_page']),
                 'error' => $exception->getMessage(),
             ]);
 

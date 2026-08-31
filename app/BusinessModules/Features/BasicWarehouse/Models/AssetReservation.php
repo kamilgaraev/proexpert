@@ -7,6 +7,7 @@ use App\Models\Material;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -72,6 +73,31 @@ class AssetReservation extends Model
     public function reservedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'reserved_by');
+    }
+
+    public function scopeSearch(Builder $query, ?string $search): Builder
+    {
+        $search = trim((string) $search);
+
+        if ($search === '') {
+            return $query;
+        }
+
+        $pattern = '%'.mb_strtolower($search).'%';
+
+        return $query->where(static function (Builder $query) use ($pattern): void {
+            $query->whereRaw("lower(COALESCE(metadata->>'document_number', '')) LIKE ?", [$pattern])
+                ->orWhereRaw("lower(COALESCE(reason, '')) LIKE ?", [$pattern])
+                ->orWhereIn('material_id', Material::query()
+                    ->select('id')
+                    ->where(static function (Builder $query) use ($pattern): void {
+                        $query->whereRaw('lower(name) LIKE ?', [$pattern])
+                            ->orWhereRaw("lower(COALESCE(code, '')) LIKE ?", [$pattern]);
+                    }))
+                ->orWhereIn('project_id', Project::query()
+                    ->select('id')
+                    ->whereRaw('lower(name) LIKE ?', [$pattern]));
+        });
     }
 
     /**
