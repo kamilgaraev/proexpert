@@ -12,6 +12,15 @@ class ReserveAssetRequest extends FormRequest
 {
     protected function prepareForValidation(): void
     {
+        if ($this->has('document_number')) {
+            $documentNumber = $this->input('document_number');
+
+            if (is_string($documentNumber)) {
+                $documentNumber = trim($documentNumber);
+                $this->merge(['document_number' => $documentNumber !== '' ? $documentNumber : null]);
+            }
+        }
+
         if ($this->filled('expires_at') && ! $this->filled('expires_hours')) {
             try {
                 $expiresAt = Carbon::parse((string) $this->input('expires_at'));
@@ -54,6 +63,7 @@ class ReserveAssetRequest extends FormRequest
             ],
             'expires_hours' => 'nullable|integer|min:1|max:168',
             'reason' => 'nullable|string',
+            'document_number' => ['nullable', 'string', 'max:100'],
         ];
     }
 }
