@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Project;
 
 use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectAllocationAvailabilityService;
 use App\Repositories\Interfaces\MaterialRepositoryInterface;
 use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
@@ -55,7 +56,8 @@ class ProjectServiceSortValidationTest extends TestCase
             Mockery::mock(OrganizationScopeInterface::class),
             Mockery::mock(ProjectParticipantService::class),
             Mockery::mock(ProjectTeamService::class),
-            new ProjectBudgetAmountService
+            new ProjectBudgetAmountService,
+            new ProjectAllocationAvailabilityService,
         );
 
         $this->assertSame($paginator, $service->getProjectsForCurrentOrg($request, 20));

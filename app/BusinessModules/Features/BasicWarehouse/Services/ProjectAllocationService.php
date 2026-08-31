@@ -21,6 +21,7 @@ final class ProjectAllocationService
     public function __construct(
         private readonly WarehouseService $warehouseService,
         private readonly ProjectMaterialDeliveryService $deliveryService,
+        private readonly ProjectAllocationAvailabilityService $availabilityService,
     ) {}
 
     public function allocate(int $organizationId, User $actor, array $data): ProjectAllocationResult
@@ -165,6 +166,10 @@ final class ProjectAllocationService
             }
 
             $allocatedQuantity = (float) $allocation->allocated_quantity;
+            $outstandingQuantity = $this->availabilityService->outstandingForAllocation(
+                $organizationId,
+                $allocation,
+            );
             $removedQuantity = array_key_exists('quantity', $data) && $data['quantity'] !== null
                 ? (float) $data['quantity']
                 : $allocatedQuantity;
@@ -177,10 +182,7 @@ final class ProjectAllocationService
             }
 
             $remainingQuantity = max(0.0, $allocatedQuantity - $removedQuantity);
-            $minimumQuantity = max(
-                (float) $delivery->shipped_quantity,
-                (float) $delivery->accepted_quantity,
-            );
+            $minimumQuantity = max(0.0, $allocatedQuantity - $outstandingQuantity);
             if ($remainingQuantity < $minimumQuantity) {
                 throw new ProjectAllocationException(
                     trans_message('basic_warehouse.project_allocations.quantity_below_shipped', [

@@ -345,11 +345,11 @@ class ProjectController extends Controller
         }
     }
 
-    public function getProjectMaterials(int $id, Request $request): JsonResponse
+    public function getProjectMaterials(Project $project, Request $request): JsonResponse
     {
         try {
             $materials = $this->projectService->getProjectMaterials(
-                $id,
+                (int) $project->id,
                 $request->get('per_page', 15),
                 $request->get('search'),
                 $request->get('sort_by', 'created_at'),
@@ -359,18 +359,18 @@ class ProjectController extends Controller
             return AdminResponse::success($materials);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@getProjectMaterials', [
-                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine(),
+                'id' => $project->id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine(),
             ]);
 
             return AdminResponse::error(trans_message('project.materials_error'), 500);
         }
     }
 
-    public function getProjectWorkTypes(int $id, Request $request): JsonResponse
+    public function getProjectWorkTypes(Project $project, Request $request): JsonResponse
     {
         try {
             $workTypes = $this->projectService->getProjectWorkTypes(
-                $id,
+                (int) $project->id,
                 $request->get('per_page', 15),
                 $request->get('search'),
                 $request->get('sort_by', 'created_at'),
@@ -380,7 +380,7 @@ class ProjectController extends Controller
             return AdminResponse::success($workTypes);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@getProjectWorkTypes', [
-                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine(),
+                'id' => $project->id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine(),
             ]);
 
             return AdminResponse::error(trans_message('project.work_types_error'), 500);

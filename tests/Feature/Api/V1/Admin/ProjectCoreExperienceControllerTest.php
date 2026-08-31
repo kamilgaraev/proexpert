@@ -316,6 +316,18 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $foreignResponse->assertForbidden();
         $foreignResponse->assertJsonPath('success', false);
         $foreignResponse->assertJsonPath('message', trans_message('project.access_denied'));
+
+        $materialsResponse = $this->withHeaders($foreignContext->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/materials");
+        $materialsResponse->assertForbidden();
+        $materialsResponse->assertJsonPath('success', false);
+        $materialsResponse->assertJsonPath('message', trans_message('project.access_denied'));
+
+        $workTypesResponse = $this->withHeaders($foreignContext->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/work-types");
+        $workTypesResponse->assertForbidden();
+        $workTypesResponse->assertJsonPath('success', false);
+        $workTypesResponse->assertJsonPath('message', trans_message('project.access_denied'));
     }
 
     private function allowAdminAccess(): void

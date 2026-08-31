@@ -11,6 +11,16 @@ use Illuminate\Support\Collection;
 
 final class ProjectAllocationAvailabilityService
 {
+    public function outstandingForAllocation(
+        int $organizationId,
+        WarehouseProjectAllocation $allocation,
+    ): float {
+        return (float) $this->outstandingForAllocations(
+            $organizationId,
+            collect([$allocation]),
+        )->get($allocation->id, 0);
+    }
+
     public function outstandingByMaterial(
         int $organizationId,
         int $warehouseId,
