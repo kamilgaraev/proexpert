@@ -28,6 +28,50 @@ final class WarehouseReservationLifecycleTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_reservation_creation_persists_and_returns_the_business_m8_number(): void
+    {
+        [$context, $material, $warehouse] = $this->warehouseContext(10);
+        WarehouseBalance::query()->update([
+            'available_quantity' => 10,
+            'reserved_quantity' => 0,
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/advanced-warehouse/reservations', [
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 2,
+                'expires_hours' => 24,
+                'document_number' => '  М8-2026-041  ',
+            ]);
+
+        $response->assertCreated();
+        $reservation = AssetReservation::query()->latest('id')->firstOrFail();
+        self::assertSame('М8-2026-041', $reservation->metadata['document_number']);
+        $response->assertJsonPath('data.document_number', 'М8-2026-041');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/advanced-warehouse/reservations', [
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 1,
+                'document_number' => str_repeat('Н', 101),
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['document_number']);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/advanced-warehouse/reservations', [
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'quantity' => 1,
+                'document_number' => ['unexpected' => 'value'],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['document_number']);
+    }
+
     public function test_consumption_is_idempotent_and_tracks_the_selected_reservation(): void
     {
         [$context, $material, $warehouse] = $this->warehouseContext(10);

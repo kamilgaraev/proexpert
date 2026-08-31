@@ -105,6 +105,7 @@ class AdvancedWarehouseController extends Controller
                     'user_id' => $request->user()->id,
                     'expires_hours' => $validated['expires_hours'] ?? 24,
                     'reason' => $validated['reason'] ?? null,
+                    'document_number' => $validated['document_number'] ?? null,
                 ]
             );
 
@@ -438,6 +439,7 @@ class AdvancedWarehouseController extends Controller
             'reserved_by_id' => $reservation->reserved_by,
             'expires_at' => optional($reservation->expires_at)?->toDateTimeString(),
             'reason' => $reservation->reason,
+            'document_number' => $reservation->metadata['document_number'] ?? null,
             'created_at' => optional($reservation->created_at)?->toDateTimeString(),
             'material' => $reservation->material ? [
                 'id' => $reservation->material->id,
