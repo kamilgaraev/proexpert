@@ -178,6 +178,50 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
             ->assertJsonPath('data.meta.metrics.discrepancy_items', 2);
     }
 
+    public function test_inventory_registry_returns_live_item_summary_before_the_act_is_completed(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Основной склад', 'INV-LIVE-SUMMARY');
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Материал сверки', 'INV-LIVE-SUMMARY');
+        $this->allowAdminAccess();
+
+        $act = InventoryAct::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'act_number' => 'INV-20260831-LIVE-SUMMARY',
+            'status' => InventoryAct::STATUS_IN_PROGRESS,
+            'inventory_date' => now()->toDateString(),
+            'created_by' => $context->user->id,
+            'commission_members' => [],
+            'summary' => null,
+        ]);
+
+        foreach ([
+            ['batch' => 'LIVE-SUMMARY-1', 'difference' => 1, 'total_value' => 100],
+            ['batch' => 'LIVE-SUMMARY-2', 'difference' => 0, 'total_value' => 0],
+        ] as $item) {
+            InventoryActItem::query()->create([
+                'inventory_act_id' => $act->id,
+                'material_id' => $material->id,
+                'expected_quantity' => 1,
+                'actual_quantity' => 1 + $item['difference'],
+                'difference' => $item['difference'],
+                'unit_price' => 100,
+                'total_value' => $item['total_value'],
+                'batch_number' => $item['batch'],
+            ]);
+        }
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouses/inventory?search=INV-20260831-LIVE-SUMMARY')
+            ->assertOk()
+            ->assertJsonPath('data.data.0.id', $act->id)
+            ->assertJsonPath('data.data.0.summary.total_items', 2)
+            ->assertJsonPath('data.data.0.summary.items_with_discrepancy', 1)
+            ->assertJsonPath('data.data.0.summary.total_difference_value', 100);
+    }
+
     public function test_project_allocation_respects_stock_availability_and_can_be_partially_deallocated(): void
     {
         $context = AdminApiTestContext::create();

@@ -29,6 +29,13 @@ final class InventoryActRegistryQuery
         return [
             'acts' => (clone $query)
                 ->with(['warehouse', 'creator'])
+                ->withCount('items')
+                ->withCount([
+                    'items as items_with_discrepancy_count' => fn (Builder $query) => $query
+                        ->whereNotNull('difference')
+                        ->whereRaw('ABS(difference) >= ?', [0.001]),
+                ])
+                ->withSum('items as items_total_difference_value', 'total_value')
                 ->orderByDesc('inventory_date')
                 ->paginate($perPage),
             'metrics' => $this->metrics($query),
