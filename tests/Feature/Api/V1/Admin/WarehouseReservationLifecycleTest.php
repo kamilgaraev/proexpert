@@ -132,6 +132,26 @@ final class WarehouseReservationLifecycleTest extends TestCase
         $reservation = AssetReservation::query()->latest('id')->firstOrFail();
         self::assertSame('М8-2026-041', $reservation->metadata['document_number']);
         $response->assertJsonPath('data.document_number', 'М8-2026-041');
+        self::assertMatchesRegularExpression(
+            '/(?:Z|[+-]\d{2}:\d{2})$/',
+            (string) $response->json('data.expires_at'),
+        );
+        self::assertMatchesRegularExpression(
+            '/(?:Z|[+-]\d{2}:\d{2})$/',
+            (string) $response->json('data.created_at'),
+        );
+
+        $listResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/advanced-warehouse/reservations?status=active')
+            ->assertOk();
+        self::assertMatchesRegularExpression(
+            '/(?:Z|[+-]\d{2}:\d{2})$/',
+            (string) $listResponse->json('data.data.0.expires_at'),
+        );
+        self::assertMatchesRegularExpression(
+            '/(?:Z|[+-]\d{2}:\d{2})$/',
+            (string) $listResponse->json('data.data.0.created_at'),
+        );
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/advanced-warehouse/reservations', [

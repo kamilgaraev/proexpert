@@ -2071,7 +2071,7 @@ class WarehouseService implements WarehouseReportDataProvider
                         'reserved' => true,
                         'reservation_id' => $existingReservation->id,
                         'quantity' => (float) $existingReservation->quantity,
-                        'expires_at' => $existingReservation->expires_at->toDateTimeString(),
+                        'expires_at' => $existingReservation->expires_at->toIso8601String(),
                         'remaining_available' => $balance ? (float) $balance->availableQuantity : 0,
                     ];
                 }
@@ -2115,7 +2115,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'reserved' => true,
                 'reservation_id' => $reservation->id,
                 'quantity' => (float) $quantity,
-                'expires_at' => $expiresAt->toDateTimeString(),
+                'expires_at' => $expiresAt->toIso8601String(),
                 'remaining_available' => $balance ? (float) $balance->availableQuantity : 0,
             ];
 

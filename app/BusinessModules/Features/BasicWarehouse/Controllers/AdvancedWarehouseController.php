@@ -440,10 +440,10 @@ class AdvancedWarehouseController extends Controller
             'status' => $this->mapReservationStatus($reservation),
             'project_id' => $reservation->project_id,
             'reserved_by_id' => $reservation->reserved_by,
-            'expires_at' => optional($reservation->expires_at)?->toDateTimeString(),
+            'expires_at' => optional($reservation->expires_at)?->toIso8601String(),
             'reason' => $reservation->reason,
             'document_number' => $reservation->metadata['document_number'] ?? null,
-            'created_at' => optional($reservation->created_at)?->toDateTimeString(),
+            'created_at' => optional($reservation->created_at)?->toIso8601String(),
             'material' => $reservation->material ? [
                 'id' => $reservation->material->id,
                 'name' => $reservation->material->name,

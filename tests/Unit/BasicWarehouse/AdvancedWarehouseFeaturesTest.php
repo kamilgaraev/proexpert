@@ -2,12 +2,11 @@
 
 namespace Tests\Unit\BasicWarehouse;
 
-use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
 use App\BusinessModules\Features\BasicWarehouse\Models\AutoReorderRule;
-use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Models\Material;
 use App\Models\Organization;
 use App\Models\User;
@@ -23,9 +22,13 @@ class AdvancedWarehouseFeaturesTest extends TestCase
     use RefreshDatabase;
 
     protected WarehouseService $service;
+
     protected Organization $organization;
+
     protected User $user;
+
     protected OrganizationWarehouse $warehouse;
+
     protected Material $material;
 
     protected function setUp(): void
@@ -36,7 +39,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
 
         $this->organization = Organization::factory()->create();
         $this->user = User::factory()->create();
-        
+
         $this->warehouse = OrganizationWarehouse::create([
             'organization_id' => $this->organization->id,
             'name' => 'Тестовый склад',
@@ -75,12 +78,34 @@ class AdvancedWarehouseFeaturesTest extends TestCase
             [
                 'user_id' => $this->user->id,
                 'reason' => 'Тестовое резервирование',
+                'idempotency_key' => 'reserve-assets-timezone-contract',
             ]
         );
 
         $this->assertTrue($result['reserved']);
         $this->assertEquals(30, $result['quantity']);
         $this->assertEquals(70, $result['remaining_available']);
+        $this->assertMatchesRegularExpression(
+            '/(?:Z|[+-]\d{2}:\d{2})$/',
+            (string) $result['expires_at'],
+        );
+
+        $retryResult = $this->service->reserveAssets(
+            $this->organization->id,
+            $this->warehouse->id,
+            $this->material->id,
+            30,
+            [
+                'user_id' => $this->user->id,
+                'reason' => 'Тестовое резервирование',
+                'idempotency_key' => 'reserve-assets-timezone-contract',
+            ],
+        );
+        $this->assertSame($result['reservation_id'], $retryResult['reservation_id']);
+        $this->assertMatchesRegularExpression(
+            '/(?:Z|[+-]\d{2}:\d{2})$/',
+            (string) $retryResult['expires_at'],
+        );
 
         // Проверяем что создалась резервация
         $this->assertDatabaseHas('asset_reservations', [
@@ -95,7 +120,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         $balance = WarehouseBalance::where('warehouse_id', $this->warehouse->id)
             ->where('material_id', $this->material->id)
             ->first();
-        
+
         $this->assertEquals(70, $balance->available_quantity);
         $this->assertEquals(30, $balance->reserved_quantity);
     }
@@ -127,7 +152,7 @@ class AdvancedWarehouseFeaturesTest extends TestCase
         $balance = WarehouseBalance::where('warehouse_id', $this->warehouse->id)
             ->where('material_id', $this->material->id)
             ->first();
-        
+
         $this->assertEquals(100, $balance->available_quantity);
         $this->assertEquals(0, $balance->reserved_quantity);
     }
