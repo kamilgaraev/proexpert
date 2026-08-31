@@ -2,6 +2,8 @@
 
 namespace App\Services\Project;
 
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectAllocationAvailabilityService;
 use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Repositories\Interfaces\MaterialRepositoryInterface;
@@ -53,6 +55,7 @@ class ProjectService
     protected ProjectParticipantService $projectParticipantService;
     protected ProjectTeamService $projectTeamService;
     protected ProjectBudgetAmountService $projectBudgetAmountService;
+    protected ProjectAllocationAvailabilityService $projectAllocationAvailabilityService;
 
     public function __construct(
         ProjectRepositoryInterface $projectRepository,
@@ -65,7 +68,8 @@ class ProjectService
         OrganizationScopeInterface $orgScope,
         ProjectParticipantService $projectParticipantService,
         ProjectTeamService $projectTeamService,
-        ProjectBudgetAmountService $projectBudgetAmountService
+        ProjectBudgetAmountService $projectBudgetAmountService,
+        ProjectAllocationAvailabilityService $projectAllocationAvailabilityService
     ) {
         $this->projectRepository = $projectRepository;
         $this->userRepository = $userRepository;
@@ -78,6 +82,7 @@ class ProjectService
         $this->projectParticipantService = $projectParticipantService;
         $this->projectTeamService = $projectTeamService;
         $this->projectBudgetAmountService = $projectBudgetAmountService;
+        $this->projectAllocationAvailabilityService = $projectAllocationAvailabilityService;
     }
 
     private function resolveProjectRoleFromValues(?string $roleNew, ?string $roleLegacy): ?ProjectOrganizationRole
@@ -654,6 +659,7 @@ class ProjectService
                     'mu.short_name as unit',
                     'w.name as warehouse_name',
                     'w.id as warehouse_id',
+                    'wpa.organization_id',
                     'wpa.allocated_quantity as allocated_quantity',
                     DB::raw('COALESCE(warehouse_totals.total_warehouse_available, 0) as warehouse_available_total'),
                     DB::raw('CASE WHEN COALESCE(warehouse_totals.total_warehouse_available, 0) > 0 THEN warehouse_totals.total_val / warehouse_totals.total_warehouse_available ELSE COALESCE(m.default_price, 0) END as average_price'),
@@ -682,17 +688,34 @@ class ProjectService
             $query->orderBy($sortBy, $sortDirection);
 
             $paginatedResults = $query->paginate($perPage);
+            $items = collect($paginatedResults->items());
+            $allocations = WarehouseProjectAllocation::query()
+                ->whereIn('id', $items->pluck('allocation_id'))
+                ->get(['id', 'organization_id', 'allocated_quantity']);
+            $outstandingByAllocation = collect();
+
+            foreach ($allocations->groupBy('organization_id') as $organizationId => $organizationAllocations) {
+                $organizationOutstanding = $this->projectAllocationAvailabilityService->outstandingForAllocations(
+                    (int) $organizationId,
+                    $organizationAllocations,
+                );
+
+                foreach ($organizationOutstanding as $allocationId => $quantity) {
+                    $outstandingByAllocation->put((int) $allocationId, (float) $quantity);
+                }
+            }
 
             return [
-                'data' => collect($paginatedResults->items())->map(function($item) {
-                    $warehouseAvailable = (float)$item->warehouse_available_total;
-                    $allocated = (float)$item->allocated_quantity;
-                    
-                    // КРИТИЧНО: Проверяем валидность данных
-                    // Если материал распределен, но его НЕТ на складе - это некорректные данные!
-                    $isValid = $warehouseAvailable > 0;
-                    $hasWarning = !$isValid && $allocated > 0;
-                    
+                'data' => $items->map(function ($item) use ($outstandingByAllocation) {
+                    $warehouseAvailable = (float) $item->warehouse_available_total;
+                    $allocated = (float) $item->allocated_quantity;
+                    $awaitingShipment = min(
+                        $allocated,
+                        (float) $outstandingByAllocation->get((int) $item->allocation_id, $allocated),
+                    );
+                    $departed = max(0.0, $allocated - $awaitingShipment);
+                    $hasWarning = $warehouseAvailable <= 0 && $awaitingShipment > 0;
+
                     return [
                         'allocation_id' => $item->allocation_id,
                         'material_id' => $item->material_id,
@@ -701,15 +724,18 @@ class ProjectService
                         'unit' => $item->unit,
                         'warehouse_name' => $item->warehouse_name,
                         'warehouse_id' => $item->warehouse_id,
-                        'allocated_quantity' => $allocated, // Распределено на проект
-                        'warehouse_available_total' => $warehouseAvailable, // Доступно на всех складах
-                        'average_price' => (float)$item->average_price,
-                        'allocated_value' => $allocated * (float)$item->average_price,
+                        'allocated_quantity' => $allocated,
+                        'planned_quantity' => $allocated,
+                        'awaiting_shipment_quantity' => $awaitingShipment,
+                        'departed_quantity' => $departed,
+                        'removable_quantity' => $awaitingShipment,
+                        'warehouse_available_total' => $warehouseAvailable,
+                        'average_price' => (float) $item->average_price,
+                        'allocated_value' => $allocated * (float) $item->average_price,
                         'last_operation_date' => $item->last_operation_date,
                         'allocated_by' => $item->allocated_by,
                         'notes' => $item->notes,
-                        // Флаги валидности данных
-                        'is_valid' => $isValid,
+                        'is_valid' => !$hasWarning,
                         'has_warning' => $hasWarning,
                         'warning_message' => $hasWarning ? trans_message('project.material_missing_warehouse_warning') : null,
                     ];

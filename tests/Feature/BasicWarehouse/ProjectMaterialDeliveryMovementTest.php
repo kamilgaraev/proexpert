@@ -356,6 +356,15 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
                 'quantity' => 10,
             ])
             ->assertOk();
+
+        $materialsResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$setup['project']->id}/materials");
+        $materialsResponse->assertOk();
+        $materialsResponse->assertJsonPath('data.data.0.allocated_quantity', 30);
+        $materialsResponse->assertJsonPath('data.data.0.awaiting_shipment_quantity', 20);
+        $materialsResponse->assertJsonPath('data.data.0.departed_quantity', 10);
+        $materialsResponse->assertJsonPath('data.data.0.removable_quantity', 20);
+
         $delivery = $setup['delivery']->fresh();
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/project-material-deliveries/{$delivery->id}/receive", [
@@ -391,6 +400,17 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $this->assertSame(6.0, (float) $reversalMovements
             ->firstWhere('movement_type', WarehouseMovement::TYPE_TRANSFER_OUT)
             ->quantity);
+
+        $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/project-allocations/{$setup['allocation']->id}", [
+                'idempotency_key' => '99999999-9999-4999-8999-999999999999',
+                'quantity' => 26,
+            ])
+            ->assertOk();
+
+        $this->assertSame(4.0, (float) $setup['allocation']->fresh()->allocated_quantity);
+        $this->assertSame(4.0, (float) $delivery->fresh()->requested_quantity);
+        $this->assertSame(4.0, (float) $delivery->fresh()->reserved_quantity);
     }
 
     private function createDeliveryContext(AdminApiTestContext $context): array

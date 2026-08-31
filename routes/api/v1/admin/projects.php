@@ -75,13 +75,15 @@ Route::get('/projects/{id}/statistics', [ProjectController::class, 'statistics']
     ->name('projects.statistics');
 
 // Получить материалы проекта
-Route::get('/projects/{id}/materials', [ProjectController::class, 'getProjectMaterials'])
-    ->whereNumber('id')
+Route::get('/projects/{project}/materials', [ProjectController::class, 'getProjectMaterials'])
+    ->middleware(['project.context', 'authorize:admin.projects.view'])
+    ->whereNumber('project')
     ->name('projects.materials');
 
 // Получить типы работ проекта
-Route::get('/projects/{id}/work-types', [ProjectController::class, 'getProjectWorkTypes'])
-    ->whereNumber('id')
+Route::get('/projects/{project}/work-types', [ProjectController::class, 'getProjectWorkTypes'])
+    ->middleware(['project.context', 'authorize:admin.projects.view'])
+    ->whereNumber('project')
     ->name('projects.workTypes');
 
 // Получить организации проекта
