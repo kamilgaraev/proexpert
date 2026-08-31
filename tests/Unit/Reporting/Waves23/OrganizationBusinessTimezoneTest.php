@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Waves23;
 
-use App\BusinessModules\Features\Procurement\Reporting\Support\OrganizationBusinessTimezone;
 use App\Models\Organization;
+use App\Support\OrganizationBusinessTimezone;
 use DateTimeZone;
 use PHPUnit\Framework\TestCase;
 

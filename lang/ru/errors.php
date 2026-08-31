@@ -17,6 +17,7 @@ return [
     'excel_export_failed' => 'Не удалось экспортировать данные в Excel.',
     'report_create_failed' => 'Не удалось сформировать отчет.',
     'report_export_failed' => 'Не удалось экспортировать отчет.',
+    'business_timezone_invalid' => 'Часовой пояс организации указан некорректно.',
     'file_corrupted' => 'Файл поврежден.',
     'access_restricted' => 'Действие ограничено.',
     'customer_access' => [
