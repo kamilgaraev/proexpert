@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\InventoryApprovalStatusException;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\InventoryReservationConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\InventoryIndexRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UpdateInventoryItemRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
@@ -235,16 +236,12 @@ class InventoryController extends Controller
         }
     }
 
-    public function updateItem(Request $request, int $actId, int $itemId): JsonResponse
+    public function updateItem(UpdateInventoryItemRequest $request, int $actId, int $itemId): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
+        $validated = $request->validated();
 
         try {
-            $validated = $request->validate([
-                'actual_quantity' => 'required|numeric|min:0',
-                'notes' => 'nullable|string',
-            ]);
-
             $act = $this->findAct($organizationId, $actId);
 
             if ($act->status !== InventoryAct::STATUS_IN_PROGRESS) {
