@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\INV3;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
+use App\BusinessModules\Features\BasicWarehouse\Services\Export\InventoryCommissionMemberNameResolver;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
+use App\Services\Storage\FileService;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 
 /**
@@ -13,6 +15,13 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
  */
 class INV3ExportStrategy extends BaseWarehouseExportStrategy
 {
+    public function __construct(
+        FileService $fileService,
+        private readonly InventoryCommissionMemberNameResolver $commissionMemberNameResolver,
+    ) {
+        parent::__construct($fileService);
+    }
+
     public function export($act): string
     {
         /** @var InventoryAct $act */
@@ -111,9 +120,9 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
         $this->setUnderline($sheet, "B{$row}");
         $row++;
         $sheet->setCellValue("A{$row}", 'Члены комиссии:');
-        foreach ($act->commission_members ?? [] as $member) {
+        foreach ($this->commissionMemberNameResolver->resolve($act) as $memberName) {
             $row++;
-            $sheet->setCellValue("A{$row}", "- ____________________ / {$member} /");
+            $sheet->setCellValue("A{$row}", "- ____________________ / {$memberName} /");
         }
     }
 
