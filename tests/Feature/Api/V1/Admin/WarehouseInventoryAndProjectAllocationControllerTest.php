@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
+use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDeliveryEvent;
@@ -86,6 +87,95 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
                 ->assertJsonPath('data.meta.total', 1)
                 ->assertJsonPath('data.data.0.id', $target->id);
         }
+    }
+
+    public function test_inventory_registry_metrics_cover_the_filtered_registry_instead_of_the_current_page(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Основной склад', 'INV-METRICS');
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Материал сверки', 'INV-METRICS');
+        $this->allowAdminAccess();
+
+        $acts = [];
+        foreach ([
+            InventoryAct::STATUS_DRAFT,
+            InventoryAct::STATUS_IN_PROGRESS,
+            InventoryAct::STATUS_APPROVED,
+        ] as $offset => $status) {
+            $acts[] = InventoryAct::query()->create([
+                'organization_id' => $context->organization->id,
+                'warehouse_id' => $warehouse->id,
+                'act_number' => "INV-20260831-METRICS-{$offset}",
+                'status' => $status,
+                'inventory_date' => now()->subDays($offset)->toDateString(),
+                'created_by' => $context->user->id,
+                'commission_members' => [],
+                'notes' => $offset === 1 ? 'Контрольная выборка' : null,
+            ]);
+        }
+
+        foreach ([1 => 2, 2 => 5] as $actOffset => $discrepancyCount) {
+            foreach (range(1, $discrepancyCount) as $itemOffset) {
+                InventoryActItem::query()->create([
+                    'inventory_act_id' => $acts[$actOffset]->id,
+                    'material_id' => $material->id,
+                    'expected_quantity' => 1,
+                    'actual_quantity' => 2,
+                    'difference' => 1,
+                    'unit_price' => 100,
+                    'total_value' => 100,
+                    'batch_number' => "METRICS-{$actOffset}-{$itemOffset}",
+                ]);
+            }
+        }
+
+        $foreignContext = AdminApiTestContext::create();
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id, 'Чужой склад', 'INV-METRICS');
+        $foreignUnit = $this->createUnit($foreignContext->organization->id);
+        $foreignMaterial = $this->createMaterial(
+            $foreignContext->organization->id,
+            $foreignUnit->id,
+            'Чужой материал',
+            'INV-METRICS-FOREIGN',
+        );
+        $foreignAct = InventoryAct::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'warehouse_id' => $foreignWarehouse->id,
+            'act_number' => 'INV-20260831-METRICS-FOREIGN',
+            'status' => InventoryAct::STATUS_IN_PROGRESS,
+            'inventory_date' => now()->toDateString(),
+            'created_by' => $foreignContext->user->id,
+            'commission_members' => [],
+            'summary' => ['items_with_discrepancy' => 100],
+        ]);
+        InventoryActItem::query()->create([
+            'inventory_act_id' => $foreignAct->id,
+            'material_id' => $foreignMaterial->id,
+            'expected_quantity' => 1,
+            'actual_quantity' => 100,
+            'difference' => 99,
+            'unit_price' => 100,
+            'total_value' => 9900,
+            'batch_number' => 'METRICS-FOREIGN',
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/inventory?warehouse_id={$warehouse->id}&per_page=1")
+            ->assertOk()
+            ->assertJsonPath('data.meta.total', 3)
+            ->assertJsonPath('data.meta.metrics.acts_total', 3)
+            ->assertJsonPath('data.meta.metrics.draft_acts', 1)
+            ->assertJsonPath('data.meta.metrics.in_progress_acts', 1)
+            ->assertJsonPath('data.meta.metrics.discrepancy_items', 7);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/inventory?warehouse_id={$warehouse->id}&search=".urlencode('контрольная выборка'))
+            ->assertOk()
+            ->assertJsonPath('data.meta.metrics.acts_total', 1)
+            ->assertJsonPath('data.meta.metrics.draft_acts', 0)
+            ->assertJsonPath('data.meta.metrics.in_progress_acts', 1)
+            ->assertJsonPath('data.meta.metrics.discrepancy_items', 2);
     }
 
     public function test_project_allocation_respects_stock_availability_and_can_be_partially_deallocated(): void
