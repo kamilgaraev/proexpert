@@ -10,6 +10,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\InventoryIndexRequ
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Queries\InventoryActRegistryQuery;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager;
 use App\BusinessModules\Features\BasicWarehouse\Services\InventoryWorkflowService;
 use App\Http\Controllers\Controller;
@@ -26,6 +27,7 @@ class InventoryController extends Controller
     public function __construct(
         protected WarehouseExportManager $exportManager,
         private readonly InventoryWorkflowService $inventoryWorkflowService,
+        private readonly InventoryActRegistryQuery $inventoryActRegistryQuery,
     ) {}
 
     public function export(Request $request, int $id): JsonResponse
@@ -68,20 +70,14 @@ class InventoryController extends Controller
             $validated = $request->validated();
             $perPage = max(1, min((int) $request->input('per_page', 20), 100));
 
-            $acts = InventoryAct::query()
-                ->where('organization_id', $organizationId)
-                ->with(['warehouse', 'creator'])
-                ->search($validated['search'] ?? null)
-                ->when(
-                    $request->filled('warehouse_id'),
-                    fn ($query) => $query->where('warehouse_id', (int) $request->input('warehouse_id'))
-                )
-                ->when(
-                    $request->filled('status'),
-                    fn ($query) => $query->where('status', (string) $request->input('status'))
-                )
-                ->orderByDesc('inventory_date')
-                ->paginate($perPage);
+            $registry = $this->inventoryActRegistryQuery->get(
+                $organizationId,
+                $request->filled('warehouse_id') ? (int) $request->input('warehouse_id') : null,
+                $request->filled('status') ? (string) $request->input('status') : null,
+                $validated['search'] ?? null,
+                $perPage,
+            );
+            $acts = $registry['acts'];
 
             return AdminResponse::success([
                 'data' => collect($acts->items())
@@ -96,6 +92,7 @@ class InventoryController extends Controller
                     'per_page' => $acts->perPage(),
                     'to' => $acts->lastItem(),
                     'total' => $acts->total(),
+                    'metrics' => $registry['metrics'],
                 ],
                 'links' => [
                     'first' => $acts->url(1),
