@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Models;
 
 use App\Models\Organization;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -73,6 +74,22 @@ class InventoryAct extends Model
         return $this->hasMany(InventoryActItem::class);
     }
 
+    public function scopeSearch(Builder $query, ?string $search): Builder
+    {
+        $search = trim((string) $search);
+
+        if ($search === '') {
+            return $query;
+        }
+
+        $pattern = '%'.mb_strtolower($search).'%';
+
+        return $query->where(static function (Builder $query) use ($pattern): void {
+            $query->whereRaw('lower(act_number) LIKE ?', [$pattern])
+                ->orWhereRaw("lower(COALESCE(notes, '')) LIKE ?", [$pattern]);
+        });
+    }
+
     /**
      * Scope для фильтрации по статусу
      */
@@ -89,4 +106,3 @@ class InventoryAct extends Model
         return $query->whereIn('status', [self::STATUS_DRAFT, self::STATUS_IN_PROGRESS]);
     }
 }
-
