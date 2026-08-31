@@ -30,6 +30,64 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_inventory_search_finds_an_act_beyond_the_first_page_and_stays_organization_scoped(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Основной склад', 'INV-SEARCH');
+        $this->allowAdminAccess();
+
+        $target = InventoryAct::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'act_number' => 'INV-20260831-SEARCH',
+            'status' => InventoryAct::STATUS_DRAFT,
+            'inventory_date' => now()->subDays(30)->toDateString(),
+            'created_by' => $context->user->id,
+            'commission_members' => [],
+            'notes' => 'Закрывающая проверка северного склада',
+        ]);
+
+        foreach (range(1, 20) as $offset) {
+            InventoryAct::query()->create([
+                'organization_id' => $context->organization->id,
+                'warehouse_id' => $warehouse->id,
+                'act_number' => "INV-20260831-DISTRACTOR-{$offset}",
+                'status' => InventoryAct::STATUS_DRAFT,
+                'inventory_date' => now()->subDays($offset - 1)->toDateString(),
+                'created_by' => $context->user->id,
+                'commission_members' => [],
+            ]);
+        }
+
+        $foreignContext = AdminApiTestContext::create();
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id, 'Чужой склад', 'INV-SEARCH');
+        InventoryAct::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'warehouse_id' => $foreignWarehouse->id,
+            'act_number' => 'INV-20260831-SEARCH',
+            'status' => InventoryAct::STATUS_DRAFT,
+            'inventory_date' => now()->toDateString(),
+            'created_by' => $foreignContext->user->id,
+            'commission_members' => [],
+        ]);
+
+        $firstPage = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/inventory?warehouse_id={$warehouse->id}")
+            ->assertOk();
+        self::assertNotContains(
+            $target->id,
+            collect($firstPage->json('data.data'))->pluck('id')->all(),
+        );
+
+        foreach (['inv-20260831-search', 'закрывающая проверка'] as $search) {
+            $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/warehouses/inventory?warehouse_id={$warehouse->id}&search=".urlencode($search))
+                ->assertOk()
+                ->assertJsonPath('data.meta.total', 1)
+                ->assertJsonPath('data.data.0.id', $target->id);
+        }
+    }
+
     public function test_project_allocation_respects_stock_availability_and_can_be_partially_deallocated(): void
     {
         $context = AdminApiTestContext::create();

@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\InventoryApprovalStatusException;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\InventoryReservationConflictException;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\InventoryIndexRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
@@ -59,16 +60,18 @@ class InventoryController extends Controller
         }
     }
 
-    public function index(Request $request): JsonResponse
+    public function index(InventoryIndexRequest $request): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
 
         try {
+            $validated = $request->validated();
             $perPage = max(1, min((int) $request->input('per_page', 20), 100));
 
             $acts = InventoryAct::query()
                 ->where('organization_id', $organizationId)
                 ->with(['warehouse', 'creator'])
+                ->search($validated['search'] ?? null)
                 ->when(
                     $request->filled('warehouse_id'),
                     fn ($query) => $query->where('warehouse_id', (int) $request->input('warehouse_id'))
@@ -105,7 +108,7 @@ class InventoryController extends Controller
             Log::error('InventoryController::index error', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
-                'filters' => $request->only(['warehouse_id', 'status', 'page', 'per_page']),
+                'filters' => $request->only(['warehouse_id', 'status', 'search', 'page', 'per_page']),
                 'error' => $exception->getMessage(),
             ]);
 
