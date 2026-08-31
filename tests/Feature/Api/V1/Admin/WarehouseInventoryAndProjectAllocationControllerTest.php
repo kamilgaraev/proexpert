@@ -262,6 +262,54 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         self::assertNull($item->fresh()->actual_quantity);
     }
 
+    public function test_inventory_act_rejects_commission_members_outside_the_active_organization_team(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Основной склад', 'INV-COMMISSION');
+        $inactiveMember = User::factory()->create([
+            'current_organization_id' => $context->organization->id,
+        ]);
+        $context->organization->users()->attach($inactiveMember->id, [
+            'is_owner' => false,
+            'is_active' => false,
+            'settings' => null,
+        ]);
+        $this->allowAdminAccess();
+
+        foreach ([$foreignContext->user->id, $inactiveMember->id] as $memberId) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/warehouses/inventory', [
+                    'warehouse_id' => $warehouse->id,
+                    'inventory_date' => '2026-08-31',
+                    'commission_members' => [$memberId],
+                ])
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors(['commission_members.0']);
+
+            self::assertSame(
+                'Выберите действующего сотрудника вашей организации.',
+                $response->json('errors')['commission_members.0'][0],
+            );
+        }
+
+        $duplicateResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-08-31',
+                'commission_members' => [$context->user->id, $context->user->id],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['commission_members.1']);
+
+        self::assertSame(
+            'Сотрудник уже добавлен в комиссию.',
+            $duplicateResponse->json('errors')['commission_members.1'][0],
+        );
+
+        self::assertSame(0, InventoryAct::query()->count());
+    }
+
     public function test_project_allocation_respects_stock_availability_and_can_be_partially_deallocated(): void
     {
         $context = AdminApiTestContext::create();

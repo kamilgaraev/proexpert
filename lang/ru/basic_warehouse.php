@@ -30,6 +30,8 @@ return [
         'actual_quantity_required' => 'Укажите фактическое количество.',
         'actual_quantity_numeric' => 'Фактическое количество должно быть числом.',
         'actual_quantity_non_negative' => 'Фактическое количество не может быть меньше нуля.',
+        'commission_member_invalid' => 'Выберите действующего сотрудника вашей организации.',
+        'commission_member_duplicate' => 'Сотрудник уже добавлен в комиссию.',
         'update_item_invalid_status' => 'Изменять позиции можно только в процессе инвентаризации.',
         'update_item_error' => 'Не удалось обновить позицию инвентаризации.',
         'complete_invalid_status' => 'Акт не находится в процессе инвентаризации.',

@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\InventoryApprovalStatusException;
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\InventoryReservationConflictException;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\InventoryIndexRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\StoreInventoryActRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\UpdateInventoryItemRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
@@ -20,8 +21,6 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 
 class InventoryController extends Controller
 {
@@ -114,25 +113,12 @@ class InventoryController extends Controller
         }
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreInventoryActRequest $request): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
+        $validated = $request->validated();
 
         try {
-            $validated = $request->validate([
-                'warehouse_id' => [
-                    'required',
-                    'integer',
-                    Rule::exists('organization_warehouses', 'id')->where(
-                        fn ($query) => $query->where('organization_id', $organizationId)
-                    ),
-                ],
-                'inventory_date' => 'required|date',
-                'commission_members' => 'nullable|array',
-                'commission_members.*' => 'integer|exists:users,id',
-                'notes' => 'nullable|string',
-            ]);
-
             $warehouse = $this->findWarehouse($organizationId, (int) $validated['warehouse_id']);
 
             $act = $this->inventoryWorkflowService->createAct(
@@ -156,8 +142,6 @@ class InventoryController extends Controller
                 trans_message('basic_warehouse.inventory.created'),
                 201
             );
-        } catch (ValidationException $exception) {
-            return AdminResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('basic_warehouse.inventory.warehouse_not_found'), 404);
         } catch (\Throwable $exception) {
