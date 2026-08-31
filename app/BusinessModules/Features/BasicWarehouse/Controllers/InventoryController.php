@@ -422,13 +422,16 @@ class InventoryController extends Controller
             'approved_by' => $act->approved_by,
             'notes' => $act->notes,
             'summary' => $act->summary ?? [
-                'total_items' => $act->relationLoaded('items') ? $act->items->count() : 0,
-                'items_with_discrepancy' => $act->relationLoaded('items')
-                    ? $act->items->filter(fn (InventoryActItem $item) => $item->hasDiscrepancy())->count()
-                    : 0,
-                'total_difference_value' => $act->relationLoaded('items')
-                    ? $act->items->sum(fn (InventoryActItem $item) => (float) ($item->total_value ?? 0))
-                    : 0,
+                'total_items' => (int) ($act->getAttribute('items_count')
+                    ?? ($act->relationLoaded('items') ? $act->items->count() : 0)),
+                'items_with_discrepancy' => (int) ($act->getAttribute('items_with_discrepancy_count')
+                    ?? ($act->relationLoaded('items')
+                        ? $act->items->filter(fn (InventoryActItem $item) => $item->hasDiscrepancy())->count()
+                        : 0)),
+                'total_difference_value' => (float) ($act->getAttribute('items_total_difference_value')
+                    ?? ($act->relationLoaded('items')
+                        ? $act->items->sum(fn (InventoryActItem $item) => (float) ($item->total_value ?? 0))
+                        : 0)),
             ],
             'warehouse' => $act->warehouse ? [
                 'id' => $act->warehouse->id,
