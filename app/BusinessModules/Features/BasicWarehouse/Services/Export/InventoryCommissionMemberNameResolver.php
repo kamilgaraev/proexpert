@@ -34,22 +34,36 @@ final class InventoryCommissionMemberNameResolver
             return [];
         }
 
-        $namesById = User::query()
+        $membersById = User::query()
             ->withTrashed()
             ->whereKey($memberIds->all())
             ->whereHas('organizations', static function ($query) use ($act): void {
                 $query->where('organizations.id', $act->organization_id);
             })
-            ->pluck('name', 'id');
+            ->get(['id', 'name', 'position'])
+            ->keyBy('id');
 
         $names = [];
         foreach ($memberIds as $memberId) {
-            $name = trim((string) $namesById->get($memberId));
-            if ($name !== '') {
-                $names[] = $name;
+            $member = $membersById->get($memberId);
+            if ($member instanceof User) {
+                $names[] = $this->resolveOfficialFullName($member);
             }
         }
 
         return $names;
+    }
+
+    private function resolveOfficialFullName(User $member): string
+    {
+        $name = trim((string) $member->name);
+        if (preg_match('/^\p{L}[\p{L}\p{M}\'’.-]*(?:\s+\p{L}[\p{L}\p{M}\'’.-]*)+$/u', $name) === 1) {
+            return $name;
+        }
+
+        $missingName = trans_message('basic_warehouse.inventory.commission_member_name_missing');
+        $position = trim((string) $member->position);
+
+        return $position === '' ? $missingName : "{$missingName} ({$position})";
     }
 }
