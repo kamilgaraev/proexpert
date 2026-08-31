@@ -415,6 +415,9 @@ final class WarehouseReservationLifecycleTest extends TestCase
     {
         Storage::fake('s3');
         [$context, $material, $warehouse] = $this->warehouseContext(10);
+        $context->organization->forceFill([
+            'multi_org_settings' => ['default_timezone' => 'Europe/Moscow'],
+        ])->save();
         $this->allowAdminAccess();
         $reservation = AssetReservation::query()->create([
             'organization_id' => $context->organization->id,
@@ -434,9 +437,9 @@ final class WarehouseReservationLifecycleTest extends TestCase
             'movement_type' => WarehouseMovement::TYPE_RESERVED_ISSUE,
             'quantity' => 2,
             'price' => 100,
-            'document_number' => 'ТРЕБ-001',
+            'document_number' => 'QA-REQ-OWNER-20260901-01',
             'metadata' => ['asset_reservation_id' => $reservation->id],
-            'movement_date' => now(),
+            'movement_date' => '2026-08-31 23:30:00',
         ]);
         WarehouseMovement::query()->create([
             'organization_id' => $context->organization->id,
@@ -458,9 +461,14 @@ final class WarehouseReservationLifecycleTest extends TestCase
         file_put_contents($temporaryPath, Storage::disk('s3')->get(rawurldecode($path)));
         $sheet = IOFactory::load($temporaryPath)->getActiveSheet();
 
-        self::assertSame('ТРЕБ-001', $sheet->getCell('B16')->getValue());
-        self::assertSame(2.0, (float) $sheet->getCell('E16')->getValue());
-        self::assertSame(8.0, (float) $sheet->getCell('G16')->getValue());
+        self::assertSame('01.09.2026', $sheet->getCell('A16')->getValue());
+        self::assertSame('QA-REQ-OWNER-20260901-01', $sheet->getCell('C16')->getValue());
+        self::assertSame(2.0, (float) $sheet->getCell('G16')->getValue());
+        self::assertSame(8.0, (float) $sheet->getCell('J16')->getValue());
+        self::assertContains('C16:F16', $sheet->getMergeCells());
+        self::assertSame('A1:L16', $sheet->getPageSetup()->getPrintArea());
+        self::assertSame('landscape', $sheet->getPageSetup()->getOrientation());
+        self::assertSame(1, $sheet->getPageSetup()->getFitToWidth());
         self::assertStringNotContainsString('ЧУЖОЕ-СПИСАНИЕ', json_encode($sheet->toArray(), JSON_THROW_ON_ERROR));
         @unlink($temporaryPath);
 

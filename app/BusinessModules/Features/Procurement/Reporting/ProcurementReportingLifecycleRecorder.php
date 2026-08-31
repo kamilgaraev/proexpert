@@ -19,7 +19,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifec
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseOrderPromiseVersionRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SentPurchaseOrderLineOwnerRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyLifecycleEventRecorder;
-use App\BusinessModules\Features\Procurement\Reporting\Support\OrganizationBusinessTimezone;
+use App\Support\OrganizationBusinessTimezone;
 use Brick\Math\BigDecimal;
 use Carbon\CarbonImmutable;
 use DomainException;

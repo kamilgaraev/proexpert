@@ -7,14 +7,26 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M8;
 use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
+use App\Services\Storage\FileService;
+use App\Support\OrganizationBusinessTimezone;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 /**
  * Стратегия экспорта Лимитно-заборной карты (Форма № М-8)
  */
 class M8ExportStrategy extends BaseWarehouseExportStrategy
 {
+    public function __construct(
+        FileService $fileService,
+        private readonly OrganizationBusinessTimezone $businessTimezone,
+    ) {
+        parent::__construct($fileService);
+    }
+
     /**
      * @param  array{reservation: AssetReservation, movements: Collection<int, WarehouseMovement>}  $data
      */
@@ -30,8 +42,8 @@ class M8ExportStrategy extends BaseWarehouseExportStrategy
         $sheet = $spreadsheet->getActiveSheet();
 
         $this->setHeader($sheet, $reservation);
-        $this->setTable($sheet, $reservation, $movements);
-        $this->applyStyles($sheet);
+        $lastRow = $this->setTable($sheet, $reservation, $movements);
+        $this->applyStyles($sheet, $lastRow);
 
         $materialCode = $this->filenameFragment(
             $reservation->material?->code ?? $reservation->material?->name,
@@ -51,31 +63,41 @@ class M8ExportStrategy extends BaseWarehouseExportStrategy
         return 'm8';
     }
 
-    protected function setHeader($sheet, AssetReservation $reservation): void
+    protected function setHeader(Worksheet $sheet, AssetReservation $reservation): void
     {
         $org = $reservation->organization;
 
+        foreach (range(1, 3) as $row) {
+            $sheet->mergeCells("J{$row}:L{$row}");
+        }
         $sheet->setCellValue('J1', 'Унифицированная форма № М-8');
         $sheet->setCellValue('J2', 'Утверждена постановлением Госкомстата');
         $sheet->setCellValue('J3', 'России от 30.10.97 № 71а');
         $sheet->getStyle('J1:L3')->getFont()->setSize(8);
+        $sheet->getStyle('J1:L3')->getAlignment()
+            ->setHorizontal(Alignment::HORIZONTAL_RIGHT)
+            ->setWrapText(true);
 
-        $sheet->mergeCells('A5:G5');
+        $sheet->mergeCells('A5:I5');
         $sheet->setCellValue('A5', $org->legal_name ?? $org->name);
-        $this->setUnderline($sheet, 'A5:G5');
+        $this->setUnderline($sheet, 'A5:I5');
+        $sheet->mergeCells('A6:I6');
         $sheet->setCellValue('A6', 'организация');
-        $this->setCenter($sheet, 'A6:G6');
+        $this->setCenter($sheet, 'A6:I6');
         $sheet->getStyle('A6')->getFont()->setSize(8);
 
-        $sheet->setCellValue('H5', 'Код');
-        $sheet->setCellValue('H6', 'Форма по ОКУД');
-        $sheet->setCellValue('I6', '0315005');
-        $sheet->setCellValue('H7', 'по ОКПО');
-        $sheet->setCellValue('I7', $org->okpo ?? '');
-        $this->applyTableStyle($sheet, 'H5:I7');
-        $this->setCenter($sheet, 'H5:I7');
+        $sheet->mergeCells('J5:K5');
+        $sheet->mergeCells('J6:K6');
+        $sheet->mergeCells('J7:K7');
+        $sheet->setCellValue('J5', 'Код');
+        $sheet->setCellValue('J6', 'Форма по ОКУД');
+        $sheet->setCellValue('L6', '0315005');
+        $sheet->setCellValue('J7', 'по ОКПО');
+        $sheet->setCellValue('L7', $org->okpo ?? '');
+        $this->applyTableStyle($sheet, 'J5:L7');
+        $this->setCenter($sheet, 'J5:L7');
 
-        $sheet->mergeCells('A9:I9');
+        $sheet->mergeCells('A9:L9');
         $sheet->setCellValue(
             'A9',
             'ЛИМИТНО-ЗАБОРНАЯ КАРТА № '.$this->documentNumber($reservation->metadata['document_number'] ?? null)
@@ -84,6 +106,8 @@ class M8ExportStrategy extends BaseWarehouseExportStrategy
         $this->setCenter($sheet, 'A9');
         $sheet->getStyle('A9')->getFont()->setSize(14);
 
+        $sheet->mergeCells('A11:L11');
+        $sheet->mergeCells('A12:L12');
         $unit = $reservation->material?->measurementUnit;
         $sheet->setCellValue('A11', 'Материал: '.($reservation->material?->name ?? ''));
         $sheet->setCellValue(
@@ -92,37 +116,70 @@ class M8ExportStrategy extends BaseWarehouseExportStrategy
         );
     }
 
-    protected function setTable($sheet, $reservation, $movements): void
+    protected function setTable(Worksheet $sheet, AssetReservation $reservation, Collection $movements): int
     {
         $row = 15;
+        $this->mergeTableRow($sheet, $row);
         $sheet->setCellValue("A{$row}", 'Дата');
-        $sheet->setCellValue("B{$row}", 'Номер документа');
-        $sheet->setCellValue("E{$row}", 'Отпущено');
-        $sheet->setCellValue("G{$row}", 'Остаток лимита');
+        $sheet->setCellValue("C{$row}", 'Номер документа');
+        $sheet->setCellValue("G{$row}", 'Отпущено');
+        $sheet->setCellValue("J{$row}", 'Остаток лимита');
 
-        $this->setBold($sheet, "A{$row}:I{$row}");
-        $this->setCenter($sheet, "A{$row}:I{$row}");
+        $this->setBold($sheet, "A{$row}:L{$row}");
+        $this->setCenter($sheet, "A{$row}:L{$row}");
 
         $remaining = (float) $reservation->quantity;
+        $timezone = $this->businessTimezone->resolve($reservation->organization);
         foreach ($movements as $m) {
             $row++;
-            $sheet->setCellValue("A{$row}", $m->movement_date->format('d.m.Y'));
-            $sheet->setCellValue("B{$row}", $this->documentNumber($m->document_number));
-            $sheet->setCellValue("E{$row}", $m->quantity);
+            $this->mergeTableRow($sheet, $row);
+            $sheet->setCellValue("A{$row}", $m->movement_date->copy()->setTimezone($timezone)->format('d.m.Y'));
+            $sheet->setCellValue("C{$row}", $this->documentNumber($m->document_number));
+            $sheet->setCellValue("G{$row}", $m->quantity);
             $remaining -= (float) $m->quantity;
-            $sheet->setCellValue("G{$row}", max(0, $remaining));
+            $sheet->setCellValue("J{$row}", max(0, $remaining));
         }
 
-        $this->applyTableStyle($sheet, "A15:I{$row}");
+        $this->applyTableStyle($sheet, "A15:L{$row}");
+        if ($row > 15) {
+            $this->setCenter($sheet, "A16:B{$row}");
+            $this->setCenter($sheet, "G16:L{$row}");
+        }
+
+        return $row;
     }
 
-    protected function applyStyles($sheet): void
+    protected function applyStyles(Worksheet $sheet, int $lastRow): void
     {
-        $sheet->getColumnDimension('A')->setWidth(15);
-        $sheet->getColumnDimension('B')->setWidth(15);
-        $sheet->getColumnDimension('E')->setWidth(15);
-        $sheet->getColumnDimension('G')->setWidth(15);
+        foreach (range('A', 'L') as $column) {
+            $sheet->getColumnDimension($column)->setWidth(10);
+        }
+        foreach (['C', 'D', 'E', 'F'] as $column) {
+            $sheet->getColumnDimension($column)->setWidth(14);
+        }
 
-        $sheet->getStyle('A1:L100')->getAlignment()->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+        $sheet->getStyle("A1:L{$lastRow}")->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
+        $sheet->getStyle("A15:L{$lastRow}")->getAlignment()->setWrapText(true);
+        $sheet->getRowDimension(15)->setRowHeight(30);
+
+        $sheet->getPageSetup()
+            ->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)
+            ->setPaperSize(PageSetup::PAPERSIZE_A4)
+            ->setFitToWidth(1)
+            ->setFitToHeight(0)
+            ->setPrintArea("A1:L{$lastRow}");
+        $sheet->getPageMargins()
+            ->setTop(0.35)
+            ->setRight(0.3)
+            ->setBottom(0.35)
+            ->setLeft(0.3);
+    }
+
+    private function mergeTableRow(Worksheet $sheet, int $row): void
+    {
+        $sheet->mergeCells("A{$row}:B{$row}");
+        $sheet->mergeCells("C{$row}:F{$row}");
+        $sheet->mergeCells("G{$row}:I{$row}");
+        $sheet->mergeCells("J{$row}:L{$row}");
     }
 }

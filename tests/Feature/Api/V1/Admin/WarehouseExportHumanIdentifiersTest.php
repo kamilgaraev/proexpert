@@ -96,6 +96,9 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         Storage::fake('s3');
 
         [$context, $material, $warehouse] = $this->warehouseContext();
+        $context->organization->forceFill([
+            'multi_org_settings' => ['default_timezone' => 'Asia/Yekaterinburg'],
+        ])->save();
         $reservation = AssetReservation::query()->create([
             'organization_id' => $context->organization->id,
             'warehouse_id' => $warehouse->id,
@@ -119,8 +122,16 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
             'document_number' => null,
             'reason' => 'Выдача по лимиту',
             'metadata' => [],
-            'movement_date' => '2026-08-30 12:00:00',
+            'movement_date' => '2026-08-30 20:30:00',
         ]);
+
+        $emptyPath = app(M8ExportStrategy::class)->export([
+            'reservation' => $reservation,
+            'movements' => collect(),
+        ]);
+        $emptySheet = $this->sheetFromStorage($emptyPath);
+        $this->assertSame('A1:L15', $emptySheet->getPageSetup()->getPrintArea());
+        $this->assertContains('C15:F15', $emptySheet->getMergeCells());
 
         $path = app(M8ExportStrategy::class)->export([
             'reservation' => $reservation,
@@ -131,7 +142,8 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         $this->assertSame('ЛИМИТНО-ЗАБОРНАЯ КАРТА № б/н', $sheet->getCell('A9')->getValue());
         $this->assertSame('Материал: Кабель ВВГ', $sheet->getCell('A11')->getValue());
         $this->assertSame('Лимит: 8.000 м', $sheet->getCell('A12')->getValue());
-        $this->assertSame('б/н', $sheet->getCell('B16')->getValue());
+        $this->assertSame('31.08.2026', $sheet->getCell('A16')->getValue());
+        $this->assertSame('б/н', $sheet->getCell('C16')->getValue());
         $this->assertStringContainsString('kab-vvg_', $path);
         $this->assertStringContainsString('20260830_090000', $path);
         $this->assertStringNotContainsString('Res'.$reservation->id, $path);
