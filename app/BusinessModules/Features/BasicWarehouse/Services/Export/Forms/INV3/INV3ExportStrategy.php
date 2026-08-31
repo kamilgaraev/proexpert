@@ -142,6 +142,8 @@ class INV3ExportStrategy extends BaseWarehouseExportStrategy
         foreach (range('B', 'L') as $column) {
             $sheet->getColumnDimension($column)->setWidth(11);
         }
+        $sheet->getColumnDimension('H')->setWidth(18);
+        $sheet->getColumnDimension('I')->setWidth(12);
 
         $sheet->getStyle('A1:L'.$sheet->getHighestRow())
             ->getAlignment()

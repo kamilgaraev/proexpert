@@ -45,6 +45,7 @@ final class WarehouseINV3ReadableExportRegressionTest extends TestCase
         $this->assertSame(PageSetup::ORIENTATION_LANDSCAPE, $sheet->getPageSetup()->getOrientation());
         $this->assertSame(1, $sheet->getPageSetup()->getFitToWidth());
         $this->assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+        $this->assertGreaterThanOrEqual(18.0, $sheet->getColumnDimension('H')->getWidth());
     }
 
     // Regression: ISSUE-127 — официальный документ показывал технический логин вместо ФИО
