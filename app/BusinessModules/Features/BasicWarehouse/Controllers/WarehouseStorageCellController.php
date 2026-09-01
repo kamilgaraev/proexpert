@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseStorageCellRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
