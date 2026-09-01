@@ -68,6 +68,48 @@ class WarehouseServiceTest extends TestCase
         $this->assertSame(20.0, $stockByWarehouse[$secondaryWarehouse->id]['available_quantity']);
     }
 
+    public function test_get_stock_data_replaces_custody_login_with_readable_person_name(): void
+    {
+        [$organization, , $material, $user] = $this->createWarehouseContext();
+        $user->forceFill(['name' => 'technical_owner_login'])->save();
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Жилой комплекс Северный',
+        ]);
+        $warehouse = OrganizationWarehouse::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'responsible_user_id' => $user->id,
+            'name' => 'Ответственное хранение: Жилой комплекс Северный, technical_owner_login',
+            'code' => 'CUSTODY-READABLE-STOCK',
+            'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
+            'is_main' => false,
+            'is_active' => true,
+        ]);
+        WorkforceEmployee::query()->create([
+            'organization_id' => $organization->id,
+            'user_id' => $user->id,
+            'personnel_number' => 'QA-STOCK-NAME-001',
+            'last_name' => 'Гараев',
+            'first_name' => 'Камиль',
+            'middle_name' => 'Тестович',
+            'employment_status' => 'active',
+            'hire_date' => '2026-01-01',
+        ]);
+        $this->createBalance($organization->id, $warehouse->id, $material->id, 10);
+
+        $stock = $this->service->getStockData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+        ]);
+
+        $this->assertCount(1, $stock);
+        $this->assertSame(
+            'Ответственное хранение: Жилой комплекс Северный, Гараев Камиль Тестович',
+            $stock[0]['warehouse_name']
+        );
+        $this->assertStringNotContainsString('technical_owner_login', $stock[0]['warehouse_name']);
+    }
+
     public function test_get_stock_data_project_filter_returns_only_allocated_warehouse_position(): void
     {
         [$organization, $mainWarehouse, $material, $user] = $this->createWarehouseContext();
