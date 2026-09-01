@@ -34,10 +34,30 @@ class WarehouseLogisticUnitRequest extends FormRequest
 
         if ($this->isMethod('put') || $this->isMethod('patch')) {
             foreach ($rules as $key => $rule) {
-                $rules[$key] = str_replace('required', 'sometimes', $rule);
+                $rules[$key] = str_replace('required', 'sometimes|required', $rule);
             }
         }
 
         return $rules;
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'zone_id' => trans_message('basic_warehouse.logistic_unit.validation.zone'),
+            'cell_id' => trans_message('basic_warehouse.logistic_unit.validation.cell'),
+            'parent_unit_id' => trans_message('basic_warehouse.logistic_unit.validation.parent'),
+            'name' => trans_message('basic_warehouse.logistic_unit.validation.name'),
+            'code' => trans_message('basic_warehouse.logistic_unit.validation.code'),
+            'unit_type' => trans_message('basic_warehouse.logistic_unit.validation.type'),
+            'status' => trans_message('basic_warehouse.logistic_unit.validation.status'),
+            'capacity' => trans_message('basic_warehouse.logistic_unit.validation.capacity'),
+            'current_load' => trans_message('basic_warehouse.logistic_unit.validation.current_load'),
+            'gross_weight' => trans_message('basic_warehouse.logistic_unit.validation.gross_weight'),
+            'volume' => trans_message('basic_warehouse.logistic_unit.validation.volume'),
+            'metadata' => trans_message('basic_warehouse.logistic_unit.validation.metadata'),
+            'is_active' => trans_message('basic_warehouse.logistic_unit.validation.is_active'),
+            'notes' => trans_message('basic_warehouse.logistic_unit.validation.notes'),
+        ];
     }
 }

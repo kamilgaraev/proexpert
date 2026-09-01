@@ -562,6 +562,99 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         ]);
     }
 
+    public function test_logistic_unit_validation_uses_business_field_labels_on_create_and_update(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $zone = $this->createZone($warehouse->id, 'Storage zone', 'STORAGE');
+        $unit = $this->createLogisticUnit(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            null,
+            'Pallet',
+            'PALLET-1'
+        );
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/{$warehouse->id}/logistic-units", [
+                'name' => 'Invalid pallet',
+                'code' => 'INVALID-PALLET',
+                'unit_type' => WarehouseLogisticUnit::TYPE_PALLET,
+                'status' => WarehouseLogisticUnit::STATUS_AVAILABLE,
+                'capacity' => -1,
+                'current_load' => -1,
+                'gross_weight' => -1,
+                'volume' => -1,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.capacity.0', 'Поле «вместимость» должно быть не меньше 0.')
+            ->assertJsonPath('errors.current_load.0', 'Поле «текущая загрузка» должно быть не меньше 0.')
+            ->assertJsonPath('errors.gross_weight.0', 'Поле «вес брутто» должно быть не меньше 0.')
+            ->assertJsonPath('errors.volume.0', 'Поле «объём» должно быть не меньше 0.');
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/{$warehouse->id}/logistic-units/{$unit->id}", ['name' => ''])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Заполните поле «название логистической единицы».')
+            ->assertJsonPath('errors.name.0', 'Заполните поле «название логистической единицы».');
+
+        $this->assertDatabaseHas('warehouse_logistic_units', [
+            'id' => $unit->id,
+            'name' => 'Pallet',
+        ]);
+        $this->assertDatabaseMissing('warehouse_logistic_units', [
+            'warehouse_id' => $warehouse->id,
+            'code' => 'INVALID-PALLET',
+        ]);
+    }
+
+    public function test_logistic_unit_cannot_be_nested_in_its_descendant(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $zone = $this->createZone($warehouse->id, 'Storage zone', 'STORAGE');
+        $parent = $this->createLogisticUnit(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            null,
+            'Parent pallet',
+            'PARENT-PALLET'
+        );
+        $child = $this->createLogisticUnit(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            null,
+            'Child box',
+            'CHILD-BOX'
+        );
+        $child->update(['parent_unit_id' => $parent->id]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson(
+                "/api/v1/admin/warehouses/{$warehouse->id}/logistic-units/{$parent->id}",
+                ['parent_unit_id' => $child->id]
+            )
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'message',
+                'Нельзя вложить логистическую единицу в одну из её дочерних единиц.'
+            );
+
+        $this->assertDatabaseHas('warehouse_logistic_units', [
+            'id' => $parent->id,
+            'parent_unit_id' => null,
+        ]);
+        $this->assertDatabaseHas('warehouse_logistic_units', [
+            'id' => $child->id,
+            'parent_unit_id' => $parent->id,
+        ]);
+    }
+
     public function test_zone_cannot_be_deleted_while_it_has_linked_warehouse_entities(): void
     {
         $context = AdminApiTestContext::create();
