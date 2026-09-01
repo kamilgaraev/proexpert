@@ -1530,7 +1530,17 @@ class WarehouseService implements WarehouseReportDataProvider
     {
         $query = WarehouseMovement::query()
             ->where('organization_id', $organizationId)
-            ->with(['material.measurementUnit', 'warehouse', 'cell.zone', 'project', 'user', 'relatedUser', 'photos']);
+            ->with([
+                'material.measurementUnit',
+                'warehouse',
+                'fromWarehouse',
+                'toWarehouse',
+                'cell.zone',
+                'project',
+                'user',
+                'relatedUser',
+                'photos',
+            ]);
 
         if (isset($filters['warehouse_id'])) {
             $query->where('warehouse_id', $filters['warehouse_id']);
@@ -1605,13 +1615,28 @@ class WarehouseService implements WarehouseReportDataProvider
             ->all();
 
         $employeeNames = $this->personNameProvider->employeeNamesAt($organizationId, $references);
+        $ownerUserIds = DB::table('organization_user')
+            ->where('organization_id', $organizationId)
+            ->where('is_owner', true)
+            ->where('is_active', true)
+            ->whereIn('user_id', collect($references)->pluck('user_id')->unique()->all())
+            ->pluck('user_id')
+            ->mapWithKeys(static fn (int|string $userId): array => [(int) $userId => true])
+            ->all();
 
         return $movements
-            ->mapWithKeys(static fn (WarehouseMovement $movement): array => [
-                (int) $movement->id => $movement->user_id !== null
-                    ? ($employeeNames[(int) $movement->id] ?? trans_message('warehouse_basic.document_person_not_specified'))
-                    : trans_message('warehouse_basic.document_person_not_specified'),
-            ])
+            ->mapWithKeys(static function (WarehouseMovement $movement) use ($employeeNames, $ownerUserIds): array {
+                $actorName = $employeeNames[(int) $movement->id] ?? null;
+
+                if ($actorName === null && isset($ownerUserIds[(int) $movement->user_id])) {
+                    $actorName = trans_message('warehouse_basic.organization_owner');
+                }
+
+                return [
+                    (int) $movement->id => $actorName
+                        ?? trans_message('warehouse_basic.document_person_not_specified'),
+                ];
+            })
             ->all();
     }
 
@@ -1625,6 +1650,10 @@ class WarehouseService implements WarehouseReportDataProvider
             'operation_category_label' => $movement->operationCategoryLabel(),
             'warehouse_id' => $movement->warehouse_id,
             'warehouse_name' => $movement->warehouse->name,
+            'from_warehouse_id' => $movement->from_warehouse_id,
+            'from_warehouse_name' => $movement->fromWarehouse?->name,
+            'to_warehouse_id' => $movement->to_warehouse_id,
+            'to_warehouse_name' => $movement->toWarehouse?->name,
             'cell_id' => $movement->cell_id,
             'cell' => $movement->cell ? [
                 'id' => $movement->cell->id,
