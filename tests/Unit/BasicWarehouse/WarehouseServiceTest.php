@@ -18,6 +18,7 @@ use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class WarehouseServiceTest extends TestCase
@@ -268,6 +269,16 @@ class WarehouseServiceTest extends TestCase
     {
         [$organization, $warehouse, $material, $user] = $this->createWarehouseContext();
         $user->forceFill(['name' => 'technical_login'])->save();
+        DB::table('organization_user')->insert([
+            'organization_id' => $organization->id,
+            'user_id' => $user->id,
+            'is_owner' => true,
+            'is_active' => true,
+            'settings' => json_encode([], JSON_THROW_ON_ERROR),
+            'project_access_mode' => 'all',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $employee = WorkforceEmployee::query()->create([
             'organization_id' => $organization->id,
             'user_id' => $user->id,
@@ -382,7 +393,7 @@ class WarehouseServiceTest extends TestCase
             'movement_type' => WarehouseMovement::TYPE_RECEIPT,
         ]);
 
-        $this->assertSame('ФИО не указано', $withoutPersonnel[0]['user_name']);
+        $this->assertSame('Владелец организации', $withoutPersonnel[0]['user_name']);
         $this->assertNotSame('technical_login', $withoutPersonnel[0]['user_name']);
 
         $systemMovement = WarehouseMovement::query()->create([
@@ -401,6 +412,41 @@ class WarehouseServiceTest extends TestCase
         ]))->keyBy('movement_id');
 
         $this->assertSame('ФИО не указано', $systemMovements[$systemMovement->id]['user_name']);
+    }
+
+    public function test_get_movements_data_returns_readable_transfer_route(): void
+    {
+        [$organization, $sourceWarehouse, $material] = $this->createWarehouseContext();
+        $targetWarehouse = OrganizationWarehouse::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Склад назначения',
+            'code' => 'TARGET',
+            'warehouse_type' => OrganizationWarehouse::TYPE_EXTERNAL,
+            'is_main' => false,
+            'is_active' => true,
+        ]);
+
+        $movement = WarehouseMovement::query()->create([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $sourceWarehouse->id,
+            'to_warehouse_id' => $targetWarehouse->id,
+            'material_id' => $material->id,
+            'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT,
+            'quantity' => 2,
+            'price' => 100,
+            'movement_date' => '2026-05-03 10:00:00',
+        ]);
+
+        $movements = collect($this->service->getMovementsData($organization->id, [
+            'warehouse_id' => $sourceWarehouse->id,
+            'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT,
+        ]))->keyBy('movement_id');
+
+        $this->assertSame($sourceWarehouse->id, $movements[$movement->id]['warehouse_id']);
+        $this->assertNull($movements[$movement->id]['from_warehouse_id']);
+        $this->assertNull($movements[$movement->id]['from_warehouse_name']);
+        $this->assertSame($targetWarehouse->id, $movements[$movement->id]['to_warehouse_id']);
+        $this->assertSame($targetWarehouse->name, $movements[$movement->id]['to_warehouse_name']);
     }
 
     public function test_get_inventory_data_returns_inventory_acts(): void
