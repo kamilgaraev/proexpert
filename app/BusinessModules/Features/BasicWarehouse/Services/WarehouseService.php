@@ -18,6 +18,7 @@ use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services
 use App\BusinessModules\Features\Procurement\Enums\PurchaseReceiptStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
+use App\BusinessModules\Features\WorkforceManagement\Contracts\WorkforcePersonNameProvider;
 use App\Models\Material;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
@@ -46,6 +47,7 @@ class WarehouseService implements WarehouseReportDataProvider
         private readonly CanonicalWarehouseReportingIdentity $reportingIdentity,
         private readonly ReservationQuantityService $reservationQuantityService,
         private readonly ProjectAllocationAvailabilityService $allocationAvailabilityService,
+        private readonly WorkforcePersonNameProvider $personNameProvider,
     ) {
         $this->logging = $logging;
     }
@@ -1198,11 +1200,17 @@ class WarehouseService implements WarehouseReportDataProvider
      */
     public function getMovementsData(int $organizationId, array $filters = []): array
     {
-        return $this->movementQuery($organizationId, $filters)
+        $movements = $this->movementQuery($organizationId, $filters)
             ->orderByDesc('movement_date')
             ->orderByDesc('id')
-            ->get()
-            ->map(fn (WarehouseMovement $movement): array => $this->serializeMovement($movement))
+            ->get();
+        $actorNames = $this->movementActorNames($organizationId, $movements);
+
+        return $movements
+            ->map(fn (WarehouseMovement $movement): array => $this->serializeMovement(
+                $movement,
+                $actorNames[(int) $movement->id] ?? null,
+            ))
             ->all();
     }
 
@@ -1220,10 +1228,14 @@ class WarehouseService implements WarehouseReportDataProvider
                 page: max(1, $page),
             );
 
-        $paginator->setCollection(
-            $paginator->getCollection()
-                ->map(fn (WarehouseMovement $movement): array => $this->serializeMovement($movement))
-        );
+        $movements = $paginator->getCollection();
+        $actorNames = $this->movementActorNames($organizationId, $movements);
+        $paginator->setCollection($movements->map(
+            fn (WarehouseMovement $movement): array => $this->serializeMovement(
+                $movement,
+                $actorNames[(int) $movement->id] ?? null,
+            ),
+        ));
         $paginator->appends(array_filter([
             'material_id' => $filters['material_id'] ?? null,
             'movement_type' => $filters['movement_type'] ?? null,
@@ -1276,7 +1288,7 @@ class WarehouseService implements WarehouseReportDataProvider
         $search = trim((string) ($filters['search'] ?? ''));
         if ($search !== '') {
             $pattern = '%'.$search.'%';
-            $query->where(function (Builder $searchQuery) use ($pattern): void {
+            $query->where(function (Builder $searchQuery) use ($organizationId, $pattern, $search): void {
                 $searchQuery
                     ->whereLike('document_number', $pattern)
                     ->orWhereLike('reason', $pattern)
@@ -1287,17 +1299,45 @@ class WarehouseService implements WarehouseReportDataProvider
                     })
                     ->orWhereHas('project', static function (Builder $projectQuery) use ($pattern): void {
                         $projectQuery->whereLike('name', $pattern);
-                    })
-                    ->orWhereHas('user', static function (Builder $userQuery) use ($pattern): void {
-                        $userQuery->whereLike('name', $pattern);
                     });
+
+                $this->personNameProvider->orWhereEmployeeNameMatches(
+                    $searchQuery,
+                    $organizationId,
+                    $search,
+                    'warehouse_movements.user_id',
+                    'warehouse_movements.movement_date',
+                );
             });
         }
 
         return $query;
     }
 
-    private function serializeMovement(WarehouseMovement $movement): array
+    private function movementActorNames(int $organizationId, Collection $movements): array
+    {
+        $references = $movements
+            ->filter(static fn (WarehouseMovement $movement): bool => $movement->user_id !== null)
+            ->mapWithKeys(static fn (WarehouseMovement $movement): array => [
+                (int) $movement->id => [
+                    'user_id' => (int) $movement->user_id,
+                    'date' => $movement->movement_date,
+                ],
+            ])
+            ->all();
+
+        $employeeNames = $this->personNameProvider->employeeNamesAt($organizationId, $references);
+
+        return $movements
+            ->mapWithKeys(static fn (WarehouseMovement $movement): array => [
+                (int) $movement->id => $movement->user_id !== null
+                    ? ($employeeNames[(int) $movement->id] ?? trans_message('warehouse_basic.document_person_not_specified'))
+                    : trans_message('warehouse_basic.document_person_not_specified'),
+            ])
+            ->all();
+    }
+
+    private function serializeMovement(WarehouseMovement $movement, ?string $actorName): array
     {
         return [
             'movement_id' => $movement->id,
@@ -1331,7 +1371,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 ?? null,
             'project_id' => $movement->project_id,
             'project_name' => $movement->project->name ?? null,
-            'user_name' => $movement->user->name ?? null,
+            'user_name' => $actorName,
             'related_user_id' => $movement->related_user_id,
             'related_user_name' => $movement->relatedUser->name ?? null,
             'related_user' => $movement->relatedUser ? [
