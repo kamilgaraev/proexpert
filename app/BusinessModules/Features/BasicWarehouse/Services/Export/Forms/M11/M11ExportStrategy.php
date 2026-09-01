@@ -6,6 +6,8 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M11;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
+use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseDocumentPersonResolver;
+use App\Services\Storage\FileService;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 
 /**
@@ -13,6 +15,13 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
  */
 class M11ExportStrategy extends BaseWarehouseExportStrategy
 {
+    public function __construct(
+        FileService $fileService,
+        private readonly WarehouseDocumentPersonResolver $personResolver,
+    ) {
+        parent::__construct($fileService);
+    }
+
     public function export($movementOrCollection): string
     {
         $movements = $movementOrCollection instanceof \Illuminate\Database\Eloquent\Collection
@@ -114,7 +123,12 @@ class M11ExportStrategy extends BaseWarehouseExportStrategy
     protected function setFooter($sheet, WarehouseMovement $movement): void
     {
         $row = $sheet->getHighestRow() + 2;
-        $sheet->setCellValue("A{$row}", 'Через кого: ____________________ / '.($movement->user->name ?? '').' /');
+        $person = $this->personResolver->resolve(
+            $movement->user,
+            (int) $movement->organization_id,
+            $movement->movement_date,
+        );
+        $sheet->setCellValue("A{$row}", 'Через кого: ____________________ / '.$person.' /');
         $sheet->mergeCells("A{$row}:I{$row}");
         $row++;
         $sheet->setCellValue("A{$row}", 'Разрешил: ____________________');

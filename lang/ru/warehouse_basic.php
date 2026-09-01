@@ -40,6 +40,7 @@ return [
     'access_denied' => 'Доступ запрещен.',
     'export_success' => 'Файл успешно сформирован.',
     'document_without_number' => 'б/н',
+    'document_person_not_specified' => 'ФИО не указано',
     'document_form_unavailable' => 'Эта форма не подходит для выбранной складской операции.',
     'm4_export_error' => 'Не удалось выгрузить приходный ордер М-4.',
     'm11_export_error' => 'Не удалось выгрузить требование-накладную М-11.',
