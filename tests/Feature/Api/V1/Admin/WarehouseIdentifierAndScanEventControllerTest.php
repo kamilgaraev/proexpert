@@ -202,6 +202,67 @@ class WarehouseIdentifierAndScanEventControllerTest extends TestCase
         );
     }
 
+    public function test_resolved_scan_history_keeps_readable_context_after_identifier_deletion(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse(
+            $context->organization->id,
+            'Исторический склад',
+            'HISTORY-WH'
+        );
+        $identifier = $this->createIdentifier(
+            $context->organization->id,
+            $warehouse->id,
+            'HISTORY-CODE'
+        );
+        $identifier->forceFill(['label' => 'Метка исторического склада'])->save();
+        $this->allowAdminAccess();
+
+        $createdResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouse-scan-events', [
+                'warehouse_id' => $warehouse->id,
+                'code' => 'HISTORY-CODE',
+                'source' => WarehouseScanEvent::SOURCE_ADMIN,
+                'metadata' => ['operator_note' => 'Сохранить'],
+            ]);
+
+        $createdResponse->assertCreated();
+        $createdResponse->assertJsonPath('data.result', WarehouseScanEvent::RESULT_RESOLVED);
+        $createdResponse->assertJsonPath('data.metadata.operator_note', 'Сохранить');
+        $createdResponse->assertJsonMissingPath('data.metadata._resolution_snapshot');
+        $eventId = (int) $createdResponse->json('data.id');
+
+        $identifier->delete();
+
+        $legacyEvent = WarehouseScanEvent::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'scanned_by_id' => $context->user->id,
+            'code' => 'LEGACY-HISTORY-CODE',
+            'source' => WarehouseScanEvent::SOURCE_ADMIN,
+            'result' => WarehouseScanEvent::RESULT_RESOLVED,
+            'entity_type' => 'warehouse',
+            'entity_id' => $warehouse->id,
+            'metadata' => [],
+            'scanned_at' => now()->subMinute(),
+        ]);
+
+        $indexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouse-scan-events?result=resolved');
+
+        $indexResponse->assertOk();
+        $events = collect($indexResponse->json('data'))->keyBy('id');
+
+        $this->assertSame('Метка исторического склада', $events[$eventId]['identifier']['label']);
+        $this->assertSame('Исторический склад', $events[$eventId]['entity_summary']['name']);
+        $this->assertSame('HISTORY-WH', $events[$eventId]['entity_summary']['code']);
+        $this->assertSame('Сохранить', $events[$eventId]['metadata']['operator_note']);
+        $this->assertArrayNotHasKey('_resolution_snapshot', $events[$eventId]['metadata']);
+        $this->assertNull($events[$legacyEvent->id]['identifier']);
+        $this->assertSame('Исторический склад', $events[$legacyEvent->id]['entity_summary']['name']);
+        $this->assertSame('HISTORY-WH', $events[$legacyEvent->id]['entity_summary']['code']);
+    }
+
     public function test_custody_warehouse_identifier_uses_a_readable_person_name_instead_of_login(): void
     {
         $context = AdminApiTestContext::create();
