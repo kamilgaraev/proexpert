@@ -15,6 +15,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -30,6 +31,72 @@ use Tests\TestCase;
 class WarehouseTopologyAndTaskControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_warehouse_list_replaces_technical_custody_logins_with_person_names(): void
+    {
+        $context = AdminApiTestContext::create();
+        $context->user->forceFill(['name' => 'technical_owner_login'])->save();
+        $responsibleWithoutProfile = User::factory()->create([
+            'name' => 'technical_storekeeper_login',
+            'current_organization_id' => $context->organization->id,
+        ]);
+        $project = Project::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Жилой комплекс Северный',
+            'status' => 'active',
+        ]);
+        $regularWarehouse = $this->createWarehouse(
+            $context->organization->id,
+            'Основной склад',
+            'MAIN'
+        );
+        $custodyWithProfile = OrganizationWarehouse::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'responsible_user_id' => $context->user->id,
+            'name' => 'Ответственное хранение: Жилой комплекс Северный, technical_owner_login',
+            'code' => 'CUSTODY-WITH-PROFILE',
+            'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
+            'is_active' => true,
+        ]);
+        $custodyWithoutProfile = OrganizationWarehouse::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'responsible_user_id' => $responsibleWithoutProfile->id,
+            'name' => 'Ответственное хранение: Жилой комплекс Северный, technical_storekeeper_login',
+            'code' => 'CUSTODY-WITHOUT-PROFILE',
+            'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
+            'is_active' => true,
+        ]);
+        WorkforceEmployee::query()->create([
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'personnel_number' => 'QA-CUSTODY-NAME-001',
+            'last_name' => 'Гараев',
+            'first_name' => 'Камиль',
+            'middle_name' => 'Тестович',
+            'employment_status' => 'active',
+            'hire_date' => '2026-01-01',
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouses')
+            ->assertOk();
+
+        $warehouses = collect($response->json('data'))->keyBy('id');
+
+        $this->assertSame('Основной склад', $warehouses->get($regularWarehouse->id)['name']);
+        $this->assertSame(
+            'Ответственное хранение: Жилой комплекс Северный, Гараев Камиль Тестович',
+            $warehouses->get($custodyWithProfile->id)['name']
+        );
+        $this->assertSame(
+            'Ответственное хранение: Жилой комплекс Северный, ФИО не указано',
+            $warehouses->get($custodyWithoutProfile->id)['name']
+        );
+        $this->assertStringNotContainsString('technical_', $response->getContent());
+    }
 
     public function test_owner_can_manage_warehouse_topology_and_tasks_without_foreign_leaks(): void
     {

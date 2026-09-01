@@ -29,12 +29,7 @@ class WarehouseController extends Controller
         $organizationId = (int) $request->user()->current_organization_id;
 
         try {
-            $warehouses = OrganizationWarehouse::query()
-                ->where('organization_id', $organizationId)
-                ->where('is_active', true)
-                ->orderByDesc('is_main')
-                ->orderBy('name')
-                ->get();
+            $warehouses = $this->warehouseService->getWarehouses($organizationId);
 
             return AdminResponse::success($warehouses);
         } catch (\Throwable $exception) {

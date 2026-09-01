@@ -196,7 +196,7 @@ final class WarehouseCustodyService
             if ($replayed !== null) {
                 return array_merge($replayed, [
                     'project_warehouse' => $projectWarehouse,
-                    'custody_warehouse' => $custodyWarehouse,
+                    'custody_warehouse' => $this->warehouseService->withReadableWarehouseName($custodyWarehouse),
                 ]);
             }
 
@@ -222,7 +222,7 @@ final class WarehouseCustodyService
 
             return array_merge($result, [
                 'project_warehouse' => $projectWarehouse->refresh(),
-                'custody_warehouse' => $custodyWarehouse->refresh(),
+                'custody_warehouse' => $this->warehouseService->withReadableWarehouseName($custodyWarehouse->refresh()),
             ]);
         });
     }
@@ -263,7 +263,7 @@ final class WarehouseCustodyService
             if ($replayed !== null) {
                 return array_merge($replayed, [
                     'project_warehouse' => $projectWarehouse,
-                    'custody_warehouse' => $custodyWarehouse,
+                    'custody_warehouse' => $this->warehouseService->withReadableWarehouseName($custodyWarehouse),
                 ]);
             }
 
@@ -296,7 +296,7 @@ final class WarehouseCustodyService
 
             return array_merge($result, [
                 'project_warehouse' => $projectWarehouse->refresh(),
-                'custody_warehouse' => $custodyWarehouse->refresh(),
+                'custody_warehouse' => $this->warehouseService->withReadableWarehouseName($custodyWarehouse->refresh()),
             ]);
         });
     }
@@ -323,17 +323,19 @@ final class WarehouseCustodyService
                 $warehouse->forceFill(['is_active' => true])->save();
             }
 
-            return $warehouse;
+            return $this->warehouseService->withReadableWarehouseName($warehouse);
         }
 
         return OrganizationWarehouse::query()->create([
             'organization_id' => $organizationId,
             'project_id' => $project->id,
             'responsible_user_id' => $responsibleUser->id,
-            'name' => trans_message('basic_warehouse.custody.warehouse_name', [
-                'project' => $project->name,
-                'user' => $responsibleUser->name,
-            ]),
+            'name' => $this->warehouseService->custodyWarehouseName(
+                $organizationId,
+                $project,
+                $responsibleUser,
+                now()
+            ),
             'code' => 'CUST-'.$project->id.'-'.$responsibleUser->id,
             'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
             'is_main' => false,

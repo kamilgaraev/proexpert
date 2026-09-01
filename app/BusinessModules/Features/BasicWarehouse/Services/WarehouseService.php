@@ -21,10 +21,13 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
 use App\BusinessModules\Features\WorkforceManagement\Contracts\WorkforcePersonNameProvider;
 use App\Models\Material;
 use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
 use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
 use chillerlan\QRCode\QRCode;
 use chillerlan\QRCode\QROptions;
+use DateTimeInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -101,15 +104,100 @@ class WarehouseService implements WarehouseReportDataProvider
      */
     public function getWarehouses(int $organizationId, bool $activeOnly = true): \Illuminate\Database\Eloquent\Collection
     {
-        $query = OrganizationWarehouse::where('organization_id', $organizationId);
+        $query = OrganizationWarehouse::query()
+            ->with('project')
+            ->where('organization_id', $organizationId);
 
         if ($activeOnly) {
             $query->where('is_active', true);
         }
 
-        return $query->orderBy('is_main', 'desc')
+        $warehouses = $query->orderBy('is_main', 'desc')
             ->orderBy('name')
             ->get();
+
+        return $this->applyReadableCustodyWarehouseNames($organizationId, $warehouses);
+    }
+
+    public function custodyWarehouseName(
+        int $organizationId,
+        Project $project,
+        User $responsibleUser,
+        DateTimeInterface $date
+    ): string {
+        return $this->buildCustodyWarehouseName(
+            $organizationId,
+            (string) $project->name,
+            (int) $responsibleUser->id,
+            $date
+        );
+    }
+
+    public function withReadableWarehouseName(OrganizationWarehouse $warehouse): OrganizationWarehouse
+    {
+        if ($warehouse->warehouse_type !== OrganizationWarehouse::TYPE_CUSTODY) {
+            return $warehouse;
+        }
+
+        $warehouse->loadMissing('project');
+        $warehouse->setAttribute('name', $this->buildCustodyWarehouseName(
+            (int) $warehouse->organization_id,
+            (string) ($warehouse->project?->name
+                ?? trans_message('basic_warehouse.custody.project_name_missing')),
+            $warehouse->responsible_user_id !== null ? (int) $warehouse->responsible_user_id : null,
+            $warehouse->created_at ?? now()
+        ));
+        $warehouse->syncOriginalAttribute('name');
+
+        return $warehouse;
+    }
+
+    private function buildCustodyWarehouseName(
+        int $organizationId,
+        string $projectName,
+        ?int $responsibleUserId,
+        DateTimeInterface $date
+    ): string {
+        return trans_message('basic_warehouse.custody.warehouse_name', [
+            'project' => $projectName,
+            'user' => $responsibleUserId !== null
+                ? ($this->personNameProvider->employeeNameAt($organizationId, $responsibleUserId, $date)
+                    ?? trans_message('basic_warehouse.custody.person_name_missing'))
+                : trans_message('basic_warehouse.custody.person_name_missing'),
+        ]);
+    }
+
+    private function applyReadableCustodyWarehouseNames(
+        int $organizationId,
+        \Illuminate\Database\Eloquent\Collection $warehouses
+    ): \Illuminate\Database\Eloquent\Collection {
+        $custodyWarehouses = $warehouses->filter(
+            static fn (OrganizationWarehouse $warehouse): bool => $warehouse->warehouse_type === OrganizationWarehouse::TYPE_CUSTODY
+                && $warehouse->responsible_user_id !== null
+        );
+        $references = $custodyWarehouses->mapWithKeys(
+            static fn (OrganizationWarehouse $warehouse): array => [
+                $warehouse->id => [
+                    'user_id' => (int) $warehouse->responsible_user_id,
+                    'date' => $warehouse->created_at ?? now(),
+                ],
+            ]
+        )->all();
+        $personNames = $this->personNameProvider->employeeNamesAt($organizationId, $references);
+
+        $custodyWarehouses->each(
+            static function (OrganizationWarehouse $warehouse) use ($personNames): void {
+                $warehouse->setAttribute('name', trans_message('basic_warehouse.custody.warehouse_name', [
+                    'project' => $warehouse->project?->name
+                        ?? trans_message('basic_warehouse.custody.project_name_missing'),
+                    'user' => $personNames[$warehouse->id]
+                        ?? trans_message('basic_warehouse.custody.person_name_missing'),
+                ]));
+                $warehouse->syncOriginalAttribute('name');
+            }
+        );
+
+        return $warehouses;
     }
 
     /**

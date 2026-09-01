@@ -82,7 +82,11 @@ final class WarehouseCustodyFlowTest extends TestCase
         $response->assertJsonPath('data.movement_in.related_user.id', $setup['responsibleUser']->id);
         $response->assertJsonPath(
             'data.custody_warehouse.name',
-            'Ответственное хранение: '.$setup['project']->name.', '.$setup['responsibleUser']->name,
+            'Ответственное хранение: '.$setup['project']->name.', ФИО не указано',
+        );
+        $this->assertStringNotContainsString(
+            (string) $setup['responsibleUser']->name,
+            (string) $response->json('data.custody_warehouse.name')
         );
 
         $custodyWarehouse = OrganizationWarehouse::query()
@@ -120,6 +124,30 @@ final class WarehouseCustodyFlowTest extends TestCase
             'related_user_id' => $setup['responsibleUser']->id,
             'quantity' => 20,
         ]);
+
+        $custodyWarehouse->forceFill([
+            'name' => 'Ответственное хранение: '.$setup['project']->name.', technical_responsible_login',
+        ])->save();
+
+        $legacyResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'idempotency_key' => (string) Str::uuid(),
+                'project_id' => $setup['project']->id,
+                'project_warehouse_id' => $setup['projectWarehouse']->id,
+                'material_id' => $setup['material']->id,
+                'responsible_user_id' => $setup['responsibleUser']->id,
+                'quantity' => 1,
+            ])
+            ->assertOk()
+            ->assertJsonPath(
+                'data.custody_warehouse.name',
+                'Ответственное хранение: '.$setup['project']->name.', ФИО не указано'
+            );
+
+        $this->assertStringNotContainsString(
+            'technical_responsible_login',
+            (string) $legacyResponse->json('data.custody_warehouse.name')
+        );
     }
 
     public function test_admin_can_return_material_from_responsible_user_to_project(): void

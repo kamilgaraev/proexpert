@@ -294,6 +294,8 @@ return [
         'issued' => 'Материал выдан ответственному',
         'returned' => 'Материал возвращен на объект',
         'warehouse_name' => 'Ответственное хранение: :project, :user',
+        'person_name_missing' => 'ФИО не указано',
+        'project_name_missing' => 'Объект не указан',
         'export' => [
             'detail_title' => 'Материалы у ответственных',
             'summary_title' => 'Сводка по ответственным',
