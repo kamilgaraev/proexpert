@@ -8,8 +8,10 @@ use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseScanEvent;
+use App\BusinessModules\Features\WorkforceManagement\Contracts\WorkforcePersonNameProvider;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
@@ -198,6 +200,48 @@ class WarehouseIdentifierAndScanEventControllerTest extends TestCase
             ['PALLET-ARCHIVED', 'UNKNOWN-CODE'],
             collect($indexResponse->json('data'))->pluck('code')->all()
         );
+    }
+
+    public function test_custody_warehouse_identifier_uses_a_readable_person_name_instead_of_login(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Тестовый объект',
+        ]);
+        $warehouse = OrganizationWarehouse::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'responsible_user_id' => $context->user->id,
+            'name' => 'Ответственное хранение: Тестовый объект, technical-login',
+            'code' => 'CUSTODY-ID',
+            'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
+            'is_main' => false,
+            'is_active' => true,
+        ]);
+        $identifier = $this->createIdentifier(
+            $context->organization->id,
+            $warehouse->id,
+            'CUSTODY-CODE'
+        );
+        $this->mock(WorkforcePersonNameProvider::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('employeeNameAt')->andReturn(null);
+        });
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouse-identifiers/'.$identifier->id);
+
+        $response->assertOk();
+        $response->assertJsonPath(
+            'data.warehouse.name',
+            'Ответственное хранение: '.$project->name.', ФИО не указано'
+        );
+        $response->assertJsonPath(
+            'data.entity_summary.name',
+            'Ответственное хранение: '.$project->name.', ФИО не указано'
+        );
+        $this->assertStringNotContainsString('technical-login', (string) $response->json('data.warehouse.name'));
     }
 
     public function test_admin_viewer_cannot_manage_identifiers_or_scan_events_without_warehouse_permission(): void

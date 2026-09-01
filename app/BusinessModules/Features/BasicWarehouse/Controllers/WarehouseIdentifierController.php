@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\Model;
@@ -24,6 +25,13 @@ use Illuminate\Support\Facades\Log;
 
 class WarehouseIdentifierController extends Controller
 {
+    private const WAREHOUSE_RELATIONS = [
+        'warehouse:id,organization_id,project_id,responsible_user_id,name,code,warehouse_type,created_at',
+        'warehouse.project:id,name',
+    ];
+
+    public function __construct(private readonly WarehouseService $warehouseService) {}
+
     public function index(Request $request): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
@@ -38,11 +46,11 @@ class WarehouseIdentifierController extends Controller
                 ->when(
                     $request->filled('q'),
                     fn ($query) => $query->where(function ($nestedQuery) use ($request): void {
-                        $search = '%' . trim((string) $request->input('q')) . '%';
+                        $search = '%'.trim((string) $request->input('q')).'%';
                         $nestedQuery->where('code', 'like', $search)->orWhere('label', 'like', $search);
                     })
                 )
-                ->with('warehouse:id,name,code')
+                ->with(self::WAREHOUSE_RELATIONS)
                 ->orderByDesc('is_primary')
                 ->orderByDesc('updated_at')
                 ->get();
@@ -91,7 +99,7 @@ class WarehouseIdentifierController extends Controller
             ]);
 
             return AdminResponse::success(
-                $this->makeIdentifierPayload($identifier->load('warehouse:id,name,code')),
+                $this->makeIdentifierPayload($identifier->load(self::WAREHOUSE_RELATIONS)),
                 trans_message('basic_warehouse.identifier.created'),
                 201
             );
@@ -168,7 +176,7 @@ class WarehouseIdentifierController extends Controller
             ]);
 
             return AdminResponse::success(
-                $this->makeIdentifierPayload($identifier->fresh()->load('warehouse:id,name,code')),
+                $this->makeIdentifierPayload($identifier->fresh()->load(self::WAREHOUSE_RELATIONS)),
                 trans_message('basic_warehouse.identifier.updated')
             );
         } catch (ModelNotFoundException) {
@@ -228,7 +236,7 @@ class WarehouseIdentifierController extends Controller
                             ->orWhereNull('warehouse_id');
                     })
                 )
-                ->with('warehouse:id,name,code')
+                ->with(self::WAREHOUSE_RELATIONS)
                 ->firstOrFail();
 
             return AdminResponse::success($this->makeIdentifierPayload($identifier));
@@ -250,7 +258,7 @@ class WarehouseIdentifierController extends Controller
     private function findIdentifier(int $organizationId, int $identifierId): WarehouseIdentifier
     {
         return WarehouseIdentifier::query()
-            ->with('warehouse:id,name,code')
+            ->with(self::WAREHOUSE_RELATIONS)
             ->where('organization_id', $organizationId)
             ->findOrFail($identifierId);
     }
@@ -331,6 +339,10 @@ class WarehouseIdentifierController extends Controller
 
     private function makeIdentifierPayload(WarehouseIdentifier $identifier): array
     {
+        $warehouse = $identifier->warehouse !== null
+            ? $this->warehouseService->withReadableWarehouseName($identifier->warehouse)
+            : null;
+
         return [
             'id' => $identifier->id,
             'organization_id' => $identifier->organization_id,
@@ -346,12 +358,14 @@ class WarehouseIdentifierController extends Controller
             'last_scanned_at' => optional($identifier->last_scanned_at)?->toDateTimeString(),
             'metadata' => $identifier->metadata ?? [],
             'notes' => $identifier->notes,
-            'warehouse' => $identifier->warehouse ? [
-                'id' => $identifier->warehouse->id,
-                'name' => $identifier->warehouse->name,
-                'code' => $identifier->warehouse->code,
+            'warehouse' => $warehouse ? [
+                'id' => $warehouse->id,
+                'name' => $warehouse->name,
+                'code' => $warehouse->code,
             ] : null,
-            'entity_summary' => $this->makeEntitySummary($identifier->entity_type, (int) $identifier->entity_id, $identifier->organization_id),
+            'entity_summary' => $identifier->entity_type === 'warehouse' && $warehouse !== null
+                ? $this->makeWarehouseSummary($warehouse)
+                : $this->makeEntitySummary($identifier->entity_type, (int) $identifier->entity_id, $identifier->organization_id),
             'created_at' => optional($identifier->created_at)?->toDateTimeString(),
             'updated_at' => optional($identifier->updated_at)?->toDateTimeString(),
         ];
@@ -366,11 +380,7 @@ class WarehouseIdentifierController extends Controller
         }
 
         return match ($entityType) {
-            'warehouse' => [
-                'id' => $entity->id,
-                'name' => $entity->name,
-                'code' => $entity->code,
-            ],
+            'warehouse' => $this->makeWarehouseSummary($entity),
             'zone' => [
                 'id' => $entity->id,
                 'name' => $entity->name,
@@ -403,5 +413,16 @@ class WarehouseIdentifierController extends Controller
             ],
             default => null,
         };
+    }
+
+    private function makeWarehouseSummary(OrganizationWarehouse $warehouse): array
+    {
+        $warehouse = $this->warehouseService->withReadableWarehouseName($warehouse);
+
+        return [
+            'id' => $warehouse->id,
+            'name' => $warehouse->name,
+            'code' => $warehouse->code,
+        ];
     }
 }
