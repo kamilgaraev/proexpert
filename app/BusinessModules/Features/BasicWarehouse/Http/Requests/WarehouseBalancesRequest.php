@@ -23,6 +23,11 @@ final class WarehouseBalancesRequest extends FormRequest
             : 0;
 
         return [
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'search' => ['nullable', 'string', 'max:255'],
+            'missing_location' => ['nullable', 'boolean'],
+            'low_stock' => ['nullable', 'boolean'],
             'zone_id' => [
                 'nullable',
                 'integer',

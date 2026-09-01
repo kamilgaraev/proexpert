@@ -1109,6 +1109,17 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         $this->assertArrayNotHasKey('OTHER-ZONE-STOCK', $balancesByMaterial);
 
         $this->withHeaders($context->authHeaders())
+            ->getJson(
+                "/api/v1/admin/warehouses/{$warehouse->id}/balances?zone_id={$storageZone->id}&page=1&per_page=1"
+            )
+            ->assertOk()
+            ->assertJsonCount(1, 'data.items')
+            ->assertJsonPath('data.pagination.total', 2)
+            ->assertJsonPath('data.pagination.per_page', 1)
+            ->assertJsonPath('data.summary.total_items', 2)
+            ->assertJsonPath('data.summary.total_value', 80);
+
+        $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/balances?zone_id={$foreignZone->id}")
             ->assertUnprocessable();
         $this->withHeaders($context->authHeaders())

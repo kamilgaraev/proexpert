@@ -147,6 +147,123 @@ class WarehouseServiceTest extends TestCase
         $this->assertSame(5.0, $stock[0]['allocated_total']);
     }
 
+    public function test_paginated_stock_data_paginates_positions_and_keeps_full_summary(): void
+    {
+        [$organization, $warehouse, $material] = $this->createWarehouseContext();
+        $secondMaterial = $material->replicate()->fill([
+            'name' => 'Sand',
+            'code' => 'SAND',
+        ]);
+        $secondMaterial->save();
+        $thirdMaterial = $material->replicate()->fill([
+            'name' => 'Brick',
+            'code' => 'BRICK',
+        ]);
+        $thirdMaterial->save();
+        $sufficientMaterial = $material->replicate()->fill([
+            'name' => 'Aggregate sufficient stock',
+            'code' => 'ENOUGH',
+        ]);
+        $sufficientMaterial->save();
+
+        WarehouseBalance::create([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'available_quantity' => 3,
+            'reserved_quantity' => 2,
+            'unit_price' => 100,
+            'min_stock_level' => 10,
+            'batch_number' => 'PAGE-A',
+        ]);
+        WarehouseBalance::create([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'available_quantity' => 4,
+            'reserved_quantity' => 1,
+            'unit_price' => 100,
+            'min_stock_level' => 10,
+            'batch_number' => 'PAGE-B',
+        ]);
+        $this->createBalance($organization->id, $warehouse->id, $secondMaterial->id, 20);
+        $this->createBalance($organization->id, $warehouse->id, $thirdMaterial->id, 30);
+        foreach (['ENOUGH-A', 'ENOUGH-B'] as $batchNumber) {
+            WarehouseBalance::create([
+                'organization_id' => $organization->id,
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $sufficientMaterial->id,
+                'available_quantity' => 6,
+                'reserved_quantity' => 0,
+                'unit_price' => 100,
+                'min_stock_level' => 10,
+                'batch_number' => $batchNumber,
+            ]);
+        }
+
+        $firstPage = $this->service->getPaginatedStockData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+        ], 1, 2);
+        $secondPage = $this->service->getPaginatedStockData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+        ], 2, 2);
+        $lowStockPage = $this->service->getPaginatedStockData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+            'low_stock' => true,
+        ], 1, 25);
+
+        $this->assertCount(2, $firstPage['items']);
+        $this->assertSame(4, $firstPage['pagination']['total']);
+        $this->assertSame(2, $firstPage['pagination']['last_page']);
+        $this->assertSame(4, $firstPage['summary']['total_items']);
+        $this->assertSame(1, $firstPage['summary']['low_stock_count']);
+        $this->assertSame(7200.0, $firstPage['summary']['total_value']);
+        $this->assertSame(10.0, $firstPage['items'][0]['total_quantity']);
+        $this->assertCount(2, $secondPage['items']);
+        $this->assertSame(1, $lowStockPage['pagination']['total']);
+        $this->assertSame($material->id, $lowStockPage['items'][0]['material_id']);
+    }
+
+    public function test_paginated_stock_data_applies_search_and_missing_location_to_full_positions(): void
+    {
+        [$organization, $warehouse, $material] = $this->createWarehouseContext();
+        $material->update(['name' => 'Special cement', 'code' => 'SPECIAL-500']);
+        $locatedMaterial = $material->replicate()->fill([
+            'name' => 'Special located cement',
+            'code' => 'SPECIAL-LOCATED',
+        ]);
+        $locatedMaterial->save();
+        $otherMaterial = $material->replicate()->fill([
+            'name' => 'Other material',
+            'code' => 'OTHER',
+        ]);
+        $otherMaterial->save();
+
+        $this->createBalance($organization->id, $warehouse->id, $material->id, 10);
+        $locatedBalance = $this->createBalance($organization->id, $warehouse->id, $locatedMaterial->id, 20);
+        $locatedBalance->update(['location_code' => 'LOCATED-A']);
+        WarehouseBalance::create([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $locatedMaterial->id,
+            'available_quantity' => 0,
+            'reserved_quantity' => 0,
+            'unit_price' => 100,
+            'batch_number' => 'EMPTY-UNLOCATED',
+        ]);
+        $this->createBalance($organization->id, $warehouse->id, $otherMaterial->id, 30);
+
+        $page = $this->service->getPaginatedStockData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+            'search' => 'special',
+            'missing_location' => true,
+        ], 1, 25);
+
+        $this->assertSame(1, $page['pagination']['total']);
+        $this->assertSame($material->id, $page['items'][0]['material_id']);
+        $this->assertSame(10.0, $page['items'][0]['total_quantity']);
+    }
+
     public function test_get_movements_data_returns_warehouse_movements(): void
     {
         [$organization, $warehouse, $material, $user] = $this->createWarehouseContext();
