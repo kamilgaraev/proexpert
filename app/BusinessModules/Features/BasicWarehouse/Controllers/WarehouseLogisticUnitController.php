@@ -8,8 +8,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseLogisticU
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseLogisticUnitRelationService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\Builder;
@@ -20,6 +19,10 @@ use Illuminate\Support\Facades\Log;
 
 class WarehouseLogisticUnitController extends Controller
 {
+    public function __construct(
+        private readonly WarehouseLogisticUnitRelationService $relationService
+    ) {}
+
     public function index(Request $request, int $warehouseId): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
@@ -39,7 +42,7 @@ class WarehouseLogisticUnitController extends Controller
                 ->when(
                     $request->filled('q'),
                     fn (Builder $query) => $query->where(function (Builder $nestedQuery) use ($request): void {
-                        $search = '%' . trim((string) $request->input('q')) . '%';
+                        $search = '%'.trim((string) $request->input('q')).'%';
                         $nestedQuery->where('name', 'like', $search)->orWhere('code', 'like', $search);
                     })
                 )
@@ -72,7 +75,7 @@ class WarehouseLogisticUnitController extends Controller
             $warehouse = $this->findWarehouse($organizationId, $warehouseId);
             $validated = $request->validated();
 
-            $this->assertWarehouseRelations($organizationId, $warehouse->id, $validated);
+            $this->relationService->assertValid($organizationId, $warehouse->id, $validated);
 
             $exists = WarehouseLogisticUnit::query()
                 ->where('warehouse_id', $warehouse->id)
@@ -144,7 +147,7 @@ class WarehouseLogisticUnitController extends Controller
             $unit = $this->findUnit($organizationId, $warehouse->id, $id);
             $validated = $request->validated();
 
-            $this->assertWarehouseRelations($organizationId, $warehouse->id, $validated, $unit);
+            $this->relationService->assertValid($organizationId, $warehouse->id, $validated, $unit);
 
             if (isset($validated['code']) && $validated['code'] !== $unit->code) {
                 $exists = WarehouseLogisticUnit::query()
@@ -250,58 +253,6 @@ class WarehouseLogisticUnitController extends Controller
             ->withCount(['identifiers', 'scanEvents', 'childUnits'])
             ->where('organization_id', $organizationId)
             ->where('warehouse_id', $warehouseId);
-    }
-
-    private function assertWarehouseRelations(
-        int $organizationId,
-        int $warehouseId,
-        array $validated,
-        ?WarehouseLogisticUnit $unit = null
-    ): void {
-        $zoneId = array_key_exists('zone_id', $validated) ? ($validated['zone_id'] !== null ? (int) $validated['zone_id'] : null) : $unit?->zone_id;
-        $cellId = array_key_exists('cell_id', $validated) ? ($validated['cell_id'] !== null ? (int) $validated['cell_id'] : null) : $unit?->cell_id;
-        $parentUnitId = array_key_exists('parent_unit_id', $validated) ? ($validated['parent_unit_id'] !== null ? (int) $validated['parent_unit_id'] : null) : $unit?->parent_unit_id;
-
-        if ($zoneId !== null) {
-            $zoneExists = WarehouseZone::query()
-                ->where('warehouse_id', $warehouseId)
-                ->where('id', $zoneId)
-                ->exists();
-
-            if (! $zoneExists) {
-                throw new \InvalidArgumentException(trans_message('basic_warehouse.logistic_unit.zone_invalid'));
-            }
-        }
-
-        if ($cellId !== null) {
-            $cell = WarehouseStorageCell::query()
-                ->where('organization_id', $organizationId)
-                ->where('warehouse_id', $warehouseId)
-                ->find($cellId);
-
-            if (! $cell) {
-                throw new \InvalidArgumentException(trans_message('basic_warehouse.logistic_unit.cell_invalid'));
-            }
-
-            if ($zoneId !== null && $cell->zone_id !== null && $cell->zone_id !== $zoneId) {
-                throw new \InvalidArgumentException(trans_message('basic_warehouse.logistic_unit.cell_zone_mismatch'));
-            }
-        }
-
-        if ($parentUnitId !== null) {
-            $parentUnit = WarehouseLogisticUnit::query()
-                ->where('organization_id', $organizationId)
-                ->where('warehouse_id', $warehouseId)
-                ->find($parentUnitId);
-
-            if (! $parentUnit) {
-                throw new \InvalidArgumentException(trans_message('basic_warehouse.logistic_unit.parent_invalid'));
-            }
-
-            if ($unit && $parentUnit->id === $unit->id) {
-                throw new \InvalidArgumentException(trans_message('basic_warehouse.logistic_unit.parent_self'));
-            }
-        }
     }
 
     private function makeUnitPayload(WarehouseLogisticUnit $unit): array
