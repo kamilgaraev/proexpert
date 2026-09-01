@@ -16,6 +16,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M15\M15Exp
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M4\M4ExportStrategy;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M7\M7ExportStrategy;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M8\M8ExportStrategy;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -89,6 +90,75 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         $this->assertSame('б/н', $inventorySheet->getCell('D11')->getValue());
         $this->assertStringContainsString('20260830', $inventoryPath);
         $this->assertStringNotContainsString('_'.$act->id.'.xlsx', $inventoryPath);
+    }
+
+    public function test_official_forms_use_personnel_name_instead_of_account_login(): void
+    {
+        Storage::fake('s3');
+
+        [$context, $material, $warehouse] = $this->warehouseContext();
+        $context->user->forceFill(['name' => 'technical_login'])->save();
+        $movement = WarehouseMovement::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'user_id' => $context->user->id,
+            'movement_type' => WarehouseMovement::TYPE_RECEIPT,
+            'quantity' => 5,
+            'price' => 100,
+            'document_number' => 'QA-PERSON-001',
+            'reason' => 'Приёмка материалов',
+            'metadata' => ['supplier_name' => 'Поставщик'],
+            'movement_date' => '2026-09-01 10:11:12',
+        ]);
+
+        $withoutPersonnelSheet = $this->sheetFromStorage(app(M4ExportStrategy::class)->export($movement));
+        $this->assertStringContainsString('ФИО не указано', $withoutPersonnelSheet->getCell('A19')->getValue());
+        $this->assertStringNotContainsString('technical_login', $withoutPersonnelSheet->getCell('A19')->getValue());
+
+        WorkforceEmployee::query()->create([
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'personnel_number' => 'QA-PERSON-OLD',
+            'last_name' => 'Старый',
+            'first_name' => 'Сотрудник',
+            'employment_status' => 'dismissed',
+            'hire_date' => '2025-01-01',
+            'dismissal_date' => '2025-12-31',
+        ]);
+        WorkforceEmployee::query()->create([
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'personnel_number' => 'QA-PERSON-001',
+            'last_name' => 'Гараев',
+            'first_name' => 'Камиль',
+            'middle_name' => 'Тестович',
+            'employment_status' => 'active',
+            'hire_date' => '2026-01-01',
+        ]);
+
+        $movement->forceFill(['movement_date' => '2025-06-01 10:11:12'])->save();
+        $historicalSheet = $this->sheetFromStorage(app(M4ExportStrategy::class)->export($movement));
+        $historicalPersonText = (string) $historicalSheet->getCell('A19')->getValue();
+        $this->assertStringContainsString('Старый Сотрудник', $historicalPersonText);
+        $this->assertStringNotContainsString('Гараев Камиль Тестович', $historicalPersonText);
+
+        $movement->forceFill(['movement_date' => '2026-09-01 10:11:12'])->save();
+
+        $forms = [
+            [M4ExportStrategy::class, 'A19'],
+            [M11ExportStrategy::class, 'A19'],
+            [M15ExportStrategy::class, 'A16'],
+        ];
+
+        foreach ($forms as [$strategy, $personCell]) {
+            $sheet = $this->sheetFromStorage(app($strategy)->export($movement));
+            $personText = (string) $sheet->getCell($personCell)->getValue();
+
+            $this->assertStringContainsString('Гараев Камиль Тестович', $personText);
+            $this->assertStringNotContainsString('technical_login', $personText);
+            $this->assertStringNotContainsString('Старый Сотрудник', $personText);
+        }
     }
 
     public function test_m8_uses_material_data_and_human_readable_numbers(): void

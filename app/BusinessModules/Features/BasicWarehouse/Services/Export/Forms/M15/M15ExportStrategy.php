@@ -6,6 +6,8 @@ namespace App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M15;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
+use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseDocumentPersonResolver;
+use App\Services\Storage\FileService;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 
 /**
@@ -13,6 +15,13 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
  */
 class M15ExportStrategy extends BaseWarehouseExportStrategy
 {
+    public function __construct(
+        FileService $fileService,
+        private readonly WarehouseDocumentPersonResolver $personResolver,
+    ) {
+        parent::__construct($fileService);
+    }
+
     public function export($movementOrCollection): string
     {
         $movements = $movementOrCollection instanceof \Illuminate\Database\Eloquent\Collection
@@ -93,7 +102,12 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
                 ?? $movement->metadata['recipient']
                 ?? 'Сторонняя организация')
         );
-        $sheet->setCellValue('A16', 'Через кого: '.($movement->user->name ?? ''));
+        $person = $this->personResolver->resolve(
+            $movement->user,
+            (int) $movement->organization_id,
+            $movement->movement_date,
+        );
+        $sheet->setCellValue('A16', 'Через кого: '.$person);
     }
 
     protected function setTable($sheet, $movements): void

@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\PayrollReadinessDatabasePort;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\WorkforceReportDatabasePort;
+use App\BusinessModules\Features\WorkforceManagement\Contracts\WorkforcePersonNameProvider;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionReportBindingFactory;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\PayrollReadinessDatabasePort;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\WorkforceReportDatabasePort;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollReadinessFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollSourceRateFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabasePayrollReadinessAdapter;
@@ -22,6 +23,7 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacity
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityOptionsService;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityPublishedRuntimeBindingRegistrar;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityReportBindingFactory;
+use App\BusinessModules\Features\WorkforceManagement\Services\EloquentWorkforcePersonNameProvider;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
 
@@ -30,6 +32,7 @@ final class WorkforceManagementServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(WorkforceManagementModule::class);
+        $this->app->singleton(WorkforcePersonNameProvider::class, EloquentWorkforcePersonNameProvider::class);
         $this->app->scoped(PayrollReadinessDatabasePort::class, static fn ($app): DatabasePayrollReadinessAdapter => new DatabasePayrollReadinessAdapter(
             $app['db']->connection(), $app->make(PayrollReadinessFormula::class), $app->make(PayrollSourceRateFormula::class),
         ));
