@@ -969,7 +969,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 $query->where('available_quantity', '>', 0)
                     ->orWhere('reserved_quantity', '>', 0);
             })
-            ->with(['material.measurementUnit', 'warehouse', 'cell.zone', 'material.photos']);
+            ->with(['material.measurementUnit', 'warehouse.project', 'cell.zone', 'material.photos']);
 
         // Применяем фильтры
         if (isset($filters['warehouse_id'])) {
@@ -1012,6 +1012,12 @@ class WarehouseService implements WarehouseReportDataProvider
         }
 
         $allBatches = $query->get();
+        $this->applyReadableCustodyWarehouseNames(
+            $organizationId,
+            new \Illuminate\Database\Eloquent\Collection(
+                $allBatches->pluck('warehouse')->filter()->unique('id')->values()->all()
+            )
+        );
         $photoMap = WarehouseItemGallery::with('photos')
             ->where('organization_id', $organizationId)
             ->whereIn('warehouse_id', $allBatches->pluck('warehouse_id')->unique())
