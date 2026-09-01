@@ -526,6 +526,42 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         ]);
     }
 
+    public function test_zone_and_cell_updates_reject_empty_names_with_business_field_labels(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $zone = $this->createZone($warehouse->id, 'Storage zone', 'STORAGE');
+        $cell = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            'Storage cell',
+            'CELL-1'
+        );
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/{$warehouse->id}/zones/{$zone->id}", ['name' => ''])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Заполните поле «название зоны».')
+            ->assertJsonPath('errors.name.0', 'Заполните поле «название зоны».');
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/{$warehouse->id}/cells/{$cell->id}", ['name' => ''])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Заполните поле «название ячейки».')
+            ->assertJsonPath('errors.name.0', 'Заполните поле «название ячейки».');
+
+        $this->assertDatabaseHas('warehouse_zones', [
+            'id' => $zone->id,
+            'name' => 'Storage zone',
+        ]);
+        $this->assertDatabaseHas('warehouse_storage_cells', [
+            'id' => $cell->id,
+            'name' => 'Storage cell',
+        ]);
+    }
+
     public function test_zone_cannot_be_deleted_while_it_has_linked_warehouse_entities(): void
     {
         $context = AdminApiTestContext::create();
