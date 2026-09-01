@@ -97,14 +97,15 @@ class M8ExportStrategy extends BaseWarehouseExportStrategy
         $this->applyTableStyle($sheet, 'J5:L7');
         $this->setCenter($sheet, 'J5:L7');
 
+        $title = 'ЛИМИТНО-ЗАБОРНАЯ КАРТА № '
+            .$this->documentNumber($reservation->metadata['document_number'] ?? null);
         $sheet->mergeCells('A9:L9');
-        $sheet->setCellValue(
-            'A9',
-            'ЛИМИТНО-ЗАБОРНАЯ КАРТА № '.$this->documentNumber($reservation->metadata['document_number'] ?? null)
-        );
+        $sheet->setCellValue('A9', $title);
         $this->setBold($sheet, 'A9');
         $this->setCenter($sheet, 'A9');
         $sheet->getStyle('A9')->getFont()->setSize(14);
+        $sheet->getStyle('A9')->getAlignment()->setWrapText(true);
+        $sheet->getRowDimension(9)->setRowHeight($this->titleRowHeight($title));
 
         $sheet->mergeCells('A11:L11');
         $sheet->mergeCells('A12:L12');
@@ -181,5 +182,12 @@ class M8ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->mergeCells("C{$row}:F{$row}");
         $sheet->mergeCells("G{$row}:I{$row}");
         $sheet->mergeCells("J{$row}:L{$row}");
+    }
+
+    private function titleRowHeight(string $title): float
+    {
+        $lineCount = max(1, (int) ceil(mb_strwidth($title, 'UTF-8') / 70));
+
+        return max(24, $lineCount * 21);
     }
 }
