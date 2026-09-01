@@ -816,13 +816,7 @@ class WarehouseService implements WarehouseReportDataProvider
             });
         }
 
-        if (! empty($filters['location_code'])) {
-            $query->where('location_code', $filters['location_code']);
-        }
-
-        if (! empty($filters['cell_id'])) {
-            $query->where('cell_id', $filters['cell_id']);
-        }
+        $this->applyStockLocationFilters($query, $organizationId, $filters);
 
         if (isset($filters['low_stock']) && $filters['low_stock']) {
             $query->lowStock();
@@ -911,13 +905,7 @@ class WarehouseService implements WarehouseReportDataProvider
             });
         }
 
-        if (! empty($filters['location_code'])) {
-            $query->where('location_code', $filters['location_code']);
-        }
-
-        if (! empty($filters['cell_id'])) {
-            $query->where('cell_id', $filters['cell_id']);
-        }
+        $this->applyStockLocationFilters($query, $organizationId, $filters);
 
         if (isset($filters['low_stock']) && $filters['low_stock']) {
             $query->lowStock();
@@ -1110,6 +1098,40 @@ class WarehouseService implements WarehouseReportDataProvider
         }
 
         return $resultData;
+    }
+
+    private function applyStockLocationFilters(Builder $query, int $organizationId, array $filters): void
+    {
+        if (! empty($filters['location_code'])) {
+            $query->where('location_code', $filters['location_code']);
+        }
+
+        if (! empty($filters['cell_id'])) {
+            $query->where('cell_id', $filters['cell_id']);
+        }
+
+        if (empty($filters['zone_id'])) {
+            return;
+        }
+
+        $zoneId = (int) $filters['zone_id'];
+        $query->where(function (Builder $locationQuery) use ($organizationId, $zoneId): void {
+            $locationQuery
+                ->whereHas('cell', static function (Builder $cellQuery) use ($organizationId, $zoneId): void {
+                    $cellQuery
+                        ->where('organization_id', $organizationId)
+                        ->where('zone_id', $zoneId);
+                })
+                ->orWhere(function (Builder $legacyLocationQuery) use ($organizationId, $zoneId): void {
+                    $legacyLocationQuery
+                        ->whereNull('cell_id')
+                        ->whereIn('location_code', DB::table('warehouse_storage_cells')
+                            ->select('code')
+                            ->where('organization_id', $organizationId)
+                            ->whereColumn('warehouse_storage_cells.warehouse_id', 'warehouse_balances.warehouse_id')
+                            ->where('zone_id', $zoneId));
+                });
+        });
     }
 
     private function purchaseReceiptDocumentMap(int $organizationId, Collection $batches): array

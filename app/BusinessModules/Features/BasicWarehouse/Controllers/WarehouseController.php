@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\IndexWarehouseMovementRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseBalancesRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseDashboardService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
@@ -21,8 +22,7 @@ class WarehouseController extends Controller
     public function __construct(
         protected WarehouseService $warehouseService,
         protected WarehouseDashboardService $dashboardService
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -207,7 +207,7 @@ class WarehouseController extends Controller
         }
     }
 
-    public function balances(Request $request, string|int $id): JsonResponse
+    public function balances(WarehouseBalancesRequest $request, string|int $id): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
         $warehouseId = is_int($id) ? $id : (ctype_digit($id) ? (int) $id : null);
@@ -223,6 +223,7 @@ class WarehouseController extends Controller
                 'project_id' => $request->input('project_id'),
                 'location_code' => $request->input('location_code'),
                 'cell_id' => $request->input('cell_id'),
+                'zone_id' => $request->validated('zone_id'),
             ];
 
             $balances = $this->warehouseService->getStockData($organizationId, $filters);
@@ -235,7 +236,7 @@ class WarehouseController extends Controller
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
                 'warehouse_id' => $warehouseId,
-                'filters' => $request->only(['asset_type', 'low_stock', 'project_id', 'location_code', 'cell_id']),
+                'filters' => $request->only(['asset_type', 'low_stock', 'project_id', 'location_code', 'cell_id', 'zone_id']),
                 'error' => $exception->getMessage(),
             ]);
 
@@ -354,6 +355,6 @@ class WarehouseController extends Controller
             return (int) $id;
         }
 
-        throw (new ModelNotFoundException())->setModel(OrganizationWarehouse::class, [$id]);
+        throw (new ModelNotFoundException)->setModel(OrganizationWarehouse::class, [$id]);
     }
 }

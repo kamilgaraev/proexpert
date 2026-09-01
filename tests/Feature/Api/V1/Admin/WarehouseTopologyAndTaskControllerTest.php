@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -711,6 +712,118 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
             ->assertJsonPath('data.0.cells.0.id', $cell->id)
             ->assertJsonPath('data.0.cells.0.available_quantity', 1)
             ->assertJsonPath('data.0.cells.0.reserved_quantity', 1);
+    }
+
+    public function test_stock_zone_filter_matches_current_and_legacy_cell_locations(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $storageZone = $this->createZone($warehouse->id, 'Storage zone', 'STORAGE');
+        $otherZone = $this->createZone($warehouse->id, 'Other zone', 'OTHER');
+        $storageCell = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $storageZone->id,
+            'Storage cell',
+            'STORAGE-A1'
+        );
+        $otherCell = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $otherZone->id,
+            'Other cell',
+            'OTHER-A1'
+        );
+        $otherWarehouse = $this->createWarehouse($context->organization->id, 'Other warehouse', 'OTHER-WAREHOUSE');
+        $foreignZone = $this->createZone($otherWarehouse->id, 'Foreign storage zone', 'FOREIGN-STORAGE');
+        $this->createCell(
+            $context->organization->id,
+            $otherWarehouse->id,
+            $foreignZone->id,
+            'Foreign cell with duplicate code',
+            $storageCell->code
+        );
+        $currentMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Current cell stock',
+            'code' => 'CURRENT-CELL-STOCK',
+            'is_active' => true,
+        ]);
+        $legacyMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Legacy cell stock',
+            'code' => 'LEGACY-CELL-STOCK',
+            'is_active' => true,
+        ]);
+        $otherMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Other zone stock',
+            'code' => 'OTHER-ZONE-STOCK',
+            'is_active' => true,
+        ]);
+
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'cell_id' => $storageCell->id,
+            'location_code' => $storageCell->code,
+            'material_id' => $currentMaterial->id,
+            'available_quantity' => 2,
+            'reserved_quantity' => 0,
+            'unit_price' => 10,
+        ]);
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'cell_id' => null,
+            'location_code' => $storageCell->code,
+            'material_id' => $legacyMaterial->id,
+            'available_quantity' => 3,
+            'reserved_quantity' => 0,
+            'unit_price' => 20,
+        ]);
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'cell_id' => $otherCell->id,
+            'location_code' => $otherCell->code,
+            'material_id' => $otherMaterial->id,
+            'available_quantity' => 4,
+            'reserved_quantity' => 0,
+            'unit_price' => 30,
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/balances?zone_id={$storageZone->id}")
+            ->assertOk();
+
+        $balancesByMaterial = collect($response->json('data'))->keyBy('material_code');
+
+        $this->assertCount(2, $balancesByMaterial);
+        $this->assertSame(2, $balancesByMaterial['CURRENT-CELL-STOCK']['available_quantity']);
+        $this->assertSame(3, $balancesByMaterial['LEGACY-CELL-STOCK']['available_quantity']);
+        $this->assertArrayNotHasKey('OTHER-ZONE-STOCK', $balancesByMaterial);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/balances?zone_id={$foreignZone->id}")
+            ->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/balances?zone_id=invalid")
+            ->assertUnprocessable();
+
+        $foreignContext = AdminApiTestContext::create();
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id, 'Foreign warehouse', 'FOREIGN');
+        $foreignOrganizationZone = $this->createZone($foreignWarehouse->id, 'Foreign zone', 'FOREIGN-ZONE');
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$foreignWarehouse->id}/balances?zone_id={$foreignOrganizationZone->id}")
+            ->assertUnprocessable();
+
+        $foreignZoneBalances = app(WarehouseService::class)->getStockData($context->organization->id, [
+            'warehouse_id' => $warehouse->id,
+            'zone_id' => $foreignZone->id,
+        ]);
+        $this->assertSame([], $foreignZoneBalances);
     }
 
     private function createWarehouse(int $organizationId, string $name, string $code): OrganizationWarehouse

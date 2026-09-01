@@ -40,7 +40,7 @@ final class InventoryStockService
                 ),
                 'unit_price' => $firstBalance->unit_price,
                 'cell_id' => $firstBalance->cell_id,
-                'location_code' => $firstBalance->cell_id === null ? $firstBalance->location_code : null,
+                'location_code' => $firstBalance->cell?->code ?? $firstBalance->location_code,
                 'batch_number' => $firstBalance->batch_number,
             ]);
         }

@@ -612,6 +612,8 @@ class WarehouseOperationsController extends Controller
     ): JsonResponse {
         if ($exception instanceof WarehouseOperationIdempotencyConflictException) {
             $status = 409;
+        } elseif ($exception instanceof InvalidArgumentException) {
+            $status = 422;
         }
 
         Log::error('Warehouse operation failed', array_merge($context, [
