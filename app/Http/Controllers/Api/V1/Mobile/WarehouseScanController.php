@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseScanEvent;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseScanEventSnapshotService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
 use App\Services\Mobile\MobileWarehouseTaskService;
@@ -27,9 +28,9 @@ use Illuminate\Support\Str;
 class WarehouseScanController extends Controller
 {
     public function __construct(
-        private readonly MobileWarehouseTaskService $taskService
-    ) {
-    }
+        private readonly MobileWarehouseTaskService $taskService,
+        private readonly WarehouseScanEventSnapshotService $scanEventSnapshotService
+    ) {}
 
     public function resolve(WarehouseScanEventRequest $request): JsonResponse
     {
@@ -239,7 +240,7 @@ class WarehouseScanController extends Controller
             'entity_type' => $identifier?->entity_type,
             'entity_id' => $identifier?->entity_id !== null ? (int) $identifier->entity_id : null,
             'scan_context' => $scanContext,
-            'metadata' => $metadata,
+            'metadata' => $this->scanEventSnapshotService->withResolutionSnapshot($metadata, $identifier),
             'notes' => $notes,
             'scanned_at' => now(),
         ]);
@@ -577,7 +578,7 @@ class WarehouseScanController extends Controller
             'entity_type' => $event->entity_type,
             'entity_id' => $event->entity_id !== null ? (int) $event->entity_id : null,
             'scan_context' => $event->scan_context,
-            'metadata' => $event->metadata ?? [],
+            'metadata' => $this->scanEventSnapshotService->publicMetadata($event),
             'notes' => $event->notes,
             'scanned_at' => optional($event->scanned_at)?->toDateTimeString(),
             'warehouse' => $event->warehouse ? $this->makeWarehousePayload($event->warehouse) : null,

@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseEntitySummaryService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -30,7 +31,10 @@ class WarehouseIdentifierController extends Controller
         'warehouse.project:id,name',
     ];
 
-    public function __construct(private readonly WarehouseService $warehouseService) {}
+    public function __construct(
+        private readonly WarehouseService $warehouseService,
+        private readonly WarehouseEntitySummaryService $entitySummaryService
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -373,46 +377,7 @@ class WarehouseIdentifierController extends Controller
 
     private function makeEntitySummary(string $entityType, int $entityId, int $organizationId): ?array
     {
-        $entity = $this->resolveEntityModel($entityType, $organizationId, $entityId);
-
-        if (! $entity) {
-            return null;
-        }
-
-        return match ($entityType) {
-            'warehouse' => $this->makeWarehouseSummary($entity),
-            'zone' => [
-                'id' => $entity->id,
-                'name' => $entity->name,
-                'code' => $entity->code,
-            ],
-            'cell' => [
-                'id' => $entity->id,
-                'name' => $entity->name,
-                'code' => $entity->code,
-            ],
-            'asset' => [
-                'id' => $entity->id,
-                'name' => $entity->name,
-                'code' => $entity->code,
-            ],
-            'inventory_act' => [
-                'id' => $entity->id,
-                'name' => $entity->act_number,
-                'code' => $entity->act_number,
-            ],
-            'movement' => [
-                'id' => $entity->id,
-                'name' => $entity->movement_type,
-                'code' => $entity->document_number,
-            ],
-            'logistic_unit' => [
-                'id' => $entity->id,
-                'name' => $entity->name,
-                'code' => $entity->code,
-            ],
-            default => null,
-        };
+        return $this->entitySummaryService->summarize($entityType, $entityId, $organizationId);
     }
 
     private function makeWarehouseSummary(OrganizationWarehouse $warehouse): array

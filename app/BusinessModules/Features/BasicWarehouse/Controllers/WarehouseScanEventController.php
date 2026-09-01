@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseScanEvent;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseScanEventSnapshotService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\Builder;
@@ -19,6 +20,8 @@ use Illuminate\Support\Facades\Log;
 
 class WarehouseScanEventController extends Controller
 {
+    public function __construct(private readonly WarehouseScanEventSnapshotService $snapshotService) {}
+
     public function index(Request $request): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
@@ -41,7 +44,7 @@ class WarehouseScanEventController extends Controller
                 ->when($request->filled('entity_type'), fn (Builder $query) => $query->where('entity_type', (string) $request->input('entity_type')))
                 ->when(
                     $request->filled('q'),
-                    fn (Builder $query) => $query->where('code', 'like', '%' . trim((string) $request->input('q')) . '%')
+                    fn (Builder $query) => $query->where('code', 'like', '%'.trim((string) $request->input('q')).'%')
                 )
                 ->orderByDesc('scanned_at')
                 ->limit(200)
@@ -99,7 +102,10 @@ class WarehouseScanEventController extends Controller
                 'entity_type' => $identifier?->entity_type,
                 'entity_id' => $identifier?->entity_id,
                 'scan_context' => $validated['scan_context'] ?? null,
-                'metadata' => $validated['metadata'] ?? [],
+                'metadata' => $this->snapshotService->withResolutionSnapshot(
+                    $validated['metadata'] ?? [],
+                    $identifier
+                ),
                 'notes' => $validated['notes'] ?? null,
                 'scanned_at' => now(),
             ];
@@ -171,7 +177,7 @@ class WarehouseScanEventController extends Controller
             'entity_type' => $event->entity_type,
             'entity_id' => $event->entity_id !== null ? (int) $event->entity_id : null,
             'scan_context' => $event->scan_context,
-            'metadata' => $event->metadata ?? [],
+            'metadata' => $this->snapshotService->publicMetadata($event),
             'notes' => $event->notes,
             'scanned_at' => optional($event->scanned_at)?->toDateTimeString(),
             'warehouse' => $event->warehouse ? [
@@ -179,15 +185,7 @@ class WarehouseScanEventController extends Controller
                 'name' => $event->warehouse->name,
                 'code' => $event->warehouse->code,
             ] : null,
-            'identifier' => $event->identifier ? [
-                'id' => $event->identifier->id,
-                'code' => $event->identifier->code,
-                'identifier_type' => $event->identifier->identifier_type,
-                'entity_type' => $event->identifier->entity_type,
-                'entity_id' => (int) $event->identifier->entity_id,
-                'label' => $event->identifier->label,
-                'status' => $event->identifier->status,
-            ] : null,
+            'identifier' => $this->snapshotService->identifierPayload($event),
             'logistic_unit' => $event->logisticUnit ? [
                 'id' => $event->logisticUnit->id,
                 'name' => $event->logisticUnit->name,
@@ -195,30 +193,9 @@ class WarehouseScanEventController extends Controller
                 'unit_type' => $event->logisticUnit->unit_type,
                 'status' => $event->logisticUnit->status,
             ] : null,
-            'entity_summary' => $this->makeEntitySummary($event),
+            'entity_summary' => $this->snapshotService->entitySummary($event),
             'created_at' => optional($event->created_at)?->toDateTimeString(),
             'updated_at' => optional($event->updated_at)?->toDateTimeString(),
         ];
-    }
-
-    private function makeEntitySummary(WarehouseScanEvent $event): ?array
-    {
-        if ($event->logisticUnit) {
-            return [
-                'id' => $event->logisticUnit->id,
-                'name' => $event->logisticUnit->name,
-                'code' => $event->logisticUnit->code,
-            ];
-        }
-
-        if ($event->identifier) {
-            return [
-                'id' => (int) $event->identifier->entity_id,
-                'name' => $event->identifier->label ?: $event->identifier->code,
-                'code' => $event->identifier->code,
-            ];
-        }
-
-        return null;
     }
 }
