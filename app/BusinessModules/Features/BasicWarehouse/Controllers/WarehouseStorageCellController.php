@@ -7,13 +7,13 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseStorageCellRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseStorageLoadSummaryService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -23,6 +23,10 @@ use Illuminate\Support\Facades\Log;
 
 class WarehouseStorageCellController extends Controller
 {
+    public function __construct(
+        private readonly WarehouseStorageLoadSummaryService $loadSummaryService
+    ) {}
+
     public function index(Request $request, int $warehouseId): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
@@ -44,13 +48,13 @@ class WarehouseStorageCellController extends Controller
                 ->orderBy('name')
                 ->get();
 
-            $storedQuantities = $this->getStoredQuantitiesByCellId($warehouse->id);
+            $loadSummaries = $this->loadSummaryService->summarizeCells($organizationId, $warehouse->id);
 
             return AdminResponse::success(
                 $cells->map(
                     fn (WarehouseStorageCell $cell) => $this->makeCellPayload(
                         $cell,
-                        (float) ($storedQuantities[$cell->id] ?? 0)
+                        $loadSummaries[$cell->id] ?? $this->emptyLoadSummary()
                     )
                 )->values()->all()
             );
@@ -95,7 +99,7 @@ class WarehouseStorageCellController extends Controller
             ]);
 
             return AdminResponse::success(
-                $this->makeCellPayload($cell->load('zone:id,name,code'), 0),
+                $this->makeCellPayload($cell->load('zone:id,name,code'), $this->emptyLoadSummary()),
                 trans_message('basic_warehouse.cell.created'),
                 201
             );
@@ -123,10 +127,10 @@ class WarehouseStorageCellController extends Controller
         try {
             $warehouse = $this->findWarehouse($organizationId, $warehouseId);
             $cell = $this->findCell($organizationId, $warehouse->id, $id);
-            $storedQuantities = $this->getStoredQuantitiesByCellId($warehouse->id);
+            $loadSummaries = $this->loadSummaryService->summarizeCells($organizationId, $warehouse->id);
 
             return AdminResponse::success(
-                $this->makeCellPayload($cell, (float) ($storedQuantities[$cell->id] ?? 0))
+                $this->makeCellPayload($cell, $loadSummaries[$cell->id] ?? $this->emptyLoadSummary())
             );
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('basic_warehouse.cell.not_found'), 404);
@@ -167,10 +171,13 @@ class WarehouseStorageCellController extends Controller
             }
 
             $cell->update($validated);
-            $storedQuantities = $this->getStoredQuantitiesByCellId($warehouse->id);
+            $loadSummaries = $this->loadSummaryService->summarizeCells($organizationId, $warehouse->id);
 
             return AdminResponse::success(
-                $this->makeCellPayload($cell->fresh()->load('zone:id,name,code'), (float) ($storedQuantities[$cell->id] ?? 0)),
+                $this->makeCellPayload(
+                    $cell->fresh()->load('zone:id,name,code'),
+                    $loadSummaries[$cell->id] ?? $this->emptyLoadSummary()
+                ),
                 trans_message('basic_warehouse.cell.updated')
             );
         } catch (ModelNotFoundException) {
@@ -326,45 +333,24 @@ class WarehouseStorageCellController extends Controller
         }
     }
 
-    private function getStoredQuantitiesByCellId(int $warehouseId): array
+    private function emptyLoadSummary(): array
     {
-        $cellCodes = WarehouseStorageCell::query()
-            ->where('warehouse_id', $warehouseId)
-            ->pluck('code', 'id');
-
-        $quantities = WarehouseBalance::query()
-            ->where('warehouse_id', $warehouseId)
-            ->whereNotNull('cell_id')
-            ->selectRaw('cell_id, SUM(available_quantity + reserved_quantity) as stored_quantity')
-            ->groupBy('cell_id')
-            ->pluck('stored_quantity', 'cell_id')
-            ->map(fn ($value) => (float) $value)
-            ->all();
-
-        $legacyQuantities = WarehouseBalance::query()
-            ->where('warehouse_id', $warehouseId)
-            ->whereNull('cell_id')
-            ->whereIn('location_code', $cellCodes->filter()->values())
-            ->selectRaw('location_code, SUM(available_quantity + reserved_quantity) as stored_quantity')
-            ->groupBy('location_code')
-            ->pluck('stored_quantity', 'location_code')
-            ->map(fn ($value) => (float) $value)
-            ->all();
-
-        foreach ($cellCodes as $cellId => $code) {
-            $quantities[$cellId] = ($quantities[$cellId] ?? 0.0) + ($legacyQuantities[$code] ?? 0.0);
-        }
-
-        return $quantities;
+        return [
+            'stored_quantity' => 0.0,
+            'measurement_unit' => null,
+            'quantity_breakdown' => [],
+            'has_mixed_measurement_units' => false,
+            'has_incomplete_measurement_units' => false,
+            'current_utilization' => null,
+        ];
     }
 
-    private function makeCellPayload(WarehouseStorageCell $cell, float $storedQuantity): array
+    private function makeCellPayload(WarehouseStorageCell $cell, array $loadSummary): array
     {
         $capacity = $cell->capacity !== null ? (float) $cell->capacity : null;
-        $currentUtilization = null;
-
-        if ($capacity !== null && $capacity > 0) {
-            $currentUtilization = round(min(100, ($storedQuantity / $capacity) * 100), 1);
+        $currentUtilization = $loadSummary['current_utilization'];
+        if ($currentUtilization === null && $loadSummary['stored_quantity'] === 0.0 && $capacity !== null && $capacity > 0) {
+            $currentUtilization = 0.0;
         }
 
         return [
@@ -381,7 +367,11 @@ class WarehouseStorageCellController extends Controller
             'bin_number' => $cell->bin_number,
             'capacity' => $capacity,
             'max_weight' => $cell->max_weight !== null ? (float) $cell->max_weight : null,
-            'stored_quantity' => round($storedQuantity, 3),
+            'stored_quantity' => $loadSummary['stored_quantity'],
+            'measurement_unit' => $loadSummary['measurement_unit'],
+            'quantity_breakdown' => $loadSummary['quantity_breakdown'],
+            'has_mixed_measurement_units' => $loadSummary['has_mixed_measurement_units'],
+            'has_incomplete_measurement_units' => $loadSummary['has_incomplete_measurement_units'],
             'current_utilization' => $currentUtilization,
             'full_address' => $cell->full_address,
             'storage_conditions' => $cell->storage_conditions ?? [],

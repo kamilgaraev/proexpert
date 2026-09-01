@@ -6,12 +6,11 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseZoneRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseStorageLoadSummaryService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -21,6 +20,10 @@ use Illuminate\Support\Facades\Log;
 
 class WarehouseZoneController extends Controller
 {
+    public function __construct(
+        private readonly WarehouseStorageLoadSummaryService $loadSummaryService
+    ) {}
+
     public function index(Request $request, int $warehouseId): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
@@ -46,7 +49,7 @@ class WarehouseZoneController extends Controller
                 ->orderBy('name')
                 ->get();
 
-            $zoneSummaries = $this->getZoneSummaries($organizationId, $warehouse->id);
+            $zoneSummaries = $this->loadSummaryService->summarizeZones($organizationId, $warehouse->id);
 
             return AdminResponse::success(
                 $zones->map(
@@ -131,7 +134,7 @@ class WarehouseZoneController extends Controller
         try {
             $warehouse = $this->findWarehouse($organizationId, $warehouseId);
             $zone = $this->findZone($warehouse->id, $id);
-            $zoneSummaries = $this->getZoneSummaries($organizationId, $warehouse->id);
+            $zoneSummaries = $this->loadSummaryService->summarizeZones($organizationId, $warehouse->id);
 
             return AdminResponse::success(
                 $this->makeZonePayload($zone, $zoneSummaries[$zone->id] ?? $this->emptyZoneSummary())
@@ -174,7 +177,7 @@ class WarehouseZoneController extends Controller
 
             $zone->update($validated);
 
-            $zoneSummaries = $this->getZoneSummaries($organizationId, $warehouse->id);
+            $zoneSummaries = $this->loadSummaryService->summarizeZones($organizationId, $warehouse->id);
 
             return AdminResponse::success(
                 $this->makeZonePayload($zone->fresh(), $zoneSummaries[$zone->id] ?? $this->emptyZoneSummary()),
@@ -294,63 +297,6 @@ class WarehouseZoneController extends Controller
             ->findOrFail($zoneId);
     }
 
-    private function getZoneSummaries(int $organizationId, int $warehouseId): array
-    {
-        $cells = WarehouseStorageCell::query()
-            ->where('organization_id', $organizationId)
-            ->where('warehouse_id', $warehouseId)
-            ->get(['id', 'zone_id', 'code', 'capacity', 'is_active']);
-
-        if ($cells->isEmpty()) {
-            return [];
-        }
-
-        $cellIds = $cells->pluck('id');
-        $cellCodes = $cells->pluck('code')->filter();
-        $quantityByCellId = WarehouseBalance::query()
-            ->where('warehouse_id', $warehouseId)
-            ->whereIn('cell_id', $cellIds)
-            ->selectRaw('cell_id, SUM(available_quantity + reserved_quantity) as stored_quantity')
-            ->groupBy('cell_id')
-            ->pluck('stored_quantity', 'cell_id')
-            ->map(fn ($value) => (float) $value)
-            ->all();
-        $legacyQuantityByCode = WarehouseBalance::query()
-            ->where('warehouse_id', $warehouseId)
-            ->whereNull('cell_id')
-            ->whereIn('location_code', $cellCodes)
-            ->selectRaw('location_code, SUM(available_quantity + reserved_quantity) as stored_quantity')
-            ->groupBy('location_code')
-            ->pluck('stored_quantity', 'location_code')
-            ->map(fn ($value) => (float) $value)
-            ->all();
-
-        return $cells
-            ->whereNotNull('zone_id')
-            ->groupBy('zone_id')
-            ->map(function ($zoneCells) use ($quantityByCellId, $legacyQuantityByCode): array {
-                $storedQuantity = $zoneCells->sum(
-                    fn (WarehouseStorageCell $cell): float => ($quantityByCellId[$cell->id] ?? 0.0)
-                        + ($legacyQuantityByCode[$cell->code] ?? 0.0)
-                );
-                $capacities = $zoneCells->pluck('capacity');
-                $capacity = $capacities->contains(null)
-                    ? null
-                    : (float) $capacities->sum(fn ($value) => (float) $value);
-
-                return [
-                    'cells_count' => $zoneCells->count(),
-                    'active_cells_count' => $zoneCells->where('is_active', true)->count(),
-                    'stored_quantity' => round($storedQuantity, 3),
-                    'capacity' => $capacity,
-                    'current_utilization' => $capacity !== null && $capacity > 0
-                        ? round(min(100, ($storedQuantity / $capacity) * 100), 1)
-                        : null,
-                ];
-            })
-            ->all();
-    }
-
     private function emptyZoneSummary(): array
     {
         return [
@@ -358,6 +304,10 @@ class WarehouseZoneController extends Controller
             'active_cells_count' => 0,
             'stored_quantity' => 0.0,
             'capacity' => null,
+            'measurement_unit' => null,
+            'quantity_breakdown' => [],
+            'has_mixed_measurement_units' => false,
+            'has_incomplete_measurement_units' => false,
             'current_utilization' => null,
         ];
     }
@@ -365,6 +315,10 @@ class WarehouseZoneController extends Controller
     private function makeZonePayload(WarehouseZone $zone, array $summary): array
     {
         $capacity = $zone->capacity !== null ? (float) $zone->capacity : null;
+        $currentUtilization = $summary['current_utilization'];
+        if ($currentUtilization === null && $summary['stored_quantity'] === 0.0 && $capacity !== null && $capacity > 0) {
+            $currentUtilization = 0.0;
+        }
 
         return [
             'id' => $zone->id,
@@ -378,7 +332,11 @@ class WarehouseZoneController extends Controller
             'capacity' => $capacity,
             'max_weight' => $zone->max_weight !== null ? (float) $zone->max_weight : null,
             'stored_quantity' => $summary['stored_quantity'],
-            'current_utilization' => $summary['current_utilization'],
+            'measurement_unit' => $summary['measurement_unit'],
+            'quantity_breakdown' => $summary['quantity_breakdown'],
+            'has_mixed_measurement_units' => $summary['has_mixed_measurement_units'],
+            'has_incomplete_measurement_units' => $summary['has_incomplete_measurement_units'],
+            'current_utilization' => $currentUtilization,
             'summary' => $summary,
             'full_address' => $zone->full_address,
             'storage_conditions' => $zone->storage_conditions ?? [],

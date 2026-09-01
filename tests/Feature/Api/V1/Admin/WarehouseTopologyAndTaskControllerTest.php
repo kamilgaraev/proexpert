@@ -19,6 +19,7 @@ use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceE
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
+use App\Models\MeasurementUnit;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\Project;
@@ -31,6 +32,112 @@ use Tests\TestCase;
 class WarehouseTopologyAndTaskControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_cell_and_zone_load_do_not_sum_incompatible_measurement_units(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN-LOAD');
+        $zone = $this->createZone($warehouse->id, 'Storage zone', 'LOAD-ZONE');
+        $singleUnitCell = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            'Single unit cell',
+            'CELL-SINGLE'
+        );
+        $mixedUnitCell = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            'Mixed unit cell',
+            'CELL-MIXED'
+        );
+        $unknownUnitCell = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            'Unknown unit cell',
+            'CELL-UNKNOWN'
+        );
+        foreach ([$singleUnitCell, $mixedUnitCell, $unknownUnitCell] as $cell) {
+            $cell->forceFill(['capacity' => 100])->save();
+        }
+
+        $kilogram = MeasurementUnit::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('short_name', 'кг')
+            ->firstOrFail();
+        $piece = MeasurementUnit::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('short_name', 'шт')
+            ->firstOrFail();
+        $kgMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'measurement_unit_id' => $kilogram->id,
+            'name' => 'Steel',
+            'code' => 'STEEL-KG',
+            'is_active' => true,
+        ]);
+        $pieceMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'measurement_unit_id' => $piece->id,
+            'name' => 'Fastener',
+            'code' => 'FASTENER-PCS',
+            'is_active' => true,
+        ]);
+        $unknownMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Unknown unit material',
+            'code' => 'UNKNOWN-UNIT',
+            'is_active' => true,
+        ]);
+
+        foreach ([
+            [$singleUnitCell->id, null, $kgMaterial->id, 10],
+            [null, $singleUnitCell->code, $kgMaterial->id, 5],
+            [$mixedUnitCell->id, null, $kgMaterial->id, 2],
+            [$mixedUnitCell->id, null, $pieceMaterial->id, 3],
+            [$unknownUnitCell->id, null, $unknownMaterial->id, 4],
+        ] as [$cellId, $locationCode, $materialId, $quantity]) {
+            WarehouseBalance::query()->create([
+                'organization_id' => $context->organization->id,
+                'warehouse_id' => $warehouse->id,
+                'cell_id' => $cellId,
+                'location_code' => $locationCode,
+                'material_id' => $materialId,
+                'available_quantity' => $quantity,
+                'reserved_quantity' => 0,
+                'unit_price' => 1,
+            ]);
+        }
+        $this->allowAdminAccess();
+
+        $cellsResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/cells")
+            ->assertOk();
+        $cells = collect($cellsResponse->json('data'))->keyBy('code');
+
+        $this->assertSame(15, $cells['CELL-SINGLE']['stored_quantity']);
+        $this->assertSame('кг', $cells['CELL-SINGLE']['measurement_unit']);
+        $this->assertSame(15, $cells['CELL-SINGLE']['current_utilization']);
+        $this->assertFalse($cells['CELL-SINGLE']['has_mixed_measurement_units']);
+        $this->assertNull($cells['CELL-MIXED']['stored_quantity']);
+        $this->assertNull($cells['CELL-MIXED']['current_utilization']);
+        $this->assertTrue($cells['CELL-MIXED']['has_mixed_measurement_units']);
+        $this->assertCount(2, $cells['CELL-MIXED']['quantity_breakdown']);
+        $this->assertNull($cells['CELL-UNKNOWN']['stored_quantity']);
+        $this->assertTrue($cells['CELL-UNKNOWN']['has_incomplete_measurement_units']);
+
+        $zoneResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/zones")
+            ->assertOk();
+        $zoneData = collect($zoneResponse->json('data'))->firstWhere('id', $zone->id);
+        $this->assertNull($zoneData['stored_quantity']);
+        $this->assertNull($zoneData['summary']['capacity']);
+        $this->assertNull($zoneData['current_utilization']);
+        $this->assertTrue($zoneData['has_mixed_measurement_units']);
+        $this->assertTrue($zoneData['has_incomplete_measurement_units']);
+    }
 
     public function test_warehouse_list_replaces_technical_custody_logins_with_person_names(): void
     {
