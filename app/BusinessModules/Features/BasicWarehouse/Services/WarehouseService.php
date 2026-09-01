@@ -1661,7 +1661,7 @@ class WarehouseService implements WarehouseReportDataProvider
             ->where('organization_id', $organizationId)
             ->when($warehouseId !== null, fn ($query) => $query->where('warehouse_id', $warehouseId))
             ->whereBetween('movement_date', [$dateFrom, $dateTo])
-            ->with(['material'])
+            ->with(['material.measurementUnit:id,short_name'])
             ->get();
 
         $days = max(1, $dateFrom->diffInDays($dateTo) + 1);
@@ -1697,6 +1697,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'material_id' => (int) $materialId,
                 'material_name' => (string) $material->name,
                 'material_code' => (string) ($material->code ?? ''),
+                'measurement_unit' => $material->measurementUnit?->short_name,
                 'average_stock' => round($averageStock, 2),
                 'total_consumption' => round($consumption, 2),
                 'turnover_ratio' => round($turnoverRatio, 2),
@@ -1775,7 +1776,7 @@ class WarehouseService implements WarehouseReportDataProvider
             ->where('movement_type', 'write_off')
             ->when($warehouseId !== null, static fn ($query) => $query->where('warehouse_id', $warehouseId))
             ->when($assetIds !== [], static fn ($query) => $query->whereIn('material_id', $assetIds))
-            ->with(['material'])
+            ->with(['material.measurementUnit:id,short_name'])
             ->get();
 
         $forecasts = [];
@@ -1814,6 +1815,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'asset_id' => $materialId,
                 'asset_name' => $material->name,
                 'asset_code' => $material->code,
+                'measurement_unit' => $material->measurementUnit?->short_name,
                 'current_stock' => $currentStock,
                 'average_daily_consumption' => round($averageDailyConsumption, 2),
                 'predicted_consumption' => round($predictedConsumption, 2),
