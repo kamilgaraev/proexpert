@@ -14,6 +14,21 @@ final class WarehouseBalancesRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $booleanFilters = [];
+
+        foreach (['missing_location', 'low_stock'] as $filter) {
+            $value = $this->input($filter);
+
+            if (is_string($value) && in_array(strtolower($value), ['true', 'false'], true)) {
+                $booleanFilters[$filter] = strtolower($value) === 'true';
+            }
+        }
+
+        $this->merge($booleanFilters);
+    }
+
     public function rules(): array
     {
         $organizationId = (int) ($this->user()?->current_organization_id ?? 0);
