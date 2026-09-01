@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocatio
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Models\Material;
+use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -298,6 +299,14 @@ class WarehouseServiceTest extends TestCase
         $this->assertSame(20.0, $data['assets'][0]['average_stock']);
         $this->assertSame(10.0, $data['assets'][0]['consumption']);
         $this->assertSame(0.5, $data['assets'][0]['turnover_rate']);
+
+        $report = $this->service->getTurnoverAnalyticsReport($organization->id, [
+            'date_from' => now()->subDays(10),
+            'date_to' => now(),
+            'warehouse_id' => $warehouse->id,
+        ]);
+
+        $this->assertSame('кг', $report['materials'][0]['measurement_unit']);
     }
 
     public function test_get_forecast_data_returns_consumption_forecast(): void
@@ -315,6 +324,7 @@ class WarehouseServiceTest extends TestCase
         $this->assertSame($material->id, $data['forecasts'][0]['asset_id']);
         $this->assertSame(0.1, $data['forecasts'][0]['average_daily_consumption']);
         $this->assertSame(3.0, $data['forecasts'][0]['predicted_consumption']);
+        $this->assertSame('кг', $data['forecasts'][0]['measurement_unit']);
     }
 
     public function test_get_abc_xyz_analysis_returns_consumption_categories(): void
@@ -366,10 +376,15 @@ class WarehouseServiceTest extends TestCase
             'is_main' => true,
             'is_active' => true,
         ]);
+        $measurementUnit = MeasurementUnit::query()
+            ->where('organization_id', $organization->id)
+            ->where('short_name', 'кг')
+            ->firstOrFail();
         $material = Material::create([
             'organization_id' => $organization->id,
             'name' => 'Cement M500',
             'code' => 'CEM-500',
+            'measurement_unit_id' => $measurementUnit->id,
             'additional_properties' => ['asset_type' => 'material'],
             'is_active' => true,
         ]);
