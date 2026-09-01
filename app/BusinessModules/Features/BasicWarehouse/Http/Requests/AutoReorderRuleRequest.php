@@ -20,13 +20,19 @@ class AutoReorderRuleRequest extends FormRequest
             $maxStock = (float) $reorderPoint + (float) $reorderQuantity;
         }
 
-        $payload = [
-            'min_stock' => $minStock,
-            'default_supplier_id' => $this->input('default_supplier_id', $this->input('supplier_id')),
-            'max_stock' => $maxStock,
-        ];
+        $payload = [];
 
-        $this->merge(array_filter($payload, static fn ($value) => $value !== null && $value !== ''));
+        if ($this->hasAny(['min_stock', 'min_stock_level'])) {
+            $payload['min_stock'] = $minStock;
+        }
+        if ($this->hasAny(['default_supplier_id', 'supplier_id'])) {
+            $payload['default_supplier_id'] = $this->input('default_supplier_id', $this->input('supplier_id'));
+        }
+        if ($maxStock !== null && $maxStock !== '') {
+            $payload['max_stock'] = $maxStock;
+        }
+
+        $this->merge($payload);
     }
 
     public function authorize(): bool
