@@ -219,20 +219,23 @@ class AdvancedWarehouseController extends Controller
                 $validated
             );
 
+            if ($result['action'] === 'duplicate') {
+                return AdminResponse::error(
+                    trans_message('basic_warehouse.auto_reorder.duplicate_rule'),
+                    422
+                );
+            }
+
             $rule = AutoReorderRule::query()
                 ->where('organization_id', $organizationId)
                 ->with(['material.measurementUnit', 'warehouse.project', 'defaultSupplier'])
                 ->findOrFail((int) $result['rule_id']);
             $this->warehouseService->withReadableWarehouseName($rule->warehouse);
 
-            $messageKey = $result['action'] === 'created'
-                ? 'basic_warehouse.auto_reorder.created'
-                : 'basic_warehouse.auto_reorder.updated';
-
             return AdminResponse::success(
                 $this->makeAutoReorderRulePayload($rule),
-                trans_message($messageKey),
-                $result['action'] === 'created' ? 201 : 200
+                trans_message('basic_warehouse.auto_reorder.created'),
+                201
             );
         } catch (\Throwable $exception) {
             Log::error('AdvancedWarehouseController::createAutoReorderRule error', [

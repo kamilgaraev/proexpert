@@ -1200,6 +1200,29 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
             'notes' => 'Порог скорректирован владельцем',
         ]);
 
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/advanced-warehouse/auto-reorder/rules', [
+                'warehouse_id' => $custodyWarehouse->id,
+                'material_id' => $material->id,
+                'min_stock_level' => 20,
+                'reorder_point' => 25,
+                'reorder_quantity' => 30,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath(
+                'message',
+                'Для этого материала и склада уже существует правило автопополнения.'
+            );
+
+        $this->assertDatabaseHas('auto_reorder_rules', [
+            'id' => $ruleId,
+            'min_stock' => 1,
+            'reorder_point' => 4,
+            'reorder_quantity' => 6,
+            'default_supplier_id' => null,
+            'notes' => 'Порог скорректирован владельцем',
+        ]);
+
         $otherRule = AutoReorderRule::query()->create([
             'organization_id' => $context->organization->id,
             'warehouse_id' => $otherWarehouse->id,
