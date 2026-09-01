@@ -147,6 +147,53 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         $this->assertStringContainsString('kab-vvg_', $path);
         $this->assertStringContainsString('20260830_090000', $path);
         $this->assertStringNotContainsString('Res'.$reservation->id, $path);
+
+        $longDocumentNumber = 'QA-M8-'.str_repeat('A', 94);
+        $reservation->forceFill([
+            'metadata' => ['document_number' => $longDocumentNumber],
+        ])->save();
+        $longNumberPath = app(M8ExportStrategy::class)->export([
+            'reservation' => $reservation,
+            'movements' => collect(),
+        ]);
+        $longNumberSheet = $this->sheetFromStorage($longNumberPath);
+
+        $this->assertSame(
+            'ЛИМИТНО-ЗАБОРНАЯ КАРТА № '.$longDocumentNumber,
+            $longNumberSheet->getCell('A9')->getValue(),
+        );
+        $this->assertTrue($longNumberSheet->getStyle('A9')->getAlignment()->getWrapText());
+        $this->assertGreaterThanOrEqual(42, $longNumberSheet->getRowDimension(9)->getRowHeight());
+
+        $wideDocumentNumber = 'QA'.str_repeat('界', 98);
+        $reservation->forceFill([
+            'metadata' => ['document_number' => $wideDocumentNumber],
+        ])->save();
+        $wideNumberPath = app(M8ExportStrategy::class)->export([
+            'reservation' => $reservation,
+            'movements' => collect(),
+        ]);
+        $wideNumberSheet = $this->sheetFromStorage($wideNumberPath);
+
+        $this->assertSame(
+            'ЛИМИТНО-ЗАБОРНАЯ КАРТА № '.$wideDocumentNumber,
+            $wideNumberSheet->getCell('A9')->getValue(),
+        );
+        $this->assertGreaterThanOrEqual(84, $wideNumberSheet->getRowDimension(9)->getRowHeight());
+
+        $reservation->forceFill([
+            'metadata' => ['document_number' => "QA-M8-01\n  /  2026"],
+        ])->save();
+        $multilineNumberPath = app(M8ExportStrategy::class)->export([
+            'reservation' => $reservation,
+            'movements' => collect(),
+        ]);
+        $multilineNumberSheet = $this->sheetFromStorage($multilineNumberPath);
+
+        $this->assertSame(
+            'ЛИМИТНО-ЗАБОРНАЯ КАРТА № QA-M8-01 / 2026',
+            $multilineNumberSheet->getCell('A9')->getValue(),
+        );
     }
 
     private function warehouseContext(): array

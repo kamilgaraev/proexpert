@@ -44,7 +44,8 @@ abstract class BaseWarehouseExportStrategy implements WarehouseExportStrategyInt
 
     protected function documentNumber(mixed $number): string
     {
-        $normalized = trim((string) $number);
+        $trimmed = trim((string) $number);
+        $normalized = preg_replace('/\s+/u', ' ', $trimmed) ?? $trimmed;
 
         return $normalized !== '' ? $normalized : trans_message('warehouse_basic.document_without_number');
     }
