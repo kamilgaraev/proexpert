@@ -17,6 +17,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -220,8 +221,9 @@ class AdvancedWarehouseController extends Controller
 
             $rule = AutoReorderRule::query()
                 ->where('organization_id', $organizationId)
-                ->with(['material', 'warehouse', 'defaultSupplier'])
+                ->with(['material.measurementUnit', 'warehouse.project', 'defaultSupplier'])
                 ->findOrFail((int) $result['rule_id']);
+            $this->warehouseService->withReadableWarehouseName($rule->warehouse);
 
             $messageKey = $result['action'] === 'created'
                 ? 'basic_warehouse.auto_reorder.created'
@@ -253,11 +255,21 @@ class AdvancedWarehouseController extends Controller
 
             $rules = AutoReorderRule::query()
                 ->where('organization_id', $organizationId)
-                ->with(['material', 'warehouse', 'defaultSupplier'])
+                ->with(['material.measurementUnit', 'warehouse.project', 'defaultSupplier'])
                 ->when($request->filled('warehouse_id'), fn (Builder $query) => $query->where('warehouse_id', (int) $request->input('warehouse_id')))
                 ->when($request->boolean('active_only'), fn (Builder $query) => $query->where('is_active', true))
                 ->orderByDesc('updated_at')
                 ->paginate($perPage);
+
+            $warehouses = new EloquentCollection(
+                $rules->getCollection()
+                    ->pluck('warehouse')
+                    ->filter()
+                    ->unique('id')
+                    ->values()
+                    ->all()
+            );
+            $this->warehouseService->applyReadableCustodyWarehouseNames($organizationId, $warehouses);
 
             $rules->setCollection(
                 $rules->getCollection()->map(
@@ -285,7 +297,7 @@ class AdvancedWarehouseController extends Controller
         try {
             $rule = AutoReorderRule::query()
                 ->where('organization_id', $organizationId)
-                ->with(['material', 'warehouse', 'defaultSupplier'])
+                ->with(['material.measurementUnit', 'warehouse.project', 'defaultSupplier'])
                 ->findOrFail($ruleId);
 
             $validated = $request->validated();
@@ -306,8 +318,11 @@ class AdvancedWarehouseController extends Controller
             $rule->fill($validated);
             $rule->save();
 
+            $rule->refresh()->load(['material.measurementUnit', 'warehouse.project', 'defaultSupplier']);
+            $this->warehouseService->withReadableWarehouseName($rule->warehouse);
+
             return AdminResponse::success(
-                $this->makeAutoReorderRulePayload($rule->fresh(['material', 'warehouse', 'defaultSupplier'])),
+                $this->makeAutoReorderRulePayload($rule),
                 trans_message('basic_warehouse.auto_reorder.updated')
             );
         } catch (ModelNotFoundException) {
@@ -357,7 +372,7 @@ class AdvancedWarehouseController extends Controller
 
         try {
             $warehouseId = $request->filled('warehouse_id') ? (int) $request->input('warehouse_id') : null;
-            $result = $this->warehouseService->checkAutoReorder($organizationId);
+            $result = $this->warehouseService->checkAutoReorder($organizationId, $warehouseId);
             $items = collect($result['orders'] ?? [])
                 ->when(
                     $warehouseId !== null,
@@ -492,7 +507,9 @@ class AdvancedWarehouseController extends Controller
             'material' => $rule->material ? [
                 'id' => $rule->material->id,
                 'name' => $rule->material->name,
-                'unit' => $rule->material->unit?->name ?? $rule->material->measurement_unit ?? 'шт',
+                'unit' => $rule->material->measurementUnit?->short_name
+                    ?? $rule->material->measurementUnit?->name
+                    ?? trans_message('basic_warehouse.auto_reorder.measurement_unit_missing'),
             ] : null,
             'warehouse' => $rule->warehouse ? [
                 'id' => $rule->warehouse->id,
@@ -512,6 +529,8 @@ class AdvancedWarehouseController extends Controller
         return [
             'material_id' => (int) $item['material_id'],
             'material_name' => $item['material_name'] ?? '',
+            'measurement_unit' => $item['measurement_unit']
+                ?? trans_message('basic_warehouse.auto_reorder.measurement_unit_missing'),
             'warehouse_id' => (int) $item['warehouse_id'],
             'warehouse_name' => $item['warehouse_name'] ?? '',
             'current_stock' => (float) ($item['current_stock'] ?? 0),

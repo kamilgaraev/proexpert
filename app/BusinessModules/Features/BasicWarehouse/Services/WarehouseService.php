@@ -167,7 +167,7 @@ class WarehouseService implements WarehouseReportDataProvider
         ]);
     }
 
-    private function applyReadableCustodyWarehouseNames(
+    public function applyReadableCustodyWarehouseNames(
         int $organizationId,
         \Illuminate\Database\Eloquent\Collection $warehouses
     ): \Illuminate\Database\Eloquent\Collection {
@@ -2616,12 +2616,18 @@ class WarehouseService implements WarehouseReportDataProvider
     /**
      * Проверить необходимость автопополнения
      */
-    public function checkAutoReorder(int $organizationId): array
+    public function checkAutoReorder(int $organizationId, ?int $warehouseId = null): array
     {
         $rules = AutoReorderRule::where('organization_id', $organizationId)
             ->where('is_active', true)
-            ->with(['material', 'warehouse', 'defaultSupplier'])
+            ->when($warehouseId !== null, fn (Builder $query) => $query->where('warehouse_id', $warehouseId))
+            ->with(['material.measurementUnit', 'warehouse.project', 'defaultSupplier'])
             ->get();
+
+        $warehouses = new \Illuminate\Database\Eloquent\Collection(
+            $rules->pluck('warehouse')->filter()->unique('id')->values()->all()
+        );
+        $this->applyReadableCustodyWarehouseNames($organizationId, $warehouses);
 
         $ordersToGenerate = [];
         $rulesChecked = 0;
@@ -2644,6 +2650,9 @@ class WarehouseService implements WarehouseReportDataProvider
                     'material_id' => $rule->material_id,
                     'material_name' => $rule->material->name,
                     'material_code' => $rule->material->code,
+                    'measurement_unit' => $rule->material->measurementUnit?->short_name
+                        ?? $rule->material->measurementUnit?->name
+                        ?? trans_message('basic_warehouse.auto_reorder.measurement_unit_missing'),
                     'warehouse_id' => $rule->warehouse_id,
                     'warehouse_name' => $rule->warehouse->name,
                     'current_stock' => $currentStock,
@@ -2670,6 +2679,7 @@ class WarehouseService implements WarehouseReportDataProvider
 
         $this->logging->business('warehouse.auto_reorder.checked', [
             'organization_id' => $organizationId,
+            'warehouse_id' => $warehouseId,
             'rules_checked' => $rulesChecked,
             'orders_to_generate' => count($ordersToGenerate),
         ]);

@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
+use App\BusinessModules\Features\BasicWarehouse\Models\AutoReorderRule;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
 use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
@@ -1107,6 +1108,124 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
         $this->assertDatabaseMissing('auto_reorder_rules', [
             'organization_id' => $context->organization->id,
         ]);
+    }
+
+    public function test_auto_reorder_owner_flow_is_readable_editable_and_scoped_to_selected_warehouse(): void
+    {
+        $context = AdminApiTestContext::create();
+        $context->user->forceFill(['name' => 'technical_owner_login'])->save();
+        $unit = MeasurementUnit::query()
+            ->where('organization_id', $context->organization->id)
+            ->whereRaw('lower(short_name) = ?', ['кг'])
+            ->firstOrFail();
+        $material = $this->createMaterial(
+            $context->organization->id,
+            $unit->id,
+            'Арматура А500С',
+            'REBAR-12'
+        );
+        $project = Project::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Тестовый объект',
+            'status' => 'active',
+        ]);
+        $custodyWarehouse = OrganizationWarehouse::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'responsible_user_id' => $context->user->id,
+            'name' => 'Ответственное хранение: Тестовый объект, technical_owner_login',
+            'code' => 'AUTO-REORDER-CUSTODY',
+            'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
+            'is_active' => true,
+        ]);
+        $supplier = Supplier::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Поставщик арматуры',
+            'is_active' => true,
+        ]);
+        $otherWarehouse = $this->createWarehouse(
+            $context->organization->id,
+            'Другой склад',
+            'AUTO-REORDER-OTHER'
+        );
+        $otherMaterial = $this->createMaterial(
+            $context->organization->id,
+            $unit->id,
+            'Цемент',
+            'CEMENT-M500'
+        );
+        $this->allowAdminAccess();
+
+        $createResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/advanced-warehouse/auto-reorder/rules', [
+                'warehouse_id' => $custodyWarehouse->id,
+                'material_id' => $material->id,
+                'min_stock_level' => 2,
+                'reorder_point' => 5,
+                'reorder_quantity' => 8,
+                'supplier_id' => $supplier->id,
+                'notes' => 'Первичная настройка',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.material.unit', 'кг')
+            ->assertJsonPath(
+                'data.warehouse.name',
+                'Ответственное хранение: Тестовый объект, ФИО не указано'
+            );
+
+        $ruleId = (int) $createResponse->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/advanced-warehouse/auto-reorder/rules/{$ruleId}", [
+                'min_stock_level' => 1,
+                'reorder_point' => 4,
+                'reorder_quantity' => 6,
+                'supplier_id' => null,
+                'notes' => 'Порог скорректирован владельцем',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.min_stock_level', 1)
+            ->assertJsonPath('data.reorder_point', 4)
+            ->assertJsonPath('data.reorder_quantity', 6)
+            ->assertJsonPath('data.supplier', null)
+            ->assertJsonPath('data.material.unit', 'кг')
+            ->assertJsonPath(
+                'data.warehouse.name',
+                'Ответственное хранение: Тестовый объект, ФИО не указано'
+            );
+
+        $this->assertDatabaseHas('auto_reorder_rules', [
+            'id' => $ruleId,
+            'default_supplier_id' => null,
+            'notes' => 'Порог скорректирован владельцем',
+        ]);
+
+        $otherRule = AutoReorderRule::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $otherWarehouse->id,
+            'material_id' => $otherMaterial->id,
+            'min_stock' => 1,
+            'max_stock' => 10,
+            'reorder_point' => 4,
+            'reorder_quantity' => 6,
+            'is_active' => true,
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/advanced-warehouse/auto-reorder/check', [
+                'warehouse_id' => $custodyWarehouse->id,
+            ])
+            ->assertOk()
+            ->assertJsonCount(1, 'data.items_to_reorder')
+            ->assertJsonPath('data.items_to_reorder.0.material_id', $material->id)
+            ->assertJsonPath('data.items_to_reorder.0.measurement_unit', 'кг')
+            ->assertJsonPath(
+                'data.items_to_reorder.0.warehouse_name',
+                'Ответственное хранение: Тестовый объект, ФИО не указано'
+            );
+
+        $this->assertNotNull(AutoReorderRule::query()->findOrFail($ruleId)->last_checked_at);
+        $this->assertNull($otherRule->fresh()->last_checked_at);
     }
 
     public function test_advanced_analytics_rejects_foreign_warehouse_and_asset_filters(): void
