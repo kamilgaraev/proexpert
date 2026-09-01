@@ -964,52 +964,7 @@ class WarehouseService implements WarehouseReportDataProvider
      */
     public function getStockData(int $organizationId, array $filters = []): array
     {
-        $query = WarehouseBalance::where('organization_id', $organizationId)
-            ->where(function (Builder $query): void {
-                $query->where('available_quantity', '>', 0)
-                    ->orWhere('reserved_quantity', '>', 0);
-            })
-            ->with(['material.measurementUnit', 'warehouse.project', 'cell.zone', 'material.photos']);
-
-        // Применяем фильтры
-        if (isset($filters['warehouse_id'])) {
-            $query->where('warehouse_id', $filters['warehouse_id']);
-        }
-
-        if (isset($filters['asset_type'])) {
-            $query->whereHas('material', function ($q) use ($filters) {
-                $driver = $q->getConnection()->getDriverName();
-                if ($driver === 'pgsql') {
-                    $q->whereRaw("additional_properties->>'asset_type' = ?", [$filters['asset_type']]);
-                } else {
-                    $q->whereRaw("JSON_EXTRACT(additional_properties, '$.asset_type') = ?", [$filters['asset_type']]);
-                }
-            });
-        }
-
-        if (isset($filters['category'])) {
-            $query->whereHas('material', function ($q) use ($filters) {
-                $q->where('category', $filters['category']);
-            });
-        }
-
-        $this->applyStockLocationFilters($query, $organizationId, $filters);
-
-        if (isset($filters['low_stock']) && $filters['low_stock']) {
-            $query->lowStock();
-        }
-
-        if (isset($filters['project_id'])) {
-            $query->whereExists(function ($allocationQuery) use ($filters): void {
-                $allocationQuery
-                    ->selectRaw('1')
-                    ->from('warehouse_project_allocations as project_filter_allocations')
-                    ->whereColumn('project_filter_allocations.organization_id', 'warehouse_balances.organization_id')
-                    ->whereColumn('project_filter_allocations.warehouse_id', 'warehouse_balances.warehouse_id')
-                    ->whereColumn('project_filter_allocations.material_id', 'warehouse_balances.material_id')
-                    ->where('project_filter_allocations.project_id', $filters['project_id']);
-            });
-        }
+        $query = $this->buildStockQuery($organizationId, $filters);
 
         $allBatches = $query->get();
         $this->applyReadableCustodyWarehouseNames(
@@ -1192,6 +1147,213 @@ class WarehouseService implements WarehouseReportDataProvider
         }
 
         return $resultData;
+    }
+
+    public function getPaginatedStockData(
+        int $organizationId,
+        array $filters,
+        int $page,
+        int $perPage,
+    ): array {
+        $page = max(1, $page);
+        $perPage = max(1, min(100, $perPage));
+        $queryFilters = $filters;
+        unset($queryFilters['low_stock']);
+        $baseQuery = $this->buildStockQuery($organizationId, $queryFilters);
+        $baseQuery->setEagerLoads([]);
+
+        $positionQuery = (clone $baseQuery)
+            ->selectRaw('warehouse_id, material_id')
+            ->selectRaw('SUM(available_quantity) AS available_quantity')
+            ->selectRaw('SUM(reserved_quantity) AS reserved_quantity')
+            ->selectRaw('MAX(min_stock_level) AS min_stock_level')
+            ->selectRaw('SUM((available_quantity + reserved_quantity) * unit_price) AS total_value')
+            ->groupBy('warehouse_id', 'material_id');
+        if (! empty($filters['low_stock'])) {
+            $positionQuery
+                ->havingRaw('MAX(min_stock_level) > 0')
+                ->havingRaw('SUM(available_quantity) <= MAX(min_stock_level)');
+        }
+
+        $summary = DB::query()
+            ->fromSub(clone $positionQuery, 'stock_positions')
+            ->selectRaw('COUNT(*) AS total_items')
+            ->selectRaw(
+                'SUM(CASE WHEN min_stock_level > 0 AND available_quantity <= min_stock_level THEN 1 ELSE 0 END) AS low_stock_count'
+            )
+            ->selectRaw('COALESCE(SUM(total_value), 0) AS total_value')
+            ->first();
+
+        $total = (int) ($summary->total_items ?? 0);
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min($page, $lastPage);
+        $positionPairs = (clone $positionQuery)
+            ->orderBy('warehouse_id')
+            ->orderBy('material_id')
+            ->forPage($page, $perPage)
+            ->get()
+            ->map(static fn ($position): array => [
+                'warehouse_id' => (int) $position->warehouse_id,
+                'material_id' => (int) $position->material_id,
+            ])
+            ->values();
+
+        $items = $positionPairs->isEmpty()
+            ? []
+            : $this->getStockData($organizationId, [
+                ...$queryFilters,
+                'position_pairs' => $positionPairs->all(),
+            ]);
+        $positionOrder = $positionPairs
+            ->mapWithKeys(static fn (array $pair, int $index): array => [
+                $pair['warehouse_id'].':'.$pair['material_id'] => $index,
+            ]);
+        $items = collect($items)
+            ->sortBy(static fn (array $item): int => (int) $positionOrder->get(
+                $item['warehouse_id'].':'.$item['material_id'],
+                PHP_INT_MAX,
+            ))
+            ->values()
+            ->all();
+
+        $reservedByMaterial = DB::query()
+            ->fromSub(clone $positionQuery, 'filtered_stock_positions')
+            ->selectRaw('material_id, SUM(reserved_quantity) AS reserved_quantity')
+            ->groupBy('material_id')
+            ->havingRaw('SUM(reserved_quantity) > 0')
+            ->get();
+        $materials = Material::query()
+            ->whereIn('id', $reservedByMaterial->pluck('material_id'))
+            ->with('measurementUnit:id,name,short_name')
+            ->get()
+            ->keyBy('id');
+        $reservedQuantities = $reservedByMaterial
+            ->groupBy(static function ($position) use ($materials): string {
+                $material = $materials->get($position->material_id);
+
+                return $material?->measurementUnit?->short_name
+                    ?? $material?->measurementUnit?->name
+                    ?? '';
+            })
+            ->map(static fn (Collection $positions, string $measurementUnit): array => [
+                'measurement_unit' => $measurementUnit,
+                'quantity' => (float) $positions->sum('reserved_quantity'),
+            ])
+            ->values()
+            ->all();
+
+        $from = $total === 0 || $items === [] ? null : (($page - 1) * $perPage) + 1;
+
+        return [
+            'items' => $items,
+            'pagination' => [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'last_page' => $lastPage,
+                'from' => $from,
+                'to' => $from === null ? null : $from + count($items) - 1,
+            ],
+            'summary' => [
+                'total_items' => $total,
+                'low_stock_count' => (int) ($summary->low_stock_count ?? 0),
+                'total_value' => (float) ($summary->total_value ?? 0),
+                'reserved_quantities' => $reservedQuantities,
+            ],
+        ];
+    }
+
+    private function buildStockQuery(int $organizationId, array $filters): Builder
+    {
+        $query = WarehouseBalance::query()
+            ->where('organization_id', $organizationId)
+            ->where(function (Builder $query): void {
+                $query->where('available_quantity', '>', 0)
+                    ->orWhere('reserved_quantity', '>', 0);
+            })
+            ->with(['material.measurementUnit', 'warehouse.project', 'cell.zone', 'material.photos']);
+
+        if (isset($filters['warehouse_id'])) {
+            $query->where('warehouse_id', $filters['warehouse_id']);
+        }
+
+        if (isset($filters['asset_type'])) {
+            $query->whereHas('material', function ($materialQuery) use ($filters): void {
+                $driver = $materialQuery->getConnection()->getDriverName();
+                if ($driver === 'pgsql') {
+                    $materialQuery->whereRaw("additional_properties->>'asset_type' = ?", [$filters['asset_type']]);
+                } else {
+                    $materialQuery->whereRaw("JSON_EXTRACT(additional_properties, '$.asset_type') = ?", [$filters['asset_type']]);
+                }
+            });
+        }
+
+        if (isset($filters['category'])) {
+            $query->whereHas('material', static function (Builder $materialQuery) use ($filters): void {
+                $materialQuery->where('category', $filters['category']);
+            });
+        }
+
+        if (! empty($filters['search'])) {
+            $search = mb_strtolower(trim((string) $filters['search']));
+            $query->whereHas('material', static function (Builder $materialQuery) use ($search): void {
+                $materialQuery->where(function (Builder $searchQuery) use ($search): void {
+                    $searchQuery->whereRaw('LOWER(name) LIKE ?', ['%'.$search.'%'])
+                        ->orWhereRaw('LOWER(code) LIKE ?', ['%'.$search.'%']);
+                });
+            });
+        }
+
+        $this->applyStockLocationFilters($query, $organizationId, $filters);
+
+        if (! empty($filters['missing_location'])) {
+            $query->whereExists(static function ($missingLocationQuery) use ($organizationId): void {
+                $missingLocationQuery
+                    ->selectRaw('1')
+                    ->from('warehouse_balances as missing_location_balances')
+                    ->whereColumn('missing_location_balances.warehouse_id', 'warehouse_balances.warehouse_id')
+                    ->whereColumn('missing_location_balances.material_id', 'warehouse_balances.material_id')
+                    ->where('missing_location_balances.organization_id', $organizationId)
+                    ->whereNull('missing_location_balances.cell_id')
+                    ->where(function ($quantityQuery): void {
+                        $quantityQuery->where('missing_location_balances.available_quantity', '>', 0)
+                            ->orWhere('missing_location_balances.reserved_quantity', '>', 0);
+                    })
+                    ->where(function ($locationQuery): void {
+                        $locationQuery->whereNull('missing_location_balances.location_code')
+                            ->orWhere('missing_location_balances.location_code', '');
+                    });
+            });
+        }
+
+        if (! empty($filters['low_stock'])) {
+            $query->lowStock();
+        }
+
+        if (isset($filters['project_id'])) {
+            $query->whereExists(function ($allocationQuery) use ($filters): void {
+                $allocationQuery
+                    ->selectRaw('1')
+                    ->from('warehouse_project_allocations as project_filter_allocations')
+                    ->whereColumn('project_filter_allocations.organization_id', 'warehouse_balances.organization_id')
+                    ->whereColumn('project_filter_allocations.warehouse_id', 'warehouse_balances.warehouse_id')
+                    ->whereColumn('project_filter_allocations.material_id', 'warehouse_balances.material_id')
+                    ->where('project_filter_allocations.project_id', $filters['project_id']);
+            });
+        }
+
+        if (! empty($filters['position_pairs'])) {
+            $query->where(static function (Builder $positionQuery) use ($filters): void {
+                foreach ($filters['position_pairs'] as $pair) {
+                    $positionQuery->orWhere(static function (Builder $pairQuery) use ($pair): void {
+                        $pairQuery->where('warehouse_id', $pair['warehouse_id'])
+                            ->where('material_id', $pair['material_id']);
+                    });
+                }
+            });
+        }
+
+        return $query;
     }
 
     private function applyStockLocationFilters(Builder $query, int $organizationId, array $filters): void

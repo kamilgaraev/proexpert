@@ -219,9 +219,20 @@ class WarehouseController extends Controller
                 'location_code' => $request->input('location_code'),
                 'cell_id' => $request->input('cell_id'),
                 'zone_id' => $request->validated('zone_id'),
+                'search' => $request->validated('search'),
+                'missing_location' => $request->boolean('missing_location'),
             ];
 
-            $balances = $this->warehouseService->getStockData($organizationId, $filters);
+            $page = $request->validated('page');
+            $perPage = $request->validated('per_page');
+            $balances = $page !== null || $perPage !== null
+                ? $this->warehouseService->getPaginatedStockData(
+                    $organizationId,
+                    $filters,
+                    (int) ($page ?? 1),
+                    (int) ($perPage ?? 25),
+                )
+                : $this->warehouseService->getStockData($organizationId, $filters);
 
             return AdminResponse::success($balances);
         } catch (ModelNotFoundException) {
@@ -231,7 +242,18 @@ class WarehouseController extends Controller
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
                 'warehouse_id' => $warehouseId,
-                'filters' => $request->only(['asset_type', 'low_stock', 'project_id', 'location_code', 'cell_id', 'zone_id']),
+                'filters' => $request->only([
+                    'asset_type',
+                    'low_stock',
+                    'project_id',
+                    'location_code',
+                    'cell_id',
+                    'zone_id',
+                    'search',
+                    'missing_location',
+                    'page',
+                    'per_page',
+                ]),
                 'error' => $exception->getMessage(),
             ]);
 
