@@ -42,10 +42,27 @@ class WarehouseZoneRequest extends FormRequest
 
         if ($this->isMethod('patch') || $this->isMethod('put')) {
             foreach ($rules as $key => $rule) {
-                $rules[$key] = str_replace('required', 'sometimes', $rule);
+                $rules[$key] = str_replace('required', 'sometimes|required', $rule);
             }
         }
 
         return $rules;
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'name' => trans_message('basic_warehouse.zone.validation.name'),
+            'code' => trans_message('basic_warehouse.zone.validation.code'),
+            'zone_type' => trans_message('basic_warehouse.zone.validation.type'),
+            'rack_number' => trans_message('basic_warehouse.zone.validation.rack_number'),
+            'shelf_number' => trans_message('basic_warehouse.zone.validation.shelf_number'),
+            'cell_number' => trans_message('basic_warehouse.zone.validation.cell_number'),
+            'capacity' => trans_message('basic_warehouse.zone.validation.capacity'),
+            'max_weight' => trans_message('basic_warehouse.zone.validation.max_weight'),
+            'storage_conditions' => trans_message('basic_warehouse.zone.validation.storage_conditions'),
+            'is_active' => trans_message('basic_warehouse.zone.validation.is_active'),
+            'notes' => trans_message('basic_warehouse.zone.validation.notes'),
+        ];
     }
 }

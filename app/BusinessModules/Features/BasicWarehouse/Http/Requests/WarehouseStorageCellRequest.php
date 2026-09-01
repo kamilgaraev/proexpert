@@ -34,10 +34,30 @@ class WarehouseStorageCellRequest extends FormRequest
 
         if ($this->isMethod('put') || $this->isMethod('patch')) {
             foreach ($rules as $key => $rule) {
-                $rules[$key] = str_replace('required', 'sometimes', $rule);
+                $rules[$key] = str_replace('required', 'sometimes|required', $rule);
             }
         }
 
         return $rules;
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'zone_id' => trans_message('basic_warehouse.cell.validation.zone'),
+            'name' => trans_message('basic_warehouse.cell.validation.name'),
+            'code' => trans_message('basic_warehouse.cell.validation.code'),
+            'cell_type' => trans_message('basic_warehouse.cell.validation.type'),
+            'status' => trans_message('basic_warehouse.cell.validation.status'),
+            'rack_number' => trans_message('basic_warehouse.cell.validation.rack_number'),
+            'shelf_number' => trans_message('basic_warehouse.cell.validation.shelf_number'),
+            'bin_number' => trans_message('basic_warehouse.cell.validation.bin_number'),
+            'capacity' => trans_message('basic_warehouse.cell.validation.capacity'),
+            'max_weight' => trans_message('basic_warehouse.cell.validation.max_weight'),
+            'storage_conditions' => trans_message('basic_warehouse.cell.validation.storage_conditions'),
+            'metadata' => trans_message('basic_warehouse.cell.validation.metadata'),
+            'is_active' => trans_message('basic_warehouse.cell.validation.is_active'),
+            'notes' => trans_message('basic_warehouse.cell.validation.notes'),
+        ];
     }
 }
