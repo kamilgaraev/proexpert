@@ -1120,6 +1120,22 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
             ->assertJsonPath('data.summary.total_value', 80);
 
         $this->withHeaders($context->authHeaders())
+            ->getJson(
+                "/api/v1/admin/warehouses/{$warehouse->id}/balances?missing_location=true&page=1&per_page=25"
+            )
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->getJson(
+                "/api/v1/admin/warehouses/{$warehouse->id}/balances?low_stock=true&page=1&per_page=25"
+            )
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->getJson(
+                "/api/v1/admin/warehouses/{$warehouse->id}/balances?missing_location=unknown&page=1&per_page=25"
+            )
+            ->assertUnprocessable();
+
+        $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/balances?zone_id={$foreignZone->id}")
             ->assertUnprocessable();
         $this->withHeaders($context->authHeaders())
