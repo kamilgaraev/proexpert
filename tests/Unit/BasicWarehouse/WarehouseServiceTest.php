@@ -12,6 +12,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Models\Material;
 use App\Models\Organization;
 use App\Models\Project;
@@ -106,6 +107,17 @@ class WarehouseServiceTest extends TestCase
     public function test_get_movements_data_returns_warehouse_movements(): void
     {
         [$organization, $warehouse, $material, $user] = $this->createWarehouseContext();
+        $user->forceFill(['name' => 'technical_login'])->save();
+        $employee = WorkforceEmployee::query()->create([
+            'organization_id' => $organization->id,
+            'user_id' => $user->id,
+            'personnel_number' => 'WAREHOUSE-AUTHOR-001',
+            'last_name' => 'Иванов',
+            'first_name' => 'Иван',
+            'middle_name' => 'Иванович',
+            'employment_status' => 'active',
+            'hire_date' => '2026-01-01',
+        ]);
         $relatedUser = User::factory()->create([
             'current_organization_id' => $organization->id,
         ]);
@@ -159,11 +171,76 @@ class WarehouseServiceTest extends TestCase
         $this->assertSame(12.5, $data[0]['quantity']);
         $this->assertSame(150.0, $data[0]['price']);
         $this->assertSame(1875.0, $data[0]['total_value']);
-        $this->assertSame($user->name, $data[0]['user_name']);
+        $this->assertSame('Иванов Иван Иванович', $data[0]['user_name']);
+        $this->assertNotSame('technical_login', $data[0]['user_name']);
+
+        WorkforceEmployee::query()->create([
+            'organization_id' => $organization->id,
+            'user_id' => $user->id,
+            'personnel_number' => 'WAREHOUSE-AUTHOR-HISTORICAL',
+            'last_name' => 'Петров',
+            'first_name' => 'Пётр',
+            'middle_name' => 'Петрович',
+            'employment_status' => 'dismissed',
+            'hire_date' => '2025-01-01',
+            'dismissal_date' => '2025-12-31',
+        ]);
+        WarehouseMovement::query()->create([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $otherMaterial->id,
+            'movement_type' => WarehouseMovement::TYPE_RECEIPT,
+            'quantity' => 1,
+            'price' => 10,
+            'user_id' => $user->id,
+            'movement_date' => '2025-12-31 23:59:59',
+        ]);
+
+        $this->assertCount(2, $this->service->getMovementsData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+            'search' => 'Иванов Иван',
+        ]));
+        $historicalAuthorMovements = $this->service->getMovementsData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+            'search' => 'Петров Пётр',
+        ]);
+        $this->assertCount(1, $historicalAuthorMovements);
+        $this->assertSame('Петров Пётр Петрович', $historicalAuthorMovements[0]['user_name']);
+        $this->assertCount(0, $this->service->getMovementsData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+            'search' => 'technical_login',
+        ]));
         $this->assertSame($relatedUser->id, $data[0]['related_user_id']);
         $this->assertSame($relatedUser->name, $data[0]['related_user_name']);
         $this->assertSame($relatedUser->id, $data[0]['related_user']['id']);
         $this->assertSame('RCPT-1', $data[0]['document_number']);
+
+        $employee->delete();
+        $withoutPersonnel = $this->service->getMovementsData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'movement_type' => WarehouseMovement::TYPE_RECEIPT,
+        ]);
+
+        $this->assertSame('ФИО не указано', $withoutPersonnel[0]['user_name']);
+        $this->assertNotSame('technical_login', $withoutPersonnel[0]['user_name']);
+
+        $systemMovement = WarehouseMovement::query()->create([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'movement_type' => WarehouseMovement::TYPE_ADJUSTMENT,
+            'quantity' => 1,
+            'price' => 0,
+            'user_id' => null,
+            'movement_date' => '2026-05-02 10:00:00',
+        ]);
+        $systemMovements = collect($this->service->getMovementsData($organization->id, [
+            'warehouse_id' => $warehouse->id,
+            'movement_type' => WarehouseMovement::TYPE_ADJUSTMENT,
+        ]))->keyBy('movement_id');
+
+        $this->assertSame('ФИО не указано', $systemMovements[$systemMovement->id]['user_name']);
     }
 
     public function test_get_inventory_data_returns_inventory_acts(): void
