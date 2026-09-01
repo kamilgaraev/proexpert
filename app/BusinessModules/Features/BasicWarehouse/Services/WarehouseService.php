@@ -2556,31 +2556,13 @@ class WarehouseService implements WarehouseReportDataProvider
     ): array {
         $warehouseId = $ruleData['warehouse_id'];
 
-        // Проверяем существование правила
-        $existingRule = AutoReorderRule::where('warehouse_id', $warehouseId)
-            ->where('material_id', $materialId)
-            ->first();
-
-        if ($existingRule) {
-            // Обновляем существующее правило
-            $existingRule->update([
-                'min_stock' => $ruleData['min_stock'],
-                'max_stock' => $ruleData['max_stock'],
-                'reorder_point' => $ruleData['reorder_point'],
-                'reorder_quantity' => $ruleData['reorder_quantity'],
-                'default_supplier_id' => $ruleData['default_supplier_id'] ?? null,
-                'is_active' => $ruleData['is_active'] ?? true,
-                'notes' => $ruleData['notes'] ?? null,
-            ]);
-
-            $rule = $existingRule;
-            $action = 'updated';
-        } else {
-            // Создаем новое правило
-            $rule = AutoReorderRule::create([
-                'organization_id' => $organizationId,
+        $rule = AutoReorderRule::query()->firstOrCreate(
+            [
                 'warehouse_id' => $warehouseId,
                 'material_id' => $materialId,
+            ],
+            [
+                'organization_id' => $organizationId,
                 'min_stock' => $ruleData['min_stock'],
                 'max_stock' => $ruleData['max_stock'],
                 'reorder_point' => $ruleData['reorder_point'],
@@ -2588,10 +2570,10 @@ class WarehouseService implements WarehouseReportDataProvider
                 'default_supplier_id' => $ruleData['default_supplier_id'] ?? null,
                 'is_active' => $ruleData['is_active'] ?? true,
                 'notes' => $ruleData['notes'] ?? null,
-            ]);
+            ]
+        );
 
-            $action = 'created';
-        }
+        $action = $rule->wasRecentlyCreated ? 'created' : 'duplicate';
 
         $this->logging->business('warehouse.auto_reorder_rule.'.$action, [
             'organization_id' => $organizationId,
