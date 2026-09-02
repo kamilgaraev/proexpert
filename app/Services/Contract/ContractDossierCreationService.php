@@ -163,6 +163,19 @@ final class ContractDossierCreationService
     /** @return array<string, mixed> */
     private function documentMetadata(Contract $contract, ContractDossierCreationInput $input): array
     {
+        if ($input->profileCode === 'contract.supply' && $input->sourceType === null) {
+            $price = $contract->total_amount ?? $contract->base_amount;
+            $defaults = array_filter([
+                'subject' => $this->firstFilledString($contract->subject),
+                'buyer' => $this->firstFilledString($contract->organization?->legal_name, $contract->organization?->name),
+                'supplier' => $this->firstFilledString($contract->supplier?->name, $contract->contractor?->name),
+                'price' => is_numeric($price) ? (float) $price : null,
+                'delivery_terms' => $this->firstFilledString($contract->delivery_terms),
+            ], static fn (mixed $value): bool => $value !== null);
+
+            return [...$defaults, ...$input->documentMetadata];
+        }
+
         if ($input->profileCode !== 'contract.supply' || $input->sourceType !== 'purchase_order') {
             return $input->documentMetadata;
         }
