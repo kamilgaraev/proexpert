@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalArchiveRetentionControll
 use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalArchiveSettingsController;
 use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalArchiveSignatureController;
 use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalArchiveWorkflowController;
+use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalWorkflowHistoryController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void {
@@ -73,6 +74,8 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
         ->middleware(['authorize:legal_archive.files.upload', 'authorize:legal_archive.versions.create', 'authorize:legal_archive.editor.edit'])
         ->whereNumber('legalDocument')->name('documents.editor.blank-session');
 
+    Route::get('documents/{legalDocument}/workflow/history', LegalWorkflowHistoryController::class)
+        ->middleware('authorize:legal_archive.workflow.view')->whereNumber('legalDocument')->name('workflow.history');
     Route::post('documents/{legalDocument}/workflow/submit', [LegalArchiveWorkflowController::class, 'submit'])
         ->middleware('authorize:legal_archive.workflow.submit')->whereNumber('legalDocument')->name('workflow.submit');
     Route::post('workflow-steps/{legalWorkflowStep}/approve', [LegalArchiveWorkflowController::class, 'approve'])
