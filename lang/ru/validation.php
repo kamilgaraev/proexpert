@@ -36,6 +36,10 @@ return [
     'string' => 'Поле «:attribute» должно быть строкой.',
 
     'attributes' => [
+        'retention_policy' => 'правило хранения',
+        'retention_basis' => 'основание хранения',
+        'retention_started_at' => 'начало хранения',
+        'retention_until' => 'хранить до',
         'accounting_account' => 'счёт учёта',
         'action' => 'действие',
         'code' => 'код',

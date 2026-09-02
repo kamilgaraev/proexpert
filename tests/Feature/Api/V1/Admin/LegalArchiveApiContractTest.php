@@ -143,6 +143,7 @@ final class LegalArchiveApiContractTest extends TestCase
             'code' => 'customer.supply',
             'base_code' => 'contract.supply',
             'name' => 'Специальная поставка',
+            'retention_policy' => 'Пять лет после исполнения договора',
             'schema' => '[]',
             'required_fields' => '[]',
             'required_file_roles' => '[]',
@@ -157,6 +158,7 @@ final class LegalArchiveApiContractTest extends TestCase
             'code' => 'customer.supply',
             'base_code' => 'contract.supply',
             'name' => 'Поставка владельца 8',
+            'retention_policy' => 'По номенклатуре другой организации',
             'schema' => '[]',
             'required_fields' => '[]',
             'required_file_roles' => '[]',
@@ -213,6 +215,8 @@ final class LegalArchiveApiContractTest extends TestCase
         $listed = collect($list->getData(true)['data'])->keyBy('id');
         self::assertSame('customer.supply', $listed[42]['type_profile']['code']);
         self::assertSame('Специальная поставка', $listed[42]['type_profile']['label']);
+        self::assertSame('Пять лет после исполнения договора', $listed[42]['type_profile']['retention_policy'] ?? null);
+        self::assertSame('По номенклатуре другой организации', $listed[43]['type_profile']['retention_policy'] ?? null);
         self::assertSame('retired.profile', $listed[45]['type_profile']['code']);
         self::assertSame('Поставка владельца 8', $listed[43]['type_profile']['label']);
         self::assertSame('not_available', $listed[43]['workflow_summary']['status']);
@@ -240,6 +244,8 @@ final class LegalArchiveApiContractTest extends TestCase
         $detail = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42', 'GET'), $actor);
         self::assertSame(200, $detail->getStatusCode(), (string) $detail->getContent());
         self::assertSame('42', (string) $detail->getData(true)['data']['id']);
+        self::assertSame('Пять лет после исполнения договора', $detail->getData(true)['data']['type_profile']['retention_policy'] ?? null);
+        self::assertNull($detail->getData(true)['data']['retention']['policy']);
         self::assertSame('"legal-document-42-v3"', $detail->headers->get('ETag'));
 
         $contractDetail = $this->runCanonical(
@@ -249,6 +255,7 @@ final class LegalArchiveApiContractTest extends TestCase
         self::assertSame(200, $contractDetail->getStatusCode(), (string) $contractDetail->getContent());
         self::assertTrue($contractDetail->getData(true)['data']['type_profile_configured']);
         self::assertSame('Специальная поставка', $contractDetail->getData(true)['data']['type_profile']['label']);
+        self::assertSame('Пять лет после исполнения договора', $contractDetail->getData(true)['data']['type_profile']['retention_policy'] ?? null);
 
         $externalDetail = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/43', 'GET'), $actor);
         self::assertSame(200, $externalDetail->getStatusCode());
