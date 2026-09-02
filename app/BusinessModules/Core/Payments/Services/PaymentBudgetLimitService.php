@@ -179,14 +179,14 @@ final class PaymentBudgetLimitService
         if ($result->decision === BudgetLimitCheckService::DECISION_BLOCK) {
             $this->storeResult($document, $calculation, false, $user, null);
 
-            throw new \DomainException($result->message);
+            throw new \App\BusinessModules\Core\Payments\Exceptions\PaymentBudgetLimitException($result->message);
         }
 
         if ($result->decision === BudgetLimitCheckService::DECISION_REQUIRE_EXCEPTION) {
             if (! $this->canOverride($user, $result->requiredPermission, (int) $document->organization_id)) {
                 $this->storeResult($document, $calculation, false, $user, null);
 
-                throw new \DomainException($result->message);
+                throw new \App\BusinessModules\Core\Payments\Exceptions\PaymentBudgetLimitException($result->message);
             }
 
             $reason = trim((string) $overrideReason);
@@ -194,7 +194,7 @@ final class PaymentBudgetLimitService
             if ($reason === '') {
                 $this->storeResult($document, $calculation, false, $user, null);
 
-                throw new \DomainException(trans_message('budgeting.limits.reason_required'));
+                throw new \App\BusinessModules\Core\Payments\Exceptions\PaymentBudgetLimitException(trans_message('budgeting.limits.reason_required'));
             }
 
             $isOverride = true;
@@ -953,7 +953,7 @@ final class PaymentBudgetLimitService
             ->first();
 
         if (! $model) {
-            throw new \DomainException(trans_message($messageKey));
+            throw new \App\BusinessModules\Core\Payments\Exceptions\PaymentBudgetLimitException(trans_message($messageKey));
         }
 
         return (int) $model->id;

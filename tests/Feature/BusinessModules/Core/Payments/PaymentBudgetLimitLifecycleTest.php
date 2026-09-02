@@ -104,7 +104,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'current_organization_id' => $context->organization->id,
         ]);
 
-        $this->expectException(\DomainException::class);
+        $this->expectException(\App\BusinessModules\Core\Payments\Exceptions\PaymentBudgetLimitException::class);
 
         $this->service()->assertAllowed(
             $document,

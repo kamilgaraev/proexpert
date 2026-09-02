@@ -95,6 +95,10 @@ class ContractSideMutationService
                         'payment_date' => $advance['payment_date'] ?? null,
                         'payment_type' => 'advance',
                         'description' => $advance['description'] ?? null,
+                        'budget_article_id' => $advance['budget_article_id'] ?? null,
+                        'responsibility_center_id' => $advance['responsibility_center_id'] ?? null,
+                        'budget_override_reason' => $advance['budget_override_reason'] ?? null,
+                        'created_by_user_id' => $actorId ?? Auth::id(),
                     ]);
                 }
             }

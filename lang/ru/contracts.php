@@ -3,6 +3,10 @@
 declare(strict_types=1);
 
 return [
+    'advance_article_required' => 'Выберите бюджетную статью для аванса.',
+    'advance_center_required' => 'Выберите центр финансовой ответственности для аванса.',
+    'advance_amount_positive' => 'Укажите сумму аванса больше нуля.',
+    'advance_budget_identifier_invalid' => 'Выберите значение из бюджетного справочника.',
     'invalid_transition' => 'Это изменение статуса договора недоступно.',
     'status_transition_only' => 'Изменяйте статус договора только через доступные действия.',
     'transitioned' => 'Статус договора изменен.',

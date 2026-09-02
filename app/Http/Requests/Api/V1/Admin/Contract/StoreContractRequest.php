@@ -137,6 +137,14 @@ class StoreContractRequest extends FormRequest
         $organizationId = $this->currentOrganizationId();
         $routeProjectId = $this->routeProjectId();
         $isMultiProject = $this->boolean('is_multi_project');
+        $budgetClassificationPresence = app(\App\Modules\Core\AccessController::class)->hasModuleAccess($organizationId, 'budgeting')
+            ? 'required'
+            : 'nullable';
+        $catalogIdentifierRule = static function (string $attribute, mixed $value, \Closure $fail): void {
+            if ((! is_string($value) && ! is_int($value)) || strlen((string) $value) > 191) {
+                $fail(trans_message('contracts.advance_budget_identifier_invalid'));
+            }
+        };
         $projectIdRules = [
             'nullable',
             'integer',
@@ -203,9 +211,12 @@ class StoreContractRequest extends FormRequest
             'planned_advance_amount' => ['nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['nullable', 'numeric', 'min:0'],
             'advance_payments' => ['nullable', 'array'],
-            'advance_payments.*.amount' => ['required', 'numeric', 'min:0'],
+            'advance_payments.*.amount' => ['required', 'numeric', 'gt:0'],
             'advance_payments.*.payment_date' => ['nullable', 'date'],
             'advance_payments.*.description' => ['nullable', 'string'],
+            'advance_payments.*.budget_article_id' => [$budgetClassificationPresence, $catalogIdentifierRule],
+            'advance_payments.*.responsibility_center_id' => [$budgetClassificationPresence, $catalogIdentifierRule],
+            'advance_payments.*.budget_override_reason' => ['nullable', 'string', 'max:2000'],
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['nullable', 'string'],
@@ -218,6 +229,15 @@ class StoreContractRequest extends FormRequest
             'document_profile_code' => ['nullable', 'string', 'max:191'],
             'document_metadata' => ['nullable', 'array'],
             'document_confidentiality_level' => ['nullable', 'in:internal,restricted,secret'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'advance_payments.*.budget_article_id.required' => trans_message('contracts.advance_article_required'),
+            'advance_payments.*.responsibility_center_id.required' => trans_message('contracts.advance_center_required'),
+            'advance_payments.*.amount.gt' => trans_message('contracts.advance_amount_positive'),
         ];
     }
 
