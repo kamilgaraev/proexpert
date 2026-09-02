@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Api\V1\Landing\Organization;
 
+use App\Models\Organization;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Unique;
 
 use function trans_message;
 
@@ -14,19 +17,20 @@ class UpdateOrganizationRequest extends FormRequest
     public function authorize(): bool
     {
         $user = Auth::user();
+        $organizationId = $this->currentOrganizationId();
 
-        if (! $user || ! $user->current_organization_id) {
+        if (! $user || ! $organizationId) {
             return false;
         }
 
         return $user->hasPermission('organization.manage', [
-            'organization_id' => $user->current_organization_id,
+            'organization_id' => $organizationId,
         ]);
     }
 
     public function rules(): array
     {
-        $organizationId = Auth::user()->current_organization_id ?? null;
+        $organization = $this->currentOrganization();
 
         return [
             'name' => 'sometimes|required|string|max:255|min:2',
@@ -35,15 +39,13 @@ class UpdateOrganizationRequest extends FormRequest
                 'nullable',
                 'string',
                 'regex:/^(\d{10}|\d{12})$/',
-                $organizationId ? 'unique:organizations,tax_number,'.$organizationId : 'unique:organizations,tax_number',
+                $this->uniqueRuleWhenChanged($organization, 'tax_number'),
             ]),
             'registration_number' => array_filter([
                 'nullable',
                 'string',
                 'regex:/^(\d{13}|\d{15})$/',
-                $organizationId
-                    ? 'unique:organizations,registration_number,'.$organizationId
-                    : 'unique:organizations,registration_number',
+                $this->uniqueRuleWhenChanged($organization, 'registration_number'),
             ]),
             'okpo' => [
                 'nullable',
@@ -61,7 +63,7 @@ class UpdateOrganizationRequest extends FormRequest
                 'string',
                 'email',
                 'max:255',
-                $organizationId ? 'unique:organizations,email,'.$organizationId : 'unique:organizations,email',
+                $this->uniqueRuleWhenChanged($organization, 'email'),
             ]),
             'address' => 'nullable|string|max:500|min:10',
             'city' => 'nullable|string|max:100|min:2|regex:/^[а-яёА-ЯЁa-zA-Z\s\-\.]+$/u',
@@ -97,5 +99,33 @@ class UpdateOrganizationRequest extends FormRequest
             'country.min' => trans_message('organization.validation.country_min'),
             'description.max' => trans_message('organization.validation.description_max'),
         ];
+    }
+
+    private function currentOrganizationId(): ?int
+    {
+        $organizationId = $this->attributes->get('current_organization_id')
+            ?? Auth::user()?->current_organization_id;
+
+        return is_numeric($organizationId) ? (int) $organizationId : null;
+    }
+
+    private function currentOrganization(): ?Organization
+    {
+        $organizationId = $this->currentOrganizationId();
+
+        return $organizationId
+            ? Organization::query()->find($organizationId)
+            : null;
+    }
+
+    private function uniqueRuleWhenChanged(?Organization $organization, string $field): ?Unique
+    {
+        if ($organization && $this->input($field) === $organization->getAttribute($field)) {
+            return null;
+        }
+
+        $rule = Rule::unique('organizations', $field);
+
+        return $organization ? $rule->ignore($organization) : $rule;
     }
 }
