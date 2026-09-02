@@ -29,9 +29,16 @@ use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\ConnectionResolverInterface;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Events\Dispatcher;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Foundation\Application;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Str;
+use Illuminate\Translation\FileLoader;
+use Illuminate\Translation\Translator;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use RuntimeException;
@@ -44,32 +51,45 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
 
     private string $schema;
 
+    private ?Container $previousContainer = null;
+
+    private ?ConnectionResolverInterface $previousResolver = null;
+
+    private ?\Illuminate\Contracts\Events\Dispatcher $previousDispatcher = null;
+
+    private mixed $previousFacadeApplication = null;
+
     protected function setUp(): void
     {
         parent::setUp();
-        $dsn = getenv('LEGAL_DOCUMENT_PG_TEST_DSN');
-        if (getenv('LEGAL_ARCHIVE_PG_EDITOR_CONCURRENCY') !== '1'
-            || getenv('LEGAL_DOCUMENT_PG_TEST_ALLOW_DDL') !== '1'
-            || ! is_string($dsn) || $dsn === ''
-            || ! function_exists('pcntl_fork') || ! function_exists('pcntl_waitpid')) {
-            self::markTestSkipped('Dedicated PostgreSQL editor concurrency contract database is not enabled.');
-        }
+        $this->previousContainer = Container::getInstance();
+        $this->previousResolver = Model::getConnectionResolver();
+        $this->previousDispatcher = Model::getEventDispatcher();
+        $this->previousFacadeApplication = Facade::getFacadeApplication();
         $this->database = new Capsule;
-        $this->database->addConnection($this->connectionConfig($dsn), 'editor_first');
-        $this->database->addConnection($this->connectionConfig($dsn), 'editor_second');
+        $this->database->addConnection($this->connectionConfig(), 'editor_first');
+        $this->database->addConnection($this->connectionConfig(), 'editor_second');
         $this->database->setAsGlobal();
-        $container = new Container;
+        $container = new Application(dirname(__DIR__, 3));
         $container->instance('db', $this->database->getDatabaseManager());
         $container->instance('config', new Repository([
+            'app' => ['locale' => 'ru', 'fallback_locale' => 'ru'],
             'legal-document-editor' => [
                 'callback_base_url' => 'https://api.example.test',
                 'session_ttl_minutes' => 120,
                 'source_url_ttl_minutes' => 10,
             ],
         ]));
+        $container->instance('translator', new Translator(new FileLoader(new Filesystem, dirname(__DIR__, 3).'/lang'), 'ru'));
+        $container->instance('log', new NullLogger);
+        $this->database->setEventDispatcher(new Dispatcher($container));
+        $this->database->bootEloquent();
+        Model::clearBootedModels();
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($container);
         $this->database->getDatabaseManager()->setDefaultConnection('editor_first');
         $this->first = $this->database->getConnection('editor_first');
+        $container->instance('db.schema', $this->first->getSchemaBuilder());
         $database = (string) $this->first->selectOne('SELECT current_database() name')->name;
         if (preg_match('/(?:_test|_testing)$/D', $database) !== 1) {
             self::markTestSkipped('PostgreSQL database name must end with _test or _testing.');
@@ -84,6 +104,9 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
             '000720_add_legal_document_editor_session_constraints', '000730_validate_legal_document_editor_session_constraints'] as $suffix) {
             (require dirname(__DIR__, 3)."/database/migrations/2026_07_19_{$suffix}.php")->up();
         }
+        foreach (['000010_reconcile_legal_document_editor_save_guard', '000011_reconcile_legal_document_editor_failed_save_completion'] as $suffix) {
+            (require dirname(__DIR__, 3)."/database/migrations/2026_07_22_{$suffix}.php")->up();
+        }
         $this->seedAggregate();
     }
 
@@ -93,7 +116,19 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
             $this->first->statement("DROP SCHEMA {$this->schema} CASCADE");
         }
         Facade::clearResolvedInstances();
-        Facade::setFacadeApplication(null);
+        Facade::setFacadeApplication($this->previousFacadeApplication);
+        Container::setInstance($this->previousContainer);
+        if ($this->previousResolver !== null) {
+            Model::setConnectionResolver($this->previousResolver);
+        } else {
+            Model::unsetConnectionResolver();
+        }
+        if ($this->previousDispatcher !== null) {
+            Model::setEventDispatcher($this->previousDispatcher);
+        } else {
+            Model::unsetEventDispatcher();
+        }
+        Model::clearBootedModels();
         parent::tearDown();
     }
 
@@ -220,6 +255,7 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
                 (string) $session->id, $payload->documentKey, $status,
                 'https://office.example.test/document.docx', $replay, 'token',
             ));
+            self::assertSame('Договор подряда №42.docx', $resolved->original_filename);
         }
 
         self::assertInstanceOf(LegalArchiveDocumentVersion::class, $resolved);
@@ -276,6 +312,9 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
 
     public function test_callback_vs_new_version_has_one_service_winner(): void
     {
+        if (! function_exists('pcntl_fork') || ! function_exists('pcntl_waitpid')) {
+            self::markTestSkipped('Parallel editor scenarios require the pcntl extension.');
+        }
         $payload = $this->openSession();
         $session = $this->first->table('legal_document_editor_sessions')->sole();
         $gate = 'editor-version-'.bin2hex(random_bytes(6));
@@ -559,6 +598,9 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
 
     private function forkWorkers(callable $work, bool $requireSuccess = true, ?callable $afterFork = null): array
     {
+        if (! function_exists('pcntl_fork') || ! function_exists('pcntl_waitpid')) {
+            self::markTestSkipped('Parallel editor scenarios require the pcntl extension.');
+        }
         $children = [];
         for ($worker = 0; $worker < 2; $worker++) {
             $pid = pcntl_fork();
@@ -708,7 +750,7 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
             throw new RuntimeException('editor_test_file_failed');
         }
 
-        return new DownloadedEditorDocument($path, 'document.docx', 'text/plain', strlen($body), hash('sha256', $body));
+        return new DownloadedEditorDocument($path, 'edited.docx', 'text/plain', strlen($body), hash('sha256', $body));
     }
 
     private function childConnection(string $name): ConnectionInterface
@@ -726,7 +768,7 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
     private function installBaseSchema(): void
     {
         $this->first->unprepared(<<<'SQL'
-CREATE TABLE organizations (id bigint PRIMARY KEY);
+CREATE TABLE organizations (id bigint PRIMARY KEY, deleted_at timestamptz);
 CREATE TABLE users (id bigint PRIMARY KEY, name text, email text, is_active boolean NOT NULL, current_organization_id bigint, deleted_at timestamptz, created_at timestamptz, updated_at timestamptz);
 CREATE TABLE legal_archive_documents (
  id bigint PRIMARY KEY, organization_id bigint NOT NULL, title text NOT NULL, current_primary_version_id bigint,
@@ -777,13 +819,13 @@ SQL);
             'lifecycle_status' => 'draft', 'signature_status' => 'not_signed', 'created_at' => $now, 'updated_at' => $now,
         ]);
         $this->first->table('legal_archive_document_files')->insert([
-            'id' => 1, 'document_id' => 1, 'organization_id' => 1, 'role' => 'main', 'title' => 'Document',
+            'id' => 1, 'document_id' => 1, 'organization_id' => 1, 'role' => 'primary', 'title' => 'Document',
             'created_at' => $now, 'updated_at' => $now,
         ]);
         $this->first->table('legal_archive_document_versions')->insert([
             'id' => 1, 'document_id' => 1, 'document_file_id' => 1, 'organization_id' => 1,
             'version_number' => '1', 'is_current' => true, 'status' => 'uploaded', 'processing_status' => 'ready',
-            'file_path' => 'org-1/legal-archive/document.docx', 'original_filename' => 'document.docx',
+            'file_path' => 'org-1/legal-archive/document.docx', 'original_filename' => 'Договор подряда №42.docx',
             'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             'size_bytes' => 10, 'content_hash' => str_repeat('a', 64), 'uploaded_at' => $now,
             'created_at' => $now, 'updated_at' => $now,
@@ -793,20 +835,22 @@ SQL);
         $this->first->table('legal_archive_documents')->where('id', 1)->update(['current_primary_version_id' => 1]);
     }
 
-    private function connectionConfig(string $dsn): array
+    private function connectionConfig(): array
     {
-        $parts = [];
-        foreach (explode(';', preg_replace('/^pgsql:/', '', $dsn) ?? '') as $part) {
-            if (str_contains($part, '=')) {
-                [$key, $value] = explode('=', $part, 2);
-                $parts[$key] = $value;
-            }
+        $environment = (string) ($_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: '');
+        $driver = (string) ($_ENV['DB_CONNECTION'] ?? getenv('DB_CONNECTION') ?: '');
+        $database = (string) ($_ENV['DB_DATABASE'] ?? getenv('DB_DATABASE') ?: '');
+        if ($environment !== 'testing' || $driver !== 'pgsql'
+            || preg_match('/^most_phpunit_[a-f0-9]+_testing$/D', $database) !== 1) {
+            throw new RuntimeException('postgres_test_database_configuration_unsafe');
         }
 
         return [
-            'driver' => 'pgsql', 'host' => $parts['host'] ?? '127.0.0.1', 'port' => $parts['port'] ?? '5432',
-            'database' => $parts['dbname'] ?? getenv('DB_DATABASE'), 'username' => getenv('DB_USERNAME'),
-            'password' => getenv('DB_PASSWORD'), 'charset' => 'utf8', 'prefix' => '', 'schema' => 'public',
+            'driver' => 'pgsql', 'host' => $_ENV['DB_HOST'] ?? getenv('DB_HOST'),
+            'port' => $_ENV['DB_PORT'] ?? getenv('DB_PORT'), 'database' => $database,
+            'username' => $_ENV['DB_USERNAME'] ?? getenv('DB_USERNAME'),
+            'password' => $_ENV['DB_PASSWORD'] ?? getenv('DB_PASSWORD'),
+            'charset' => 'utf8', 'prefix' => '', 'schema' => 'public',
         ];
     }
 }
