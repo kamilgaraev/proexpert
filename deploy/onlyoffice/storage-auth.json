@@ -1,0 +1,11 @@
+{
+  "services": {
+    "CoAuthoring": {
+      "token": {
+        "outbox": {
+          "urlExclusionRegex": "https://s3.twcstorage.ru/prohelper-storage/org-"
+        }
+      }
+    }
+  }
+}
