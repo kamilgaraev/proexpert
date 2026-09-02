@@ -63,6 +63,56 @@ final class WarehouseCustodyBalanceAggregationTest extends TestCase
         $response->assertJsonPath('data.0.responsible_user_id', $setup['responsibleUser']->id);
     }
 
+    public function test_balances_endpoint_hides_technical_owner_identity_without_workforce_profile(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createProjectWarehouseContext($context);
+        $context->user->forceFill([
+            'name' => 'technical_owner_login',
+            'email' => 'technical-owner@example.test',
+        ])->save();
+
+        $custodyWarehouse = OrganizationWarehouse::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $setup['project']->id,
+            'responsible_user_id' => $context->user->id,
+            'name' => 'Owner custody warehouse',
+            'code' => 'OWNER-CUSTODY-'.$setup['project']->id,
+            'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
+            'is_main' => false,
+            'is_active' => true,
+        ]);
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $custodyWarehouse->id,
+            'material_id' => $setup['material']->id,
+            'available_quantity' => 10,
+            'reserved_quantity' => 0,
+            'unit_price' => 16,
+            'last_movement_at' => now(),
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouses/custody/balances?responsible_user_id='.$context->user->id);
+
+        $response->assertOk();
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.responsible_user.name', 'Владелец организации');
+        $response->assertJsonPath('data.0.responsible_user.email', null);
+        $response->assertJsonMissing(['name' => 'technical_owner_login']);
+        $response->assertJsonMissing(['email' => 'technical-owner@example.test']);
+
+        $summaryResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouses/custody/summary?responsible_user_id='.$context->user->id);
+
+        $summaryResponse->assertOk();
+        $summaryResponse->assertJsonPath('data.rows.0.responsible_user_name', 'Владелец организации');
+        $summaryResponse->assertJsonPath('data.rows.0.responsible_user_email', null);
+        $summaryResponse->assertJsonMissing(['responsible_user_name' => 'technical_owner_login']);
+        $summaryResponse->assertJsonMissing(['responsible_user_email' => 'technical-owner@example.test']);
+    }
+
     /**
      * @return array{project: Project, projectWarehouse: OrganizationWarehouse, responsibleUser: User, material: Material}
      */

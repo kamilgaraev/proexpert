@@ -21,7 +21,8 @@ final class WarehouseCustodyService
 {
     public function __construct(
         private readonly WarehouseService $warehouseService,
-        private readonly ProjectWarehouseService $projectWarehouseService
+        private readonly ProjectWarehouseService $projectWarehouseService,
+        private readonly WarehousePersonIdentityResolver $personIdentityResolver,
     ) {}
 
     public function getBalances(
@@ -33,7 +34,7 @@ final class WarehouseCustodyService
     ): Collection {
         $search = trim((string) $search);
 
-        return WarehouseBalance::query()
+        $balances = WarehouseBalance::query()
             ->selectRaw(
                 'MAX(id) AS id,
                 organization_id,
@@ -89,6 +90,29 @@ final class WarehouseCustodyService
             ->orderByDesc('last_movement_at')
             ->orderByDesc('id')
             ->get();
+
+        $references = $balances
+            ->filter(static fn (WarehouseBalance $balance): bool => $balance->warehouse?->responsible_user_id !== null)
+            ->mapWithKeys(static fn (WarehouseBalance $balance): array => [
+                (int) $balance->id => [
+                    'user_id' => (int) $balance->warehouse->responsible_user_id,
+                    'date' => $balance->last_movement_at ?? now(),
+                ],
+            ])
+            ->all();
+        $identities = $this->personIdentityResolver->resolveMany($organizationId, $references);
+
+        $balances->each(static function (WarehouseBalance $balance) use ($identities): void {
+            $identity = $identities[(int) $balance->id] ?? null;
+            if ($identity === null) {
+                return;
+            }
+
+            $balance->setAttribute('responsible_user_display_name', $identity['name']);
+            $balance->setAttribute('responsible_user_display_email', $identity['email']);
+        });
+
+        return $balances;
     }
 
     public function getSummary(
@@ -105,7 +129,6 @@ final class WarehouseCustodyService
             ->filter(static fn (Collection $group, int $responsibleId): bool => $responsibleId > 0)
             ->map(function (Collection $group, int $responsibleId): array {
                 $firstBalance = $group->first();
-                $responsibleUser = $firstBalance?->warehouse?->responsibleUser;
 
                 $materials = $group
                     ->groupBy('material_id')
@@ -138,8 +161,8 @@ final class WarehouseCustodyService
 
                 return [
                     'responsible_user_id' => $responsibleId,
-                    'responsible_user_name' => $responsibleUser?->name,
-                    'responsible_user_email' => $responsibleUser?->email,
+                    'responsible_user_name' => $firstBalance?->getAttribute('responsible_user_display_name'),
+                    'responsible_user_email' => $firstBalance?->getAttribute('responsible_user_display_email'),
                     'total_quantity' => round((float) $group->sum('available_quantity'), 4),
                     'reserved_quantity' => round((float) $group->sum('reserved_quantity'), 4),
                     'positions_count' => $group->count(),

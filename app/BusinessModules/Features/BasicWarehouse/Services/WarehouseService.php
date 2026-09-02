@@ -51,6 +51,7 @@ class WarehouseService implements WarehouseReportDataProvider
         private readonly ReservationQuantityService $reservationQuantityService,
         private readonly ProjectAllocationAvailabilityService $allocationAvailabilityService,
         private readonly WorkforcePersonNameProvider $personNameProvider,
+        private readonly WarehousePersonIdentityResolver $personIdentityResolver,
     ) {
         $this->logging = $logging;
     }
@@ -1483,11 +1484,13 @@ class WarehouseService implements WarehouseReportDataProvider
             ->orderByDesc('id')
             ->get();
         $actorNames = $this->movementActorNames($organizationId, $movements);
+        $relatedUserIdentities = $this->movementRelatedUserIdentities($organizationId, $movements);
 
         return $movements
             ->map(fn (WarehouseMovement $movement): array => $this->serializeMovement(
                 $movement,
                 $actorNames[(int) $movement->id] ?? null,
+                $relatedUserIdentities[(int) $movement->id] ?? null,
             ))
             ->all();
     }
@@ -1508,10 +1511,12 @@ class WarehouseService implements WarehouseReportDataProvider
 
         $movements = $paginator->getCollection();
         $actorNames = $this->movementActorNames($organizationId, $movements);
+        $relatedUserIdentities = $this->movementRelatedUserIdentities($organizationId, $movements);
         $paginator->setCollection($movements->map(
             fn (WarehouseMovement $movement): array => $this->serializeMovement(
                 $movement,
                 $actorNames[(int) $movement->id] ?? null,
+                $relatedUserIdentities[(int) $movement->id] ?? null,
             ),
         ));
         $paginator->appends(array_filter([
@@ -1613,34 +1618,44 @@ class WarehouseService implements WarehouseReportDataProvider
                 ],
             ])
             ->all();
-
-        $employeeNames = $this->personNameProvider->employeeNamesAt($organizationId, $references);
-        $ownerUserIds = DB::table('organization_user')
-            ->where('organization_id', $organizationId)
-            ->where('is_owner', true)
-            ->where('is_active', true)
-            ->whereIn('user_id', collect($references)->pluck('user_id')->unique()->all())
-            ->pluck('user_id')
-            ->mapWithKeys(static fn (int|string $userId): array => [(int) $userId => true])
-            ->all();
+        $identities = $this->personIdentityResolver->resolveMany($organizationId, $references);
 
         return $movements
-            ->mapWithKeys(static function (WarehouseMovement $movement) use ($employeeNames, $ownerUserIds): array {
-                $actorName = $employeeNames[(int) $movement->id] ?? null;
-
-                if ($actorName === null && isset($ownerUserIds[(int) $movement->user_id])) {
-                    $actorName = trans_message('warehouse_basic.organization_owner');
-                }
-
+            ->mapWithKeys(static function (WarehouseMovement $movement) use ($identities): array {
                 return [
-                    (int) $movement->id => $actorName
+                    (int) $movement->id => ($identities[(int) $movement->id]['name'] ?? null)
                         ?? trans_message('warehouse_basic.document_person_not_specified'),
                 ];
             })
             ->all();
     }
 
-    private function serializeMovement(WarehouseMovement $movement, ?string $actorName): array
+    /**
+     * @return array<int, array{name: string, email: ?string}>
+     */
+    private function movementRelatedUserIdentities(int $organizationId, Collection $movements): array
+    {
+        $references = $movements
+            ->filter(static fn (WarehouseMovement $movement): bool => $movement->related_user_id !== null)
+            ->mapWithKeys(static fn (WarehouseMovement $movement): array => [
+                (int) $movement->id => [
+                    'user_id' => (int) $movement->related_user_id,
+                    'date' => $movement->movement_date,
+                ],
+            ])
+            ->all();
+
+        return $this->personIdentityResolver->resolveMany($organizationId, $references);
+    }
+
+    /**
+     * @param  array{name: string, email: ?string}|null  $relatedUserIdentity
+     */
+    private function serializeMovement(
+        WarehouseMovement $movement,
+        ?string $actorName,
+        ?array $relatedUserIdentity,
+    ): array
     {
         return [
             'movement_id' => $movement->id,
@@ -1680,11 +1695,13 @@ class WarehouseService implements WarehouseReportDataProvider
             'project_name' => $movement->project->name ?? null,
             'user_name' => $actorName,
             'related_user_id' => $movement->related_user_id,
-            'related_user_name' => $movement->relatedUser->name ?? null,
+            'related_user_name' => $relatedUserIdentity['name'] ?? $movement->relatedUser->name ?? null,
             'related_user' => $movement->relatedUser ? [
                 'id' => $movement->relatedUser->id,
-                'name' => $movement->relatedUser->name,
-                'email' => $movement->relatedUser->email,
+                'name' => $relatedUserIdentity['name'] ?? $movement->relatedUser->name,
+                'email' => $relatedUserIdentity !== null
+                    ? $relatedUserIdentity['email']
+                    : $movement->relatedUser->email,
             ] : null,
             'project_material_delivery_id' => $movement->project_material_delivery_id,
             'document_number' => $movement->document_number,
