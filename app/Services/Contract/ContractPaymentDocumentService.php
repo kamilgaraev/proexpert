@@ -48,6 +48,10 @@ class ContractPaymentDocumentService
                     'document_date' => $paymentDate,
                     'due_date' => $paymentDate,
                     'description' => $data['description'] ?? null,
+                    'budget_article_id' => $data['budget_article_id'] ?? null,
+                    'responsibility_center_id' => $data['responsibility_center_id'] ?? null,
+                    'budget_override_reason' => $data['budget_override_reason'] ?? null,
+                    'created_by_user_id' => $data['created_by_user_id'] ?? null,
                     'origin_key' => $idempotencyKey === null
                         ? null
                         : "contract-payment:{$contract->id}:{$idempotencyKey}",
@@ -65,6 +69,8 @@ class ContractPaymentDocumentService
                 'transaction_date' => $paymentDate,
                 'value_date' => $paymentDate,
                 'notes' => $data['description'] ?? null,
+                'budget_override_reason' => $data['budget_override_reason'] ?? null,
+                'created_by_user_id' => $data['created_by_user_id'] ?? null,
                 'metadata' => [
                     'contract_payment_type' => $paymentType,
                 ],

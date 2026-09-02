@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
+use App\BusinessModules\Core\Payments\Exceptions\PaymentBudgetLimitException;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\DTOs\Contract\ContractDossierCreationInput;
 use App\Exceptions\BusinessLogicException;
@@ -44,8 +45,7 @@ class ContractController extends Controller
         private readonly ?ContractDossierCreationService $contractDossierCreationService = null,
         private readonly ?ContractAccessService $contractAccessService = null,
         private readonly ?ContractReadService $contractReadService = null,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -115,6 +115,15 @@ class ContractController extends Controller
                 null,
                 $result->replayed ? Response::HTTP_OK : Response::HTTP_CREATED
             );
+        } catch (PaymentBudgetLimitException $exception) {
+            $this->logFailure('contract.store.budget_rejected', $request, $exception, [
+                'organization_id' => $organizationId,
+                'user_id' => $user->id,
+            ], 'warning');
+
+            return AdminResponse::error($exception->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY, [
+                'advance_payments' => [$exception->getMessage()],
+            ]);
         } catch (QueryException $exception) {
             $this->logFailure('contract.store.query_failed', $request, $exception, [
                 'organization_id' => $organizationId,
@@ -264,7 +273,7 @@ class ContractController extends Controller
             $contract = $this->contractService->getContractById($contractId, $organizationId, $projectId);
 
             if ($contract === null) {
-                throw (new ModelNotFoundException())->setModel(\App\Models\Contract::class, [$contractId]);
+                throw (new ModelNotFoundException)->setModel(\App\Models\Contract::class, [$contractId]);
             }
 
             $transitionedContract = $this->contractLifecycleService->transition(
