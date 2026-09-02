@@ -37,7 +37,15 @@ final class StoreLegalArchiveTypeProfileRequest extends FormRequest
             'allowed_signature_formats.*' => [Rule::in(['detached_cades', 'embedded_cades', 'xml_dsig'])],
             'workflow_template_id' => ['nullable', 'integer', 'min:1'],
             'retention_policy' => ['nullable', 'string', 'max:191'],
-            'confidentiality_level' => ['nullable', 'string', 'max:64'],
+            'confidentiality_level' => ['nullable', 'string', Rule::in(['public', 'internal', 'restricted', 'secret'])],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'confidentiality_level.in' => trans_message('legal_archive.messages.invalid_confidentiality_level'),
+            'confidentiality_level.string' => trans_message('legal_archive.messages.invalid_confidentiality_level'),
         ];
     }
 }
