@@ -291,6 +291,18 @@ class WarehouseServiceTest extends TestCase
         ]);
         $relatedUser = User::factory()->create([
             'current_organization_id' => $organization->id,
+            'name' => 'technical_responsible_login',
+            'email' => 'technical-responsible@example.test',
+        ]);
+        DB::table('organization_user')->insert([
+            'organization_id' => $organization->id,
+            'user_id' => $relatedUser->id,
+            'is_owner' => true,
+            'is_active' => true,
+            'settings' => json_encode([], JSON_THROW_ON_ERROR),
+            'project_access_mode' => 'all',
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
         $movement = WarehouseMovement::create([
@@ -382,8 +394,11 @@ class WarehouseServiceTest extends TestCase
             'search' => 'technical_login',
         ]));
         $this->assertSame($relatedUser->id, $data[0]['related_user_id']);
-        $this->assertSame($relatedUser->name, $data[0]['related_user_name']);
+        $this->assertSame('Владелец организации', $data[0]['related_user_name']);
         $this->assertSame($relatedUser->id, $data[0]['related_user']['id']);
+        $this->assertSame('Владелец организации', $data[0]['related_user']['name']);
+        $this->assertNull($data[0]['related_user']['email']);
+        $this->assertNotSame('technical_responsible_login', $data[0]['related_user_name']);
         $this->assertSame('RCPT-1', $data[0]['document_number']);
 
         $employee->delete();

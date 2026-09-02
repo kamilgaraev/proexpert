@@ -18,6 +18,11 @@ final class WarehouseCustodyBalanceResource extends JsonResource
         $material = $balance->material;
         $project = $warehouse?->project;
         $responsibleUser = $warehouse?->responsibleUser;
+        $responsibleUserDisplayName = $balance->getAttribute('responsible_user_display_name');
+        $hasResponsibleUserDisplayEmail = array_key_exists(
+            'responsible_user_display_email',
+            $balance->getAttributes(),
+        );
 
         return [
             'id' => $balance->id,
@@ -35,8 +40,10 @@ final class WarehouseCustodyBalanceResource extends JsonResource
             'responsible_user_id' => $warehouse?->responsible_user_id,
             'responsible_user' => $responsibleUser ? [
                 'id' => $responsibleUser->id,
-                'name' => $responsibleUser->name,
-                'email' => $responsibleUser->email,
+                'name' => $responsibleUserDisplayName ?? $responsibleUser->name,
+                'email' => $hasResponsibleUserDisplayEmail
+                    ? $balance->getAttribute('responsible_user_display_email')
+                    : $responsibleUser->email,
             ] : null,
             'material_id' => $balance->material_id,
             'material' => $material ? [

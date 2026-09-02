@@ -116,7 +116,8 @@ final class WarehouseCustodyExportService
             $material = $balance->material;
             $sheet->fromArray([[
                 $balance->warehouse?->project?->name,
-                $balance->warehouse?->responsibleUser?->name,
+                $balance->getAttribute('responsible_user_display_name')
+                    ?? $balance->warehouse?->responsibleUser?->name,
                 $material?->name,
                 $material?->measurementUnit?->short_name ?? $material?->measurementUnit?->name,
                 (float) $balance->available_quantity,

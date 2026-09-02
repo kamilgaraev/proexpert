@@ -16,6 +16,7 @@ use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Str;
 use Mockery\MockInterface;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -349,8 +350,9 @@ final class WarehouseCustodyFlowTest extends TestCase
     {
         $context = AdminApiTestContext::create();
         $storedPaths = [];
+        $storedContents = [];
 
-        $this->mock(FileService::class, function (MockInterface $mock) use (&$storedPaths): void {
+        $this->mock(FileService::class, function (MockInterface $mock) use (&$storedPaths, &$storedContents): void {
             $mock->shouldReceive('putPrivate')
                 ->twice()
                 ->andReturnUsing(static function (
@@ -358,8 +360,9 @@ final class WarehouseCustodyFlowTest extends TestCase
                     string $content,
                     string $mime,
                     string $sha256,
-                ) use (&$storedPaths): CurrentStoredFile {
+                ) use (&$storedPaths, &$storedContents): CurrentStoredFile {
                     $storedPaths[] = $path;
+                    $storedContents[$path] = $content;
 
                     return new CurrentStoredFile($path, 'etag', strlen($content), $sha256, $mime);
                 });
@@ -371,6 +374,13 @@ final class WarehouseCustodyFlowTest extends TestCase
 
         $this->allowAdminAccess();
         $setup = $this->createProjectWarehouseContext($context);
+        $setup['responsibleUser']->forceFill([
+            'name' => 'technical_owner_login',
+            'email' => 'technical-owner@example.test',
+        ])->save();
+        $context->organization->users()->updateExistingPivot($setup['responsibleUser']->id, [
+            'is_owner' => true,
+        ]);
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/custody/issue', [
@@ -417,6 +427,28 @@ final class WarehouseCustodyFlowTest extends TestCase
             [$detailResponse->json('data.path'), $summaryResponse->json('data.path')],
             $storedPaths,
         );
+
+        foreach ($storedPaths as $path) {
+            $temporaryPath = tempnam(sys_get_temp_dir(), 'custody-export-');
+            $this->assertNotFalse($temporaryPath);
+            file_put_contents($temporaryPath, $storedContents[$path]);
+
+            try {
+                $sheet = IOFactory::load($temporaryPath)->getActiveSheet();
+                $responsibleCell = str_contains($path, '/detail/') ? 'B2' : 'A2';
+                $this->assertSame('Владелец организации', $sheet->getCell($responsibleCell)->getValue());
+                $this->assertStringNotContainsString(
+                    'technical_owner_login',
+                    implode(' ', $sheet->toArray(null, true, true, false)[1]),
+                );
+                $this->assertStringNotContainsString(
+                    'technical-owner@example.test',
+                    implode(' ', $sheet->toArray(null, true, true, false)[1]),
+                );
+            } finally {
+                unlink($temporaryPath);
+            }
+        }
     }
 
     public function test_admin_cannot_issue_more_than_project_stock(): void
