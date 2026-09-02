@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M11;
 
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseWarehouseExportStrategy;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseDocumentPersonResolver;
 use App\Services\Storage\FileService;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
+
+use function trans_message;
 
 /**
  * Стратегия экспорта Требования-накладной (Форма № М-11)
@@ -90,9 +93,38 @@ class M11ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->setCellValue('I11', $movement->movement_date->format('d.m.Y'));
         $this->applyTableStyle($sheet, 'H10:I11');
         $this->setCenter($sheet, 'H10:I11');
+        $sheet->getStyle('H11')->getAlignment()->setShrinkToFit(true);
 
-        $sheet->setCellValue('A13', 'Отправитель: '.($movement->warehouse->name ?? ''));
-        $sheet->setCellValue('A14', 'Получатель: '.($movement->toWarehouse->name ?? $movement->metadata['recipient'] ?? ''));
+        $sheet->setCellValue('A13', 'Отправитель: '.$this->warehouseName($movement->warehouse, $movement));
+        $sheet->setCellValue(
+            'A14',
+            'Получатель: '.($movement->toWarehouse !== null
+                ? $this->warehouseName($movement->toWarehouse, $movement)
+                : ($movement->metadata['recipient'] ?? '')),
+        );
+    }
+
+    private function warehouseName(?OrganizationWarehouse $warehouse, WarehouseMovement $movement): string
+    {
+        if ($warehouse === null) {
+            return '';
+        }
+
+        if ($warehouse->warehouse_type !== OrganizationWarehouse::TYPE_CUSTODY) {
+            return (string) $warehouse->name;
+        }
+
+        $warehouse->loadMissing(['project', 'responsibleUser']);
+
+        return trans_message('basic_warehouse.custody.warehouse_name', [
+            'project' => $warehouse->project?->name
+                ?? trans_message('basic_warehouse.custody.project_name_missing'),
+            'user' => $this->personResolver->resolve(
+                $warehouse->responsibleUser,
+                (int) $movement->organization_id,
+                $movement->movement_date,
+            ),
+        ]);
     }
 
     protected function setTable($sheet, $movements): void

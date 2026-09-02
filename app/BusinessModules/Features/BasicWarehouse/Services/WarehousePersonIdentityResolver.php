@@ -15,7 +15,7 @@ final class WarehousePersonIdentityResolver
 {
     public function __construct(private readonly WorkforcePersonNameProvider $personNameProvider) {}
 
-    /** @return array{name: string, email: ?string} */
+    /** @return array{name: string, email: ?string, has_formal_name: bool} */
     public function resolve(int $organizationId, int $userId, DateTimeInterface $date): array
     {
         return $this->resolveMany($organizationId, [
@@ -28,7 +28,7 @@ final class WarehousePersonIdentityResolver
 
     /**
      * @param  array<int, array{user_id: int, date: DateTimeInterface}>  $references
-     * @return array<int, array{name: string, email: ?string}>
+     * @return array<int, array{name: string, email: ?string, has_formal_name: bool}>
      */
     public function resolveMany(int $organizationId, array $references): array
     {
@@ -65,6 +65,7 @@ final class WarehousePersonIdentityResolver
                 $resolved[$referenceId] = [
                     'name' => $employeeName,
                     'email' => $user?->email,
+                    'has_formal_name' => true,
                 ];
 
                 continue;
@@ -74,6 +75,7 @@ final class WarehousePersonIdentityResolver
                 $resolved[$referenceId] = [
                     'name' => trans_message('warehouse_basic.organization_owner'),
                     'email' => null,
+                    'has_formal_name' => true,
                 ];
 
                 continue;
@@ -84,6 +86,7 @@ final class WarehousePersonIdentityResolver
                     ? (string) $user->name
                     : trans_message('warehouse_basic.document_person_not_specified'),
                 'email' => $user?->email,
+                'has_formal_name' => false,
             ];
         }
 
