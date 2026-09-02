@@ -201,7 +201,7 @@ final class LegalDocumentEditorSessionService
             $source = $this->versions()->findOrFail((int) $session->source_version_id);
             $extension = strtolower(pathinfo((string) $source->original_filename, PATHINFO_EXTENSION));
             $download = $this->fetcher->fetch($input->downloadUrl, $extension);
-            $upload = new UploadedFile($download->path, $download->filename, $download->mimeType, null, true);
+            $upload = new UploadedFile($download->path, (string) $source->original_filename, $download->mimeType, null, true);
             $attempt = new LegalDocumentVersionAttempt(
                 (string) $save->operation_id,
                 $leaseToken,
