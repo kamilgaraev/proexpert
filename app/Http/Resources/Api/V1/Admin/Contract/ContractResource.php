@@ -184,6 +184,12 @@ class ContractResource extends JsonResource
             'project' => new ProjectMiniResource($this->whenLoaded('project')),
             'contractor_id' => $this->contractor_id,
             'contractor' => new ContractorMiniResource($this->whenLoaded('contractor')),
+            'supplier_id' => $this->supplier_id,
+            'supplier' => $this->whenLoaded('supplier', fn () => [
+                'id' => $this->supplier->id,
+                'name' => $this->supplier->name,
+            ]),
+            'contract_side_type' => $this->contract_side_type?->value,
             'number' => $this->number,
             'date' => $this->date,
             'subject' => $this->subject,
