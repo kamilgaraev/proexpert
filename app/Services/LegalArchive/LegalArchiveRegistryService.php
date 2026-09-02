@@ -594,6 +594,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                         'requires_signature' => $profile->requiresSignature,
                         'allowed_signature_kinds' => $profile->allowedSignatureKinds,
                         'workflow_template_id' => $profile->workflowTemplateId,
+                        'retention_policy' => $profile->retentionPolicy,
                     ]);
                 }
             }

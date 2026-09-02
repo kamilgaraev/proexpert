@@ -5,19 +5,16 @@ declare(strict_types=1);
 namespace App\Services\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
-use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
-use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
-
-use function trans_message;
 
 final class LegalDocumentGovernanceService
 {
     public function __construct(
-        private readonly AuthorizationService $authorization,
+        private readonly LegalDocumentAuthorizer $authorization,
         private readonly LegalDocumentAudit $audit,
     ) {}
 
@@ -86,14 +83,6 @@ final class LegalDocumentGovernanceService
 
     private function assertAllowed(LegalArchiveDocument $document, User $actor, string $permission): void
     {
-        $organizationId = (int) $document->organization_id;
-
-        if (
-            $organizationId < 1
-            || (int) $actor->current_organization_id !== $organizationId
-            || ! $this->authorization->can($actor, $permission, ['organization_id' => $organizationId])
-        ) {
-            throw new AuthorizationException(trans_message('legal_archive.messages.governance_access_denied'));
-        }
+        $this->authorization->authorizePermission($actor, $document, $permission);
     }
 }

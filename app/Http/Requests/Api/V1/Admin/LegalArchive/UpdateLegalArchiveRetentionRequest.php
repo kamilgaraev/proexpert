@@ -17,7 +17,7 @@ final class UpdateLegalArchiveRetentionRequest extends FormRequest
     {
         return [
             'lock_version' => ['required', 'integer', 'min:0'],
-            'retention_policy' => ['required', 'string', 'max:191'],
+            'retention_policy' => ['required', 'string', 'max:128'],
             'retention_basis' => ['nullable', 'string', 'max:1000'],
             'retention_started_at' => ['nullable', 'date'],
             'retention_until' => ['nullable', 'date', 'after_or_equal:retention_started_at'],

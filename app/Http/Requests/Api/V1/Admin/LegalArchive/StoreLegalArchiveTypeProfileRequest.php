@@ -36,7 +36,7 @@ final class StoreLegalArchiveTypeProfileRequest extends FormRequest
             'allowed_signature_formats' => ['sometimes', 'array', 'max:3'],
             'allowed_signature_formats.*' => [Rule::in(['detached_cades', 'embedded_cades', 'xml_dsig'])],
             'workflow_template_id' => ['nullable', 'integer', 'min:1'],
-            'retention_policy' => ['nullable', 'string', 'max:191'],
+            'retention_policy' => ['nullable', 'string', 'max:128'],
             'confidentiality_level' => ['nullable', 'string', Rule::in(['public', 'internal', 'restricted', 'secret'])],
         ];
     }
