@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Queries\InventoryActRegistryQuery;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager;
+use App\BusinessModules\Features\BasicWarehouse\Services\InventoryActPayloadPresenter;
 use App\BusinessModules\Features\BasicWarehouse\Services\InventoryWorkflowService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -28,6 +29,7 @@ class InventoryController extends Controller
         protected WarehouseExportManager $exportManager,
         private readonly InventoryWorkflowService $inventoryWorkflowService,
         private readonly InventoryActRegistryQuery $inventoryActRegistryQuery,
+        private readonly InventoryActPayloadPresenter $inventoryActPayloadPresenter,
     ) {}
 
     public function export(Request $request, int $id): JsonResponse
@@ -80,10 +82,7 @@ class InventoryController extends Controller
             $acts = $registry['acts'];
 
             return AdminResponse::success([
-                'data' => collect($acts->items())
-                    ->map(fn (InventoryAct $act) => $this->makeInventoryActPayload($act))
-                    ->values()
-                    ->all(),
+                'data' => $this->inventoryActPayloadPresenter->presentMany($organizationId, $acts->items()),
                 'meta' => [
                     'current_page' => $acts->currentPage(),
                     'from' => $acts->firstItem(),
@@ -132,13 +131,12 @@ class InventoryController extends Controller
 
             $act->load([
                 'warehouse',
-                'creator',
                 'items.material.measurementUnit',
                 'items.cell.zone',
             ]);
 
             return AdminResponse::success(
-                $this->makeInventoryActPayload($act, true),
+                $this->inventoryActPayloadPresenter->present($organizationId, $act, true),
                 trans_message('basic_warehouse.inventory.created'),
                 201
             );
@@ -163,13 +161,11 @@ class InventoryController extends Controller
         try {
             $act = $this->findAct($organizationId, $id, [
                 'warehouse',
-                'creator',
-                'approver',
                 'items.material.measurementUnit',
                 'items.cell.zone',
             ]);
 
-            return AdminResponse::success($this->makeInventoryActPayload($act, true));
+            return AdminResponse::success($this->inventoryActPayloadPresenter->present($organizationId, $act, true));
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('basic_warehouse.inventory.not_found'), 404);
         } catch (\Throwable $exception) {
@@ -200,10 +196,10 @@ class InventoryController extends Controller
                 'started_at' => now(),
             ]);
 
-            $act->load(['warehouse', 'creator']);
+            $act->load('warehouse');
 
             return AdminResponse::success(
-                $this->makeInventoryActPayload($act),
+                $this->inventoryActPayloadPresenter->present($organizationId, $act),
                 trans_message('basic_warehouse.inventory.started')
             );
         } catch (ModelNotFoundException) {
@@ -244,7 +240,7 @@ class InventoryController extends Controller
             $item->load(['material.measurementUnit']);
 
             return AdminResponse::success(
-                $this->makeInventoryItemPayload($item),
+                $this->inventoryActPayloadPresenter->presentItem($item),
                 trans_message('basic_warehouse.inventory.item_updated')
             );
         } catch (ModelNotFoundException) {
@@ -268,7 +264,7 @@ class InventoryController extends Controller
         $organizationId = (int) $request->user()->current_organization_id;
 
         try {
-            $act = $this->findAct($organizationId, $id, ['warehouse', 'creator', 'items.material.measurementUnit', 'items.cell.zone']);
+            $act = $this->findAct($organizationId, $id, ['warehouse', 'items.material.measurementUnit', 'items.cell.zone']);
 
             if ($act->status !== InventoryAct::STATUS_IN_PROGRESS) {
                 return AdminResponse::error(trans_message('basic_warehouse.inventory.complete_invalid_status'), 400);
@@ -301,10 +297,10 @@ class InventoryController extends Controller
                 'summary' => $summary,
             ]);
 
-            $act->refresh()->load(['warehouse', 'creator', 'items.material.measurementUnit']);
+            $act->refresh()->load(['warehouse', 'items.material.measurementUnit']);
 
             return AdminResponse::success(
-                $this->makeInventoryActPayload($act, true),
+                $this->inventoryActPayloadPresenter->present($organizationId, $act, true),
                 trans_message('basic_warehouse.inventory.completed')
             );
         } catch (ModelNotFoundException) {
@@ -334,14 +330,12 @@ class InventoryController extends Controller
 
             $act->refresh()->load([
                 'warehouse',
-                'creator',
-                'approver',
                 'items.material.measurementUnit',
                 'items.cell.zone',
             ]);
 
             return AdminResponse::success(
-                $this->makeInventoryActPayload($act, true),
+                $this->inventoryActPayloadPresenter->present($organizationId, $act, true),
                 trans_message('basic_warehouse.inventory.approved')
             );
         } catch (ModelNotFoundException) {
@@ -385,95 +379,5 @@ class InventoryController extends Controller
         return InventoryActItem::query()
             ->where('inventory_act_id', $act->id)
             ->findOrFail($itemId);
-    }
-
-    private function makeInventoryActPayload(InventoryAct $act, bool $includeItems = false): array
-    {
-        $payload = [
-            'id' => $act->id,
-            'act_number' => $act->act_number,
-            'warehouse_id' => $act->warehouse_id,
-            'status' => $act->status,
-            'inventory_date' => optional($act->inventory_date)?->toDateString(),
-            'created_by' => $act->created_by,
-            'commission_members' => $act->commission_members ?? [],
-            'started_at' => optional($act->started_at)?->toDateTimeString(),
-            'completed_at' => optional($act->completed_at)?->toDateTimeString(),
-            'approved_at' => optional($act->approved_at)?->toDateTimeString(),
-            'approved_by' => $act->approved_by,
-            'notes' => $act->notes,
-            'summary' => $act->summary ?? [
-                'total_items' => (int) ($act->getAttribute('items_count')
-                    ?? ($act->relationLoaded('items') ? $act->items->count() : 0)),
-                'items_with_discrepancy' => (int) ($act->getAttribute('items_with_discrepancy_count')
-                    ?? ($act->relationLoaded('items')
-                        ? $act->items->filter(fn (InventoryActItem $item) => $item->hasDiscrepancy())->count()
-                        : 0)),
-                'total_difference_value' => (float) ($act->getAttribute('items_total_difference_value')
-                    ?? ($act->relationLoaded('items')
-                        ? $act->items->sum(fn (InventoryActItem $item) => (float) ($item->total_value ?? 0))
-                        : 0)),
-            ],
-            'warehouse' => $act->warehouse ? [
-                'id' => $act->warehouse->id,
-                'name' => $act->warehouse->name,
-            ] : null,
-            'creator' => $act->creator ? [
-                'id' => $act->creator->id,
-                'name' => $act->creator->name,
-            ] : null,
-            'approver' => $act->approver ? [
-                'id' => $act->approver->id,
-                'name' => $act->approver->name,
-            ] : null,
-        ];
-
-        if ($includeItems) {
-            $payload['items'] = $act->items
-                ->map(fn (InventoryActItem $item) => $this->makeInventoryItemPayload($item))
-                ->values()
-                ->all();
-        }
-
-        return $payload;
-    }
-
-    private function makeInventoryItemPayload(InventoryActItem $item): array
-    {
-        $material = $item->material;
-        $measurementUnit = $material?->measurementUnit;
-
-        return [
-            'id' => $item->id,
-            'inventory_act_id' => $item->inventory_act_id,
-            'material_id' => $item->material_id,
-            'expected_quantity' => (float) $item->expected_quantity,
-            'actual_quantity' => $item->actual_quantity !== null ? (float) $item->actual_quantity : null,
-            'difference_quantity' => $item->difference !== null ? (float) $item->difference : null,
-            'unit_price' => (float) $item->unit_price,
-            'difference_value' => $item->total_value !== null ? (float) $item->total_value : null,
-            'cell_id' => $item->cell_id,
-            'cell' => $item->cell ? [
-                'id' => $item->cell->id,
-                'code' => $item->cell->code,
-                'name' => $item->cell->name,
-                'full_address' => $item->cell->full_address,
-                'zone' => $item->cell->zone ? [
-                    'id' => $item->cell->zone->id,
-                    'code' => $item->cell->zone->code,
-                    'name' => $item->cell->zone->name,
-                ] : null,
-            ] : null,
-            'storage_address' => $item->cell?->full_address ?? $item->location_code,
-            'location_code' => $item->location_code,
-            'batch_number' => $item->batch_number,
-            'notes' => $item->notes,
-            'material' => $material ? [
-                'id' => $material->id,
-                'name' => $material->name,
-                'unit' => $measurementUnit?->short_name ?? $measurementUnit?->name,
-                'article' => $material->code,
-            ] : null,
-        ];
     }
 }
