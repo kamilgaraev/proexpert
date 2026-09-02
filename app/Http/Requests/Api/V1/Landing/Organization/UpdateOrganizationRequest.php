@@ -15,7 +15,7 @@ class UpdateOrganizationRequest extends FormRequest
     {
         $user = Auth::user();
 
-        if (!$user || !$user->current_organization_id) {
+        if (! $user || ! $user->current_organization_id) {
             return false;
         }
 
@@ -35,16 +35,21 @@ class UpdateOrganizationRequest extends FormRequest
                 'nullable',
                 'string',
                 'regex:/^(\d{10}|\d{12})$/',
-                $organizationId ? 'unique:organizations,tax_number,' . $organizationId : 'unique:organizations,tax_number',
+                $organizationId ? 'unique:organizations,tax_number,'.$organizationId : 'unique:organizations,tax_number',
             ]),
             'registration_number' => array_filter([
                 'nullable',
                 'string',
                 'regex:/^(\d{13}|\d{15})$/',
                 $organizationId
-                    ? 'unique:organizations,registration_number,' . $organizationId
+                    ? 'unique:organizations,registration_number,'.$organizationId
                     : 'unique:organizations,registration_number',
             ]),
+            'okpo' => [
+                'nullable',
+                'string',
+                'regex:/^(\d{8}|\d{10})$/',
+            ],
             'phone' => [
                 'nullable',
                 'string',
@@ -56,7 +61,7 @@ class UpdateOrganizationRequest extends FormRequest
                 'string',
                 'email',
                 'max:255',
-                $organizationId ? 'unique:organizations,email,' . $organizationId : 'unique:organizations,email',
+                $organizationId ? 'unique:organizations,email,'.$organizationId : 'unique:organizations,email',
             ]),
             'address' => 'nullable|string|max:500|min:10',
             'city' => 'nullable|string|max:100|min:2|regex:/^[а-яёА-ЯЁa-zA-Z\s\-\.]+$/u',
@@ -80,6 +85,7 @@ class UpdateOrganizationRequest extends FormRequest
             'tax_number.unique' => trans_message('organization.validation.tax_number_unique'),
             'registration_number.regex' => trans_message('organization.validation.registration_number_format'),
             'registration_number.unique' => trans_message('organization.validation.registration_number_unique'),
+            'okpo.regex' => trans_message('organization.validation.okpo_format'),
             'phone.regex' => trans_message('organization.validation.phone_format'),
             'email.email' => trans_message('organization.validation.email_format'),
             'email.unique' => trans_message('organization.validation.email_unique'),
