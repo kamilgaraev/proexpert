@@ -11,6 +11,7 @@ use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
 use App\Models\User;
 use App\Services\Contract\ContractLifecycleService;
 use App\Services\Contract\ContractService;
+use App\Services\Contract\Exceptions\ContractPaymentWorkflowException;
 use Mockery;
 use Tests\Support\DatabaseLessTestCase;
 
@@ -20,6 +21,7 @@ final class ContractCreationErrorResponseTest extends DatabaseLessTestCase
     {
         foreach ([
             [new PaymentBudgetLimitException('Выбранный бюджетный лимит исчерпан.'), 422, 'Выбранный бюджетный лимит исчерпан.'],
+            [new ContractPaymentWorkflowException('Аванс требует отдельного согласования.'), 422, 'Аванс требует отдельного согласования.'],
             [new \DomainException('private_database_details'), 400, trans_message('contract.create_error')],
         ] as [$exception, $status, $message]) {
             $request = Mockery::mock(StoreContractRequest::class)->makePartial();

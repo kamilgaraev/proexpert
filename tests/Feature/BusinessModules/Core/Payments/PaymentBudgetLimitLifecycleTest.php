@@ -33,6 +33,63 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_contract_advance_runs_real_approval_and_payment_lifecycle_once(): void
+    {
+        \Illuminate\Support\Facades\Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activateBudgetingModule($context->organization->id);
+        $this->activatePaymentsModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 10000.0);
+        $contractor = \App\Models\Contractor::query()->create(['organization_id' => $context->organization->id, 'name' => 'Подрядчик']);
+        $project = \App\Models\Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contract = \App\Models\Contract::query()->create([
+            'organization_id' => $context->organization->id,
+            'contractor_id' => $contractor->id,
+            'project_id' => $project->id,
+            'number' => 'ADVANCE-LIFECYCLE',
+            'date' => now()->toDateString(),
+            'status' => 'draft',
+            'base_amount' => 10000,
+        ]);
+        $service = app(\App\Services\Contract\ContractPaymentDocumentService::class);
+        $data = [
+            'amount' => '5000.00',
+            'payment_type' => 'advance',
+            'payment_date' => now()->toDateString(),
+            'budget_article_id' => $budget['article']->id,
+            'responsibility_center_id' => $budget['center']->id,
+            'created_by_user_id' => $context->user->id,
+            'idempotency_key' => 'contract-advance-lifecycle',
+        ];
+
+        foreach ([$budget['article']->id, (string) $budget['article']->id, $budget['article']->uuid] as $identifier) {
+            $normalized = $this->service()->normalizeDocumentData(['budget_article_id' => $identifier], $context->organization->id);
+            $this->assertSame($budget['article']->id, $normalized['budget_article_id']);
+        }
+        foreach (['not-a-uuid', false, [], '999999999999999999999999'] as $identifier) {
+            try {
+                $this->service()->normalizeDocumentData(['budget_article_id' => $identifier], $context->organization->id);
+                $this->fail('Invalid budget identifier must be rejected.');
+            } catch (\App\BusinessModules\Core\Payments\Exceptions\PaymentBudgetLimitException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+        $otherOrganization = \App\Models\Organization::factory()->create();
+        try {
+            $this->service()->normalizeDocumentData(['budget_article_id' => $budget['article']->uuid], $otherOrganization->id);
+            $this->fail('Another organization must not resolve the budget article.');
+        } catch (\App\BusinessModules\Core\Payments\Exceptions\PaymentBudgetLimitException) {
+            $this->addToAssertionCount(1);
+        }
+
+        $document = $service->createPaidContractPayment($contract, $data);
+        $this->assertSame(PaymentDocumentStatus::PAID, $document->status);
+        $this->assertEquals('5000.00', $document->paid_amount);
+        $this->assertEquals('0.00', $document->remaining_amount);
+        $this->assertSame($document->id, $service->createPaidContractPayment($contract, $data)->id);
+        $this->assertSame(1, PaymentTransaction::query()->where('payment_document_id', $document->id)->count());
+    }
+
     public function test_check_returns_available_balance_for_payment_document(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');

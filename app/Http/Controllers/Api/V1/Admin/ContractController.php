@@ -25,6 +25,7 @@ use App\Services\Contract\ContractDossierCreationService;
 use App\Services\Contract\ContractLifecycleService;
 use App\Services\Contract\ContractReadService;
 use App\Services\Contract\ContractService;
+use App\Services\Contract\Exceptions\ContractPaymentWorkflowException;
 use Exception;
 use Illuminate\Container\Container;
 use Illuminate\Database\Eloquent\Model;
@@ -115,7 +116,7 @@ class ContractController extends Controller
                 null,
                 $result->replayed ? Response::HTTP_OK : Response::HTTP_CREATED
             );
-        } catch (PaymentBudgetLimitException $exception) {
+        } catch (PaymentBudgetLimitException|ContractPaymentWorkflowException $exception) {
             $this->logFailure('contract.store.budget_rejected', $request, $exception, [
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,

@@ -9,10 +9,14 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentMethod;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Contract;
+use App\Models\User;
+use App\Services\Contract\Exceptions\ContractPaymentWorkflowException;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class ContractPaymentDocumentService
@@ -23,6 +27,17 @@ class ContractPaymentDocumentService
 
     public function createPaidContractPayment(Contract $contract, array $data): PaymentDocument
     {
+        $actor = Auth::user();
+        $actor = $actor instanceof User ? $actor : null;
+        if ($actor !== null) {
+            $context = ['organization_id' => $contract->organization_id, 'project_id' => $contract->project_id];
+            $authorization = app(AuthorizationService::class);
+            if (! $authorization->can($actor, 'payments.invoice.issue', $context)
+                || ! $authorization->can($actor, 'payments.transaction.register', $context)) {
+                throw new ContractPaymentWorkflowException(trans_message('contracts.payment_registration_forbidden'));
+            }
+        }
+
         $paymentType = (string) ($data['payment_type'] ?? 'other');
         $amount = (string) BigDecimal::of((string) ($data['amount'] ?? 0))
             ->toScale(2, RoundingMode::HalfUp);
@@ -38,12 +53,14 @@ class ContractPaymentDocumentService
             $amount,
             $paymentDate,
             $idempotencyKey,
+            $actor,
         ): PaymentDocument {
             $document = $this->paymentDocumentService->createFromContract(
                 $contract,
                 $this->mapContractPaymentTypeToInvoiceType($paymentType),
                 [
                     'amount' => $amount,
+                    'status' => PaymentDocumentStatus::DRAFT,
                     'currency' => $data['currency'] ?? config('payments.defaults.currency', 'RUB'),
                     'document_date' => $paymentDate,
                     'due_date' => $paymentDate,
@@ -51,7 +68,7 @@ class ContractPaymentDocumentService
                     'budget_article_id' => $data['budget_article_id'] ?? null,
                     'responsibility_center_id' => $data['responsibility_center_id'] ?? null,
                     'budget_override_reason' => $data['budget_override_reason'] ?? null,
-                    'created_by_user_id' => $data['created_by_user_id'] ?? null,
+                    'created_by_user_id' => $actor?->id ?? $data['created_by_user_id'] ?? null,
                     'origin_key' => $idempotencyKey === null
                         ? null
                         : "contract-payment:{$contract->id}:{$idempotencyKey}",
@@ -62,6 +79,14 @@ class ContractPaymentDocumentService
                 ],
             );
 
+            if ($document->status === PaymentDocumentStatus::DRAFT) {
+                $document = $this->paymentDocumentService->submit($document, $actor, $data['budget_override_reason'] ?? null);
+            }
+
+            if ($document->status === PaymentDocumentStatus::PENDING_APPROVAL) {
+                throw new ContractPaymentWorkflowException(trans_message('contracts.payment_approval_required'));
+            }
+
             return $this->paymentDocumentService->registerPayment($document, $amount, [
                 'payment_method' => $data['payment_method'] ?? PaymentMethod::BANK_TRANSFER->value,
                 'reference_number' => $data['reference_document_number'] ?? null,
@@ -70,7 +95,7 @@ class ContractPaymentDocumentService
                 'value_date' => $paymentDate,
                 'notes' => $data['description'] ?? null,
                 'budget_override_reason' => $data['budget_override_reason'] ?? null,
-                'created_by_user_id' => $data['created_by_user_id'] ?? null,
+                'created_by_user_id' => $actor?->id ?? $data['created_by_user_id'] ?? null,
                 'metadata' => [
                     'contract_payment_type' => $paymentType,
                 ],
