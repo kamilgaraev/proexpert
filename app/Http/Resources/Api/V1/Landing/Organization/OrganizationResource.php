@@ -23,6 +23,7 @@ class OrganizationResource extends ModelJsonResource
             'legal_name' => $this->legal_name,
             'tax_number' => $this->tax_number,
             'registration_number' => $this->registration_number,
+            'okpo' => $this->okpo,
             'phone' => $this->phone,
             'email' => $this->email,
             'address' => $this->address,
@@ -43,7 +44,7 @@ class OrganizationResource extends ModelJsonResource
                 'verification_notes' => $this->verification_notes,
                 'can_be_verified' => $organization->canBeVerified(),
             ],
-            
+
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
         ];

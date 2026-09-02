@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\Export\Strategies\BaseW
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseDocumentPersonResolver;
 use App\Services\Storage\FileService;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 
 /**
  * Стратегия экспорта Требования-накладной (Форма № М-11)
@@ -137,12 +138,25 @@ class M11ExportStrategy extends BaseWarehouseExportStrategy
 
     protected function applyStyles($sheet): void
     {
+        $lastRow = $sheet->getHighestRow();
+
         $sheet->getColumnDimension('A')->setWidth(45);
         $sheet->getColumnDimension('I')->setWidth(25);
         $sheet->getColumnDimension('E')->setWidth(12);
         $sheet->getColumnDimension('F')->setWidth(12);
         $sheet->getColumnDimension('H')->setWidth(15);
 
-        $sheet->getStyle('A1:L50')->getAlignment()->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+        $sheet->getStyle("A1:L{$lastRow}")->getAlignment()->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+        $sheet->getPageSetup()
+            ->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)
+            ->setPaperSize(PageSetup::PAPERSIZE_A4)
+            ->setFitToWidth(1)
+            ->setFitToHeight(0)
+            ->setPrintArea("A1:L{$lastRow}");
+        $sheet->getPageMargins()
+            ->setTop(0.35)
+            ->setRight(0.3)
+            ->setBottom(0.35)
+            ->setLeft(0.3);
     }
 }

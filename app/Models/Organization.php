@@ -28,6 +28,7 @@ class Organization extends Model
         'legal_name',
         'tax_number',
         'registration_number',
+        'okpo',
         'phone',
         'email',
         'address',
