@@ -35,6 +35,7 @@ return [
         'current_version_load_error' => 'Не удалось загрузить актуальную версию документа',
         'current_version_not_found' => 'У документа пока нет актуальной версии',
         'validation_error' => 'Проверьте заполнение полей',
+        'invalid_confidentiality_level' => 'Выберите допустимый уровень конфиденциальности документа.',
         'organization_not_found' => 'Организация не найдена',
         'project_not_available' => 'Проект не найден или недоступен в текущей организации',
         'source_not_available' => 'Связанный объект недоступен в текущей организации',
