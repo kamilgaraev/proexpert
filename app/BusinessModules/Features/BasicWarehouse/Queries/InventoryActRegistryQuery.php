@@ -28,7 +28,7 @@ final class InventoryActRegistryQuery
 
         return [
             'acts' => (clone $query)
-                ->with(['warehouse', 'creator'])
+                ->with('warehouse')
                 ->withCount('items')
                 ->withCount([
                     'items as items_with_discrepancy_count' => fn (Builder $query) => $query

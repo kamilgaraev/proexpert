@@ -32,6 +32,34 @@ class WarehouseInventoryAndProjectAllocationControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_inventory_presents_the_organization_owner_without_exposing_the_login(): void
+    {
+        $context = AdminApiTestContext::create(['name' => 'kamilgaraev']);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Основной склад', 'INV-OWNER');
+        $this->allowAdminAccess();
+
+        $act = InventoryAct::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'act_number' => 'INV-20260902-OWNER',
+            'status' => InventoryAct::STATUS_DRAFT,
+            'inventory_date' => '2026-09-02',
+            'created_by' => $context->user->id,
+            'commission_members' => [],
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/inventory/{$act->id}")
+            ->assertOk()
+            ->assertJsonPath('data.creator.name', 'Владелец организации');
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/inventory?warehouse_id={$warehouse->id}")
+            ->assertOk()
+            ->assertJsonPath('data.data.0.creator.name', 'Владелец организации')
+            ->assertJsonMissing(['name' => 'kamilgaraev']);
+    }
+
     public function test_inventory_search_finds_an_act_beyond_the_first_page_and_stays_organization_scoped(): void
     {
         $context = AdminApiTestContext::create();
