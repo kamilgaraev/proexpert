@@ -941,14 +941,21 @@ final class PaymentBudgetLimitService
             return null;
         }
 
+        $isInteger = (is_int($value) || is_string($value))
+            && filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) !== false;
+        $isUuid = is_string($value) && \Illuminate\Support\Str::isUuid($value);
+        if (! $isInteger && ! $isUuid) {
+            throw new \App\BusinessModules\Core\Payments\Exceptions\PaymentBudgetLimitException(trans_message($messageKey));
+        }
+
         $model = $modelClass::query()
             ->where('organization_id', $organizationId)
-            ->where(function (Builder $query) use ($value): void {
-                if (is_numeric($value)) {
+            ->where(function (Builder $query) use ($value, $isInteger): void {
+                if ($isInteger) {
                     $query->whereKey((int) $value);
+                } else {
+                    $query->where('uuid', (string) $value);
                 }
-
-                $query->orWhere('uuid', (string) $value);
             })
             ->first();
 

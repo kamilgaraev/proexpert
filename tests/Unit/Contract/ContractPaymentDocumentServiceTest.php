@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Contract;
 
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
 use App\Models\Contract;
 use App\Services\Contract\ContractPaymentDocumentService;
+use App\Services\Contract\Exceptions\ContractPaymentWorkflowException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Mockery;
@@ -31,12 +33,14 @@ final class ContractPaymentDocumentServiceTest extends TestCase
             'id' => 31,
             'organization_id' => 5,
             'amount' => '9999999999999.99',
+            'status' => PaymentDocumentStatus::DRAFT,
         ]);
         $payments = Mockery::mock(PaymentDocumentService::class);
         $payments->shouldReceive('createFromContract')
             ->once()
             ->withArgs(static function (Contract $actualContract, $invoiceType, array $data) use ($contract): bool {
                 return $actualContract === $contract
+                    && $data['status'] === PaymentDocumentStatus::DRAFT
                     && $data['amount'] === '9999999999999.99'
                     && $data['origin_key'] === 'contract-payment:17:retry-17'
                     && ($data['budget_article_id'] ?? null) === 41
@@ -45,10 +49,18 @@ final class ContractPaymentDocumentServiceTest extends TestCase
                     && ($data['budget_override_reason'] ?? null) === 'Согласованное превышение лимита';
             })
             ->andReturn($document);
+        $payments->shouldReceive('submit')->once()
+            ->with($document, null, 'Согласованное превышение лимита')
+            ->andReturnUsing(static function () use ($document): PaymentDocument {
+                $document->status = PaymentDocumentStatus::APPROVED;
+
+                return $document;
+            });
         $payments->shouldReceive('registerPayment')
             ->once()
             ->withArgs(static function (PaymentDocument $actualDocument, string $amount, array $data) use ($document): bool {
                 return $actualDocument === $document
+                    && $actualDocument->status === PaymentDocumentStatus::APPROVED
                     && $amount === '9999999999999.99'
                     && $data['idempotency_key'] === 'retry-17'
                     && ($data['created_by_user_id'] ?? null) === 7
@@ -71,6 +83,60 @@ final class ContractPaymentDocumentServiceTest extends TestCase
         ]);
 
         $this->assertSame($document, $result);
+    }
+
+    public function test_pending_approval_is_not_bypassed_by_paid_contract_adapter(): void
+    {
+        $contract = new Contract;
+        $contract->forceFill(['id' => 17, 'organization_id' => 5]);
+        $document = new PaymentDocument;
+        $document->forceFill(['id' => 31, 'status' => PaymentDocumentStatus::DRAFT]);
+        $payments = Mockery::mock(PaymentDocumentService::class);
+        $payments->shouldReceive('createFromContract')->once()->andReturn($document);
+        $payments->shouldReceive('submit')->once()->with($document, null, null)
+            ->andReturnUsing(static function () use ($document): PaymentDocument {
+                $document->status = PaymentDocumentStatus::PENDING_APPROVAL;
+
+                return $document;
+            });
+        $payments->shouldNotReceive('registerPayment');
+        DB::shouldReceive('transaction')->once()->andReturnUsing(static fn (callable $callback): mixed => $callback());
+
+        $this->expectException(ContractPaymentWorkflowException::class);
+        (new ContractPaymentDocumentService($payments))->createPaidContractPayment($contract, ['amount' => 5000]);
+    }
+
+    public function test_interactive_actor_cannot_register_payment_without_financial_permission(): void
+    {
+        $actor = new \App\Models\User;
+        $actor->forceFill(['id' => 7]);
+        $this->actingAs($actor);
+        $contract = new Contract;
+        $contract->forceFill(['id' => 17, 'organization_id' => 5, 'project_id' => 9]);
+        $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('can')->with($actor, 'payments.invoice.issue', ['organization_id' => 5, 'project_id' => 9])->once()->andReturnTrue();
+        $authorization->shouldReceive('can')->with($actor, 'payments.transaction.register', ['organization_id' => 5, 'project_id' => 9])->once()->andReturnFalse();
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $authorization);
+        $payments = Mockery::mock(PaymentDocumentService::class);
+        $payments->shouldNotReceive('createFromContract');
+
+        $this->expectException(ContractPaymentWorkflowException::class);
+        (new ContractPaymentDocumentService($payments))->createPaidContractPayment($contract, ['amount' => 5000]);
+    }
+
+    public function test_paid_retry_reuses_registration_without_resubmitting_approval(): void
+    {
+        $contract = new Contract;
+        $contract->forceFill(['id' => 17, 'organization_id' => 5]);
+        $document = new PaymentDocument;
+        $document->forceFill(['id' => 31, 'status' => PaymentDocumentStatus::PAID]);
+        $payments = Mockery::mock(PaymentDocumentService::class);
+        $payments->shouldReceive('createFromContract')->once()->andReturn($document);
+        $payments->shouldNotReceive('submit');
+        $payments->shouldReceive('registerPayment')->once()->andReturn($document);
+        DB::shouldReceive('transaction')->once()->andReturnUsing(static fn (callable $callback): mixed => $callback());
+
+        $this->assertSame($document, (new ContractPaymentDocumentService($payments))->createPaidContractPayment($contract, ['amount' => 5000, 'idempotency_key' => 'retry-17']));
     }
 
     public function test_initial_advances_validate_budget_classification_without_changing_contracts_without_advances(): void
