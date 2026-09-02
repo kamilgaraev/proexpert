@@ -24,6 +24,8 @@ final class WarehouseDocumentPersonResolver
             $documentDate,
         );
 
-        return $identity['name'];
+        return $identity['has_formal_name']
+            ? $identity['name']
+            : trans_message('warehouse_basic.document_person_not_specified');
     }
 }

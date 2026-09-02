@@ -10,6 +10,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\Forms\M11\M11ExportStrategy;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
+use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -52,12 +53,18 @@ class WarehouseM11ExportTest extends TestCase
             'additional_properties' => ['asset_type' => Asset::TYPE_MATERIAL],
             'is_active' => true,
         ]);
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Тестовый объект',
+        ]);
         $sourceWarehouse = OrganizationWarehouse::query()->create([
             'organization_id' => $context->organization->id,
-            'name' => 'Основной склад',
+            'project_id' => $project->id,
+            'responsible_user_id' => $context->user->id,
+            'name' => 'Ответственное хранение: Тестовый объект, owner_technical_123',
             'code' => 'M11-SOURCE',
-            'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
-            'is_main' => true,
+            'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
+            'is_main' => false,
             'is_active' => true,
         ]);
         $recipientWarehouse = OrganizationWarehouse::query()->create([
@@ -76,11 +83,11 @@ class WarehouseM11ExportTest extends TestCase
             'related_user_id' => $context->user->id,
             'material_id' => $material->id,
             'movement_type' => WarehouseMovement::TYPE_TRANSFER_OUT,
-            'operation_category' => WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE,
+            'operation_category' => WarehouseMovement::CATEGORY_RESPONSIBLE_RETURN,
             'quantity' => 2.5,
             'price' => 112,
-            'document_number' => 'QA-M11-001',
-            'reason' => 'Выдача ответственному лицу',
+            'document_number' => 'QA-M11-RETURN-POSTRELEASE-20260902-001',
+            'reason' => 'Возврат от ответственного лица',
             'metadata' => [],
             'movement_date' => '2026-09-02 10:15:00',
         ]);
@@ -89,7 +96,7 @@ class WarehouseM11ExportTest extends TestCase
 
         Storage::disk('s3')->assertExists($path);
         $this->assertSame(
-            "org-{$context->organization->id}/exports/warehouse/m11/M11_qa-m11-001.xlsx",
+            "org-{$context->organization->id}/exports/warehouse/m11/M11_qa-m11-return-postrelease-20260902-001.xlsx",
             $path,
         );
 
@@ -104,9 +111,16 @@ class WarehouseM11ExportTest extends TestCase
             $this->assertSame('Унифицированная форма № М-11', $sheet->getCell('J1')->getValue());
             $this->assertSame('ООО «Тестовая организация»', $sheet->getCell('A5')->getValue());
             $this->assertSame('12345678', (string) $sheet->getCell('I7')->getValue());
-            $this->assertSame('QA-M11-001', $sheet->getCell('H11')->getValue());
+            $this->assertSame('QA-M11-RETURN-POSTRELEASE-20260902-001', $sheet->getCell('H11')->getValue());
             $this->assertSame('02.09.2026', $sheet->getCell('I11')->getValue());
-            $this->assertSame('Отправитель: Основной склад', $sheet->getCell('A13')->getValue());
+            $this->assertSame(
+                'Отправитель: Ответственное хранение: Тестовый объект, Владелец организации',
+                $sheet->getCell('A13')->getValue(),
+            );
+            $this->assertStringNotContainsString(
+                'owner_technical_123',
+                (string) $sheet->getCell('A13')->getValue(),
+            );
             $this->assertSame('Получатель: Ответственное хранение', $sheet->getCell('A14')->getValue());
             $this->assertSame('Арматура А500С, диаметр 12 мм', $sheet->getCell('A17')->getValue());
             $this->assertSame('Килограмм', $sheet->getCell('E17')->getValue());
@@ -123,6 +137,7 @@ class WarehouseM11ExportTest extends TestCase
             $this->assertSame(PageSetup::PAPERSIZE_A4, $sheet->getPageSetup()->getPaperSize());
             $this->assertSame(1, $sheet->getPageSetup()->getFitToWidth());
             $this->assertSame('A1:L20', $sheet->getPageSetup()->getPrintArea());
+            $this->assertTrue($sheet->getStyle('H11')->getAlignment()->getShrinkToFit());
         } finally {
             @unlink($temporaryPath);
         }

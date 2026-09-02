@@ -113,7 +113,7 @@ final class WarehouseExportHumanIdentifiersTest extends TestCase
         ]);
 
         $withoutPersonnelSheet = $this->sheetFromStorage(app(M4ExportStrategy::class)->export($movement));
-        $this->assertStringContainsString('ФИО не указано', $withoutPersonnelSheet->getCell('A19')->getValue());
+        $this->assertStringContainsString('Владелец организации', $withoutPersonnelSheet->getCell('A19')->getValue());
         $this->assertStringNotContainsString('technical_login', $withoutPersonnelSheet->getCell('A19')->getValue());
 
         WorkforceEmployee::query()->create([
