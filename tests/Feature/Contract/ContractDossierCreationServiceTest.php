@@ -4,20 +4,21 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Contract;
 
-use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
-use App\DTOs\Contract\ContractDTO;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\DTOs\Contract\ContractDossierCreationInput;
+use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractDossierCreationService;
-use App\Services\Contract\ContractFromEstimateService;
 use App\Services\Contract\ContractDossierDocumentCreator;
+use App\Services\Contract\ContractFromEstimateService;
 use App\Services\Contract\ContractSideMutationService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use DomainException;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
@@ -25,7 +26,6 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
 use Mockery;
 use PHPUnit\Framework\TestCase;
-use DomainException;
 
 final class ContractDossierCreationServiceTest extends TestCase
 {
@@ -40,10 +40,29 @@ final class ContractDossierCreationServiceTest extends TestCase
         $this->database->setEventDispatcher(new Dispatcher(new Container));
         $this->database->bootEloquent();
         Model::clearBootedModels();
+        $this->database->schema()->create('organizations', static function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->string('legal_name')->nullable();
+            $table->softDeletes();
+        });
+        $this->database->schema()->create('suppliers', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->string('name');
+            $table->softDeletes();
+        });
+        $this->database->table('organizations')->insert(['id' => 7, 'name' => 'Строительная организация']);
+        $this->database->table('suppliers')->insert(['id' => 114, 'organization_id' => 7, 'name' => 'Крепёж Снаб']);
         $this->database->schema()->create('contracts', static function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('supplier_id')->nullable();
             $table->string('number');
+            $table->text('subject')->nullable();
+            $table->text('delivery_terms')->nullable();
+            $table->decimal('base_amount', 15, 2)->nullable();
+            $table->decimal('total_amount', 15, 2)->nullable();
             $table->string('status')->default('draft');
             $table->unsignedBigInteger('legal_archive_document_id')->nullable()->unique();
             $table->string('dossier_creation_key', 191)->nullable();
@@ -211,6 +230,69 @@ final class ContractDossierCreationServiceTest extends TestCase
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('contract_estimate_items_invalid');
         $service->create(7, $actor, $project, $estimate, $input, [999], false);
+    }
+
+    public function test_manual_supply_dossier_prefills_known_terms_without_overwriting_explicit_values_or_replays(): void
+    {
+        $defaults = [
+            'subject' => 'Поставка крепежа',
+            'buyer' => 'Строительная организация',
+            'supplier' => 'Крепёж Снаб',
+            'price' => 15000.0,
+            'delivery_terms' => 'Доставка до 15 сентября',
+        ];
+        $cases = [
+            ['profile' => 'contract.supply', 'metadata' => [], 'terms' => $defaults['delivery_terms'], 'expected' => $defaults],
+            ['profile' => 'contract.supply', 'metadata' => ['buyer' => 'Уточнённое наименование', 'price' => 0.0], 'terms' => $defaults['delivery_terms'], 'expected' => [...$defaults, 'buyer' => 'Уточнённое наименование', 'price' => 0.0]],
+            ['profile' => 'contract.supply', 'metadata' => [], 'terms' => null, 'expected' => array_diff_key($defaults, ['delivery_terms' => true])],
+            ['profile' => 'contract.work', 'metadata' => ['subject' => 'Условия подряда'], 'terms' => $defaults['delivery_terms'], 'expected' => ['subject' => 'Условия подряда']],
+        ];
+        foreach ($cases as $index => $case) {
+            $key = 'manual-supply-'.$index;
+            $documentId = 100 + $index;
+            $document = new LegalArchiveDocument;
+            $document->forceFill(['id' => $documentId, 'organization_id' => 7]);
+            $this->database->table('legal_archive_documents')->insert(['id' => $documentId, 'organization_id' => 7]);
+            $creator = Mockery::mock(ContractDossierDocumentCreator::class);
+            $creator->shouldReceive('create')->once()->with(7, 3, Mockery::on(static function (mixed $data) use ($case): bool {
+                self::assertIsArray($data);
+                self::assertSame($case['expected'], $data['metadata']);
+
+                return true;
+            }))->andReturn($document);
+            $contracts = Mockery::mock(ContractSideMutationService::class);
+            $contracts->shouldReceive('create')->once()->andReturnUsing(static function () use ($key, $case): Contract {
+                $contract = Contract::query()->create([
+                    'organization_id' => 7,
+                    'number' => 'ДП-'.$key,
+                    'supplier_id' => 114,
+                    'dossier_creation_key' => $key,
+                    'subject' => 'Поставка крепежа',
+                    'delivery_terms' => $case['terms'],
+                    'base_amount' => 15000,
+                    'total_amount' => 15000,
+                ]);
+
+                return $contract;
+            });
+            $service = new ContractDossierCreationService(
+                $this->database->getConnection(),
+                $contracts,
+                new ContractAuditedMutationService(Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(), $this->database->getConnection()),
+                $creator,
+            );
+            $actor = new User;
+            $actor->forceFill(['id' => 3, 'current_organization_id' => 7]);
+            $input = new ContractDossierCreationInput($this->input()->contract, $key, 'Договор поставки', $case['profile'], $case['metadata']);
+
+            $first = $service->create(7, $actor, $input);
+            Contract::query()->whereKey($first->contract->id)->update(['subject' => 'Изменённые условия']);
+            $second = $service->create(7, $actor, $input);
+
+            self::assertFalse($first->replayed);
+            self::assertTrue($second->replayed);
+            self::assertSame($documentId, $second->document->id);
+        }
     }
 
     private function input(): ContractDossierCreationInput
