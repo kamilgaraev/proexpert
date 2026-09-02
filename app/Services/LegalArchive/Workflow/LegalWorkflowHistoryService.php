@@ -7,11 +7,22 @@ namespace App\Services\LegalArchive\Workflow;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Query\JoinClause;
 
 final readonly class LegalWorkflowHistoryService
 {
     public function __construct(private LegalDocumentAuthorizer $access) {}
+
+    public function forOrganization(User $actor, int $organizationId, int $documentId, ?int $beforeId = null): array
+    {
+        $document = LegalArchiveDocument::query()->forOrganization($organizationId)->find($documentId);
+        if ($document === null) {
+            throw new AuthorizationException;
+        }
+
+        return $this->forDocument($actor, $document, $beforeId);
+    }
 
     public function forDocument(User $actor, LegalArchiveDocument $document, ?int $beforeId = null): array
     {
