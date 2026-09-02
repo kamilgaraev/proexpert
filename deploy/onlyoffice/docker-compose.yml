@@ -11,6 +11,12 @@ services:
     ports:
       - "127.0.0.1:8088:80"
     volumes:
+      - type: bind
+        source: ./storage-auth.json
+        target: /etc/onlyoffice/documentserver/local-production-linux.json
+        read_only: true
+        bind:
+          create_host_path: false
       - onlyoffice-data:/var/www/onlyoffice/Data
       - onlyoffice-logs:/var/log/onlyoffice
       - onlyoffice-lib:/var/lib/onlyoffice
