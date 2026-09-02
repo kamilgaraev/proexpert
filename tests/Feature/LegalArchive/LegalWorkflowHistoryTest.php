@@ -25,6 +25,11 @@ final class LegalWorkflowHistoryTest extends TestCase
         $this->database->setAsGlobal();
         $this->database->bootEloquent();
         $schema = $this->database->schema();
+        $schema->create('legal_archive_documents', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->softDeletes();
+        });
         $schema->create('users', static function (Blueprint $table): void {
             $table->id();
             $table->string('name');
@@ -61,6 +66,7 @@ final class LegalWorkflowHistoryTest extends TestCase
             $table->timestampTz('decided_at');
         });
         $this->database->table('users')->insert(['id' => 8, 'name' => 'Анна Петрова']);
+        $this->database->table('legal_archive_documents')->insert(['id' => 10, 'organization_id' => 38]);
         $this->database->table('legal_workflow_instances')->insert(['id' => 1, 'organization_id' => 38, 'document_id' => 10]);
         $this->database->table('legal_archive_document_versions')->insert([
             ['id' => 100, 'organization_id' => 38, 'document_id' => 10, 'version_number' => 1],
@@ -71,7 +77,7 @@ final class LegalWorkflowHistoryTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (['legal_workflow_decisions', 'legal_workflow_steps', 'legal_workflow_instances', 'legal_archive_document_versions', 'users'] as $table) {
+        foreach (['legal_workflow_decisions', 'legal_workflow_steps', 'legal_workflow_instances', 'legal_archive_document_versions', 'legal_archive_documents', 'users'] as $table) {
             $this->database->schema()->dropIfExists($table);
         }
         $this->database->getConnection()->disconnect();
@@ -119,6 +125,32 @@ final class LegalWorkflowHistoryTest extends TestCase
         $service = new LegalWorkflowHistoryService($access);
         $this->expectException(AuthorizationException::class);
         $service->forDocument(new User, new LegalArchiveDocument);
+    }
+
+    public function test_document_lookup_does_not_load_all_versions_or_other_dossier_relations(): void
+    {
+        $this->decision(1);
+        $access = $this->createMock(LegalDocumentAuthorizer::class);
+        $access->expects(self::once())->method('authorizePermission')->with(
+            self::isInstanceOf(User::class),
+            self::callback(static fn (LegalArchiveDocument $document): bool => $document->getRelations() === []),
+            'legal_archive.workflow.view',
+        );
+        $this->database->getConnection()->enableQueryLog();
+        $this->database->getConnection()->flushQueryLog();
+
+        $page = (new LegalWorkflowHistoryService($access))->forOrganization(new User, 38, 10);
+
+        self::assertCount(1, $page['items']);
+        self::assertCount(2, $this->database->getConnection()->getQueryLog());
+        $this->database->getConnection()->disableQueryLog();
+    }
+
+    public function test_document_lookup_rejects_another_organization(): void
+    {
+        $service = new LegalWorkflowHistoryService($this->createMock(LegalDocumentAuthorizer::class));
+        $this->expectException(AuthorizationException::class);
+        $service->forOrganization(new User, 39, 10);
     }
 
     public function test_missing_actor_and_foreign_version_or_step_do_not_leak_related_details(): void
