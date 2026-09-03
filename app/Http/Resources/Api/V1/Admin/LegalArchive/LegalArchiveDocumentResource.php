@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Api\V1\Admin\LegalArchive;
 
+use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\LegalArchiveDictionary;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileAssignmentGuard;
 use App\Services\LegalArchive\Signatures\ElectronicSignatureProvider;
@@ -28,16 +29,7 @@ final class LegalArchiveDocumentResource extends JsonResource
         $lifecycleStatus = (string) $this->lifecycle_status;
         $approvalStatus = (string) $this->approval_status;
         $signatureStatus = (string) $this->signature_status;
-        $editingFrozen = $approvalStatus === 'approved'
-            || in_array($lifecycleStatus, [
-                'approved',
-                'signing',
-                'partially_signed',
-                'signed',
-                'effective',
-                'completed',
-                'archived',
-            ], true);
+        $editingFrozen = LegalDocumentEditGuard::isDocumentStateFrozen($this->resource);
         $canActivate = $lifecycleStatus === 'signed'
             && $approvalStatus === 'approved'
             && $signatureStatus === 'signed';

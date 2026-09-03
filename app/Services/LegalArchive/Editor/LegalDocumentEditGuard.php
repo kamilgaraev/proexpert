@@ -63,10 +63,18 @@ final readonly class LegalDocumentEditGuard
 
     private function assertDocumentStateMutable(LegalArchiveDocument $document): void
     {
-        if ((string) $document->approval_status === 'approved'
-            || in_array((string) $document->lifecycle_status, ['approved', 'signing', 'partially_signed', 'signed', 'active', 'completed', 'archived'], true)) {
+        if (self::isDocumentStateFrozen($document)) {
             throw new DomainException('legal_document_editing_frozen');
         }
+    }
+
+    public static function isDocumentStateFrozen(LegalArchiveDocument $document): bool
+    {
+        return (string) $document->approval_status === 'approved'
+            || in_array((string) $document->lifecycle_status, [
+                'approved', 'signing', 'partially_signed', 'signed',
+                'active', 'effective', 'completed', 'archived',
+            ], true);
     }
 
     private function assertNoActiveEditor(LegalArchiveDocument $document, ?string $editorSessionId): void

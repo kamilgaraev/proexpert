@@ -12,6 +12,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Models\User;
 use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
+use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowActionDetail;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowCurrentStep;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowSummary;
@@ -298,7 +299,11 @@ final readonly class LegalWorkflowActionResolver
             && preg_match('/^[a-f0-9]{64}$/D', (string) $version->content_hash) === 1;
         $hasBlockingComments ??= $version instanceof LegalArchiveDocumentVersion
             && $this->blockingComments->hasOpen($document, (int) $version->id);
-        $blockers = array_values(array_filter([
+        $frozen = LegalDocumentEditGuard::isDocumentStateFrozen($document);
+        $blockers = $frozen ? array_values(array_filter([
+            $canSubmit ? null : $this->label('blockers.permission_denied'),
+            $this->label('blockers.document_frozen'),
+        ])) : array_values(array_filter([
             $canSubmit ? null : $this->label('blockers.permission_denied'),
             $ready ? null : $this->label('blockers.version_not_ready'),
             $readinessBlocker,
