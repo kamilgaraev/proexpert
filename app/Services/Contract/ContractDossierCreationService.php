@@ -24,6 +24,7 @@ final class ContractDossierCreationService
         private readonly ContractSideMutationService $contracts,
         private readonly ContractAuditedMutationService $contractMutations,
         private readonly ContractDossierDocumentCreator $documents,
+        private readonly ContractDossierCounterpartyResolver $counterparties = new ContractDossierCounterpartyResolver,
     ) {}
 
     public function create(
@@ -80,7 +81,7 @@ final class ContractDossierCreationService
                     'document_date' => $contract->date?->toDateString(),
                     'effective_from' => $contract->start_date?->toDateString(),
                     'effective_until' => $contract->end_date?->toDateString(),
-                    'counterparty_name' => $contract->contractor?->name ?? $contract->supplier?->name,
+                    'counterparty_name' => $this->counterparties->name($contract),
                     'source_type' => 'contract',
                     'source_id' => (string) $contract->id,
                     'source_idempotency_key' => $key,

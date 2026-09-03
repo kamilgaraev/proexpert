@@ -32,6 +32,7 @@ final class ContractLegalDossierService
         private readonly LegalDocumentAuthorizer $authorizer,
         private readonly LegalDocumentProfileRegistry $profiles,
         private readonly LegalDocumentProfileValidator $profileValidator,
+        private readonly ContractDossierCounterpartyResolver $counterparties = new ContractDossierCounterpartyResolver,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -79,6 +80,7 @@ final class ContractLegalDossierService
                     'type_profile_code' => $profileCode,
                     'document_date' => $data['document_date'] ?? $contract->date?->toDateString(),
                     'description' => $data['description'] ?? null,
+                    'counterparty_name' => $this->counterparties->name($contract),
                     'metadata' => $metadata,
                     'source_type' => 'contract',
                     'source_id' => (string) $contract->id,
