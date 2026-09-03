@@ -61,6 +61,9 @@ final readonly class LegalArchiveLifecycleService
     public function activate(LegalArchiveDocument $document, User $actor, int $expectedLockVersion): LegalArchiveDocument
     {
         return $this->mutate($document, $actor, $expectedLockVersion, 'legal_archive.signatures.verify', static function (LegalArchiveDocument $locked): array {
+            if ((string) $locked->lifecycle_status !== 'signed') {
+                throw new DomainException('activation_state_not_allowed');
+            }
             if ((string) $locked->approval_status !== 'approved' || (string) $locked->signature_status !== 'signed') {
                 throw new DomainException('activation_requirements_not_met');
             }
