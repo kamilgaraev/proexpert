@@ -28,11 +28,10 @@ use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
-use Illuminate\Routing\Route;
-use Illuminate\Support\Facades\Facade;
-use Mockery;
 use Illuminate\Foundation\Testing\TestCase;
+use Illuminate\Routing\Route;
 use Illuminate\Validation\ValidationException;
+use Mockery;
 
 final class ContractLegalDossierServiceTest extends TestCase
 {
@@ -134,6 +133,67 @@ final class ContractLegalDossierServiceTest extends TestCase
     {
         Mockery::close();
         parent::tearDown();
+    }
+
+    public function test_manual_dossier_uses_saved_parties_for_all_sides_and_does_not_rewrite_on_retry(): void
+    {
+        $this->database->schema()->table('contracts', static function (Blueprint $table): void {
+            $table->string('contract_side_type')->nullable();
+        });
+        $this->database->schema()->table('legal_archive_documents', static function (Blueprint $table): void {
+            $table->string('counterparty_name')->nullable();
+        });
+        $this->database->schema()->create('contract_parties', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('contract_id');
+            $table->string('side');
+            $table->string('name');
+        });
+        Organization::query()->forceCreate(['id' => 7, 'name' => 'Наша организация']);
+        Supplier::query()->forceCreate(['id' => 55, 'organization_id' => 7, 'name' => 'Текущее имя поставщика']);
+        $cases = [
+            'customer_to_general_contractor' => 'Заказчик по договору',
+            'general_contractor_to_contractor' => 'Подрядчик по договору',
+            'contractor_to_subcontractor' => 'Субподрядчик по договору',
+            'general_contractor_to_supplier' => 'Поставщик генподрядчика по договору',
+            'contractor_to_supplier' => 'Поставщик подрядчика по договору',
+            'subcontractor_to_supplier' => 'Поставщик субподрядчика по договору',
+        ];
+        foreach ($cases as $type => $name) {
+            $contract = $this->contract([
+                'contract_side_type' => $type,
+                'supplier_id' => str_ends_with($type, '_to_supplier') ? 55 : null,
+                'subject' => 'Тестовый договор', 'delivery_terms' => 'Доставка на объект',
+                'base_amount' => 1000, 'total_amount' => 1000,
+            ]);
+            $externalSide = $type === 'customer_to_general_contractor' ? 'first' : 'second';
+            foreach (['first', 'second'] as $side) {
+                $this->database->table('contract_parties')->insert([
+                    'contract_id' => $contract->id, 'side' => $side,
+                    'name' => $side === $externalSide ? $name : 'Наша организация',
+                ]);
+            }
+            $creator = Mockery::mock(ContractDossierDocumentCreator::class);
+            $creator->shouldReceive('create')->once()->andReturnUsing(static function (int $organizationId, int $actorId, array $data): LegalArchiveDocument {
+                return LegalArchiveDocument::query()->create([
+                    'organization_id' => $organizationId, 'primary_project_id' => $data['primary_project_id'],
+                    'title' => $data['title'], 'document_type' => 'contract',
+                    'type_profile_code' => $data['type_profile_code'],
+                    'source_type' => $data['source_type'], 'source_id' => $data['source_id'],
+                    'source_idempotency_key' => $data['source_idempotency_key'],
+                    'counterparty_name' => $data['counterparty_name'] ?? null,
+                ]);
+            });
+            $service = $this->service($creator);
+            $input = ['title' => 'Тестовый договор', 'idempotency_key' => $type];
+            $created = $service->create($this->actor(), 7, 11, (int) $contract->id, $input);
+            self::assertSame($name, $created->document->counterparty_name);
+            $this->database->table('contract_parties')->where('contract_id', $contract->id)->update(['name' => 'Изменённая сторона']);
+            $replayed = $service->create($this->actor(), 7, 11, (int) $contract->id, $input);
+            self::assertSame('replayed', $replayed->operationResult);
+            self::assertSame($created->document->id, $replayed->document->id);
+            self::assertSame($name, $replayed->document->counterparty_name);
+        }
     }
 
     public function test_create_binds_one_server_profiled_dossier_and_exact_retry_replays(): void
