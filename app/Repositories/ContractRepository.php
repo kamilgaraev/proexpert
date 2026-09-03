@@ -261,6 +261,18 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
                           $cq->where('name', 'ilike', '%' . $search . '%')
                              ->orWhere('inn', 'like', '%' . $search . '%');
                       });
+                  })
+                  ->orWhereHas('parties', function (Builder $partyQuery) use ($search) {
+                      $partyQuery->where(function (Builder $fields) use ($search) {
+                          $fields->where('name', 'ilike', '%' . $search . '%')
+                              ->orWhere('inn', 'like', '%' . $search . '%');
+                      });
+                  })
+                  ->orWhereHas('supplier', function (Builder $supplierQuery) use ($search) {
+                      $supplierQuery->where(function (Builder $fields) use ($search) {
+                          $fields->where('name', 'ilike', '%' . $search . '%')
+                              ->orWhere('inn', 'like', '%' . $search . '%');
+                      });
                   });
             });
         }
