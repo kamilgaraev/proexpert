@@ -95,7 +95,7 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
                 'org-10/legal-archive/files/7/version.pdf',
                 5,
                 self::isInstanceOf(Organization::class),
-                self::callback(static fn (array $parameters): bool => $parameters['ResponseContentDisposition'] === 'inline; filename="document"'),
+                self::callback(static fn (array $parameters): bool => $parameters['ResponseContentDisposition'] === 'inline; filename=document'),
             )
             ->willReturnCallback(function () use (&$urlCreated): string {
                 $urlCreated = true;
@@ -140,6 +140,52 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
             new NullLogger,
             $audit,
         ))->temporaryUrl($version, $actor, 'download');
+    }
+
+    #[DataProvider('downloadFilenameProvider')]
+    public function test_file_url_preserves_the_filename_without_unsafe_header_characters(string $filename, string $expectedFilename, string $purpose): void
+    {
+        [$version, $actor] = $this->versionAndActor(10, 10, 'ready');
+        $version->original_filename = $filename;
+        $parameters = [];
+        $storage = $this->createMock(FileService::class);
+        $storage->method('temporaryUrl')->willReturnCallback(static function (string $path, int $minutes, Organization $organization, array $options) use (&$parameters): string {
+            $parameters = $options;
+
+            return 'https://signed.example/version.pdf';
+        });
+
+        (new LegalDocumentDownloadService(
+            $storage,
+            $this->createMock(LegalDocumentAuthorizer::class),
+            new LegalDocumentFilePolicy([]),
+            new NullLogger,
+            $this->createMock(LegalDocumentAudit::class),
+        ))->temporaryUrl($version, $actor, $purpose);
+
+        $header = $parameters['ResponseContentDisposition'];
+        self::assertStringStartsWith($purpose === 'download' ? 'attachment;' : 'inline;', $header);
+        self::assertDoesNotMatchRegularExpression('/[^\x20-\x7E]/', $header);
+        preg_match('/(?:^|; )filename\*=(?:UTF-8|utf-8)\'\'([^;]+)/', $header, $encoded);
+        preg_match('/(?:^|; )filename=(?:"([^"]*)"|([^;]+))/', $header, $plain);
+        self::assertNotEmpty($plain, 'An ASCII filename remains available to older clients.');
+        self::assertSame($expectedFilename, isset($encoded[1]) ? rawurldecode($encoded[1]) : ($plain[1] !== '' ? $plain[1] : $plain[2]));
+    }
+
+    /** @return iterable<string, array{string, string, string}> */
+    public static function downloadFilenameProvider(): iterable
+    {
+        yield 'Russian download' => ['Договор ДЗ-20260903-01.docx', 'Договор ДЗ-20260903-01.docx', 'download'];
+        yield 'Russian preview' => ['Приложение № 2.pdf', 'Приложение № 2.pdf', 'preview'];
+        yield 'quoted percent filename' => ['Акт "готовность 100%".pdf', 'Акт "готовность 100%".pdf', 'download'];
+        yield 'ASCII download' => ['contract-01.pdf', 'contract-01.pdf', 'download'];
+        yield 'long name keeps extension' => [str_repeat('a', 190).'.docx', str_repeat('a', 190).'.docx', 'download'];
+        yield 'Windows path' => ['C:\\incoming\\Договор.pdf', 'Договор.pdf', 'download'];
+        yield 'Unix path' => ['/incoming/Договор.pdf', 'Договор.pdf', 'preview'];
+        yield 'header controls' => ["Акт\r\n\0.pdf", 'Акт.pdf', 'download'];
+        yield 'Unicode direction controls' => ["Договор\u{202E}fdp.exe", 'Договорfdp.exe', 'download'];
+        yield 'Unicode control' => ["Акт\u{0085}.pdf", 'Акт.pdf', 'preview'];
+        yield 'missing filename' => ['', 'document', 'download'];
     }
 
     #[DataProvider('forbiddenVersionProvider')]
