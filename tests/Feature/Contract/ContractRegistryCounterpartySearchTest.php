@@ -54,10 +54,10 @@ final class ContractRegistryCounterpartySearchTest extends TestCase
             $table->string('inn')->nullable();
         });
         foreach (['contractors', 'suppliers'] as $name) {
-            $schema->create($name, static function (Blueprint $table): void {
+            $schema->create($name, static function (Blueprint $table) use ($name): void {
                 $table->id();
                 $table->string('name');
-                $table->string('inn')->nullable();
+                $table->string($name === 'suppliers' ? 'tax_number' : 'inn')->nullable();
                 $table->softDeletes();
             });
         }
@@ -96,7 +96,7 @@ final class ContractRegistryCounterpartySearchTest extends TestCase
                 ]);
             }
         }
-        $database->table('suppliers')->insert(['id' => 1, 'name' => 'Поставщик Бета', 'inn' => '1650000002']);
+        $database->table('suppliers')->insert(['id' => 1, 'name' => 'Поставщик Бета', 'tax_number' => '1650000002']);
         $repository = new ContractRepository;
         try {
             $found = $repository->getContractsForOrganizationPaginated(7, 1, ['search' => 'кОнТрАгЕнТ аЛьФа', 'status' => 'draft'], 'number', 'asc');

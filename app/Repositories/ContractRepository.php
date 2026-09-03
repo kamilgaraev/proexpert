@@ -271,7 +271,7 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
                   ->orWhereHas('supplier', function (Builder $supplierQuery) use ($search) {
                       $supplierQuery->where(function (Builder $fields) use ($search) {
                           $fields->where('name', 'ilike', '%' . $search . '%')
-                              ->orWhere('inn', 'like', '%' . $search . '%');
+                              ->orWhere('tax_number', 'like', '%' . $search . '%');
                       });
                   });
             });
