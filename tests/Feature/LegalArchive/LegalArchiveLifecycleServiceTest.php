@@ -11,6 +11,7 @@ use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\LegalArchiveLifecycleService;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
+use DomainException;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Builder;
@@ -50,11 +51,14 @@ final class LegalArchiveLifecycleServiceTest extends TestCase
             $table->json('structured_fields')->nullable();
             $table->unsignedBigInteger('updated_by_user_id')->nullable();
             $table->timestamp('activated_at')->nullable();
+            $table->timestamp('archived_at')->nullable();
+            $table->unsignedBigInteger('archived_by_user_id')->nullable();
+            $table->boolean('legal_hold')->default(false);
             $table->timestamps();
             $table->softDeletes();
         });
         $this->database->getConnection()->statement(
-            "ALTER TABLE legal_archive_documents ADD CONSTRAINT legal_docs_lifecycle_status_check CHECK (lifecycle_status IN ('signed', 'effective'))"
+            "ALTER TABLE legal_archive_documents ADD CONSTRAINT legal_docs_lifecycle_status_check CHECK (lifecycle_status IN ('signed', 'effective', 'archived'))"
         );
     }
 
@@ -66,6 +70,59 @@ final class LegalArchiveLifecycleServiceTest extends TestCase
     }
 
     public function test_signed_document_becomes_effective_when_activated(): void
+    {
+        [$document, $actor, $audit, $service] = $this->signedDocumentFixture();
+
+        $activated = $service->activate($document, $actor, 0);
+
+        self::assertSame('active', $activated->status);
+        self::assertSame('effective', $activated->lifecycle_status);
+        self::assertSame(1, $activated->lock_version);
+        self::assertNotNull($activated->activated_at);
+        self::assertSame(['activated'], $audit->events);
+    }
+
+    public function test_effective_document_cannot_be_activated_again_with_a_fresh_lock(): void
+    {
+        [$document, $actor, $audit, $service] = $this->signedDocumentFixture();
+        $activated = $service->activate($document, $actor, 0);
+        $activatedAt = $activated->activated_at->toISOString();
+
+        try {
+            $service->activate($activated, $actor, 1);
+            self::fail('Repeated activation must not overwrite the legal history.');
+        } catch (DomainException $error) {
+            self::assertSame('activation_state_not_allowed', $error->getMessage());
+        }
+
+        self::assertSame('effective', $document->refresh()->lifecycle_status);
+        self::assertSame(1, $document->lock_version);
+        self::assertSame($activatedAt, $document->activated_at->toISOString());
+        self::assertSame(['activated'], $audit->events);
+    }
+
+    public function test_archived_signed_document_cannot_be_activated_without_restoring(): void
+    {
+        [$document, $actor, $audit, $service] = $this->signedDocumentFixture();
+        $archived = $service->archive($document, $actor, 0);
+        $archivedAt = $archived->archived_at->toISOString();
+
+        try {
+            $service->activate($archived, $actor, 1);
+            self::fail('Activation must not bypass the archived document state.');
+        } catch (DomainException $error) {
+            self::assertSame('activation_state_not_allowed', $error->getMessage());
+        }
+
+        self::assertSame('archived', $document->refresh()->status);
+        self::assertSame('archived', $document->lifecycle_status);
+        self::assertSame(1, $document->lock_version);
+        self::assertSame($archivedAt, $document->archived_at->toISOString());
+        self::assertNull($document->activated_at);
+        self::assertSame(['archived'], $audit->events);
+    }
+
+    private function signedDocumentFixture(): array
     {
         $document = LegalArchiveDocument::query()->create([
             'organization_id' => 38,
@@ -87,13 +144,7 @@ final class LegalArchiveLifecycleServiceTest extends TestCase
             new LegalDocumentAggregateLock,
         );
 
-        $activated = $service->activate($document, $actor, 0);
-
-        self::assertSame('active', $activated->status);
-        self::assertSame('effective', $activated->lifecycle_status);
-        self::assertSame(1, $activated->lock_version);
-        self::assertNotNull($activated->activated_at);
-        self::assertSame(['activated'], $audit->events);
+        return [$document, $actor, $audit, $service];
     }
 }
 
