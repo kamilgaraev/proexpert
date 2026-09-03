@@ -12,6 +12,8 @@ final class LegalArchiveTypeProfileResource extends JsonResource
     public function toArray(Request $request): array
     {
         $value = is_array($this->resource) ? $this->resource : $this->resource->toArray();
+        $baseProfiles = (array) config('legal-document-profiles', []);
+        $baseProfile = $baseProfiles[(string) ($value['base_code'] ?? '')] ?? [];
 
         return [
             'id' => $value['id'] ?? null,
@@ -19,7 +21,7 @@ final class LegalArchiveTypeProfileResource extends JsonResource
             'code' => (string) ($value['code'] ?? ''),
             'base_code' => (string) ($value['base_code'] ?? ''),
             'name' => (string) ($value['name'] ?? ''),
-            'category' => $value['category'] ?? null,
+            'category' => $value['category'] ?? $baseProfile['category'] ?? null,
             'schema' => (array) ($value['schema'] ?? []),
             'required_fields' => (array) ($value['required_fields'] ?? []),
             'required_file_roles' => (array) ($value['required_file_roles'] ?? []),
