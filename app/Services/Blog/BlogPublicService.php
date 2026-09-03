@@ -20,18 +20,29 @@ class BlogPublicService
             ->published()
             ->with(['category', 'systemAuthor', 'author', 'tags']);
 
-        if (!empty($filters['category_id'])) {
+        if (isset($filters['tag_slug'])) {
+            $tag = BlogTag::query()
+                ->marketing()
+                ->active()
+                ->where('slug', (string) $filters['tag_slug'])
+                ->firstOrFail();
+
+            $query->whereHas('tags', fn ($tagQuery) => $tagQuery->where('blog_tags.id', $tag->id));
+        }
+
+        if (! empty($filters['category_id'])) {
             $query->where('category_id', (int) $filters['category_id']);
         }
 
-        if (!empty($filters['search'])) {
+        if (! empty($filters['search'])) {
             $query->search((string) $filters['search']);
         }
 
         return $query
             ->orderByDesc('published_at')
             ->orderByDesc('id')
-            ->paginate($perPage);
+            ->paginate($perPage, ['*'], 'page', isset($filters['page']) ? (int) $filters['page'] : null)
+            ->appends(array_intersect_key($filters, array_flip(['tag_slug', 'category_id', 'search', 'per_page'])));
     }
 
     public function getArticleBySlug(string $slug): ?BlogArticle

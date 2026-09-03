@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Blog;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Blog\PublicBlogArticlesRequest;
 use App\Http\Resources\Api\V1\Blog\PublicBlogArticleResource;
 use App\Http\Resources\Api\V1\Blog\PublicBlogCategoryResource;
 use App\Http\Resources\Api\V1\Blog\PublicBlogTagResource;
 use App\Http\Responses\LandingResponse;
 use App\Models\Blog\BlogArticle;
 use App\Services\Blog\BlogPublicService;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -19,13 +21,12 @@ class PublicBlogController extends Controller
 {
     public function __construct(
         private readonly BlogPublicService $blogPublicService,
-    ) {
-    }
+    ) {}
 
-    public function articles(Request $request): JsonResponse
+    public function articles(PublicBlogArticlesRequest $request): JsonResponse
     {
         try {
-            $articles = $this->blogPublicService->getArticles($request->only(['category_id', 'search', 'per_page']));
+            $articles = $this->blogPublicService->getArticles($request->validated());
 
             return LandingResponse::success([
                 'data' => PublicBlogArticleResource::collection($articles->getCollection())->resolve(),
@@ -42,9 +43,11 @@ class PublicBlogController extends Controller
                     'next' => $articles->nextPageUrl(),
                 ],
             ], trans_message('blog_cms.articles_loaded'));
+        } catch (ModelNotFoundException) {
+            return LandingResponse::error(trans_message('blog_cms.tag_not_found'), 404);
         } catch (\Throwable $e) {
             Log::error('Public blog articles load failed', [
-                'filters' => $request->all(),
+                'filters' => $request->safe()->only(['tag_slug', 'category_id', 'page', 'per_page']),
                 'error' => $e->getMessage(),
             ]);
 
@@ -57,7 +60,7 @@ class PublicBlogController extends Controller
         try {
             $article = $this->blogPublicService->getArticleBySlug($slug);
 
-            if (!$article instanceof BlogArticle) {
+            if (! $article instanceof BlogArticle) {
                 return LandingResponse::error(trans_message('blog_cms.article_not_found'), 404);
             }
 
@@ -106,13 +109,13 @@ class PublicBlogController extends Controller
     public function preview(Request $request, int $article): JsonResponse
     {
         try {
-            if (!$request->hasValidSignature()) {
+            if (! $request->hasValidSignature()) {
                 return LandingResponse::error(trans_message('blog_cms.preview_forbidden'), 403);
             }
 
             $record = $this->blogPublicService->getPreviewArticle($article);
 
-            if (!$record instanceof BlogArticle) {
+            if (! $record instanceof BlogArticle) {
                 return LandingResponse::error(trans_message('blog_cms.preview_not_found'), 404);
             }
 
@@ -154,7 +157,7 @@ class PublicBlogController extends Controller
         try {
             $record = $this->blogPublicService->getPreviewArticle($article);
 
-            if (!$record instanceof BlogArticle || !$record->is_published) {
+            if (! $record instanceof BlogArticle || ! $record->is_published) {
                 return LandingResponse::error(trans_message('blog_cms.article_not_found'), 404);
             }
 
