@@ -9,9 +9,14 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\UserProjectAccessMode;
 use App\Models\User;
+use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use Closure;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\LazyCollection;
 
 final class LegalWorkflowActorResolver
 {
@@ -29,6 +34,7 @@ final class LegalWorkflowActorResolver
     public function __construct(
         ?callable $roleLookup = null,
         array $customResolvers = [],
+        private readonly ?LegalDocumentAuthorizer $documentAuthorizer = null,
     ) {
         $this->usesDefaultRoleLookup = $roleLookup === null;
         $this->roleLookup = $roleLookup === null
@@ -87,6 +93,74 @@ final class LegalWorkflowActorResolver
     public function supports(string $actorType): bool
     {
         return in_array($actorType, ['user', 'role'], true) || isset($this->customResolvers[$actorType]);
+    }
+
+    public function recipientsFor(LegalWorkflowStep $step, LegalArchiveDocument $document): LazyCollection
+    {
+        $organizationId = (int) $document->organization_id;
+        $reference = trim((string) $step->actor_reference);
+        if ($organizationId < 1 || (int) $step->organization_id !== $organizationId
+            || $step->status !== 'active' || $reference === ''
+            || ! in_array($step->actor_type, ['user', 'role'], true)) {
+            return new LazyCollection;
+        }
+
+        $users = (new User)->setConnection($document->getConnectionName())->newQuery()
+            ->whereExists(static function (QueryBuilder $membership) use ($document, $organizationId): void {
+                $membership->select('organization_user.user_id')->from('organization_user')
+                    ->whereColumn('organization_user.user_id', 'users.id')
+                    ->where('organization_id', $organizationId)
+                    ->where('is_active', true);
+                if ($document->primary_project_id !== null) {
+                    $membership->where(static function (QueryBuilder $access) use ($document): void {
+                        $access->where('project_access_mode', UserProjectAccessMode::ALL_PROJECTS->value)
+                            ->orWhereExists(static function (QueryBuilder $project) use ($document): void {
+                                $project->select('project_user.user_id')->from('project_user')
+                                    ->whereColumn('project_user.user_id', 'users.id')
+                                    ->where('project_id', (int) $document->primary_project_id)
+                                    ->where('is_active', true);
+                            });
+                    });
+                }
+            });
+
+        if ($step->actor_type === 'user') {
+            if (! ctype_digit($reference) || (int) $reference < 1) {
+                return new LazyCollection;
+            }
+            $users->whereKey((int) $reference);
+        } else {
+            $organizationContext = AuthorizationContext::findOrganizationContext($organizationId);
+            if (! $organizationContext instanceof AuthorizationContext) {
+                return new LazyCollection;
+            }
+            $contextIds = [(int) $organizationContext->id];
+            if ($document->primary_project_id !== null) {
+                $projectContext = AuthorizationContext::findProjectContext((int) $document->primary_project_id, $organizationId);
+                if ($projectContext instanceof AuthorizationContext) {
+                    $contextIds[] = (int) $projectContext->id;
+                }
+            }
+            $users->whereIn('users.id', (new UserRoleAssignment)->setConnection($document->getConnectionName())->newQuery()
+                ->active()->where('role_slug', $reference)->whereIn('context_id', $contextIds)->select('user_id'));
+        }
+
+        return $users->lazyById(100)->map(static function (User $user) use ($organizationId): User {
+            $recipient = clone $user;
+            $recipient->setAttribute('current_organization_id', $organizationId);
+
+            return $recipient;
+        })->filter(function (User $user) use ($document): bool {
+            $access = $this->documentAuthorizer ?? app(LegalDocumentAuthorizer::class);
+            try {
+                $access->authorize($user, $document, 'view');
+                $access->authorize($user, $document, 'approve');
+
+                return true;
+            } catch (AuthorizationException) {
+                return false;
+            }
+        })->values();
     }
 
     /**

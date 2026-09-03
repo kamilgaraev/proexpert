@@ -15,11 +15,11 @@ final class LegalDocumentNotificationIdempotencyTest extends TestCase
         $document = new LegalArchiveDocument(['title' => 'Договор']);
         $document->setAttribute('id', 42);
 
-        $first = (new LegalDocumentApprovalRequiredNotification($document))->toArray(new \stdClass());
-        $second = (new LegalDocumentApprovalRequiredNotification($document))->toArray(new \stdClass());
+        $first = (new LegalDocumentApprovalRequiredNotification($document))->toArray(new \stdClass);
+        $second = (new LegalDocumentApprovalRequiredNotification($document))->toArray(new \stdClass);
 
         self::assertSame($first, $second);
         self::assertSame('legal_document_approval_required', $first['type']);
-        self::assertSame('/legal-archive/documents/42', $first['targetRoute']);
+        self::assertSame('/legal-archive/42', $first['targetRoute']);
     }
 }
