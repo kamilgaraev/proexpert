@@ -10,6 +10,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalSignatureRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\CreateLegalArchiveSignatureRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveLockRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\RegisterLegalArchiveOriginalRequest;
+use App\Http\Requests\Api\V1\Admin\LegalArchive\RegisterLegalArchivePaperOriginalRequest;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveSignatureResource;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalSignatureVerificationResource;
 use App\Http\Responses\AdminResponse;
@@ -71,6 +72,39 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
             ]), $owner->fresh());
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'signature_request_create', ['document_id' => $legalDocument]);
+        }
+    }
+
+    public function registerPaperOriginal(RegisterLegalArchivePaperOriginalRequest $request, string $legalDocument): JsonResponse
+    {
+        try {
+            $document = $this->registry->findForOrganization($this->organizationId($request), (int) $legalDocument);
+            if ($document === null) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+            $version = LegalArchiveDocumentVersion::query()->whereKey((int) $request->validated('document_version_id'))
+                ->where('organization_id', $this->organizationId($request))->where('document_id', $document->id)->first();
+            if (! $version instanceof LegalArchiveDocumentVersion) {
+                throw new DomainException('legal_signature_version_not_found');
+            }
+            $signature = $this->signatures->registerPaperOriginalForDocument($document, $version, $this->actor($request), new PaperOriginalData(
+                signedAt: new DateTimeImmutable((string) $request->validated('signed_at')),
+                signers: SignerIdentitySet::fromSnapshot((array) $request->validated('signers')),
+                storageLocation: (string) $request->validated('storage_location'),
+                idempotencyKey: (string) $request->validated('idempotency_key'),
+                authorityConfirmed: $request->boolean('authority_confirmed'),
+                clientIpHash: hash('sha256', (string) $request->ip()),
+                userAgentHash: hash('sha256', (string) $request->userAgent()),
+                expectedDocumentLockVersion: (int) $request->validated('lock_version'),
+            ));
+            $document->refresh();
+
+            return $this->etag(AdminResponse::success(new LegalArchiveSignatureResource($signature), trans_message('legal_archive.messages.original_registered'), 201, [
+                'document_lock_version' => (int) $document->lock_version,
+                'idempotency_key' => (string) $request->validated('idempotency_key'),
+            ]), $document);
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'paper_original_register', ['document_id' => $legalDocument]);
         }
     }
 

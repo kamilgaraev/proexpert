@@ -91,6 +91,9 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
 
     Route::post('documents/{legalDocument}/signatures/requests', [LegalArchiveSignatureController::class, 'createRequests'])
         ->middleware('authorize:legal_archive.signatures.request')->whereNumber('legalDocument')->name('signatures.requests.store');
+    Route::post('documents/{legalDocument}/signatures/paper-original', [LegalArchiveSignatureController::class, 'registerPaperOriginal'])
+        ->middleware(['authorize:legal_archive.signatures.request', 'authorize:legal_archive.signatures.sign'])
+        ->whereNumber('legalDocument')->name('signatures.paper-original.store');
     Route::post('signature-requests/{signatureRequest}/upload-original', [LegalArchiveSignatureController::class, 'uploadOriginal'])
         ->middleware('authorize:legal_archive.signatures.sign')->whereNumber('signatureRequest')->name('signatures.upload-original');
     Route::post('signature-requests/{signatureRequest}/signing-session', [LegalArchiveSignatureController::class, 'signingSession'])

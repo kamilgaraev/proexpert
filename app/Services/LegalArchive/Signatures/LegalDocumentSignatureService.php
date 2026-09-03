@@ -210,6 +210,57 @@ final class LegalDocumentSignatureService
         return $request;
     }
 
+    public function registerPaperOriginalForDocument(
+        LegalArchiveDocument $document,
+        LegalArchiveDocumentVersion $version,
+        User $actor,
+        PaperOriginalData $data,
+    ): LegalDocumentSignature {
+        $key = hash('sha256', $this->validKey($data->idempotencyKey));
+
+        return $this->connection->transaction(function () use ($document, $version, $actor, $data, $key): LegalDocumentSignature {
+            $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
+            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::REQUEST_SIGNATURE->value);
+            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::SIGN->value);
+            $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $version->id);
+            $originalKey = 'paper-original:'.$key;
+            $existing = $this->signatures()->where('organization_id', $lockedDocument->organization_id)
+                ->where('document_id', $lockedDocument->id)->where('document_version_id', $lockedVersion->id)
+                ->where('registered_by_user_id', $actor->id)->where('idempotency_key', $originalKey)->lockForUpdate()->first();
+
+            if ($existing instanceof LegalDocumentSignature) {
+                $request = $existing->request()->firstOrFail();
+            } else {
+                if ($data->expectedDocumentLockVersion !== null && (int) $lockedDocument->lock_version !== $data->expectedDocumentLockVersion) {
+                    throw LegalArchiveLockConflict::forDocument((int) $lockedDocument->id, (int) $lockedDocument->lock_version);
+                }
+                $request = $this->requests()->where('organization_id', $lockedDocument->organization_id)
+                    ->where('document_id', $lockedDocument->id)->where('document_version_id', $lockedVersion->id)
+                    ->where('requested_by_user_id', $actor->id)->where('method', 'paper')->where('status', 'pending')
+                    ->where('party_id', $data->partyId)->where('signer_snapshot_hash', $data->signers->hash())
+                    ->orderByDesc('id')->lockForUpdate()->first();
+                if (! $request instanceof LegalSignatureRequest) {
+                    $request = $this->createRequest($lockedDocument, $lockedVersion, $actor, 'paper', $data->signers,
+                        'paper-request:'.$key, partyId: $data->partyId, expectedDocumentLockVersion: (int) $lockedDocument->lock_version);
+                }
+            }
+
+            return $this->registerPaperOriginal($request, $actor, new PaperOriginalData(
+                signedAt: $data->signedAt,
+                signers: $data->signers,
+                storageLocation: $data->storageLocation,
+                idempotencyKey: $originalKey,
+                partyId: $data->partyId,
+                partyRoleSnapshot: $data->partyRoleSnapshot,
+                authorityConfirmed: $data->authorityConfirmed,
+                timeSource: $data->timeSource,
+                clientIpHash: $data->clientIpHash,
+                userAgentHash: $data->userAgentHash,
+                expectedDocumentLockVersion: (int) $lockedDocument->fresh()->lock_version,
+            ));
+        }, 3);
+    }
+
     public function registerPaperOriginal(
         LegalSignatureRequest $request,
         User $actor,
@@ -1155,7 +1206,11 @@ final class LegalDocumentSignatureService
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
             $existing = $this->signatures()->where('signature_request_id', $request->id)->where('idempotency_key', $key)->lockForUpdate()->first();
             if ($existing instanceof LegalDocumentSignature) {
-                $this->assertSameRequest($existing->request_hash, $requestHash);
+                if ($method === 'paper' && ! isset($data['artifact_key']) && $existing->signature_path === null) {
+                    $this->assertSamePaperOriginal($existing, $request, $data);
+                } else {
+                    $this->assertSameRequest($existing->request_hash, $requestHash);
+                }
                 if (isset($data['artifact_key'])) {
                     $artifact = $this->connection->table('legal_signature_artifacts')
                         ->where('organization_id', $lockedDocument->organization_id)
@@ -1335,6 +1390,32 @@ final class LegalDocumentSignatureService
 
             return $signature;
         }, 3);
+    }
+
+    private function assertSamePaperOriginal(LegalDocumentSignature $existing, LegalSignatureRequest $request, array $data): void
+    {
+        $partyId = $data['party_id'] ?? $request->party_id;
+        $this->assertSameRequest(CanonicalJson::fingerprint([
+            'method' => $existing->method,
+            'kind' => $existing->signature_kind,
+            'signed_at' => $existing->signed_at?->format('U'),
+            'signers' => $existing->signers,
+            'storage_location' => $existing->storage_location,
+            'party_id' => $existing->party_id === null ? null : (int) $existing->party_id,
+            'party_role' => $existing->party_role_snapshot,
+            'authority_confirmed' => (bool) $existing->authority_confirmed,
+            'time_source' => $existing->time_source,
+        ]), CanonicalJson::fingerprint([
+            'method' => 'paper',
+            'kind' => $data['signature_kind'],
+            'signed_at' => $data['signed_at']->format('U'),
+            'signers' => $data['signers'],
+            'storage_location' => $data['storage_location'],
+            'party_id' => $partyId === null ? null : (int) $partyId,
+            'party_role' => $data['party_role_snapshot'],
+            'authority_confirmed' => (bool) $data['authority_confirmed'],
+            'time_source' => $data['time_source'],
+        ]));
     }
 
     private function assertNoActiveWorkflow(int $documentId): void
