@@ -103,6 +103,18 @@ final class LegalArchiveDocument extends Model
         return $query->where('organization_id', $organizationId);
     }
 
+    public function isArchived(): bool
+    {
+        return $this->archived_at !== null || $this->status === 'archived' || $this->lifecycle_status === 'archived';
+    }
+
+    public function scopeNotArchived(Builder $query): Builder
+    {
+        return $query->whereNull('archived_at')
+            ->where(static fn (Builder $status): Builder => $status->whereNull('status')->orWhere('status', '!=', 'archived'))
+            ->where(static fn (Builder $status): Builder => $status->whereNull('lifecycle_status')->orWhere('lifecycle_status', '!=', 'archived'));
+    }
+
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);

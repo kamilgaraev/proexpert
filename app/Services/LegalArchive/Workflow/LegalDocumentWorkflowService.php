@@ -377,6 +377,9 @@ final class LegalDocumentWorkflowService
             if ($instance->status !== 'in_progress' || $lockedStep->status !== 'active') {
                 throw new DomainException('legal_workflow_step_not_active');
             }
+            if ($document->isArchived()) {
+                throw new DomainException('legal_workflow_document_archived');
+            }
             if ($lockedStep->due_at !== null && $lockedStep->due_at->isPast()) {
                 throw new DomainException('legal_workflow_step_expired');
             }
@@ -575,6 +578,9 @@ final class LegalDocumentWorkflowService
             if ($locked->status !== 'in_progress') {
                 throw new DomainException('legal_workflow_stale_action');
             }
+            if ($document->isArchived()) {
+                throw new DomainException('legal_workflow_document_archived');
+            }
             $this->finishInstance($locked, $document, 'cancelled');
             $locked->forceFill(['cancelled_at' => now(), 'lock_version' => ((int) $locked->lock_version) + 1])->save();
             $decision = $this->newDecision()->newQuery()->create([
@@ -612,6 +618,7 @@ final class LegalDocumentWorkflowService
     {
         $ids = $this->instances()
             ->where('organization_id', $organizationId)
+            ->whereHas('document', static fn (Builder $query): Builder => $query->forOrganization($organizationId)->notArchived())
             ->where('status', 'in_progress')
             ->whereNotNull('due_at')
             ->where('due_at', '<=', $at)
@@ -630,6 +637,9 @@ final class LegalDocumentWorkflowService
                     (int) $reference->organization_id,
                     (int) $reference->document_id,
                 );
+                if ($document->isArchived()) {
+                    return false;
+                }
                 $this->aggregateLock->lockVersion($this->connection, $document, (int) $reference->document_version_id);
                 $instance = $this->instances()->whereKey($id)->lockForUpdate()->first();
                 if (! $instance instanceof LegalWorkflowInstance || $instance->status !== 'in_progress' || $instance->due_at?->isAfter($at)) {

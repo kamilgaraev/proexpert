@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\LegalArchive;
 
+use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventFilters;
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService;
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditQueryService;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
@@ -14,21 +17,37 @@ use Illuminate\Database\ConnectionInterface;
 
 final readonly class LegalArchiveLifecycleService
 {
+    private const RESTORABLE_LIFECYCLE_STATUSES = [
+        'draft', 'under_review', 'revision_required', 'rejected', 'approved', 'signing',
+        'partially_signed', 'signed', 'signature_failed', 'effective', 'suspended',
+        'completed', 'terminated', 'expired',
+    ];
+
     public function __construct(
         private LegalDocumentAuthorizer $access,
         private LegalDocumentAudit $audit,
         private ConnectionInterface $connection,
         private LegalDocumentAggregateLock $lock,
         ?LegalDocumentObligationService $obligations = null,
+        ?ImmutableAuditQueryService $auditQueries = null,
     ) {
         $this->obligations = $obligations ?? new LegalDocumentObligationService;
+        $this->auditQueries = $auditQueries ?? new ImmutableAuditQueryService(new ImmutableAuditIntegrityService);
     }
 
     private LegalDocumentObligationService $obligations;
 
+    private ImmutableAuditQueryService $auditQueries;
+
     public function archive(LegalArchiveDocument $document, User $actor, int $expectedLockVersion): LegalArchiveDocument
     {
         return $this->mutate($document, $actor, $expectedLockVersion, 'legal_archive.archive', function (LegalArchiveDocument $locked) use ($actor): array {
+            if ($locked->isArchived()) {
+                throw new DomainException('document_already_archived');
+            }
+            if ($locked->approval_status === 'pending' || in_array($locked->lifecycle_status, ['under_review', 'signing', 'partially_signed'], true)) {
+                throw new DomainException('archive_document_in_progress');
+            }
             if ((bool) $locked->legal_hold) {
                 throw new DomainException('archive_blocked_by_legal_hold');
             }
@@ -44,14 +63,13 @@ final readonly class LegalArchiveLifecycleService
 
     public function restore(LegalArchiveDocument $document, User $actor, int $expectedLockVersion): LegalArchiveDocument
     {
-        return $this->mutate($document, $actor, $expectedLockVersion, 'legal_archive.archive', static function (LegalArchiveDocument $locked): array {
+        return $this->mutate($document, $actor, $expectedLockVersion, 'legal_archive.archive', function (LegalArchiveDocument $locked): array {
             if ($locked->archived_at === null) {
                 throw new DomainException('document_not_archived');
             }
 
             return [
-                'status' => 'draft',
-                'lifecycle_status' => 'draft',
+                ...$this->stateBeforeArchive($locked),
                 'archived_at' => null,
                 'archived_by_user_id' => null,
             ];
@@ -72,6 +90,35 @@ final readonly class LegalArchiveLifecycleService
         }, 'activated', function (LegalArchiveDocument $locked): void {
             $this->obligations->syncFromEffectiveDocument($locked);
         });
+    }
+
+    private function stateBeforeArchive(LegalArchiveDocument $document): array
+    {
+        $filters = new ImmutableAuditEventFilters(
+            organizationId: (int) $document->organization_id,
+            domain: 'legal_archive',
+            eventType: 'legal_document.archived',
+            subjectType: 'legal_document',
+            subjectId: (string) $document->id,
+        );
+        $event = $this->auditQueries->exportRows($filters, 1)->first();
+        if (($event?->before_state['status'] ?? null) === 'archived'
+            && ($event?->before_state['lifecycle_status'] ?? null) === 'archived') {
+            $event = $this->auditQueries->latestStateChange($filters, 'lifecycle_status');
+        }
+        $before = $event?->before_state ?? [];
+        $after = $event?->after_state ?? [];
+        $status = $before['status'] ?? null;
+        $lifecycleStatus = $before['lifecycle_status'] ?? null;
+        if (($after['status'] ?? null) !== 'archived'
+            || ($after['lifecycle_status'] ?? null) !== 'archived'
+            || ! in_array($status, LegalArchiveDictionary::STATUSES, true)
+            || $status === 'archived'
+            || ! in_array($lifecycleStatus, self::RESTORABLE_LIFECYCLE_STATUSES, true)) {
+            throw new DomainException('archive_restore_state_unavailable');
+        }
+
+        return ['status' => $status, 'lifecycle_status' => $lifecycleStatus];
     }
 
     private function mutate(

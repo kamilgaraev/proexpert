@@ -56,6 +56,7 @@ final readonly class LegalWorkflowRecoveryService
     {
         return $this->instances()
             ->where('organization_id', $organizationId)
+            ->whereHas('document', static fn (Builder $query): Builder => $query->forOrganization($organizationId)->notArchived())
             ->whereNotNull('reconciliation_required_at')
             ->orderBy('reconciliation_required_at')
             ->limit(max(1, min($limit, 1000)))
@@ -79,6 +80,9 @@ final readonly class LegalWorkflowRecoveryService
                     $organizationId,
                     (int) $reference->document_id,
                 );
+                if ($document->isArchived()) {
+                    throw new DomainException('legal_workflow_document_archived');
+                }
                 $version = $this->aggregateLock->lockVersion(
                     $this->connection,
                     $document,
