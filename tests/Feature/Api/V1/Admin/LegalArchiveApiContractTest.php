@@ -281,6 +281,83 @@ final class LegalArchiveApiContractTest extends TestCase
         self::assertSame(403, $denied->getStatusCode());
     }
 
+    public function test_draft_profile_change_preserves_document_data_and_exposes_assignment(): void
+    {
+        $this->isolateKernelAuthentication([
+            ['PATCH', '/api/v1/admin/legal-archive/documents/42'],
+            ['GET', '/api/v1/admin/legal-archive/documents/42'],
+        ]);
+        DB::table('legal_archive_documents')->insert([
+            ...$this->documentRow(42, 7, 'Поставка крепежа'),
+            'structured_fields' => json_encode(['subject' => 'Поставка крепежа'], JSON_THROW_ON_ERROR),
+            'retention_policy' => 'Правило организации',
+        ]);
+        $this->app->make(LegalDocumentTypeProfileService::class)->create(7, [
+            'code' => 'qa.supply.appendix',
+            'base_code' => 'contract.supply',
+            'name' => 'Поставка с приложением',
+            'required_file_roles' => ['appendix'],
+            'confidentiality_level' => 'public',
+        ]);
+
+        $detail = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42', 'GET'), $this->actor());
+        self::assertSame(200, $detail->getStatusCode(), (string) $detail->getContent());
+        self::assertTrue($detail->getData(true)['data']['profile_assignment']['allowed']);
+        DB::table('legal_archive_documents')->where('id', 42)->update(['legal_hold' => true]);
+        $headers = $this->kernelHeaders();
+        $this->patchJson('/api/v1/admin/legal-archive/documents/42', [
+            'lock_version' => 3,
+            'type_profile_code' => 'qa.supply.appendix',
+        ], $headers)->assertOk()
+            ->assertJsonPath('data.type_profile.code', 'qa.supply.appendix')
+            ->assertJsonPath('data.structured_fields.subject', 'Поставка крепежа')
+            ->assertJsonPath('data.retention.policy', 'Правило организации')
+            ->assertJsonPath('data.retention.legal_hold', true)
+            ->assertJsonPath('data.file_requirements.0.role', 'appendix')
+            ->assertJsonPath('data.file_requirements.0.ready', false);
+        self::assertSame('internal', DB::table('legal_archive_documents')->where('id', 42)->value('confidentiality_level'));
+    }
+
+    public function test_profile_change_rejects_an_unrelated_base_without_mutation(): void
+    {
+        $this->isolateKernelAuthentication([['PATCH', '/api/v1/admin/legal-archive/documents/42']]);
+        $headers = $this->kernelHeaders();
+        DB::table('legal_archive_documents')->insert($this->documentRow(42, 7, 'Поставка крепежа'));
+
+        $this->patchJson('/api/v1/admin/legal-archive/documents/42', [
+            'lock_version' => 3,
+            'type_profile_code' => 'other.custom',
+        ], $headers)->assertStatus(409)->assertJsonPath('message', trans_message('legal_archive.domain_errors.profile_base_change_not_allowed'));
+        self::assertSame('contract.supply', DB::table('legal_archive_documents')->where('id', 42)->value('type_profile_code'));
+        self::assertSame(3, DB::table('legal_archive_documents')->where('id', 42)->value('lock_version'));
+    }
+
+    public function test_profile_change_does_not_orphan_populated_custom_fields(): void
+    {
+        $this->isolateKernelAuthentication([['PATCH', '/api/v1/admin/legal-archive/documents/42']]);
+        $headers = $this->kernelHeaders();
+        $this->app->make(LegalDocumentTypeProfileService::class)->create(7, [
+            'code' => 'qa.supply.packaging',
+            'base_code' => 'contract.supply',
+            'name' => 'Поставка с упаковкой',
+            'schema' => ['packaging' => ['type' => 'string', 'label' => 'Упаковка']],
+        ]);
+        DB::table('legal_archive_documents')->insert([
+            ...$this->documentRow(42, 7, 'Поставка крепежа'),
+            'type_profile_code' => 'qa.supply.packaging',
+            'structured_fields' => json_encode(['packaging' => 'Коробка'], JSON_THROW_ON_ERROR),
+        ]);
+
+        $this->patchJson('/api/v1/admin/legal-archive/documents/42', [
+            'lock_version' => 3,
+            'type_profile_code' => 'contract.supply',
+        ], $headers)->assertStatus(409)->assertJsonPath('message', trans_message('legal_archive.domain_errors.profile_existing_fields_incompatible'));
+        $document = LegalArchiveDocument::query()->findOrFail(42);
+        self::assertSame('qa.supply.packaging', $document->type_profile_code);
+        self::assertSame(['packaging' => 'Коробка'], $document->structured_fields);
+        self::assertSame(3, $document->lock_version);
+    }
+
     public function test_http_kernel_enforces_validation_mutation_replay_conflict_and_resolvable_etags(): void
     {
         $this->isolateKernelAuthentication([
@@ -379,6 +456,28 @@ final class LegalArchiveApiContractTest extends TestCase
         $noLongerCurrent = $this->getJson((string) $template->headers->get('Location'), $headers);
         $noLongerCurrent->assertOk()->assertJsonPath('data.is_current', false);
         self::assertNotSame($template->headers->get('ETag'), $noLongerCurrent->headers->get('ETag'));
+    }
+
+    public function test_profile_change_keeps_permission_revision_and_approval_guards(): void
+    {
+        $this->isolateKernelAuthentication([['PATCH', '/api/v1/admin/legal-archive/documents/42']]);
+        $headers = $this->kernelHeaders();
+        DB::table('legal_archive_documents')->insert($this->documentRow(42, 7, 'Поставка крепежа'));
+        $this->app->make(LegalDocumentTypeProfileService::class)->create(7, [
+            'code' => 'qa.supply.guarded',
+            'base_code' => 'contract.supply',
+            'name' => 'Поставка с проверкой',
+        ]);
+        $payload = ['lock_version' => 3, 'type_profile_code' => 'qa.supply.guarded'];
+        $this->deniedPermissions = ['legal_archive.update'];
+        $this->patchJson('/api/v1/admin/legal-archive/documents/42', $payload, $headers)->assertForbidden();
+        $this->deniedPermissions = [];
+        $this->patchJson('/api/v1/admin/legal-archive/documents/42', [...$payload, 'lock_version' => 2], $headers)
+            ->assertStatus(409)->assertJsonPath('current_lock_version', 3);
+        DB::table('legal_archive_documents')->where('id', 42)->update(['approval_status' => 'approved']);
+        $this->patchJson('/api/v1/admin/legal-archive/documents/42', $payload, $headers)->assertStatus(409);
+        self::assertSame('contract.supply', DB::table('legal_archive_documents')->where('id', 42)->value('type_profile_code'));
+        self::assertSame(3, DB::table('legal_archive_documents')->where('id', 42)->value('lock_version'));
     }
 
     public function test_signature_verification_history_is_bounded_tenant_scoped_and_permission_protected(): void
@@ -732,6 +831,7 @@ final class LegalArchiveApiContractTest extends TestCase
             $table->unsignedBigInteger('created_by_user_id')->nullable();
             $table->unsignedBigInteger('updated_by_user_id')->nullable();
             $table->unsignedBigInteger('owner_user_id')->nullable();
+            $table->jsonb('structured_fields')->nullable();
             $table->json('metadata')->nullable();
             $table->timestamps();
             $table->softDeletes();

@@ -18,8 +18,7 @@ final class LegalArchiveDocumentResource extends JsonResource
         $problemFlags = is_array($workflowSummary) ? (array) ($workflowSummary['problem_flags'] ?? []) : [];
         $resolvedTypeProfile = $this->resource->getAttribute('api_type_profile');
         $typeProfileConfigured = is_array($resolvedTypeProfile);
-        $profileAssignmentAllowed = ! $typeProfileConfigured
-            && (new LegalDocumentProfileAssignmentGuard)->canAssign($this->resource);
+        $profileAssignmentAllowed = (new LegalDocumentProfileAssignmentGuard)->canAssign($this->resource);
         $linkedContract = $this->resource->relationLoaded('links')
             ? $this->links->first(static fn ($link): bool => in_array((string) $link->linked_type, ['contract', 'App\\Models\\Contract'], true))
             : null;
@@ -59,7 +58,7 @@ final class LegalArchiveDocumentResource extends JsonResource
             'type_profile_configured' => $typeProfileConfigured,
             'profile_assignment' => [
                 'allowed' => $profileAssignmentAllowed,
-                'blocker' => $typeProfileConfigured || $profileAssignmentAllowed
+                'blocker' => $profileAssignmentAllowed
                     ? null
                     : trans_message('legal_archive.profiles.assignment_not_available'),
             ],
