@@ -17,6 +17,7 @@ use Illuminate\Container\Container;
 use Illuminate\Support\Str;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\HeaderUtils;
 
 final class LegalDocumentDownloadService
 {
@@ -96,8 +97,7 @@ final class LegalDocumentDownloadService
             $organization,
             [
                 'ResponseContentType' => (string) ($version->mime_type ?: 'application/octet-stream'),
-                'ResponseContentDisposition' => ($purpose === 'download' ? 'attachment' : 'inline')
-                    .'; filename="'.$this->safeFilename((string) $version->original_filename).'"',
+                'ResponseContentDisposition' => $this->contentDisposition($purpose, (string) $version->original_filename),
             ],
         );
 
@@ -133,11 +133,20 @@ final class LegalDocumentDownloadService
         return 5;
     }
 
-    private function safeFilename(string $filename): string
+    private function contentDisposition(string $purpose, string $filename): string
     {
-        $filename = (string) preg_replace('/[^A-Za-z0-9._-]+/', '_', basename($filename));
+        $filename = Str::afterLast(str_replace('\\', '/', $filename), '/');
+        $filename = trim((string) preg_replace('/[\p{Cc}\p{Cf}]/u', '', $filename));
+        if ($filename === '' || $filename === '.' || $filename === '..') {
+            $filename = 'document';
+        }
+        $asciiFilename = (string) preg_replace('/[^A-Za-z0-9._-]+/', '_', Str::ascii($filename));
 
-        return $filename !== '' ? substr($filename, 0, 180) : 'document';
+        return HeaderUtils::makeDisposition(
+            $purpose === 'download' ? HeaderUtils::DISPOSITION_ATTACHMENT : HeaderUtils::DISPOSITION_INLINE,
+            $filename,
+            $asciiFilename !== '' ? $asciiFilename : 'document',
+        );
     }
 
     private function message(string $key): string
