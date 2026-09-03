@@ -1337,6 +1337,75 @@ final class LegalDocumentWorkflowTest extends TestCase
         return $actor;
     }
 
+    public function test_archived_document_rejects_workflow_decisions_and_cancellation(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer', 'finance_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('archive-workflow'));
+        $step = $instance->steps->firstWhere('status', 'active');
+        $document->refresh()->forceFill(['status' => 'archived', 'lifecycle_status' => 'archived', 'archived_at' => now()])->save();
+        $documentLock = $document->lock_version;
+
+        foreach (['approve', 'cancel'] as $action) {
+            $input = new WorkflowDecisionInput($action, 'archived-'.$action, (int) $instance->lock_version, (int) $step->lock_version, reason: 'Учебная проверка архивного документа');
+            try {
+                $action === 'cancel'
+                    ? $this->service->cancel($instance, $actor, $input)
+                    : $this->service->decide($step, $actor, $input);
+                self::fail('Workflow action must not change an archived document.');
+            } catch (DomainException $error) {
+                self::assertSame('legal_workflow_document_archived', $error->getMessage());
+            }
+        }
+        self::assertSame('archived', $document->refresh()->lifecycle_status);
+        self::assertSame($documentLock, $document->lock_version);
+        self::assertSame('in_progress', $instance->refresh()->status);
+        self::assertSame('active', $step->refresh()->status);
+        self::assertSame(0, $instance->decisions()->count());
+        self::assertSame(['workflow_submitted'], $this->audit->events);
+    }
+
+    public function test_expiry_skips_archived_documents_without_starving_live_workflows(): void
+    {
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        [$archivedDocument, $archivedVersion] = $this->dossier();
+        $archivedInstance = $this->service->submit($archivedDocument, (int) $archivedVersion->id, $actor, WorkflowOverride::none('archived-expiry'));
+        $archivedDocument->refresh()->forceFill(['status' => 'archived', 'lifecycle_status' => 'archived', 'archived_at' => now()])->save();
+        $archivedInstance->forceFill(['due_at' => now()->subMinutes(2)])->save();
+        [$liveDocument, $liveVersion] = $this->dossier();
+        $liveInstance = $this->service->submit($liveDocument, (int) $liveVersion->id, $actor, WorkflowOverride::none('live-expiry'));
+        $liveInstance->forceFill(['due_at' => now()->subMinute()])->save();
+
+        self::assertSame(1, $this->service->expireDue(15, now(), 1));
+        self::assertSame('archived', $archivedDocument->refresh()->lifecycle_status);
+        self::assertSame('in_progress', $archivedInstance->refresh()->status);
+        self::assertSame('expired', $liveInstance->refresh()->status);
+        self::assertSame('expired', $liveDocument->refresh()->lifecycle_status);
+    }
+
+    public function test_recovery_excludes_archived_document_and_keeps_its_recovery_marker(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('archived-recovery'));
+        $document->refresh()->forceFill(['status' => 'archived', 'lifecycle_status' => 'archived', 'archived_at' => now()])->save();
+        $recovery = new LegalWorkflowRecoveryService(new ImmutableAuditIntegrityService, $this->audit, $this->database->getConnection());
+        $recovery->markRequired($instance, 'Учебная проверка восстановления архивного документа');
+
+        self::assertSame([], $recovery->candidates(15)->pluck('id')->all());
+        try {
+            $recovery->reconcile(15, (int) $instance->id);
+            self::fail('Reconciliation must not overwrite the archive state.');
+        } catch (DomainException $error) {
+            self::assertSame('legal_workflow_document_archived', $error->getMessage());
+        }
+        self::assertSame('archived', $document->refresh()->lifecycle_status);
+        self::assertNotNull($instance->refresh()->reconciliation_required_at);
+    }
+
     private function createSchema(): void
     {
         $schema = $this->database->schema();
@@ -1354,6 +1423,8 @@ final class LegalDocumentWorkflowTest extends TestCase
             $table->string('type_profile_code')->nullable();
             $table->json('structured_fields')->nullable();
             $table->string('approval_status')->nullable();
+            $table->string('status')->default('draft');
+            $table->timestamp('archived_at')->nullable();
             $table->string('lifecycle_status')->nullable();
             $table->unsignedBigInteger('current_primary_version_id')->nullable();
             $table->unsignedInteger('lock_version')->default(0);

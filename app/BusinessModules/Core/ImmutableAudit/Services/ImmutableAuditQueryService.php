@@ -80,6 +80,14 @@ final class ImmutableAuditQueryService
             ->get();
     }
 
+    public function latestStateChange(ImmutableAuditEventFilters $filters, string $stateField): ?ImmutableAuditEvent
+    {
+        return $this->baseQuery($filters)
+            ->whereColumn('before_state->'.$stateField, '!=', 'after_state->'.$stateField)
+            ->orderByDesc('sequence_id')
+            ->first();
+    }
+
     public function verifyEvent(ImmutableAuditEvent $event): array
     {
         $previousHash = ImmutableAuditEvent::query()
