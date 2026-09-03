@@ -33,6 +33,7 @@ class ContractSideMutationService
         private readonly ContractStateEventService $stateEventService,
         private readonly ContractPartySnapshotService $contractPartySnapshotService,
         private readonly ContractAuditedMutationService $contractMutations,
+        private readonly ContractDossierRequisitesSyncService $dossierRequisites,
     ) {}
 
     public function create(
@@ -175,8 +176,6 @@ class ContractSideMutationService
             'user_id' => Auth::id(),
         ]);
 
-        $previousTotalAmount = (float) ($contract->total_amount ?? 0);
-        $shouldRefreshParties = $this->shouldRefreshContractParties($contract, $contractDTO);
         $updateData = $contractDTO->toArray();
         $updateData['organization_id'] = $targetOrganizationId;
         $projectIds = $updateData['project_ids'] ?? null;
@@ -189,7 +188,18 @@ class ContractSideMutationService
         try {
             DB::beginTransaction();
 
-            $this->contractMutations->update($contract, $updateData, 'update', Auth::id());
+            $contract = $contract->newQuery()->whereKey($contract->id)
+                ->where('organization_id', $contract->organization_id)->lockForUpdate()->firstOrFail();
+            $previous = clone $contract;
+            $previousTotalAmount = (float) ($contract->total_amount ?? 0);
+            $shouldRefreshParties = $this->shouldRefreshContractParties($contract, $contractDTO);
+            $this->contractMutations->update(
+                $contract,
+                $updateData,
+                'update',
+                Auth::id(),
+                afterPersist: fn (Contract $updated): array => $this->dossierRequisites->synchronize($updated, $previous, Auth::id()),
+            );
             $this->syncProjects($contract, $contractDTO, $projectIds, $targetOrganizationId);
             $this->contractPartySnapshotService->syncParties($contract->refresh(), $shouldRefreshParties);
 

@@ -119,7 +119,7 @@ class ContractMutationAtomicityTest extends TestCase
             'effective_from' => now(),
         ]);
 
-        (new ContractObserver)->retrieved($contract->fresh());
+        app(ContractObserver::class)->retrieved($contract->fresh());
 
         $storedAmount = Contract::withoutEvents(
             static fn () => Contract::query()->whereKey($contract->id)->value('total_amount')
@@ -186,6 +186,7 @@ class ContractMutationAtomicityTest extends TestCase
                 $audit ?? Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
                 DB::connection(),
             ),
+            app(\App\Services\Contract\ContractDossierRequisitesSyncService::class),
         );
     }
 
