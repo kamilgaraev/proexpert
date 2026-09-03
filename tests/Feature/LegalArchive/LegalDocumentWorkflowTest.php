@@ -6,6 +6,7 @@ namespace Tests\Feature\LegalArchive;
 
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowDecision;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
@@ -92,6 +93,44 @@ final class LegalDocumentWorkflowTest extends TestCase
         self::assertSame('pending', $document->approval_status);
         self::assertSame('under_review', $document->lifecycle_status);
         self::assertSame(['workflow_submitted'], $this->audit->events);
+    }
+
+    public function test_submit_records_exact_ready_attachment_versions_once_on_replay(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => $document->id,
+            'organization_id' => 15,
+            'role' => 'appendix',
+            'title' => 'Спецификация поставки',
+        ]);
+        $attachment = LegalArchiveDocumentVersion::query()->create([
+            'document_id' => $document->id,
+            'document_file_id' => $file->id,
+            'organization_id' => 15,
+            'version_number' => 1,
+            'is_current' => true,
+            'status' => 'uploaded',
+            'processing_status' => 'ready',
+            'content_hash' => str_repeat('b', 64),
+        ]);
+        $file->forceFill(['current_version_id' => $attachment->id])->save();
+        $override = WorkflowOverride::none('submit-with-attachment');
+
+        $first = $this->service->submit($document, (int) $version->id, $actor, $override);
+        $replay = $this->service->submit($document->refresh(), (int) $version->id, $actor, $override);
+
+        self::assertSame($first->id, $replay->id);
+        self::assertSame(['workflow_submitted'], $this->audit->events);
+        self::assertSame([[
+            'file_id' => (int) $file->id,
+            'role' => 'appendix',
+            'title' => 'Спецификация поставки',
+            'version_id' => (int) $attachment->id,
+            'content_hash' => str_repeat('b', 64),
+        ]], $this->audit->contexts[0]['document_files'] ?? null);
     }
 
     public function test_submit_is_idempotent_and_payload_mismatch_or_duplicate_active_workflow_conflicts(): void
@@ -1387,6 +1426,7 @@ final class LegalDocumentWorkflowTest extends TestCase
             $table->unsignedBigInteger('document_id');
             $table->unsignedBigInteger('organization_id');
             $table->string('role');
+            $table->string('title')->default('');
             $table->unsignedBigInteger('current_version_id')->nullable();
             $table->timestamps();
         });
@@ -1570,6 +1610,8 @@ final class RecordingWorkflowAudit implements LegalDocumentAudit
     /** @var list<string> */
     public array $events = [];
 
+    public array $contexts = [];
+
     public bool $fail = false;
 
     public function record(string $event, LegalArchiveDocument $document, User $actor, array $context = []): void
@@ -1578,6 +1620,7 @@ final class RecordingWorkflowAudit implements LegalDocumentAudit
             throw new RuntimeException('audit failed');
         }
         $this->events[] = $event;
+        $this->contexts[] = $context;
     }
 
     public function recordForActorId(string $event, LegalArchiveDocument $document, ?int $actorId, array $context = []): void

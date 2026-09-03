@@ -20,6 +20,7 @@ use App\Services\LegalArchive\ContractLegalDocumentAccessResolver;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorAvailability;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFilePolicy;
+use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
 use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
 use App\Services\LegalArchive\Files\LegalDocumentScanner;
@@ -27,6 +28,7 @@ use App\Services\LegalArchive\Files\LegalDocumentVersionAttempt;
 use App\Services\LegalArchive\Files\LegalDocumentVersionLeaseLost;
 use App\Services\LegalArchive\Files\VersionInput;
 use App\Services\LegalArchive\LegalArchiveLifecycleService;
+use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
 use App\Services\LegalArchive\LegalDocumentCreateFailureReporter;
 use App\Services\LegalArchive\Obligations\LegalDocumentObligationExecutionService;
@@ -116,6 +118,8 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $table->unsignedBigInteger('lock_version')->default(0);
             $table->string('title');
             $table->string('status')->nullable();
+            $table->string('approval_status')->nullable();
+            $table->string('lifecycle_status')->nullable();
             $table->string('confidentiality_level')->nullable();
             $table->string('direction')->nullable();
             $table->string('source_type')->nullable();
@@ -253,6 +257,107 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             'allowed_extensions' => ['pdf'],
             'allowed_mime_types' => ['pdf' => ['application/pdf']],
         ];
+    }
+
+    public function test_create_file_rejects_disallowed_upload_without_allocating_a_record(): void
+    {
+        $document = LegalArchiveDocument::query()->forceCreate(['organization_id' => 20, 'title' => 'Договор']);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::never())->method('upload');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::never())->method('assertClean');
+
+        try {
+            $this->service($storage, $scanner)->createFile($document, $this->pdf('blocked.exe'), new VersionInput, 'appendix', 'Приложение');
+            self::fail('Expected file rejection');
+        } catch (LegalDocumentFileRejected) {
+            self::assertSame(0, LegalArchiveDocumentFile::query()->count());
+            self::assertSame(0, LegalArchiveDocumentVersion::query()->count());
+        }
+    }
+
+    public function test_create_file_cleans_empty_record_after_storage_failure(): void
+    {
+        $document = LegalArchiveDocument::query()->forceCreate(['organization_id' => 20, 'title' => 'Договор']);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('upload')->willThrowException(new RuntimeException('storage_unavailable'));
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::never())->method('assertClean');
+
+        try {
+            $this->service($storage, $scanner)->createFile($document, $this->pdf('appendix.pdf'), new VersionInput, 'appendix', 'Приложение');
+            self::fail('Expected storage failure');
+        } catch (RuntimeException $error) {
+            self::assertSame('storage_unavailable', $error->getMessage());
+            self::assertSame(0, LegalArchiveDocumentFile::query()->count());
+            self::assertSame(0, LegalArchiveDocumentVersion::query()->count());
+        }
+    }
+
+    public function test_create_file_preserves_failed_scan_history(): void
+    {
+        $document = LegalArchiveDocument::query()->forceCreate(['organization_id' => 20, 'title' => 'Договор']);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('upload')->willReturn('org-20/legal-archive/appendix.pdf');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::once())->method('assertClean')->willThrowException(new RuntimeException('scanner_unavailable'));
+
+        try {
+            $this->service($storage, $scanner)->createFile($document, $this->pdf('appendix.pdf'), new VersionInput, 'appendix', 'Приложение');
+            self::fail('Expected scan failure');
+        } catch (LegalDocumentScanFailed) {
+            self::assertSame(1, LegalArchiveDocumentFile::query()->count());
+            self::assertSame('failed', LegalArchiveDocumentVersion::query()->sole()->processing_status);
+            self::assertNull(LegalArchiveDocumentFile::query()->sole()->current_version_id);
+        }
+    }
+
+    public function test_create_file_keeps_primary_pointer_and_returns_ready_attachment(): void
+    {
+        $document = LegalArchiveDocument::query()->forceCreate(['organization_id' => 20, 'title' => 'Договор', 'current_primary_version_id' => 99]);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('upload')->willReturn('org-20/legal-archive/appendix.pdf');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::once())->method('assertClean');
+
+        $file = $this->service($storage, $scanner)->createFile($document, $this->pdf('appendix.pdf'), new VersionInput(expectedDocumentLockVersion: 0), 'appendix', 'Приложение');
+
+        self::assertSame('appendix', $file->role);
+        self::assertSame('ready', $file->currentVersion->processing_status);
+        self::assertSame(1, $file->versions->count());
+        self::assertSame(99, (int) $document->fresh()->current_primary_version_id);
+        self::assertSame(1, (int) $document->fresh()->lock_version);
+    }
+
+    public function test_create_file_rejects_stale_revision_before_storage(): void
+    {
+        $document = LegalArchiveDocument::query()->forceCreate(['organization_id' => 20, 'title' => 'Договор', 'lock_version' => 2]);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::never())->method('upload');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+
+        try {
+            $this->service($storage, $scanner)->createFile($document, $this->pdf('appendix.pdf'), new VersionInput(expectedDocumentLockVersion: 1), 'appendix', 'Приложение');
+            self::fail('Expected revision conflict');
+        } catch (LegalArchiveLockConflict) {
+            self::assertSame(0, LegalArchiveDocumentFile::query()->count());
+        }
+    }
+
+    public function test_create_file_rejects_approved_document_before_storage(): void
+    {
+        $document = LegalArchiveDocument::query()->forceCreate(['organization_id' => 20, 'title' => 'Договор', 'approval_status' => 'approved']);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::never())->method('upload');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+
+        try {
+            $this->service($storage, $scanner)->createFile($document, $this->pdf('appendix.pdf'), new VersionInput, 'appendix', 'Приложение');
+            self::fail('Expected frozen document');
+        } catch (DomainException $error) {
+            self::assertSame('legal_document_editing_frozen', $error->getMessage());
+            self::assertSame(0, LegalArchiveDocumentFile::query()->count());
+        }
     }
 
     public function test_adds_versions_append_only_and_keeps_exactly_one_current_version(): void

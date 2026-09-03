@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\Services\LegalArchive\Files\LegalDocumentFileRequirements;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
 use App\Services\LegalArchive\Workflow\LegalDocumentWorkflowReadinessGuard;
@@ -58,6 +59,7 @@ final class LegalDocumentRequiredFilesReadinessTest extends TestCase
             $table->unsignedBigInteger('document_id');
             $table->unsignedBigInteger('organization_id');
             $table->string('role');
+            $table->string('title')->default('Приложение');
             $table->unsignedBigInteger('current_version_id')->nullable();
         });
         $schema->create('legal_archive_document_versions', static function (Blueprint $table): void {
@@ -206,5 +208,34 @@ final class LegalDocumentRequiredFilesReadinessTest extends TestCase
             ),
             new LegalDocumentProfileValidator,
         );
+    }
+
+    public function test_requirements_report_each_role_without_treating_another_file_as_ready(): void
+    {
+        $this->attachment('ready');
+        $registry = new LegalDocumentProfileRegistry(static fn (): ?array => null, [
+            'contract.test' => ['label' => 'Учебный договор', 'category' => 'contract',
+                'required_file_roles' => ['primary', 'appendix', 'specification'], 'required_fields' => [], 'schema' => []],
+        ]);
+        $requirements = (new LegalDocumentFileRequirements)->forDocuments(collect([$this->document()]), [
+            7 => ['contract.test' => $registry->find(7, 'contract.test')],
+        ]);
+
+        $this->assertSame(['appendix', 'specification'], array_column($requirements[17], 'role'));
+        $this->assertSame([true, false], array_column($requirements[17], 'ready'));
+    }
+
+    public function test_file_snapshot_contains_exact_current_version_and_excludes_other_tenants(): void
+    {
+        $this->attachment('ready');
+        $snapshot = (new LegalDocumentFileRequirements)->snapshotFor($this->document());
+
+        $this->assertSame([[
+            'file_id' => 31, 'role' => 'appendix', 'title' => 'Приложение',
+            'version_id' => 41, 'content_hash' => str_repeat('a', 64),
+        ]], $snapshot);
+
+        $this->database->table('legal_archive_document_versions')->where('id', 41)->update(['organization_id' => 8]);
+        $this->assertSame([], (new LegalDocumentFileRequirements)->snapshotFor($this->document()));
     }
 }

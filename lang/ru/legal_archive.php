@@ -3,6 +3,13 @@
 declare(strict_types=1);
 
 return [
+    'required_file_labels' => [
+        'appendix' => 'Приложение',
+        'attachment' => 'Дополнительный файл',
+        'specification' => 'Спецификация',
+        'power_of_attorney' => 'Доверенность',
+        'other' => 'Обязательное вложение :number',
+    ],
     'commands' => [
         'organization_required' => 'Укажите корректный идентификатор организации.',
         'message_required' => 'Для повторной отправки укажите идентификатор сообщения.',

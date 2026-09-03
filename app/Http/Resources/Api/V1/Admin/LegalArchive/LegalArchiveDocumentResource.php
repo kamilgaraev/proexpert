@@ -143,6 +143,7 @@ final class LegalArchiveDocumentResource extends JsonResource
             'current_primary_version' => new LegalArchiveDocumentVersionResource($this->whenLoaded('currentVersion')),
             'versions' => LegalArchiveDocumentVersionResource::collection($this->whenLoaded('versions')),
             'files' => LegalArchiveFileResource::collection($this->whenLoaded('files')),
+            'file_requirements' => $this->resource->getAttribute('api_file_requirements') ?? [],
             'signatures' => LegalArchiveSignatureResource::collection($this->whenLoaded('signatures')),
             'links' => LegalArchiveDocumentLinkResource::collection($this->whenLoaded('links')),
             'workflow_summary' => $workflowSummary ?? [

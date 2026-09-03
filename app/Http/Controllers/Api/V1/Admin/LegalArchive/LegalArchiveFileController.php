@@ -48,25 +48,22 @@ final class LegalArchiveFileController extends LegalArchiveApiController
 
     public function storeFile(StoreLegalArchiveFileRequest $request, string $legalDocument): JsonResponse
     {
-        $created = null;
         try {
             $owner = $this->document($request, $legalDocument);
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $owner, 'legal_archive.files.upload');
             $this->access->authorizePermission($actor, $owner, 'legal_archive.versions.create');
-            $created = LegalArchiveDocumentFile::query()->create([
-                'document_id' => (int) $owner->id,
-                'organization_id' => (int) $owner->organization_id,
-                'role' => (string) $request->validated('role'),
-                'title' => (string) $request->validated('title'),
-                'sort_order' => (int) $owner->files()->max('sort_order') + 1,
-                'is_required' => false,
-            ]);
-            $version = $this->files->addVersion($created, $request->file('file'), $this->versionInput($request));
+            $created = $this->files->createFile(
+                $owner,
+                $request->file('file'),
+                $this->versionInput($request),
+                (string) $request->validated('role'),
+                (string) $request->validated('title'),
+            );
 
-            return $this->etag(AdminResponse::success(new LegalArchiveFileResource($created->load('currentVersion', 'versions')), trans_message('legal_archive.messages.file_created'), 201, [
+            return $this->etag(AdminResponse::success(new LegalArchiveFileResource($created), trans_message('legal_archive.messages.file_created'), 201, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
-                'version_id' => (int) $version->id,
+                'version_id' => (int) $created->current_version_id,
             ]), $owner->fresh());
         } catch (Throwable $error) {
             if ($error instanceof LegalDocumentScanFailed) {
@@ -75,10 +72,6 @@ final class LegalArchiveFileController extends LegalArchiveApiController
             if ($error instanceof LegalDocumentFileRejected) {
                 return $this->fileRejected();
             }
-            if ($created instanceof LegalArchiveDocumentFile && $created->versions()->doesntExist()) {
-                $created->delete();
-            }
-
             return $this->failure($error, $request, 'file_store', ['document_id' => $legalDocument]);
         }
     }
