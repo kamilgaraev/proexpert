@@ -174,6 +174,194 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertSame(['signature_requested', 'signature_registered'], $this->audit->events);
     }
 
+    public function test_paper_original_replays_two_step_registration_after_response_loss(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $signers = $this->signerSet('Иван Иванов', 'Директор');
+        $signedAt = new DateTimeImmutable('2026-01-15');
+        $request = $this->service->createRequest($document, $version, $actor, 'paper', $signers, 'lost-response:request', expectedDocumentLockVersion: 0);
+        $original = $this->service->registerPaperOriginal($request, $actor, new PaperOriginalData(
+            signedAt: $signedAt,
+            signers: $signers,
+            storageLocation: 'Архив, папка 18',
+            idempotencyKey: 'lost-response:original',
+            authorityConfirmed: true,
+            expectedDocumentLockVersion: (int) $document->refresh()->lock_version,
+        ));
+        $completedLock = (int) $document->refresh()->lock_version;
+
+        $repeatedRequest = $this->service->createRequest($document, $version, $actor, 'paper', $signers, 'lost-response:request', expectedDocumentLockVersion: 0);
+        self::assertSame($request->id, $repeatedRequest->id);
+        $replayed = $this->service->registerPaperOriginal($repeatedRequest, $actor, new PaperOriginalData(
+            signedAt: $signedAt,
+            signers: $signers,
+            storageLocation: 'Архив, папка 18',
+            idempotencyKey: 'lost-response:original',
+            authorityConfirmed: true,
+            expectedDocumentLockVersion: $completedLock,
+        ));
+
+        self::assertSame($original->id, $replayed->id);
+        self::assertSame($completedLock, (int) $document->refresh()->lock_version);
+        self::assertSame(1, $this->database->getConnection()->table('legal_document_signatures')->count());
+        self::assertSame(['signature_requested', 'signature_registered'], $this->audit->events);
+    }
+
+    public function test_atomic_paper_registration_replays_without_another_request_or_audit_event(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $data = new PaperOriginalData(new DateTimeImmutable('2026-01-15'), $this->signerSet('Иван'), 'Шкаф 1', 'atomic-paper', authorityConfirmed: true, expectedDocumentLockVersion: 0);
+        $signature = $this->service->registerPaperOriginalForDocument($document, $version, $actor, $data);
+        $replayed = $this->service->registerPaperOriginalForDocument($document->fresh(), $version->fresh(), $actor, $data);
+
+        self::assertSame($signature->id, $replayed->id);
+        self::assertSame(1, $this->database->getConnection()->table('legal_signature_requests')->count());
+        self::assertSame(1, $this->database->getConnection()->table('legal_document_signatures')->count());
+        self::assertSame(['signature_requested', 'signature_registered'], $this->audit->events);
+    }
+
+    public function test_atomic_paper_registration_rolls_back_the_request_when_the_original_is_invalid(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        try {
+            $this->service->registerPaperOriginalForDocument($document, $version, $actor, new PaperOriginalData(
+                new DateTimeImmutable('+1 day'), $this->signerSet('Иван'), 'Шкаф 1', 'atomic-invalid', authorityConfirmed: true, expectedDocumentLockVersion: 0,
+            ));
+            self::fail('A future original must not be registered.');
+        } catch (DomainException $error) {
+            self::assertSame('legal_signature_signed_at_invalid', $error->getMessage());
+        }
+        self::assertSame(0, $this->database->getConnection()->table('legal_signature_requests')->count());
+        self::assertSame(0, $this->database->getConnection()->table('legal_document_signatures')->count());
+        self::assertSame('approved', $document->refresh()->lifecycle_status);
+        self::assertSame(0, (int) $document->lock_version);
+        self::assertSame('uploaded', $version->refresh()->status);
+    }
+
+    public function test_atomic_paper_registration_can_finish_and_replay_an_older_pending_request(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $signers = $this->signerSet('Иван');
+        $pending = $this->service->createRequest($document, $version, $actor, 'paper', $signers, 'older-client-request', expectedDocumentLockVersion: 0);
+        $data = new PaperOriginalData(new DateTimeImmutable('2026-01-15'), $signers, 'Шкаф 1', 'recovered-paper', authorityConfirmed: true, expectedDocumentLockVersion: (int) $document->refresh()->lock_version);
+        $signature = $this->service->registerPaperOriginalForDocument($document, $version, $actor, $data);
+        $replayed = $this->service->registerPaperOriginalForDocument($document->fresh(), $version->fresh(), $actor, $data);
+
+        self::assertSame($pending->id, $signature->signature_request_id);
+        self::assertSame($signature->id, $replayed->id);
+        self::assertSame(1, $this->database->getConnection()->table('legal_signature_requests')->count());
+    }
+
+    public function test_atomic_paper_registration_rejects_changed_business_data_on_replay(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $data = new PaperOriginalData(new DateTimeImmutable('2026-01-15'), $this->signerSet('Иван'), 'Шкаф 1', 'atomic-drift', authorityConfirmed: true, expectedDocumentLockVersion: 0);
+        $signature = $this->service->registerPaperOriginalForDocument($document, $version, $actor, $data);
+        foreach (['date', 'signer', 'storage', 'authority', 'role', 'time'] as $field) {
+            try {
+                $this->service->registerPaperOriginalForDocument($document, $version, $actor, new PaperOriginalData(
+                    signedAt: new DateTimeImmutable($field === 'date' ? '2026-01-16' : '2026-01-15'),
+                    signers: $this->signerSet($field === 'signer' ? 'Пётр' : 'Иван'),
+                    storageLocation: $field === 'storage' ? 'Шкаф 2' : 'Шкаф 1',
+                    idempotencyKey: 'atomic-drift',
+                    partyRoleSnapshot: $field === 'role' ? 'contractor' : null,
+                    authorityConfirmed: $field !== 'authority',
+                    timeSource: $field === 'time' ? 'provider' : 'operator',
+                    expectedDocumentLockVersion: 0,
+                ));
+                self::fail('Changed original data must not be accepted: '.$field);
+            } catch (DomainException $error) {
+                self::assertSame('legal_signature_idempotency_conflict', $error->getMessage(), $field);
+            }
+        }
+        self::assertSame('Шкаф 1', $signature->refresh()->storage_location);
+        self::assertSame(1, $this->database->getConnection()->table('legal_document_signatures')->count());
+    }
+
+    public function test_atomic_paper_registration_preserves_original_client_evidence_when_retry_network_changes(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $original = $this->service->registerPaperOriginalForDocument($document, $version, $actor, new PaperOriginalData(
+            new DateTimeImmutable('2026-01-15'), $this->signerSet('Иван'), 'Шкаф 1', 'atomic-network',
+            authorityConfirmed: true, clientIpHash: str_repeat('a', 64), userAgentHash: str_repeat('b', 64), expectedDocumentLockVersion: 0,
+        ));
+        $replayed = $this->service->registerPaperOriginalForDocument($document, $version, $actor, new PaperOriginalData(
+            new DateTimeImmutable('2026-01-15'), $this->signerSet('Иван'), 'Шкаф 1', 'atomic-network',
+            authorityConfirmed: true, clientIpHash: str_repeat('c', 64), userAgentHash: str_repeat('d', 64), expectedDocumentLockVersion: 0,
+        ));
+        self::assertSame($original->id, $replayed->id);
+        self::assertSame(str_repeat('a', 64), $replayed->client_ip_hash);
+        self::assertSame(str_repeat('b', 64), $replayed->user_agent_hash);
+    }
+
+    public function test_atomic_paper_registration_rejects_a_stale_document_without_writes(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $this->database->getConnection()->table('legal_archive_documents')->where('id', $document->id)->update(['lock_version' => 1]);
+
+        try {
+            $this->service->registerPaperOriginalForDocument($document, $version, $actor, new PaperOriginalData(
+                new DateTimeImmutable('2026-01-15'), $this->signerSet('Иван'), 'Шкаф 1', 'atomic-stale', authorityConfirmed: true, expectedDocumentLockVersion: 0,
+            ));
+            self::fail('A stale document must not be registered.');
+        } catch (\App\Services\LegalArchive\LegalArchiveLockConflict $error) {
+            self::assertSame((int) $document->id, $error->documentId);
+        }
+
+        self::assertSame(0, $this->database->getConnection()->table('legal_signature_requests')->count());
+        self::assertSame(0, $this->database->getConnection()->table('legal_document_signatures')->count());
+        self::assertSame(1, (int) $document->refresh()->lock_version);
+        self::assertSame('approved', $document->lifecycle_status);
+        self::assertSame('uploaded', $version->refresh()->status);
+        self::assertSame([], $this->audit->events);
+    }
+
+    public function test_atomic_paper_registration_requires_both_permissions_before_writing(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        foreach (['request_signature', 'sign'] as $deniedAbility) {
+            $access = $this->createMock(LegalDocumentAuthorizer::class);
+            $access->method('authorize')->willReturnCallback(static function (User $user, LegalArchiveDocument $target, string $ability) use ($deniedAbility): void {
+                if ($ability === $deniedAbility) {
+                    throw new DomainException('denied');
+                }
+            });
+            $service = new LegalDocumentSignatureService(
+                new DisabledElectronicSignatureProvider, $access, $this->audit, $this->storage, $this->database->getConnection(),
+            );
+            try {
+                $service->registerPaperOriginalForDocument($document, $version, $actor, new PaperOriginalData(
+                    new DateTimeImmutable('2026-01-15'), $this->signerSet('Иван'), 'Шкаф 1', 'atomic-denied-'.$deniedAbility, authorityConfirmed: true, expectedDocumentLockVersion: 0,
+                ));
+                self::fail('Registration must require '.$deniedAbility.'.');
+            } catch (DomainException $error) {
+                self::assertSame('denied', $error->getMessage());
+            }
+            self::assertSame(0, $this->database->getConnection()->table('legal_signature_requests')->count());
+            self::assertSame(0, $this->database->getConnection()->table('legal_document_signatures')->count());
+            self::assertSame(0, (int) $document->refresh()->lock_version);
+            self::assertSame('approved', $document->lifecycle_status);
+            self::assertSame('uploaded', $version->refresh()->status);
+            self::assertSame([], $this->audit->events);
+        }
+    }
+
+    public function test_atomic_paper_registration_rejects_another_documents_version_without_writes(): void
+    {
+        [$document, , $actor] = $this->fixture();
+        [, $otherVersion] = $this->fixture();
+        try {
+            $this->service->registerPaperOriginalForDocument($document, $otherVersion, $actor, new PaperOriginalData(
+                new DateTimeImmutable('2026-01-15'), $this->signerSet('Иван'), 'Шкаф 1', 'atomic-foreign', authorityConfirmed: true, expectedDocumentLockVersion: 0,
+            ));
+            self::fail('A version from another document must not be registered.');
+        } catch (DomainException $error) {
+            self::assertSame('legal_workflow_version_not_ready', $error->getMessage());
+        }
+        self::assertSame(0, $this->database->getConnection()->table('legal_signature_requests')->count());
+        self::assertSame(0, $this->database->getConnection()->table('legal_document_signatures')->count());
+    }
+
     public function test_paper_original_artifact_keeps_upload_lease_until_the_registered_signature_references_its_current_key(): void
     {
         [$document, $version, $actor] = $this->fixture();
@@ -1572,6 +1760,12 @@ final class ManualOriginalRegistrationTest extends TestCase
     private function schema(): void
     {
         $schema = $this->database->schema();
+        $schema->create('legal_archive_document_type_profiles', static function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->unsignedBigInteger('organization_id');
+            $table->string('code');
+            $table->boolean('is_active');
+        });
         $schema->create('organizations', static function (Blueprint $table): void {
             $table->id();
             $table->string('name');
