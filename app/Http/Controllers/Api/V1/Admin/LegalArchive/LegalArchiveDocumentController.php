@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin\LegalArchive;
 
-use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveDocumentIndexRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveLockRequest;
@@ -17,6 +16,7 @@ use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
+use App\Services\LegalArchive\Audit\LegalDocumentTimelineService;
 use App\Services\LegalArchive\ContractLegalDocumentAccessResolver;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorAvailability;
 use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
@@ -28,9 +28,9 @@ use App\Services\LegalArchive\LegalDocumentCreateFailureReporter;
 use App\Services\LegalArchive\LegalDocumentCreateInProgress;
 use App\Services\LegalArchive\Obligations\LegalDocumentObligationExecutionService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Auth\Access\AuthorizationException;
 use Throwable;
 
 use function trans_message;
@@ -344,18 +344,16 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
         }
     }
 
-    public function timeline(Request $request, string $legalDocument): JsonResponse
+    public function timeline(Request $request, LegalDocumentTimelineService $timeline, string $legalDocument): JsonResponse
     {
         try {
             $found = $this->requiredDocument($request, $legalDocument);
-            $actor = $this->actor($request);
-            $this->access->authorizePermission($actor, $found, 'legal_archive.audit.view');
-            $events = ImmutableAuditEvent::query()
-                ->where('organization_id', (int) $found->organization_id)
-                ->where('domain', 'legal_document')
-                ->where('subject_id', (string) $found->id)
-                ->orderByDesc('sequence_id')
-                ->paginate(max(10, min((int) $request->integer('per_page', 50), 100)));
+            $events = $timeline->paginate(
+                $found,
+                $this->actor($request),
+                max(1, $request->integer('page', 1)),
+                max(10, min($request->integer('per_page', 50), 100)),
+            );
 
             return AdminResponse::paginated($events->items(), [
                 'current_page' => $events->currentPage(),

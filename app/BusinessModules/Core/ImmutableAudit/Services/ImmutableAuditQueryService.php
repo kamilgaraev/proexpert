@@ -16,6 +16,15 @@ final class ImmutableAuditQueryService
         private readonly ImmutableAuditIntegrityService $integrity,
     ) {}
 
+    public function paginateActivity(ImmutableAuditEventFilters $filters): LengthAwarePaginator
+    {
+        return $this->baseQuery($filters)
+            ->select(['id', 'action', 'result', 'actor_type', 'actor_user_id', 'actor_snapshot', 'occurred_at'])
+            ->with('actor:id,name')
+            ->orderByDesc('sequence_id')
+            ->paginate(min(100, max(1, $filters->perPage)), ['*'], 'page', max(1, $filters->page));
+    }
+
     public function paginate(ImmutableAuditEventFilters $filters): LengthAwarePaginator
     {
         return $this->baseQuery($filters)

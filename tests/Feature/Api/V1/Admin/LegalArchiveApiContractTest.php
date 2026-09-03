@@ -92,6 +92,7 @@ final class LegalArchiveApiContractTest extends TestCase
             'admin.legal-archive.documents.files.store' => 'authorize:legal_archive.files.upload',
             'admin.legal-archive.workflow.submit' => 'authorize:legal_archive.workflow.submit',
             'admin.legal-archive.documents.available-actions' => 'authorize:legal_archive.workflow.view',
+            'admin.legal-archive.documents.timeline' => 'authorize:legal_archive.audit.view',
             'admin.legal-archive.signatures.requests.store' => 'authorize:legal_archive.signatures.request',
             'admin.legal-archive.signatures.index' => 'authorize:legal_archive.signatures.view',
             'admin.legal-archive.signatures.verification-history' => 'authorize:legal_archive.signatures.view',
@@ -108,6 +109,76 @@ final class LegalArchiveApiContractTest extends TestCase
             self::assertContains('admin.response', $route->gatherMiddleware());
             self::assertContains($permission, $route->gatherMiddleware());
         }
+    }
+
+    public function test_document_timeline_uses_recorded_domain_and_exposes_only_readable_scoped_history(): void
+    {
+        Schema::connection('legal_api_contract')->create('immutable_audit_events', static function (Blueprint $table): void {
+            $table->uuid('id')->unique();
+            $table->bigIncrements('sequence_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->string('domain');
+            $table->string('subject_type');
+            $table->string('subject_id');
+            $table->string('action');
+            $table->string('result')->default('success');
+            $table->string('actor_type')->default('user');
+            $table->unsignedBigInteger('actor_user_id')->nullable();
+            $table->jsonb('actor_snapshot')->nullable();
+            $table->timestamp('occurred_at');
+            $table->jsonb('domain_context')->nullable();
+        });
+        DB::table('legal_archive_documents')->insert($this->documentRow(42, 7, 'Учебный договор'));
+        $event = [
+            'organization_id' => 7, 'domain' => 'legal_archive', 'subject_type' => 'legal_document',
+            'subject_id' => '42', 'action' => 'archived', 'actor_user_id' => 5,
+            'actor_snapshot' => json_encode(['name' => 'Иван Петров', 'email' => 'private@example.invalid']),
+            'domain_context' => json_encode(['token' => 'must-not-be-exposed']),
+            'occurred_at' => '2026-09-03 10:00:00',
+        ];
+        for ($index = 0; $index < 11; $index++) {
+            DB::table('immutable_audit_events')->insert([...$event, 'id' => (string) \Illuminate\Support\Str::uuid()]);
+        }
+        foreach ([['organization_id' => 8], ['subject_id' => '99'], ['subject_type' => 'contract'], ['domain' => 'legal_document']] as $foreign) {
+            DB::table('immutable_audit_events')->insert([...$event, ...$foreign, 'id' => (string) \Illuminate\Support\Str::uuid()]);
+        }
+        $actor = $this->actor();
+        $response = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42/timeline?per_page=10', 'GET'), $actor);
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+        $body = $response->getData(true);
+        self::assertSame(11, $body['meta']['total']);
+        self::assertCount(10, $body['data']);
+        self::assertSame('Документ переведён в архив', $body['data'][0]['action_label']);
+        self::assertSame('Иван Петров', $body['data'][0]['actor_name']);
+        self::assertSame(['id', 'action_label', 'actor_name', 'occurred_at', 'result_label'], array_keys($body['data'][0]));
+        self::assertStringNotContainsString('must-not-be-exposed', (string) $response->getContent());
+        self::assertStringNotContainsString('private@example.invalid', (string) $response->getContent());
+        $second = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42/timeline?per_page=10&page=2', 'GET'), $actor)->getData(true);
+        self::assertCount(1, $second['data']);
+        self::assertEmpty(array_intersect(array_column($body['data'], 'id'), array_column($second['data'], 'id')));
+        DB::table('users')->insert(['id' => 5, 'name' => 'Новое имя пользователя', 'email' => 'current@example.invalid', 'is_active' => true]);
+        foreach ([
+            ['action' => 'restored', 'actor_snapshot' => '[]'],
+            ['action' => 'future_internal_action', 'actor_snapshot' => '[]', 'actor_user_id' => null, 'actor_type' => 'system', 'result' => 'future_result'],
+            ['actor_snapshot' => '{"name": ["invalid"]}', 'actor_user_id' => null, 'result' => 'denied'],
+        ] as $variant) {
+            DB::table('immutable_audit_events')->insert([...$event, ...$variant, 'id' => (string) \Illuminate\Support\Str::uuid()]);
+        }
+        $latest = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42/timeline?per_page=1000&page=-1', 'GET'), $actor)->getData(true);
+        self::assertSame(100, $latest['meta']['per_page']);
+        self::assertSame(1, $latest['meta']['current_page']);
+        self::assertSame('Исполнитель не указан', $latest['data'][0]['actor_name']);
+        self::assertSame('Доступ запрещён', $latest['data'][0]['result_label']);
+        self::assertSame('Система МОСТ', $latest['data'][1]['actor_name']);
+        self::assertSame('Событие документа', $latest['data'][1]['action_label']);
+        self::assertSame('Результат не указан', $latest['data'][1]['result_label']);
+        self::assertSame('Новое имя пользователя', $latest['data'][2]['actor_name']);
+        self::assertSame('Документ восстановлен из архива', $latest['data'][2]['action_label']);
+        self::assertSame('Иван Петров', $latest['data'][3]['actor_name']);
+        DB::table('legal_archive_documents')->insert($this->documentRow(43, 8, 'Чужой документ'));
+        self::assertSame(404, $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/43/timeline', 'GET'), $actor)->getStatusCode());
+        $this->deniedPermissions = ['legal_archive.audit.view'];
+        self::assertSame(403, $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42/timeline', 'GET'), $actor)->getStatusCode());
     }
 
     public function test_domain_specific_route_parameters_bypass_global_bindings_and_reach_real_controller(): void
