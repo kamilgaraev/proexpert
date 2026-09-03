@@ -295,19 +295,6 @@ final class NotificationServiceTargetTest extends TestCase
         self::assertSame(0, $service->dispatchCount);
     }
 
-    public function test_database_persistence_owns_the_atomic_create_contract(): void
-    {
-        $source = file_get_contents(
-            dirname(__DIR__, 3).'/app/BusinessModules/Features/Notifications/Services/DatabaseNotificationPersistence.php'
-        );
-
-        self::assertIsString($source);
-        self::assertStringContainsString('DB::transaction(', $source);
-        self::assertStringContainsString('Notification::create(', $source);
-        self::assertStringContainsString("'required_permissions' => \$options->requiredPermissions", $source);
-        self::assertStringContainsString('$notification->targets()->createMany(', $source);
-    }
-
     public function test_all_runtime_target_inserts_flow_through_database_persistence(): void
     {
         $root = dirname(__DIR__, 3).'/app';

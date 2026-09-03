@@ -18,6 +18,7 @@ use App\Models\User;
 use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
 
@@ -47,6 +48,36 @@ class NotificationService
         string|array|null $requiredPermissions = null,
         string|array|null $interfaces = null,
     ): Notification {
+        return $this->sendWithId(
+            null,
+            $user,
+            $type,
+            $data,
+            $notificationType,
+            $priority,
+            $channels,
+            $organizationId,
+            $requiredPermissions,
+            $interfaces,
+        );
+    }
+
+    public function sendWithId(
+        ?string $notificationId,
+        User $user,
+        string $type,
+        array $data,
+        ?string $notificationType = 'system',
+        ?string $priority = 'normal',
+        ?array $channels = null,
+        ?int $organizationId = null,
+        string|array|null $requiredPermissions = null,
+        string|array|null $interfaces = null,
+    ): Notification {
+        if ($notificationId !== null && ! Str::isUuid($notificationId)) {
+            throw new DomainException('notification_identifier_invalid');
+        }
+
         $notificationType = $notificationType ?? 'system';
         $priority = $priority ?? 'normal';
         $resolvedInterfaces = $this->targetResolver->resolve(
@@ -82,6 +113,7 @@ class NotificationService
                     $resolvedInterfaces,
                     $organizationId,
                     $requiredPermissions,
+                    $notificationId,
                 ),
             );
         }
@@ -103,6 +135,7 @@ class NotificationService
                     $resolvedInterfaces,
                     $organizationId,
                     $requiredPermissions,
+                    $notificationId,
                 ),
                 false,
             );
@@ -137,6 +170,7 @@ class NotificationService
                 $resolvedInterfaces,
                 $organizationId,
                 $requiredPermissions,
+                $notificationId,
             ),
             true,
         );

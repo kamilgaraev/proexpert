@@ -11,5 +11,6 @@ final readonly class NotificationDeliveryOptions
         public array $interfaces,
         public ?int $organizationId,
         public array $requiredPermissions,
+        public ?string $notificationId = null,
     ) {}
 }

@@ -11,7 +11,6 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowDecision;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Models\User;
-use App\Notifications\LegalArchive\LegalDocumentApprovalRequiredNotification;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
 use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
@@ -231,11 +230,10 @@ final class LegalDocumentWorkflowService
                 return $instance->load('steps', 'decisions');
             }, 3);
             $document = $document->fresh();
-            foreach ($instance->steps->where('status', 'active') as $step) {
-                if ((string) $step->actor_type === 'user' && ctype_digit((string) $step->actor_reference)
-                    && ($recipient = User::query()->find((int) $step->actor_reference)) instanceof User
-                    && $document instanceof LegalArchiveDocument) {
-                    ($this->notifications ?? new LegalDocumentNotificationPublisher)->publish($document, $recipient, 'workflow-step:'.$step->id.':'.$recipient->id, new LegalDocumentApprovalRequiredNotification($document));
+            if ($document instanceof LegalArchiveDocument && $instance->status === 'in_progress') {
+                $notifier = new LegalWorkflowApprovalNotifier($this->actors, $this->notifications ?? new LegalDocumentNotificationPublisher);
+                foreach ($instance->steps->where('status', 'active') as $step) {
+                    $notifier->publishForStep($document, $step);
                 }
             }
 
@@ -481,12 +479,10 @@ final class LegalDocumentWorkflowService
             return $instance->refresh()->load('steps', 'decisions');
         }, 3);
         $document = LegalArchiveDocument::query()->find($updated->document_id);
-        if ($document instanceof LegalArchiveDocument) {
+        if ($document instanceof LegalArchiveDocument && $updated->status === 'in_progress') {
+            $notifier = new LegalWorkflowApprovalNotifier($this->actors, $this->notifications ?? new LegalDocumentNotificationPublisher);
             foreach ($updated->steps->where('status', 'active') as $activeStep) {
-                if ((string) $activeStep->actor_type === 'user' && ctype_digit((string) $activeStep->actor_reference)
-                    && ($recipient = User::query()->find((int) $activeStep->actor_reference)) instanceof User) {
-                    ($this->notifications ?? new LegalDocumentNotificationPublisher)->publish($document, $recipient, 'workflow-step:'.$activeStep->id.':'.$recipient->id, new LegalDocumentApprovalRequiredNotification($document));
-                }
+                $notifier->publishForStep($document, $activeStep);
             }
         }
 

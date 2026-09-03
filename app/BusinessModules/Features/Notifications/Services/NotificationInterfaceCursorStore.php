@@ -41,7 +41,10 @@ final class NotificationInterfaceCursorStore
         DB::table('notification_interface_cursors')->upsert(
             $rows,
             ['recipient_user_id', 'interface'],
-            ['latest_sequence', 'updated_at']
+            [
+                'latest_sequence' => DB::raw('GREATEST(notification_interface_cursors.latest_sequence, EXCLUDED.latest_sequence)'),
+                'updated_at',
+            ]
         );
     }
 }
