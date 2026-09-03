@@ -21,4 +21,16 @@ final class LegalDocumentProfileAssignmentGuard
             throw new DomainException('profile_correction_not_allowed');
         }
     }
+
+    public function assertCompatible(LegalArchiveDocument $document, ?LegalDocumentProfile $current, LegalDocumentProfile $next): void
+    {
+        if (($current !== null && $current->baseCode !== $next->baseCode)
+            || ($current === null && (string) $document->document_type !== $next->category)) {
+            throw new DomainException('profile_base_change_not_allowed');
+        }
+
+        if (array_diff_key((array) $document->structured_fields, $next->schema, ['obligations' => true]) !== []) {
+            throw new DomainException('profile_existing_fields_incompatible');
+        }
+    }
 }

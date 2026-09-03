@@ -656,11 +656,18 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         ];
 
         $payload = Arr::only($data, $allowed);
-        if (isset($data['type_profile_code'])) {
+        if (array_key_exists('type_profile_code', $data)) {
             $profile = $this->profiles->find($organizationId, (string) $data['type_profile_code']);
+            if ($forUpdate && $currentDocument !== null
+                && (string) $currentDocument->type_profile_code !== $profile->code) {
+                $currentCode = (string) $currentDocument->type_profile_code;
+                $currentProfile = $this->profiles->findMany($organizationId, [$currentCode])[$currentCode] ?? null;
+                (new LegalDocumentProfileAssignmentGuard)->assertCompatible($currentDocument, $currentProfile, $profile);
+                $data['structured_fields'] = (array) ($data['structured_fields'] ?? $currentDocument->structured_fields ?? []);
+            }
             $payload['type_profile_code'] = $profile->code;
             $payload['document_type'] = $profile->category;
-            if (! array_key_exists('confidentiality_level', $data)) {
+            if (! $forUpdate && ! array_key_exists('confidentiality_level', $data)) {
                 $payload['confidentiality_level'] = $profile->confidentialityLevel;
             }
             if (! array_key_exists('structured_fields', $data) && is_array($data['metadata'] ?? null)) {
