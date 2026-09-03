@@ -37,6 +37,56 @@ final class LegalDocumentFileService
         $this->aggregateLock = $aggregateLock ?? new LegalDocumentAggregateLock;
     }
 
+    public function createFile(
+        LegalArchiveDocument $document,
+        UploadedFile $upload,
+        VersionInput $input,
+        string $role,
+        string $title,
+    ): LegalArchiveDocumentFile {
+        $this->policy->assertUploadAllowed($upload);
+        $file = $this->database()->transaction(function () use ($document, $input, $role, $title): LegalArchiveDocumentFile {
+            $lockedDocument = $this->aggregateLock->lockDocument(
+                $this->database(),
+                (int) $document->organization_id,
+                (int) $document->id,
+            );
+            if ($input->expectedDocumentLockVersion !== null
+                && (int) $lockedDocument->lock_version !== $input->expectedDocumentLockVersion) {
+                throw LegalArchiveLockConflict::forDocument((int) $lockedDocument->id, (int) $lockedDocument->lock_version);
+            }
+            $this->assertCurrentVersionRotationAllowed($lockedDocument);
+
+            return $lockedDocument->files()->create([
+                'organization_id' => (int) $lockedDocument->organization_id,
+                'role' => $role,
+                'title' => $title,
+                'sort_order' => (int) $lockedDocument->files()->max('sort_order') + 1,
+                'is_required' => false,
+            ]);
+        }, 3);
+
+        try {
+            $this->addVersion($file, $upload, $input);
+        } catch (Throwable $error) {
+            $this->database()->transaction(function () use ($document, $file): void {
+                $lockedDocument = $this->aggregateLock->lockDocument(
+                    $this->database(),
+                    (int) $document->organization_id,
+                    (int) $document->id,
+                );
+                $lockedFile = $this->aggregateLock->lockFile($this->database(), $lockedDocument, (int) $file->id);
+                if ($lockedFile->versions()->doesntExist()) {
+                    $lockedFile->delete();
+                }
+            }, 3);
+
+            throw $error;
+        }
+
+        return $file->refresh()->load('currentVersion', 'versions');
+    }
+
     public function addVersion(
         LegalArchiveDocumentFile $file,
         UploadedFile $upload,
@@ -749,7 +799,7 @@ final class LegalDocumentFileService
         Throwable $exception,
     ): void {
         $now = now();
-        $debtKey = LegalCleanupDebtKey::for($organizationId, $storagePath, null);
+        $debtKey = LegalCleanupDebtKey::for($organizationId, $storagePath);
         $row = [
             'organization_id' => $organizationId,
             'storage_path' => $storagePath,

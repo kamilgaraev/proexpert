@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\LegalArchive\Workflow;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\Services\LegalArchive\Files\LegalDocumentFileRequirements;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfile;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
@@ -27,6 +28,12 @@ final readonly class LegalDocumentWorkflowReadinessGuard
             $this->profileCode($document),
         );
         $this->validator->validate($profile, (array) $document->structured_fields);
+        $missing = $this->missingAdditionalFilesFor(collect([$document]), [
+            (int) $document->organization_id => [$this->profileCode($document) => $profile],
+        ]);
+        if (isset($missing[(int) $document->id])) {
+            throw ValidationException::withMessages(['files' => $this->requiredFilesBlocker()]);
+        }
     }
 
     public function blocker(LegalArchiveDocument $document): ?string
@@ -51,6 +58,7 @@ final readonly class LegalDocumentWorkflowReadinessGuard
             return $this->allBlocked($documents);
         }
 
+        $missingFiles = $this->missingAdditionalFilesFor($documents, $profiles);
         $blockers = [];
         foreach ($documents as $document) {
             $profile = $profiles[(int) $document->organization_id][$this->profileCode($document)] ?? null;
@@ -65,6 +73,9 @@ final readonly class LegalDocumentWorkflowReadinessGuard
             } catch (ValidationException|InvalidArgumentException) {
                 $blockers[(int) $document->id] = $this->requiredRequisitesBlocker();
             }
+            if (! isset($blockers[(int) $document->id]) && isset($missingFiles[(int) $document->id])) {
+                $blockers[(int) $document->id] = $this->requiredFilesBlocker();
+            }
         }
 
         return $blockers;
@@ -73,6 +84,20 @@ final readonly class LegalDocumentWorkflowReadinessGuard
     private function profileCode(LegalArchiveDocument $document): string
     {
         return trim((string) ($document->type_profile_code ?: $document->document_type));
+    }
+
+    public function missingAdditionalFilesFor(Collection $documents, array $profiles): array
+    {
+        return (new LegalDocumentFileRequirements)->missingFor($documents, $profiles);
+    }
+
+    private function requiredFilesBlocker(): string
+    {
+        if (Container::getInstance()->bound('translator')) {
+            return trans_message('legal_archive.workflow.blockers.required_files_missing');
+        }
+
+        return 'legal_archive.workflow.blockers.required_files_missing';
     }
 
     /**

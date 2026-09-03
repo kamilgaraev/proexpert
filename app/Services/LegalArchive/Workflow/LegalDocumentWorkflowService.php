@@ -15,6 +15,7 @@ use App\Notifications\LegalArchive\LegalDocumentApprovalRequiredNotification;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
 use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
+use App\Services\LegalArchive\Files\LegalDocumentFileRequirements;
 use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\LegalArchive\LegalDocumentNotificationPublisher;
@@ -223,6 +224,7 @@ final class LegalDocumentWorkflowService
                     'workflow_instance_id' => (int) $instance->id,
                     'document_version_id' => $versionId,
                     'document_content_hash' => (string) $version->content_hash,
+                    'document_files' => (new LegalDocumentFileRequirements)->snapshotFor($lockedDocument),
                     'snapshot_hash' => $snapshot->hash,
                 ]);
 

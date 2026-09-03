@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\Services\LegalArchive\Files\LegalDocumentFileRequirements;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Models\Project;
@@ -578,9 +579,11 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             )->filter()->unique()->values()->all(),
         )->all();
         $profilesByOrganization = $this->profiles->findManyForOrganizations($codesByOrganization);
+        $fileRequirements = (new LegalDocumentFileRequirements)->forDocuments($documents, $profilesByOrganization);
         foreach ($documents->groupBy('organization_id') as $organizationId => $ownedDocuments) {
             $profiles = $profilesByOrganization[(int) $organizationId] ?? [];
             foreach ($ownedDocuments as $document) {
+                $document->setAttribute('api_file_requirements', $fileRequirements[(int) $document->id] ?? []);
                 $code = trim((string) $document->type_profile_code);
                 $profile = $profiles[$code] ?? null;
                 if ($profile !== null) {
@@ -591,6 +594,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                         'label' => $profile->label,
                         'schema' => $profile->schema,
                         'required_fields' => $profile->requiredFields,
+                        'required_file_roles' => $profile->requiredFileRoles,
                         'requires_signature' => $profile->requiresSignature,
                         'allowed_signature_kinds' => $profile->allowedSignatureKinds,
                         'workflow_template_id' => $profile->workflowTemplateId,

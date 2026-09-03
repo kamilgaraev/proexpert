@@ -3,6 +3,13 @@
 declare(strict_types=1);
 
 return [
+    'required_file_labels' => [
+        'appendix' => 'Приложение',
+        'attachment' => 'Дополнительный файл',
+        'specification' => 'Спецификация',
+        'power_of_attorney' => 'Доверенность',
+        'other' => 'Обязательное вложение :number',
+    ],
     'commands' => [
         'organization_required' => 'Укажите корректный идентификатор организации.',
         'message_required' => 'Для повторной отправки укажите идентификатор сообщения.',
@@ -163,6 +170,7 @@ return [
             'permission_denied' => 'Недостаточно прав для этого действия',
             'version_not_ready' => 'Актуальная версия документа ещё не готова',
             'required_requisites_missing' => 'Заполните обязательные реквизиты и условия документа',
+            'required_files_missing' => 'Добавьте обязательные файлы и дождитесь завершения их проверки безопасности',
             'route_not_configured' => 'Для этого вида документа не настроен маршрут согласования',
             'obligation_updated' => 'Обязательство обновлено',
             'obligation_responsible_invalid' => 'Ответственный должен быть активным участником организации',
