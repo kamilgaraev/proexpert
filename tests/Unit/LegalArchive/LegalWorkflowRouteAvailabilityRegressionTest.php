@@ -46,6 +46,54 @@ final class LegalWorkflowRouteAvailabilityRegressionTest extends TestCase
         self::assertContains('legal_archive.workflow.blockers.route_not_configured', $submit->blockers);
     }
 
+    public function test_frozen_document_does_not_offer_resubmission_or_a_new_version(): void
+    {
+        $actor = new RouteAvailabilityTestUser;
+        $actor->forceFill(['id' => 8, 'current_organization_id' => 15]);
+        $resolver = new LegalWorkflowActionResolver(
+            new LegalWorkflowAuthorization,
+            new LegalWorkflowActorResolver,
+            readiness: new LegalDocumentWorkflowReadinessGuard(
+                new LegalDocumentProfileRegistry(
+                    static fn (): ?array => null,
+                    require dirname(__DIR__, 3).'/config/legal-document-profiles.php',
+                ),
+                new LegalDocumentProfileValidator,
+            ),
+            templateAvailability: new FixedTemplateAvailability(true),
+        );
+
+        foreach (['approved', 'signing', 'partially_signed', 'signed', 'effective', 'active', 'completed', 'archived'] as $state) {
+            $document = $this->readyDocument();
+            $document->forceFill(['lifecycle_status' => $state]);
+            $submit = $resolver->forMany($actor, collect([$document]))[42]->action('submit');
+
+            self::assertFalse($submit->enabled, $state);
+            self::assertContains('legal_archive.workflow.blockers.document_frozen', $submit->blockers, $state);
+            self::assertNotContains('legal_archive.workflow.blockers.new_version_required', $submit->blockers, $state);
+        }
+
+        $document = $this->readyDocument();
+        $document->forceFill(['approval_status' => 'approved', 'lifecycle_status' => null]);
+        $instance = new \App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
+        $instance->forceFill(['id' => 9, 'status' => 'approved', 'document_version_id' => 73, 'document_content_hash' => str_repeat('a', 64)]);
+        $instance->setRelation('steps', collect());
+        $document->setRelation('latestWorkflowInstance', $instance);
+        $submit = $resolver->forMany($actor, collect([$document]))[42]->action('submit');
+
+        self::assertFalse($submit->enabled);
+        self::assertContains('legal_archive.workflow.blockers.document_frozen', $submit->blockers);
+        self::assertNotContains('legal_archive.workflow.blockers.new_version_required', $submit->blockers);
+
+        $document->forceFill(['approval_status' => 'returned', 'lifecycle_status' => 'draft']);
+        $instance->forceFill(['status' => 'returned']);
+        $submit = $resolver->forMany($actor, collect([$document]))[42]->action('submit');
+
+        self::assertFalse($submit->enabled);
+        self::assertContains('legal_archive.workflow.blockers.new_version_required', $submit->blockers);
+        self::assertNotContains('legal_archive.workflow.blockers.document_frozen', $submit->blockers);
+    }
+
     private function readyDocument(): LegalArchiveDocument
     {
         $document = new LegalArchiveDocument;

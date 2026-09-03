@@ -132,4 +132,39 @@ final class LegalArchiveDocumentResourceTest extends TestCase
         $unsupported = (new LegalArchiveDocumentResource($document))->resolve(Request::create('/'));
         $this->assertFalse($unsupported['editor']['enabled']);
     }
+
+    public function test_card_and_mutation_guard_agree_on_frozen_document_states(): void
+    {
+        $connection = $this->createMock(\Illuminate\Database\Connection::class);
+        $connection->expects(self::never())->method('getSchemaBuilder');
+        $guard = new \App\Services\LegalArchive\Editor\LegalDocumentEditGuard($connection);
+
+        foreach ([
+            ['draft', null, false],
+            ['draft', 'returned', false],
+            [null, 'approved', true],
+            ['approved', null, true],
+            ['signing', null, true],
+            ['partially_signed', null, true],
+            ['signed', null, true],
+            ['effective', null, true],
+            ['active', null, true],
+            ['completed', null, true],
+            ['archived', null, true],
+        ] as [$lifecycle, $approval, $frozen]) {
+            $document = new LegalArchiveDocument(['document_type' => 'contract']);
+            $document->forceFill(['id' => 42, 'lifecycle_status' => $lifecycle, 'approval_status' => $approval]);
+            $payload = (new LegalArchiveDocumentResource($document))->resolve(Request::create('/'));
+            self::assertSame($frozen, $payload['lifecycle']['editing_frozen']);
+
+            if ($frozen) {
+                try {
+                    $guard->assertVersionMutationAllowed($document);
+                    self::fail('Frozen document accepted a file mutation');
+                } catch (\DomainException $exception) {
+                    self::assertSame('legal_document_editing_frozen', $exception->getMessage());
+                }
+            }
+        }
+    }
 }
