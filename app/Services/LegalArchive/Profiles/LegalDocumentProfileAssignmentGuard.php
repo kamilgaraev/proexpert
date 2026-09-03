@@ -11,6 +11,12 @@ final class LegalDocumentProfileAssignmentGuard
 {
     public function canAssign(LegalArchiveDocument $document): bool
     {
+        if ($document->lifecycle_status === null) {
+            return $document->status === 'draft'
+                && $document->approval_status === null
+                && $document->signature_status === null;
+        }
+
         return (string) $document->lifecycle_status === 'draft'
             && (string) $document->approval_status !== 'approved';
     }
