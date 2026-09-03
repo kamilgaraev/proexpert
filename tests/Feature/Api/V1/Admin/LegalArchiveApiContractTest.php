@@ -281,7 +281,7 @@ final class LegalArchiveApiContractTest extends TestCase
         self::assertSame(403, $denied->getStatusCode());
     }
 
-    public function test_draft_profile_change_preserves_document_data_and_exposes_assignment(): void
+    public function test_uninitialized_draft_profile_change_preserves_document_data_and_exposes_assignment(): void
     {
         $this->isolateKernelAuthentication([
             ['PATCH', '/api/v1/admin/legal-archive/documents/42'],
@@ -291,6 +291,9 @@ final class LegalArchiveApiContractTest extends TestCase
             ...$this->documentRow(42, 7, 'Поставка крепежа'),
             'structured_fields' => json_encode(['subject' => 'Поставка крепежа'], JSON_THROW_ON_ERROR),
             'retention_policy' => 'Правило организации',
+            'lifecycle_status' => null,
+            'approval_status' => null,
+            'signature_status' => null,
         ]);
         $this->app->make(LegalDocumentTypeProfileService::class)->create(7, [
             'code' => 'qa.supply.appendix',
