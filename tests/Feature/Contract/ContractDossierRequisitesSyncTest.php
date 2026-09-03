@@ -12,9 +12,12 @@ use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
 use App\Services\Contract\ContractSideMutationService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use Mockery;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\TestCase;
@@ -93,6 +96,85 @@ final class ContractDossierRequisitesSyncTest extends TestCase
         self::assertSame('2026-09-03', $contract->fresh()->date->toDateString());
         self::assertSame('2026-09-03', $document->fresh()->document_date->toDateString());
         self::assertSame($originalLock, (int) $document->fresh()->lock_version);
+    }
+
+    #[DataProvider('activeProcesses')]
+    public function test_active_legal_process_preserves_document_requisites(string $process): void
+    {
+        [$organization, $project, $contractor, $service, $contract, $document] = $this->fixture();
+        $this->activeProcess($document, $process);
+        $originalLock = (int) $document->lock_version;
+
+        $service->update($contract->id, $organization->id, $this->input($project->id, $contractor->id, '2026-09-04'));
+
+        self::assertSame('2026-09-04', $contract->fresh()->date->toDateString());
+        self::assertSame('2026-09-03', $document->fresh()->document_date->toDateString());
+        self::assertSame($originalLock, (int) $document->fresh()->lock_version);
+    }
+
+    public static function activeProcesses(): array
+    {
+        return [['editor'], ['workflow'], ['signature']];
+    }
+
+    private function activeProcess(LegalArchiveDocument $document, string $process): void
+    {
+        $organizationId = (int) $document->organization_id;
+        $user = User::factory()->create();
+        $hash = str_repeat('a', 64);
+        $timestamps = ['created_at' => now(), 'updated_at' => now()];
+        $fileId = DB::table('legal_archive_document_files')->insertGetId([
+            'document_id' => $document->id, 'organization_id' => $organizationId,
+            'role' => 'main', 'title' => 'Учебный договор', ...$timestamps,
+        ]);
+        $versionId = DB::table('legal_archive_document_versions')->insertGetId([
+            'document_id' => $document->id, 'organization_id' => $organizationId,
+            'document_file_id' => $fileId, 'version_number' => '1', 'is_current' => true,
+            'status' => 'uploaded', 'processing_status' => 'ready',
+            'file_path' => "org-{$organizationId}/legal-archive/test.docx", 'original_filename' => 'test.docx',
+            'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'size_bytes' => 10, 'content_hash' => $hash, 'uploaded_at' => now(), ...$timestamps,
+        ]);
+        DB::table('legal_archive_document_files')->where('id', $fileId)->update(['current_version_id' => $versionId]);
+        $document->update(['current_primary_version_id' => $versionId]);
+
+        if ($process === 'editor') {
+            DB::table('legal_document_editor_sessions')->insert([
+                'id' => (string) Str::uuid(), 'organization_id' => $organizationId,
+                'document_id' => $document->id, 'source_version_id' => $versionId,
+                'document_file_id' => $fileId, 'opened_by_user_id' => $user->id,
+                'provider' => 'test', 'mode' => 'edit', 'status' => 'active', 'generation' => 1,
+                'document_key' => (string) Str::uuid(), 'source_content_hash' => $hash,
+                'expires_at' => now()->addHour(), ...$timestamps,
+            ]);
+        } elseif ($process === 'workflow') {
+            $templateId = DB::table('legal_workflow_templates')->insertGetId([
+                'organization_id' => $organizationId, 'code' => 'test', 'version' => 1,
+                'name' => 'Учебное согласование', 'definition_hash' => $hash,
+                'created_by_user_id' => $user->id, ...$timestamps,
+            ]);
+            DB::table('legal_workflow_instances')->insert([
+                'organization_id' => $organizationId, 'document_id' => $document->id,
+                'document_version_id' => $versionId, 'document_content_hash' => $hash,
+                'template_id' => $templateId, 'template_version' => 1, 'template_definition_hash' => $hash,
+                'template_snapshot' => '{}', 'snapshot_hash' => $hash, 'client_request_hash' => $hash,
+                'request_hash' => $hash, 'idempotency_key' => (string) Str::uuid(), 'status' => 'in_progress',
+                'submitted_by_user_id' => $user->id, 'submitted_at' => now(), ...$timestamps,
+            ]);
+        } else {
+            DB::table('legal_signature_requests')->insert([
+                'organization_id' => $organizationId, 'document_id' => $document->id,
+                'document_version_id' => $versionId, 'method' => 'provider_electronic', 'provider' => 'test',
+                'status' => 'pending', 'signed_content_hash' => $hash,
+                'signers' => json_encode([['user_id' => $user->id]], JSON_THROW_ON_ERROR),
+                'signer_snapshot_hash' => $hash, 'profile_code' => 'contract.lease', 'profile_lock_version' => 0,
+                'allowed_signature_kinds' => '["detached_cades"]', 'required_signature_kinds' => '[]',
+                'allowed_signature_formats' => '["p7s"]', 'requirement_snapshot_hash' => $hash,
+                'requirement_group_key' => $hash, 'correlation_id' => $hash,
+                'idempotency_key' => (string) Str::uuid(), 'request_hash' => $hash,
+                'requested_by_user_id' => $user->id, 'requested_at' => now(), ...$timestamps,
+            ]);
+        }
     }
 
     private function fixture(array $attributes = [], bool $failDocumentAudit = false): array
