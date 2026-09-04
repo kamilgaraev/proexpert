@@ -684,6 +684,15 @@ trait ActingTestSchema
             $table->softDeletes();
         });
 
+        Schema::create('payment_transactions', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('payment_document_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->decimal('amount', 15, 2);
+            $table->string('currency')->default('RUB');
+            $table->string('status')->default('completed');
+        });
+
         Schema::create('performance_act_completed_works', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('performance_act_id');

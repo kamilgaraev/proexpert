@@ -1156,6 +1156,58 @@ class ActReportsPreviewTest extends TestCase
         ]);
     }
 
+    public function test_act_financial_summary_uses_its_own_ledger_and_net_refunds(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('ACT-LEDGER');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'ACT-LEDGER', 4);
+        $base = [
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'document_type' => 'invoice',
+            'direction' => 'outgoing',
+            'invoiceable_type' => ContractPerformanceAct::class,
+            'invoiceable_id' => $act->id,
+            'amount' => 500,
+            'paid_amount' => 499,
+            'remaining_amount' => 1,
+            'currency' => 'RUB',
+            'status' => 'partially_paid',
+        ];
+        $documentId = DB::table('payment_documents')->insertGetId($base + ['document_number' => 'ACT-OWN']);
+        foreach ([170, -20] as $amount) {
+            DB::table('payment_transactions')->insert([
+                'payment_document_id' => $documentId,
+                'organization_id' => $organization->id,
+                'amount' => $amount,
+                'currency' => 'RUB',
+                'status' => 'completed',
+            ]);
+        }
+        foreach ([
+            ['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id],
+            ['invoiceable_id' => $act->id + 1000],
+            ['organization_id' => $organization->id + 1000],
+            ['status' => 'cancelled'],
+            ['deleted_at' => now()],
+            ['currency' => 'USD'],
+        ] as $index => $overrides) {
+            $ignoredId = DB::table('payment_documents')->insertGetId(array_merge($base, $overrides, ['document_number' => 'IGNORED-'.$index]));
+            DB::table('payment_transactions')->insert([
+                'payment_document_id' => $ignoredId,
+                'organization_id' => $overrides['organization_id'] ?? $organization->id,
+                'amount' => 300,
+                'currency' => $overrides['currency'] ?? 'RUB',
+                'status' => 'completed',
+            ]);
+        }
+        $summary = app(\App\Services\ActReport\ActReportWorkflowService::class)->financialSummary($act);
+        self::assertSame('4000.00', $summary['accepted_amount']);
+        self::assertSame('150.00', $summary['paid_amount']);
+        self::assertSame('3850.00', $summary['debt_amount']);
+    }
+
     public function test_act_can_be_submitted_approved_locked_and_return_financial_summary(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVAL-1');
@@ -1188,8 +1240,8 @@ class ActReportsPreviewTest extends TestCase
         $approve->assertJsonPath('data.status', 'approved');
         $approve->assertJsonPath('data.is_approved', true);
         $approve->assertJsonPath('data.financial_summary.accepted_amount', '4000.00');
-        $approve->assertJsonPath('data.financial_summary.paid_amount', '1500.00');
-        $approve->assertJsonPath('data.financial_summary.debt_amount', '2500.00');
+        $approve->assertJsonPath('data.financial_summary.paid_amount', '0.00');
+        $approve->assertJsonPath('data.financial_summary.debt_amount', '4000.00');
 
         $this->assertDatabaseHas('contract_performance_acts', [
             'id' => $act->id,

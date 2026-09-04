@@ -53,7 +53,7 @@ final readonly class AcceptedProductionCandidateContract
 
     public const FORMULA_HASH = '839ea0b2787a0d73872bf5f7a63292437abaae05abb108ae92731abe3264f06b';
 
-    public const SOURCE_HASH = 'b307333778d12fbdfdbf7efbee632afc511b44d035446845bc3c37e7f889485d';
+    public const SOURCE_HASH = '0a057adb128aca98b7ee83260f1ceb80d2cd13d545cf5e9b1710cd0273dc39c6';
 
     public function filters(): array
     {
