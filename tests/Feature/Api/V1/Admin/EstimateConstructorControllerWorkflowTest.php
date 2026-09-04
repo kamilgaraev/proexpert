@@ -12,13 +12,66 @@ use App\Models\EstimateSection;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 class EstimateConstructorControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_adding_normative_to_approved_estimate_returns_conflict_without_writing(): void
+    {
+        $this->mock(AccessController::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('hasModuleAccess')
+                ->andReturnUsing(static fn (int $organizationId, string $moduleSlug): bool => $moduleSlug === 'budget-estimates');
+        });
+
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project, ['status' => 'approved']);
+        $datasetId = DB::table('estimate_dataset_versions')->insertGetId([
+            'source_type' => 'fsnb',
+            'version_key' => 'approved-estimate-guard',
+            'bucket' => 'tests',
+            'prefix' => 'tests',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $collectionId = DB::table('estimate_norm_collections')->insertGetId([
+            'dataset_version_id' => $datasetId,
+            'code' => 'GUARD',
+            'name' => 'Проверка защиты утверждённой сметы',
+            'norm_type' => 'gesn',
+            'source_file' => 'guard.json',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $normId = DB::table('estimate_norms')->insertGetId([
+            'collection_id' => $collectionId,
+            'code' => 'GUARD-01',
+            'name' => 'Тестовая расценка',
+            'unit' => 'шт.',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/from-estimate-norms", [
+                'items' => [[
+                    'estimate_norm_id' => $normId,
+                    'quantity' => 1,
+                ]],
+            ]);
+
+        $response->assertConflict();
+        $response->assertJsonPath('success', false);
+        $response->assertJsonPath('message', trans_message('estimate.structure_locked'));
+        $this->assertDatabaseMissing('estimate_items', ['estimate_id' => $estimate->id]);
+    }
 
     public function test_bulk_delete_returns_admin_contract_and_stays_inside_current_organization(): void
     {
@@ -167,7 +220,7 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
         return Estimate::query()->create(array_merge([
             'organization_id' => $organization->id,
             'project_id' => $project->id,
-            'number' => 'CONSTR-' . random_int(10000, 99999),
+            'number' => 'CONSTR-'.random_int(10000, 99999),
             'name' => 'Constructor estimate',
             'type' => 'local',
             'status' => 'draft',
@@ -186,7 +239,7 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
             'estimate_id' => $estimate->id,
             'position_number' => '1',
             'item_type' => EstimatePositionItemType::WORK->value,
-            'name' => 'Constructor item ' . random_int(1000, 9999),
+            'name' => 'Constructor item '.random_int(1000, 9999),
             'measurement_unit_id' => $unit->id,
             'quantity' => 1,
             'unit_price' => 1000,
@@ -203,7 +256,7 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
         return EstimateSection::query()->create(array_merge([
             'estimate_id' => $estimate->id,
             'section_number' => '1',
-            'name' => 'Constructor section ' . random_int(1000, 9999),
+            'name' => 'Constructor section '.random_int(1000, 9999),
             'sort_order' => 1,
             'is_summary' => false,
         ], $overrides));
@@ -217,8 +270,8 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
     ): EstimatePositionCatalog {
         return EstimatePositionCatalog::query()->create(array_merge([
             'organization_id' => $organization->id,
-            'name' => 'Catalog item ' . random_int(1000, 9999),
-            'code' => 'catalog-' . random_int(1000, 9999),
+            'name' => 'Catalog item '.random_int(1000, 9999),
+            'code' => 'catalog-'.random_int(1000, 9999),
             'item_type' => EstimatePositionItemType::WORK->value,
             'measurement_unit_id' => $unit->id,
             'unit_price' => 1000,
@@ -233,8 +286,8 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
     {
         return MeasurementUnit::query()->create(array_merge([
             'organization_id' => $organization->id,
-            'name' => 'Constructor unit ' . random_int(1000, 9999),
-            'short_name' => 'cu' . random_int(1000, 9999),
+            'name' => 'Constructor unit '.random_int(1000, 9999),
+            'short_name' => 'cu'.random_int(1000, 9999),
             'type' => 'work',
             'is_default' => false,
             'is_system' => false,

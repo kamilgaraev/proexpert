@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
+use App\BusinessModules\Features\Procurement\Exceptions\IncomingUpdAttachmentException;
 use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptIdempotencyConflictException;
 use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptPaymentException;
 use App\BusinessModules\Features\Procurement\Http\Requests\CancelPurchaseOrderRequest;
+use App\BusinessModules\Features\Procurement\Http\Requests\ReceivePurchaseOrderMaterialsRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\ReturnPurchaseReceiptLineRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\ReversePurchaseReceiptLineRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\StorePurchaseOrderRequest;
@@ -65,6 +67,7 @@ class PurchaseOrderController extends Controller
                     'receipts.warehouse',
                     'receipts.receivedByUser',
                     'receipts.lines',
+                    'receipts.document',
                     'organization',
                 ]);
 
@@ -129,6 +132,7 @@ class PurchaseOrderController extends Controller
                     'receipts.warehouse',
                     'receipts.receivedByUser',
                     'receipts.lines',
+                    'receipts.document',
                     'organization',
                 ])
                 ->find($id);
@@ -350,7 +354,7 @@ class PurchaseOrderController extends Controller
         }
     }
 
-    public function receiveMaterials(Request $request, int $id): JsonResponse
+    public function receiveMaterials(ReceivePurchaseOrderMaterialsRequest $request, int $id): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -364,6 +368,7 @@ class PurchaseOrderController extends Controller
                     'receipts.warehouse',
                     'receipts.receivedByUser',
                     'receipts.lines',
+                    'receipts.document',
                 ])
                 ->find($id);
 
@@ -371,7 +376,7 @@ class PurchaseOrderController extends Controller
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
-            $validated = $this->validateReceiptPayload($request, $order, $organizationId, true);
+            $validated = $request->validated();
 
             $received = $this->service->receiveMaterials(
                 $order,
@@ -383,6 +388,8 @@ class PurchaseOrderController extends Controller
                     'notes' => $validated['notes'] ?? null,
                     'metadata' => $validated['metadata'] ?? null,
                     'idempotency_key' => $validated['idempotency_key'],
+                    'document_mode' => $validated['document_mode'],
+                    'receipt_document_id' => $validated['receipt_document_id'] ?? null,
                 ]
             );
 
@@ -396,6 +403,11 @@ class PurchaseOrderController extends Controller
             return AdminResponse::error($e->getMessage(), 409);
         } catch (PurchaseReceiptPaymentException $e) {
             return AdminResponse::error($e->getMessage(), 422);
+        } catch (IncomingUpdAttachmentException $e) {
+            return AdminResponse::error(
+                trans_message('procurement.upd.attachment_issues.'.$e->reason),
+                422
+            );
         } catch (\DomainException) {
             return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {
