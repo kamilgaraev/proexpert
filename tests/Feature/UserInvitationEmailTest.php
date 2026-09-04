@@ -132,6 +132,7 @@ class UserInvitationEmailTest extends TestCase
             $table->string('email');
             $table->string('name');
             $table->json('role_slugs');
+            $table->json('custom_roles')->default('[]');
             $table->string('token', 64)->nullable();
             $table->timestamp('expires_at')->nullable();
             $table->timestamp('accepted_at')->nullable();

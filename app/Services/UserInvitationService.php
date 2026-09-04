@@ -24,7 +24,8 @@ class UserInvitationService
 
     public function __construct(
         LoggingService $logging,
-        AdminPanelAccessHelper $adminPanelHelper
+        AdminPanelAccessHelper $adminPanelHelper,
+        private readonly UserInvitationCustomRoles $customRoles,
     ) {
         $this->logging = $logging;
         $this->adminPanelHelper = $adminPanelHelper;
@@ -44,6 +45,9 @@ class UserInvitationService
 
         try {
             $this->validateInvitationData($data, $organizationId);
+            $customRoles = $this->customRoles
+                ->resolve($organizationId, $data['custom_role_ids'] ?? [])
+                ->all();
 
             // SECURITY: Проверка существующих пользователей
             $existingUser = User::where('email', $data['email'])->first();
@@ -93,7 +97,8 @@ class UserInvitationService
                     'invited_by_user_id' => $invitedBy->id,
                     'email' => $data['email'],
                     'name' => $data['name'],
-                    'role_slugs' => $data['role_slugs'],
+                    'role_slugs' => $data['role_slugs'] ?? [],
+                    'custom_roles' => $customRoles,
                     'metadata' => $data['metadata'] ?? null,
                 ]);
 
@@ -442,12 +447,14 @@ class UserInvitationService
             throw new BusinessLogicException('Имя пользователя обязательно');
         }
 
-        if (empty($data['role_slugs']) || ! is_array($data['role_slugs'])) {
+        $systemRoles = $data['role_slugs'] ?? [];
+        $customRoleIds = $data['custom_role_ids'] ?? [];
+        if (! is_array($systemRoles) || ! is_array($customRoleIds) || ($systemRoles === [] && $customRoleIds === [])) {
             throw new BusinessLogicException('Необходимо указать роли для пользователя');
         }
 
         $validRoles = $this->adminPanelHelper->getAdminPanelRoles(null, 'lk', true);
-        $invalidRoles = array_diff($data['role_slugs'], $validRoles);
+        $invalidRoles = array_diff($systemRoles, $validRoles);
 
         if (! empty($invalidRoles)) {
             throw new BusinessLogicException('Недопустимые роли: '.implode(', ', $invalidRoles));
@@ -492,11 +499,9 @@ class UserInvitationService
 
     private function assignRolesToUser(User $user, UserInvitation $invitation): void
     {
-        // Получаем или создаем контекст организации
         $context = AuthorizationContext::getOrganizationContext($invitation->organization_id);
 
-        foreach ($invitation->role_slugs as $roleSlug) {
-            // Используем updateOrCreate для атомарного создания или реактивации роли
+        foreach ($invitation->role_slugs ?? [] as $roleSlug) {
             UserRoleAssignment::updateOrCreate(
                 [
                     'user_id' => $user->id,
@@ -504,8 +509,32 @@ class UserInvitationService
                     'context_id' => $context->id,
                 ],
                 [
-                    'role_type' => 'system', // Системная роль из JSON
-                    'assigned_by' => auth()->id(),
+                    'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+                    'assigned_by' => $invitation->invited_by_user_id,
+                    'is_active' => true,
+                    'expires_at' => null,
+                ]
+            );
+        }
+
+        $customRoles = $this->customRoles
+            ->resolve($invitation->organization_id, array_column($invitation->custom_roles ?? [], 'id'))
+            ->keyBy('id');
+        foreach ($invitation->custom_roles ?? [] as $roleSnapshot) {
+            $role = $customRoles->get($roleSnapshot['id'] ?? null);
+            if (! is_array($role) || ($roleSnapshot['slug'] ?? null) !== $role['slug']) {
+                throw new BusinessLogicException(trans_message('user_invitations.errors.invalid_roles'));
+            }
+
+            UserRoleAssignment::updateOrCreate(
+                [
+                    'user_id' => $user->id,
+                    'role_slug' => $role['slug'],
+                    'context_id' => $context->id,
+                ],
+                [
+                    'role_type' => UserRoleAssignment::TYPE_CUSTOM,
+                    'assigned_by' => $invitation->invited_by_user_id,
                     'is_active' => true,
                     'expires_at' => null,
                 ]

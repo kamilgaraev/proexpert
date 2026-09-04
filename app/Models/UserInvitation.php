@@ -27,6 +27,7 @@ class UserInvitation extends Model
         'email',
         'name',
         'role_slugs',
+        'custom_roles',
         'token',
         'expires_at',
         'accepted_at',
@@ -38,6 +39,7 @@ class UserInvitation extends Model
 
     protected $casts = [
         'role_slugs' => 'array',
+        'custom_roles' => 'array',
         'expires_at' => 'datetime',
         'accepted_at' => 'datetime',
         'sent_at' => 'datetime',
@@ -139,9 +141,17 @@ class UserInvitation extends Model
             'admin' => trans_message('user_invitations.roles.admin'),
         ];
 
-        return array_map(function ($slug) use ($roleMap) {
+        $systemNames = array_map(function ($slug) use ($roleMap) {
             return $roleMap[$slug] ?? $slug;
         }, $this->role_slugs ?? []);
+        $customNames = array_values(array_filter(array_map(
+            static fn (mixed $role): ?string => is_array($role) && is_string($role['name'] ?? null)
+                ? $role['name']
+                : null,
+            $this->custom_roles ?? [],
+        )));
+
+        return array_merge($systemNames, $customNames);
     }
 
     public function getStatusTextAttribute(): string

@@ -48,11 +48,13 @@ class StoreUserInvitationRequest extends FormRequest
                 }
             ],
             'name' => ['required', 'string', 'min:2', 'max:100'],
-            'role_slugs' => ['required', 'array', 'min:1'],
+            'role_slugs' => ['nullable', 'array', 'required_without:custom_role_ids'],
             'role_slugs.*' => [
                 'string',
                 Rule::in(app(AdminPanelAccessHelper::class)->getAdminPanelRoles(null, 'lk', true)),
             ],
+            'custom_role_ids' => ['nullable', 'array', 'required_without:role_slugs'],
+            'custom_role_ids.*' => ['integer', 'min:1', 'distinct:strict'],
             'metadata' => ['nullable', 'array'],
             'metadata.welcome_message' => ['nullable', 'string', 'max:1000'],
             'metadata.department' => ['nullable', 'string', 'max:100'],
@@ -70,6 +72,10 @@ class StoreUserInvitationRequest extends FormRequest
             'name.max' => 'Имя не должно превышать 100 символов',
             'role_slugs.required' => 'Необходимо выбрать хотя бы одну роль',
             'role_slugs.min' => 'Необходимо выбрать хотя бы одну роль',
+            'role_slugs.required_without' => 'Необходимо выбрать хотя бы одну роль',
+            'custom_role_ids.required_without' => 'Необходимо выбрать хотя бы одну роль',
+            'custom_role_ids.*.integer' => 'Выбрана недопустимая роль',
+            'custom_role_ids.*.distinct' => 'Одна роль выбрана несколько раз',
             'role_slugs.*.in' => 'Выбрана недопустимая роль',
             'metadata.welcome_message.max' => 'Приветственное сообщение не должно превышать 1000 символов',
             'metadata.department.max' => 'Название отдела не должно превышать 100 символов',
@@ -81,7 +87,8 @@ class StoreUserInvitationRequest extends FormRequest
         return [
             'email' => 'email адрес',
             'name' => 'имя пользователя',
-            'role_slugs' => 'роли',
+            'role_slugs' => 'готовые роли',
+            'custom_role_ids' => 'роли компании',
             'metadata.welcome_message' => 'приветственное сообщение',
             'metadata.department' => 'отдел',
         ];

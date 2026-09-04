@@ -77,13 +77,16 @@ Route::prefix('invitations')->group(function () {
 
 // === УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ОРГАНИЗАЦИИ ===
 Route::prefix('organization-users')->group(function () {
-    Route::get('/', [OrganizationUserController::class, 'index']);
+    Route::get('/', [OrganizationUserController::class, 'index'])
+        ->middleware(['authorize:users.manage,organization']);
     Route::get('/{userId}', [OrganizationUserController::class, 'show']);
 
     Route::middleware(['authorize:users.manage,organization'])->group(function () {
         Route::put('/{userId}', [OrganizationUserController::class, 'update']);
         Route::delete('/{userId}', [OrganizationUserController::class, 'destroy']);
         Route::post('/{userId}/toggle-status', [OrganizationUserController::class, 'toggleStatus']);
+        Route::patch('/{userId}/access', [OrganizationUserController::class, 'setAccess'])
+            ->whereNumber('userId');
     });
 
     // Управление ролями пользователей (новая система)
