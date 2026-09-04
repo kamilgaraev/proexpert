@@ -149,7 +149,20 @@ class UpdateContractRequest extends FormRequest
     {
         $organizationId = $this->currentOrganizationId();
         $routeProjectId = $this->routeProjectId();
-        $isMultiProject = $this->requestedMultiProjectState($this->resolveContract());
+        $contract = $this->resolveContract();
+        $isMultiProject = $this->requestedMultiProjectState($contract);
+        $startDate = $this->input('start_date', $contract->start_date?->format('Y-m-d'));
+        $endDate = $this->input('end_date', $contract->end_date?->format('Y-m-d'));
+        $startDateRules = ['sometimes', 'nullable', 'date'];
+        $endDateRules = ['sometimes', 'nullable', 'date'];
+
+        if (is_string($endDate) && $endDate !== '') {
+            $startDateRules[] = 'before_or_equal:'.$endDate;
+        }
+
+        if (is_string($startDate) && $startDate !== '') {
+            $endDateRules[] = 'after_or_equal:'.$startDate;
+        }
         $projectIdRules = [
             'sometimes',
             'nullable',
@@ -223,8 +236,8 @@ class UpdateContractRequest extends FormRequest
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'status' => ['prohibited'],
-            'start_date' => ['sometimes', 'nullable', 'date'],
-            'end_date' => ['sometimes', 'nullable', 'date', 'after_or_equal:start_date'],
+            'start_date' => $startDateRules,
+            'end_date' => $endDateRules,
             'notes' => ['sometimes', 'nullable', 'string'],
             'is_multi_project' => ['sometimes', 'nullable', 'boolean'],
             'project_ids' => $projectIdsRules,

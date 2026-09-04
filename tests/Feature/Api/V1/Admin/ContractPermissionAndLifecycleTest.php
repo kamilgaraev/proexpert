@@ -41,6 +41,38 @@ final class ContractPermissionAndLifecycleTest extends TestCase
 {
     public function refreshDatabase(): void {}
 
+    public function test_partial_period_updates_preserve_clear_and_validate_dates(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(22, 11);
+        $contract->update(['start_date' => '2026-09-05', 'end_date' => '2026-09-10']);
+
+        foreach ([
+            [[], true, '2026-09-05', '2026-09-10'],
+            [['start_date' => null], true, null, '2026-09-10'],
+            [['end_date' => null], true, '2026-09-05', null],
+            [['start_date' => null, 'end_date' => null], true, null, null],
+            [['end_date' => '2026-09-11'], true, '2026-09-05', '2026-09-11'],
+            [['start_date' => '2026-09-10'], true, '2026-09-10', '2026-09-10'],
+            [['start_date' => '2026-09-11'], false, null, null],
+            [['end_date' => '2026-09-04'], false, null, null],
+            [['start_date' => 'invalid'], false, null, null],
+        ] as [$input, $valid, $start, $end]) {
+            $request = $this->requestWithProjectRoute(UpdateContractRequest::class, $this->user(7), 11);
+            self::assertInstanceOf(UpdateContractRequest::class, $request);
+            $request->merge($input);
+            $validator = \Illuminate\Support\Facades\Validator::make($input, $request->rules(), $request->messages());
+            $request->withValidator($validator);
+            self::assertSame($valid, $validator->passes(), json_encode($input).': '.json_encode($validator->errors()->toArray()));
+            if ($valid) {
+                $request->setValidator($validator);
+                $data = $request->toDto()->toArray();
+                self::assertSame($start, $data['start_date']);
+                self::assertSame($end, $data['end_date']);
+            }
+        }
+    }
+
     public function test_contract_routes_require_canonical_permissions(): void
     {
         $this->assertRoutePermission('GET', 'api/v1/admin/contracts', 'contracts.view');
