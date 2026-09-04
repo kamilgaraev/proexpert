@@ -18,6 +18,10 @@ final class NotificationPresenter
         $target = $this->target($notification);
 
         $payload = $notification->toArray();
+        $payload['data'] = (new NotificationContentFormatter)->format(
+            (string) $notification->type,
+            is_array($payload['data'] ?? null) ? $payload['data'] : [],
+        );
         unset($payload['targets'], $payload['analytics'], $payload['read_at']);
 
         $payload['read_at'] = $target->read_at?->toJSON();

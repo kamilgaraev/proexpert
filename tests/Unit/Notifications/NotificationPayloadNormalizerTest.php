@@ -9,6 +9,8 @@ use PHPUnit\Framework\TestCase;
 
 final class NotificationPayloadNormalizerTest extends TestCase
 {
+    use UsesNotificationTranslations;
+
     public function test_normalization_does_not_invent_a_delivery_interface(): void
     {
         $payload = (new NotificationPayloadNormalizer)->normalize('system.notice', [], 'system');
