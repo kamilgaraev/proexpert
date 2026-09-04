@@ -179,6 +179,53 @@ class ActingAvailabilityServiceTest extends TestCase
         $this->assertSame(8.0, $available[0]['available_quantity']);
     }
 
+    public function test_annulled_act_releases_work_without_deleting_history(): void
+    {
+        [$contract, $project, $organization] = $this->createContract();
+        $work = CompletedWork::create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+            'journal_entry_id' => 1006,
+            'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
+            'quantity' => 1,
+            'completed_quantity' => 1,
+            'price' => 100,
+            'total_amount' => 100,
+            'completion_date' => '2026-04-10',
+            'status' => 'confirmed',
+        ]);
+        $act = ContractPerformanceAct::create([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'act_document_number' => 'ANNULLED-1',
+            'act_date' => '2026-04-15',
+            'amount' => 100,
+            'status' => ContractPerformanceAct::STATUS_ANNULLED,
+            'is_approved' => false,
+        ]);
+        $line = PerformanceActLine::create([
+            'performance_act_id' => $act->id,
+            'completed_work_id' => $work->id,
+            'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
+            'title' => 'Работа из журнала',
+            'quantity' => 1,
+            'unit_price' => 100,
+            'amount' => 100,
+        ]);
+
+        $service = app(ActingAvailabilityService::class);
+        $available = $service->getAvailableWorks($contract->id, '2026-04-01', '2026-04-30');
+
+        $this->assertCount(1, $available);
+        $this->assertSame(1.0, $available[0]['available_quantity']);
+        $this->assertSame(0.0, $available[0]['reserved_quantity']);
+        $this->assertSame(0.0, $available[0]['approved_acted_quantity']);
+        $this->assertSame([], $service->getBlockedWorks($contract->id, '2026-04-01', '2026-04-30'));
+        $this->assertNotNull($line->fresh());
+        $this->assertSame(ContractPerformanceAct::STATUS_ANNULLED, $act->fresh()->status);
+    }
+
     public function test_fully_acted_work_is_not_returned(): void
     {
         [$contract, $project, $organization] = $this->createContract();
