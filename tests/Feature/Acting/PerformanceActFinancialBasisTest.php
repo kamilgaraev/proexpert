@@ -32,6 +32,69 @@ final class PerformanceActFinancialBasisTest extends TestCase
 
     public function test_act_line_uses_and_persists_the_approved_estimate_version_snapshot(): void
     {
+        $this->assertApprovedEstimateFinancialCycle(false);
+    }
+
+    public function test_vat_included_coverage_is_not_taxed_again_in_the_act(): void
+    {
+        $this->assertApprovedEstimateFinancialCycle(true);
+    }
+
+    public function test_old_vat_included_coverage_uses_the_immutable_estimate_tax_basis(): void
+    {
+        $this->assertApprovedEstimateFinancialCycle(true, true);
+    }
+
+    public function test_old_net_coverage_uses_the_immutable_estimate_tax_basis(): void
+    {
+        $this->assertApprovedEstimateFinancialCycle(false, true);
+    }
+
+    public function test_coverage_tax_calculation_preserves_precision_until_final_unit_price(): void
+    {
+        foreach ([['7', '120.00', '17.14', '100.00', '100.00'], ['3', '100.00', '40.00'], ['3', '120.00', '40.00'], ['1.5', '100.00', '80.00'], ['1.5', '120.00', '80.00'], ['3000000', '100000.00', '0.04', '100000.00']] as $case) {
+            [$quantity, $amount, $expectedPrice] = $case;
+            $contract = new Contract;
+            $contract->setRawAttributes(['id' => 1, 'organization_id' => 1]);
+            $version = new \App\Models\EstimateVersion;
+            $version->forceFill([
+                'id' => 1,
+                'organization_id' => 1,
+                'estimate_id' => 1,
+                'status' => 'approved',
+                'snapshot' => [
+                    'rates' => ['vat_rate' => 20],
+                    'unsectioned_items' => [[
+                        'id' => 1,
+                        'quantity_total' => $quantity,
+                        'current_total_amount' => $case[3] ?? '100.00',
+                        'contract_links' => [[
+                            'contract_id' => 1,
+                            'quantity' => $quantity,
+                            'amount' => $amount,
+                            'amount_without_vat' => $case[4] ?? null,
+                        ]],
+                    ]],
+                ],
+            ]);
+            $estimate = new Estimate;
+            $estimate->setRawAttributes(['id' => 1]);
+            $estimate->setRelation('currentVersion', $version);
+            $item = new EstimateItem;
+            $item->setRawAttributes(['id' => 1]);
+            $item->setRelation('estimate', $estimate);
+            $work = new CompletedWork;
+            $work->setRelation('estimateItem', $item);
+
+            $basis = app(\App\Services\Acting\PerformanceActFinancialBasisService::class)
+                ->forCompletedWork($work, $contract, (float) $quantity);
+
+            self::assertSame($expectedPrice, $basis['unit_price']);
+        }
+    }
+
+    private function assertApprovedEstimateFinancialCycle(bool $includeVat, bool $oldCoverage = false): void
+    {
         $organization = Organization::factory()->create();
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $actor = User::factory()->create(['current_organization_id' => $organization->id]);
@@ -81,19 +144,21 @@ final class PerformanceActFinancialBasisTest extends TestCase
             'total_amount' => 1000,
             'current_total_amount' => 1000,
         ]);
-        ContractEstimateItem::query()->create([
-            'contract_id' => $contract->id,
-            'estimate_id' => $estimate->id,
-            'estimate_item_id' => $item->id,
-            'quantity' => 1,
-            'amount' => 1000,
-        ]);
+        app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService::class)
+            ->attachItems($contract, $estimate, [$item->id], $includeVat);
+        if ($oldCoverage) {
+            ContractEstimateItem::query()->where('estimate_item_id', $item->id)
+                ->update(['amount_without_vat' => null]);
+        }
         $version = app(EstimateVersioningService::class)->createSnapshot(
             estimate: $estimate,
             actorId: $actor->id,
             label: 'Утверждённая версия',
             snapshotType: 'approval',
         );
+        $snapshotItem = app(\App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionItemSnapshotResolver::class)
+            ->resolve($version, $item);
+        self::assertSame($oldCoverage ? null : '1000.00', $snapshotItem['contract_links'][0]['amount_without_vat']);
         $unit->forceFill(['short_name' => 'кг (изменено)'])->saveQuietly();
         $item->forceFill([
             'unit_price' => 9000,
@@ -119,6 +184,12 @@ final class PerformanceActFinancialBasisTest extends TestCase
             'completion_date' => '2026-08-10',
             'status' => 'confirmed',
         ]);
+
+        $available = app(\App\Services\Acting\ActingAvailabilityService::class)
+            ->getAvailableWorks($contract->id, '2026-08-01', '2026-08-31');
+        self::assertCount(1, $available);
+        self::assertEquals(1200, $available[0]['unit_price']);
+        self::assertEquals(1200, $available[0]['available_amount']);
 
         $act = app(ActingActWizardService::class)->createFromWizard(
             organizationId: $organization->id,

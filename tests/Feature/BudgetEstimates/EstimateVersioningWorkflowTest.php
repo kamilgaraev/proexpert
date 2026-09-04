@@ -406,6 +406,7 @@ class EstimateVersioningWorkflowTest extends TestCase
             'quantity' => '2.00000000',
             'amount' => '1200.00',
             'notes' => 'Snapshot allocation',
+            'amount_without_vat' => '1000.00',
         ]);
         EstimateItem::query()->create([
             'estimate_id' => $estimate->id,
@@ -468,6 +469,7 @@ class EstimateVersioningWorkflowTest extends TestCase
             'quantity' => '1.00000000',
             'amount' => '10.00',
             'notes' => 'Mutated allocation',
+            'amount_without_vat' => '8.33',
         ]);
         EstimateItem::query()->create([
             'estimate_id' => $estimate->id,
@@ -518,6 +520,7 @@ class EstimateVersioningWorkflowTest extends TestCase
         $this->assertSame($contract->id, $restoredContractLink->contract_id);
         $this->assertSame('2.00000000', $restoredContractLink->quantity);
         $this->assertSame('1200.00', $restoredContractLink->amount);
+        $this->assertSame('1000.00', $restoredContractLink->amount_without_vat);
         $this->assertSame('Snapshot allocation', $restoredContractLink->notes);
         $this->assertSoftDeleted('estimate_items', ['id' => $item->id]);
         $this->assertNotNull($restoredChildItem);

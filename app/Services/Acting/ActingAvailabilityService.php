@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\Acting;
 
+use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
+use App\Models\Contract;
 use App\Models\PerformanceActLine;
 use Illuminate\Support\Collection;
 
@@ -13,12 +15,12 @@ use function trans_message;
 class ActingAvailabilityService
 {
     public function __construct(
-        private readonly ActingPriceService $priceService
-    ) {
-    }
+        private readonly PerformanceActFinancialBasisService $financialBasis
+    ) {}
 
     public function getAvailableWorks(int $contractId, string $periodStart, string $periodEnd): array
     {
+        $contract = Contract::query()->findOrFail($contractId);
         $works = $this->baseWorksQuery($contractId, $periodStart, $periodEnd)
             ->orderBy('completion_date')
             ->orderBy('id')
@@ -26,7 +28,7 @@ class ActingAvailabilityService
         $quantityUsage = $this->resolveQuantityUsage($works->pluck('id')->map(fn ($id): int => (int) $id)->all());
 
         return $works
-            ->map(fn (CompletedWork $work): array => $this->mapWork($work, $quantityUsage[$work->id] ?? []))
+            ->map(fn (CompletedWork $work): array => $this->mapWork($work, $contract, $quantityUsage[$work->id] ?? []))
             ->filter(fn (array $work): bool => $work['available_quantity'] > 0 && $work['blockers'] === [])
             ->values()
             ->all();
@@ -34,6 +36,7 @@ class ActingAvailabilityService
 
     public function getBlockedWorks(int $contractId, string $periodStart, string $periodEnd): array
     {
+        $contract = Contract::query()->findOrFail($contractId);
         $works = $this->baseWorksQuery($contractId, $periodStart, $periodEnd)
             ->orderBy('completion_date')
             ->orderBy('id')
@@ -41,7 +44,7 @@ class ActingAvailabilityService
         $quantityUsage = $this->resolveQuantityUsage($works->pluck('id')->map(fn ($id): int => (int) $id)->all());
 
         return $works
-            ->map(fn (CompletedWork $work): array => $this->mapWork($work, $quantityUsage[$work->id] ?? []))
+            ->map(fn (CompletedWork $work): array => $this->mapWork($work, $contract, $quantityUsage[$work->id] ?? []))
             ->filter(fn (array $work): bool => $work['available_quantity'] <= 0 || $work['blockers'] !== [])
             ->values()
             ->all();
@@ -50,7 +53,7 @@ class ActingAvailabilityService
     private function baseWorksQuery(int $contractId, string $periodStart, string $periodEnd)
     {
         return CompletedWork::query()
-            ->with('estimateItem.contractLinks', 'estimateItem.estimate', 'journalEntry.journal', 'workType')
+            ->with('estimateItem.contractLinks', 'estimateItem.estimate.currentVersion', 'journalEntry.journal', 'workType')
             ->where(function ($query) use ($contractId): void {
                 $query
                     ->where('contract_id', $contractId)
@@ -100,6 +103,7 @@ class ActingAvailabilityService
 
             if (ActingQuantityStatus::isApproved($act)) {
                 $usage[$workId]['approved_acted_quantity'] += (float) $line->quantity;
+
                 continue;
             }
 
@@ -116,15 +120,25 @@ class ActingAvailabilityService
         return $usage;
     }
 
-    private function mapWork(CompletedWork $work, array $quantityUsage): array
+    private function mapWork(CompletedWork $work, Contract $contract, array $quantityUsage): array
     {
         $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
         $reservedQuantity = (float) ($quantityUsage['reserved_quantity'] ?? 0);
         $approvedActedQuantity = (float) ($quantityUsage['approved_acted_quantity'] ?? 0);
         $actedQuantity = $reservedQuantity + $approvedActedQuantity;
         $availableQuantity = round(max(0, $effectiveQuantity - $actedQuantity), 4);
-        $unitPrice = $this->priceService->resolveCompletedWorkUnitPrice($work, $effectiveQuantity);
         $blockers = $this->buildBlockers($work, $availableQuantity);
+        $unitPrice = 0.0;
+        try {
+            $basis = $this->financialBasis->forCompletedWork($work, $contract, $effectiveQuantity);
+            $unitPrice = (float) $basis['unit_price'];
+        } catch (BusinessLogicException $exception) {
+            $blockers[] = [
+                'code' => 'financial_basis_missing',
+                'message' => $exception->getMessage(),
+                'target' => 'estimate',
+            ];
+        }
 
         return [
             'id' => $work->id,

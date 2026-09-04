@@ -396,6 +396,7 @@ class EstimateVersionRestoreService
                 'estimate_item_id' => $item->id,
                 'quantity' => $linkPayload['quantity'] ?? '0',
                 'amount' => $linkPayload['amount'] ?? '0',
+                'amount_without_vat' => $linkPayload['amount_without_vat'] ?? null,
                 'notes' => $linkPayload['notes'] ?? null,
             ]);
         }

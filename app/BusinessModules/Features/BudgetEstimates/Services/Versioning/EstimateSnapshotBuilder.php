@@ -71,7 +71,7 @@ class EstimateSnapshotBuilder
                 'measurementUnit:id,name,short_name',
                 'resources' => static fn ($query) => $query->orderBy('id'),
                 'resources.measurementUnit:id,name,short_name',
-                'contractLinks:id,contract_id,estimate_id,estimate_item_id,quantity,amount,notes',
+                'contractLinks:id,contract_id,estimate_id,estimate_item_id,quantity,amount,amount_without_vat,notes',
             ])
             ->where('estimate_id', $estimate->id)
             ->orderBy('id')
@@ -290,6 +290,7 @@ class EstimateSnapshotBuilder
                     'contract_id' => $link->contract_id,
                     'quantity' => $this->quantity($link->quantity),
                     'amount' => $this->money($link->amount),
+                    'amount_without_vat' => $link->amount_without_vat === null ? null : $this->money($link->amount_without_vat),
                     'notes' => $link->notes,
                 ])
                 ->values()
