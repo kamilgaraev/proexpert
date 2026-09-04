@@ -72,6 +72,20 @@
             text-align: right;
         }
 
+        .most-document-note {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: -7mm;
+            margin: 0;
+            padding: 0;
+            border: 0;
+        }
+
+        .most-fixed-footer {
+            display: none;
+        }
+
         .header-area {
             min-height: 65mm;
             position: relative;
@@ -254,6 +268,7 @@
     </style>
 </head>
 <body>
+    @include('pdf.partials.most-brand-footer')
     <div class="header-area">
         <div class="top-note">
             <div>Унифицированная форма № КС-3</div>
@@ -439,6 +454,5 @@
             @endfor
         </tbody>
     </table>
-    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

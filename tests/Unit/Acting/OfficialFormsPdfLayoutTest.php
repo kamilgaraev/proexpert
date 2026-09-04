@@ -38,9 +38,9 @@ final class OfficialFormsPdfLayoutTest extends TestCase
                 foreach (['ks2', 'ks3'] as $form) {
                     $data = [
                         'documentGeneratedAt' => '04.09.2026 09:00',
-                        'act' => (object) ['act_date' => '2026-08-29', 'act_document_number' => 'КС-2-ТЕСТ-01'],
+                        'act' => (object) ['act_date' => '2026-08-29', 'act_document_number' => 'КС-2-QA-20260829-02'],
                         'period_start' => '2026-08-01', 'period_end' => '2026-08-29',
-                        'customer_org' => (object) ['name' => 'Заказчик', 'address' => 'г. Казань, улица Строителей, дом 10'],
+                        'customer_org' => (object) ['name' => 'Учебная организация', 'tax_number' => '1234567890', 'address' => '420021, Республика Татарстан, город Казань, улица Производственная, дом 59А, офис 206'],
                         'contractor' => (object) ['name' => 'Подрядчик'],
                         'project' => (object) ['name' => 'Производственный корпус'],
                         'contract' => (object) ['number' => 'ДП-202608-34', 'date' => '2026-08-28'],
@@ -88,6 +88,9 @@ final class OfficialFormsPdfLayoutTest extends TestCase
                     }
                     foreach (range(1, $count) as $i) {
                         self::assertStringContainsString('RowMarker'.$i.'End', $rendered, $form);
+                    }
+                    foreach ($pageText as $text) {
+                        self::assertStringContainsString('04.09.2026 09:00', $text, $form.' footer missing');
                     }
                     if ($form === 'ks2') {
                         foreach ($pageText as $text) {
