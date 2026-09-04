@@ -14,6 +14,7 @@ final class PaymentDocumentPresenter
     public function __construct(
         private readonly PaymentBudgetLimitService $budgetLimitService,
         private readonly PurchaseOrderContractRequirementService $contractRequirement,
+        private readonly PaymentDocumentActionPresenter $actions,
     ) {}
 
     /**
@@ -56,6 +57,7 @@ final class PaymentDocumentPresenter
             'workflow_summary' => $this->buildWorkflowSummary($document, $problemFlags, []),
             'budget_limit_check' => $this->budgetLimitService->check($document, $user),
             'can_be_cancelled' => $document->canBeCancelled(),
+            'action_summary' => $this->actions->present($document, $user),
             'created_at' => $document->created_at->toDateTimeString(),
         ];
     }
