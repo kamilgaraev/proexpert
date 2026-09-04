@@ -31,6 +31,68 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_bulk_create_preserves_description(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works/bulk", [
+                'works' => [[
+                    'quantity' => 1,
+                    'completion_date' => '2026-09-04',
+                    'description' => 'Смонтирована секция ограждения',
+                    'notes' => 'Отдельное примечание',
+                ]],
+            ])->assertCreated()->assertJsonPath('data.0.description', 'Смонтирована секция ограждения');
+
+        $this->assertSame('Смонтирована секция ограждения', CompletedWork::findOrFail($response->json('data.0.id'))->description);
+    }
+
+    public function test_description_survives_create_read_update_and_can_be_cleared(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = $this->createContractor($context->organization, 'Description Contractor');
+        $workType = $this->createWorkType($context->organization, 'Монтаж ограждения');
+        $this->allowAdminAccess();
+        $endpoint = "/api/v1/admin/projects/{$project->id}/works";
+        $description = 'Смонтирована секция ограждения';
+
+        $created = $this->withHeaders($context->authHeaders())->postJson($endpoint, [
+            'project_id' => $project->id,
+            'contractor_id' => $contractor->id,
+            'work_type_id' => $workType->id,
+            'user_id' => $context->user->id,
+            'quantity' => 1,
+            'price' => 100,
+            'completion_date' => '2026-09-04',
+            'status' => 'pending',
+            'description' => $description,
+            'notes' => 'Отдельное примечание',
+        ])->assertCreated()->assertJsonPath('data.description', $description);
+
+        $id = $created->json('data.id');
+        $this->assertSame($description, CompletedWork::findOrFail($id)->description);
+        $this->withHeaders($context->authHeaders())->getJson("{$endpoint}/{$id}")
+            ->assertOk()->assertJsonPath('data.description', $description);
+        $listed = $this->withHeaders($context->authHeaders())->getJson($endpoint)->assertOk();
+        $rows = collect($listed->json('data.data', $listed->json('data')));
+        $this->assertSame($description, $rows->firstWhere('id', $id)['description']);
+
+        $this->withHeaders($context->authHeaders())->putJson("{$endpoint}/{$id}", [
+            'description' => 'Описание уточнено',
+        ])->assertOk()->assertJsonPath('data.description', 'Описание уточнено');
+        $this->withHeaders($context->authHeaders())->putJson("{$endpoint}/{$id}", [
+            'notes' => 'Примечание обновлено',
+        ])->assertOk()->assertJsonPath('data.description', 'Описание уточнено');
+        $this->withHeaders($context->authHeaders())->putJson("{$endpoint}/{$id}", [
+            'description' => null,
+        ])->assertOk()->assertJsonPath('data.description', null)
+            ->assertJsonPath('data.notes', 'Примечание обновлено');
+        $this->assertNull(CompletedWork::findOrFail($id)->description);
+    }
+
     public function test_owner_can_create_update_list_and_delete_completed_work_inside_project(): void
     {
         $context = AdminApiTestContext::create();
@@ -297,7 +359,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
                     'completion_date' => '2026-06-20',
                     'status' => 'pending',
                 ]],
-        ]);
+            ]);
 
         $contractResponse->assertStatus(422);
         $contractResponse->assertJsonPath('errors.index', 0);
@@ -563,8 +625,8 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             'organization_id' => $organization->id,
             'source_organization_id' => $sourceOrganization?->id,
             'name' => $name,
-            'contact_person' => $name . ' Manager',
-            'email' => strtolower(str_replace(' ', '.', $name)) . '@example.test',
+            'contact_person' => $name.' Manager',
+            'email' => strtolower(str_replace(' ', '.', $name)).'@example.test',
             'inn' => (string) random_int(1000000000, 9999999999),
             'contractor_type' => $sourceOrganization
                 ? ContractorType::INVITED_ORGANIZATION->value
@@ -584,7 +646,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             'project_id' => $project->id,
             'contractor_id' => $contractor->id,
             'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
-            'number' => 'WORK-CON-' . random_int(10000, 99999),
+            'number' => 'WORK-CON-'.random_int(10000, 99999),
             'date' => '2026-06-01',
             'subject' => 'Completed work contract',
             'work_type_category' => ContractWorkTypeCategoryEnum::SMR->value,
@@ -607,7 +669,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         return WorkType::query()->create([
             'organization_id' => $organization->id,
             'name' => $name,
-            'code' => 'WT-' . random_int(1000, 9999),
+            'code' => 'WT-'.random_int(1000, 9999),
             'default_price' => 1000,
             'is_active' => true,
         ]);
@@ -653,7 +715,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             'project_id' => $project->id,
             'organization_id' => $organization->id,
             'created_by_user_id' => $user->id,
-            'name' => 'Works schedule ' . random_int(1000, 9999),
+            'name' => 'Works schedule '.random_int(1000, 9999),
             'planned_start_date' => '2026-06-01',
             'planned_end_date' => '2026-07-01',
             'status' => 'draft',
@@ -684,7 +746,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             'schedule_id' => $schedule->id,
             'organization_id' => $organization->id,
             'created_by_user_id' => $user->id,
-            'name' => 'Works task ' . random_int(1000, 9999),
+            'name' => 'Works task '.random_int(1000, 9999),
             'task_type' => 'task',
             'planned_start_date' => '2026-06-01',
             'planned_end_date' => '2026-06-05',
@@ -706,7 +768,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         return Estimate::query()->create(array_merge([
             'organization_id' => $organization->id,
             'project_id' => $project->id,
-            'number' => 'EST-WORK-' . random_int(10000, 99999),
+            'number' => 'EST-WORK-'.random_int(10000, 99999),
             'name' => 'Completed work estimate',
             'type' => 'local',
             'status' => 'approved',

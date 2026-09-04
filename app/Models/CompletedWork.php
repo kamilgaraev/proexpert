@@ -15,14 +15,17 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class CompletedWork extends Model
 {
     use HasFactory;
-    use SoftDeletes;
     use HasOnboardingDemo;
+    use SoftDeletes;
 
     public const ORIGIN_MANUAL = 'manual';
+
     public const ORIGIN_SCHEDULE = 'schedule';
+
     public const ORIGIN_JOURNAL = 'journal';
 
     public const PLANNING_PLANNED = 'planned';
+
     public const PLANNING_REQUIRES_SCHEDULE = 'requires_schedule';
 
     protected $fillable = [
@@ -47,6 +50,7 @@ class CompletedWork extends Model
         'total_amount',
         'completion_date',
         'notes',
+        'description',
         'status',
         'additional_info',
         'is_onboarding_demo',

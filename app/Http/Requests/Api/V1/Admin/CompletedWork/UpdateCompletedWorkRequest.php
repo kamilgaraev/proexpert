@@ -29,7 +29,7 @@ class UpdateCompletedWorkRequest extends FormRequest
         $projectId = (int) $this->input('project_id', $completedWork->project_id);
 
         return [
-            'project_id' => ['sometimes', 'required', 'integer', new ProjectAccessibleRule()],
+            'project_id' => ['sometimes', 'required', 'integer', new ProjectAccessibleRule],
             'contract_id' => [
                 'sometimes',
                 'nullable',
@@ -99,6 +99,7 @@ class UpdateCompletedWorkRequest extends FormRequest
             'total_amount' => 'sometimes|nullable|numeric|min:0',
             'completion_date' => 'sometimes|required|date_format:Y-m-d',
             'notes' => 'sometimes|nullable|string|max:65535',
+            'description' => 'sometimes|nullable|string|max:65535',
             'status' => 'sometimes|required|string|in:draft,pending,in_review,confirmed,cancelled,rejected',
             'work_origin_type' => 'sometimes|nullable|string|in:manual,schedule,journal',
             'planning_status' => 'sometimes|nullable|string|in:planned,requires_schedule',
@@ -163,7 +164,10 @@ class UpdateCompletedWorkRequest extends FormRequest
             notes: $validatedData['notes'] ?? $completedWork->notes,
             status: $validatedData['status'] ?? $completedWork->status,
             additional_info: $validatedData['additional_info'] ?? $completedWork->additional_info,
-            materials: $materials
+            materials: $materials,
+            description: array_key_exists('description', $validatedData)
+                ? $validatedData['description']
+                : $completedWork->description
         );
     }
 }
