@@ -115,6 +115,10 @@ final class LegalArchiveDocumentResource extends JsonResource
                 'completed_at' => $obligation->completed_at?->toISOString(),
             ])->values()),
             'lock_version' => (int) $this->lock_version,
+            'editing' => $this->when(array_key_exists('api_editing_blocker', $this->resource->getAttributes()), fn () => [
+                'allowed' => $this->resource->getAttribute('api_editing_blocker') === null,
+                'reason_code' => $this->resource->getAttribute('api_editing_blocker'),
+            ]),
             'editor' => [
                 'enabled' => (bool) config('legal-document-editor.enabled', false)
                     && (string) config('legal-document-editor.driver', 'onlyoffice') === 'onlyoffice',

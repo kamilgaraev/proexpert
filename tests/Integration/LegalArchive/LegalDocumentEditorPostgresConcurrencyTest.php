@@ -7,6 +7,7 @@ namespace Tests\Integration\LegalArchive;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Models\Contract;
+use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
@@ -35,6 +36,7 @@ use Illuminate\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Str;
 use Illuminate\Translation\FileLoader;
@@ -45,7 +47,52 @@ use RuntimeException;
 
 final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
 {
+    public function test_mutation_blocker_matches_workflow_and_signature_guards(): void
+    {
+        $document = LegalArchiveDocument::query()->findOrFail(1);
+        $this->database->addConnection(array_replace($this->connectionConfig(), ['search_path' => $this->schema]), 'mutation_availability');
+        $connection = $this->database->getConnection('mutation_availability');
+        self::assertTrue($connection->getSchemaBuilder()->hasTable('legal_workflow_instances'));
+        $guard = new LegalDocumentEditGuard($connection);
+        self::assertNull($guard->mutationBlocker($document));
+
+        $this->first->table('legal_workflow_instances')->insert(['document_id' => 1, 'status' => 'in_progress']);
+        self::assertSame('legal_document_active_workflow_exists', $guard->mutationBlocker($document));
+        $this->first->table('legal_workflow_instances')->where('document_id', 1)->update(['status' => 'completed']);
+        self::assertNull($guard->mutationBlocker($document));
+
+        $this->first->table('legal_signature_requests')->insert(['document_id' => 1, 'status' => 'pending']);
+        self::assertSame('legal_document_active_signature_exists', $guard->mutationBlocker($document));
+        $this->first->table('legal_signature_requests')->where('document_id', 1)->update(['status' => 'cancelled']);
+        self::assertNull($guard->mutationBlocker($document));
+
+        $this->openSession();
+        self::assertSame('legal_document_active_editor_exists', $guard->mutationBlocker($document));
+
+        $document->approval_status = 'approved';
+        self::assertSame('legal_document_editing_frozen', $guard->mutationBlocker($document));
+        $connection->disconnect();
+    }
+
     private Capsule $database;
+
+    public function test_document_resource_exposes_only_precomputed_editing_capability(): void
+    {
+        $document = LegalArchiveDocument::query()->findOrFail(1);
+        $this->first->enableQueryLog();
+        $this->first->flushQueryLog();
+        $resource = new LegalArchiveDocumentResource($document);
+        self::assertArrayNotHasKey('editing', $resource->resolve(new Request));
+        $document->setAttribute('api_editing_blocker', null);
+        self::assertSame(['allowed' => true, 'reason_code' => null], $resource->resolve(new Request)['editing']);
+        $document->setAttribute('api_editing_blocker', 'legal_document_active_workflow_exists');
+        self::assertSame([
+            'allowed' => false,
+            'reason_code' => 'legal_document_active_workflow_exists',
+        ], $resource->resolve(new Request)['editing']);
+        self::assertSame([], $this->first->getQueryLog());
+        $this->first->disableQueryLog();
+    }
 
     private ConnectionInterface $first;
 

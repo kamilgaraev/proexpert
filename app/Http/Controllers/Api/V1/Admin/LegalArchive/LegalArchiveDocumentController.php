@@ -217,6 +217,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 'api_editor_current_version_editable',
                 $this->editorAvailability->currentVersionEditable($found),
             );
+            $found->setAttribute('api_editing_blocker', $this->editorAvailability->documentMutationBlocker($found));
 
             return $this->etag(AdminResponse::success(
                 new LegalArchiveDocumentResource($found),
@@ -246,6 +247,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 'api_editor_current_version_editable',
                 $this->editorAvailability->currentVersionEditable($found),
             );
+            $found->setAttribute('api_editing_blocker', $this->editorAvailability->documentMutationBlocker($found));
 
             return $this->etag(AdminResponse::success(
                 new LegalArchiveDocumentResource($found),

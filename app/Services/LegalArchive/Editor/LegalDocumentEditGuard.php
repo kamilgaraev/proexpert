@@ -30,6 +30,17 @@ final readonly class LegalDocumentEditGuard
         $this->assertMutable($document, $editorSessionId, false);
     }
 
+    public function mutationBlocker(LegalArchiveDocument $document): ?string
+    {
+        try {
+            $this->assertVersionMutationAllowed($document);
+
+            return null;
+        } catch (DomainException $exception) {
+            return $exception->getMessage();
+        }
+    }
+
     public function assertWorkflowSubmissionAllowed(LegalArchiveDocument $document): void
     {
         $this->assertDocumentStateMutable($document);

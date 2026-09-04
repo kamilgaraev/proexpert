@@ -13,6 +13,11 @@ final readonly class LegalDocumentEditorAvailability
 {
     public function __construct(private ConnectionInterface $connection) {}
 
+    public function documentMutationBlocker(LegalArchiveDocument $document): ?string
+    {
+        return (new LegalDocumentEditGuard($this->connection))->mutationBlocker($document);
+    }
+
     public function currentVersionEditable(LegalArchiveDocument $document): bool
     {
         $version = $document->currentVersion;
