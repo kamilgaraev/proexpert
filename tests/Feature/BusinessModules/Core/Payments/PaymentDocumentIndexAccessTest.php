@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentActionPresenter;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentPresenter;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
@@ -153,11 +154,60 @@ final class PaymentDocumentIndexAccessTest extends TestCase
         $documents = collect($indexResponse->json('data'))->keyBy('id');
         $this->assertFalse($documents->get($cancelledDocument->id)['can_be_cancelled']);
         $this->assertFalse($documents->get($paidDocument->id)['can_be_cancelled']);
+        $this->assertNull($documents->get($cancelledDocument->id)['action_summary']['primary_action']);
+        $this->assertNull($documents->get($paidDocument->id)['action_summary']['primary_action']);
 
         $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/payments/documents/{$cancelledDocument->id}")
             ->assertOk()
             ->assertJsonPath('data.can_be_cancelled', false);
+    }
+
+    public function test_owner_receives_approval_action_for_submitted_invoice_in_list_and_detail(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $this->activatePaymentsModule($context->organization->id);
+
+        $document = PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'document_type' => PaymentDocumentType::INVOICE,
+            'document_number' => 'PAY-DOC-SUBMITTED-ACTION',
+            'document_date' => '2026-09-04',
+            'direction' => InvoiceDirection::OUTGOING,
+            'invoice_type' => InvoiceType::OTHER,
+            'amount' => 100,
+            'paid_amount' => 0,
+            'remaining_amount' => 100,
+            'currency' => 'RUB',
+            'status' => PaymentDocumentStatus::SUBMITTED,
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/documents?per_page=50')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $document->id)
+            ->assertJsonPath('data.0.action_summary.primary_action.key', 'approve_payment_document')
+            ->assertJsonPath('data.0.action_summary.primary_action.is_enabled', true)
+            ->assertJsonPath('data.0.action_summary.primary_action.method', 'POST');
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/documents/{$document->id}")
+            ->assertOk()
+            ->assertJsonPath('data.can_be_approved_by_current_user', true)
+            ->assertJsonPath('data.action_summary.primary_action.key', 'approve_payment_document')
+            ->assertJsonPath('data.action_summary.primary_action.is_enabled', true)
+            ->assertJsonPath('data.action_summary.primary_action.href', "/api/v1/admin/payments/approvals/documents/{$document->id}/approve");
+
+        $this->assertSame(PaymentDocumentStatus::SUBMITTED, $document->fresh()->status);
+        $this->assertSame(0, $document->approvals()->count());
+
+        $actions = app(PaymentDocumentActionPresenter::class);
+        $this->assertFalse($actions->present($document, null)['primary_action']['is_enabled']);
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $foreignAction = $actions->present($document, $foreignContext->user)['primary_action'];
+        $this->assertFalse($foreignAction['is_enabled']);
+        $this->assertTrue($foreignAction['disabled']);
+        $this->assertNotEmpty($foreignAction['disabled_reason']);
     }
 
     private function activatePaymentsModule(int $organizationId): void
