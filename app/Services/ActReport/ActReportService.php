@@ -10,6 +10,7 @@ use App\Models\CompletedWork;
 use App\Models\PerformanceActLine;
 use App\Exceptions\BusinessLogicException;
 use App\Services\Contract\ContractAccessService;
+use App\Services\Acting\ActingQuantityStatus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -58,6 +59,7 @@ class ActReportService
         return [
             'total_acts' => (clone $query)->count(),
             'approved_acts' => (clone $query)->where('is_approved', true)->count(),
+            'pending_acts' => (clone $query)->where('status', ContractPerformanceAct::STATUS_PENDING_APPROVAL)->count(),
             'total_amount' => (float) (clone $query)->sum('amount'),
         ];
     }
@@ -136,6 +138,13 @@ class ActReportService
         $actedQuantities = PerformanceActLine::query()
             ->where('line_type', PerformanceActLine::TYPE_COMPLETED_WORK)
             ->whereNot('performance_act_id', $act->id)
+            ->whereHas('performanceAct', function (Builder $query) use ($act): void {
+                $query->where('contract_id', $act->contract_id)
+                    ->where(function (Builder $statusQuery): void {
+                        $statusQuery->whereNull('status')
+                            ->orWhereNotIn('status', ActingQuantityStatus::releasedStatuses());
+                    });
+            })
             ->whereNotNull('completed_work_id')
             ->selectRaw('completed_work_id, SUM(quantity) as acted_quantity')
             ->groupBy('completed_work_id')
