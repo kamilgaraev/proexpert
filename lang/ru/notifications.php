@@ -3,6 +3,15 @@
 declare(strict_types=1);
 
 return [
+    'content' => [
+        'default_title' => 'Новое уведомление',
+        'contract_status_changed' => 'Изменён статус договора',
+        'contract_status_changed_number' => 'Изменён статус договора № :number',
+        'contract_status_transition' => 'Статус изменён с «:old» на «:new».',
+        'contract_new_status' => 'Новый статус: «:status».',
+        'contract_status_details' => 'Проверьте актуальный статус в карточке договора.',
+        'contract_limit_warning' => 'Достигнут порог выполнения договора',
+    ],
     'customer_channel_unsupported' => 'Выбранный канал недоступен для уведомлений заказчиков.',
     'templates_navigation_label' => 'Шаблоны',
     'template_model_label' => 'шаблон уведомления',

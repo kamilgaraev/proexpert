@@ -28,22 +28,14 @@ use Throwable;
 
 final class NotificationServiceTargetTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        $application = new Container;
-        $application->instance('log', new NullLogger);
-        Facade::clearResolvedInstances();
-        Facade::setFacadeApplication($application);
+    use UsesNotificationTranslations {
+        setUp as private setUpTranslations;
     }
 
-    protected function tearDown(): void
+    protected function setUp(): void
     {
-        Facade::clearResolvedInstances();
-        Facade::setFacadeApplication(null);
-
-        parent::tearDown();
+        $this->setUpTranslations();
+        Facade::getFacadeApplication()->instance('log', new NullLogger);
     }
 
     public function test_explicit_target_replaces_conflicting_legacy_interface_in_payload(): void

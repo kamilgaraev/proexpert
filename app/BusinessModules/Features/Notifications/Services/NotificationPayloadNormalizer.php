@@ -13,6 +13,7 @@ final class NotificationPayloadNormalizer
             ?? $this->stringValue($data['notification_type'] ?? null)
             ?? $notificationType;
         $entity = $this->normalizeEntity($businessType, $data);
+        $data = (new NotificationContentFormatter)->format($businessType, $data);
 
         $payload = [
             ...$data,
