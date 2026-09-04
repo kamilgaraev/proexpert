@@ -9,6 +9,9 @@ use Illuminate\Http\Request;
 use App\Http\Requests\Api\V1\Landing\User\OrganizationTeamIndexRequest;
 use App\Http\Responses\LandingResponse;
 use App\Services\User\OrganizationTeamDirectory;
+use App\Services\User\OrganizationTeamAccess;
+use App\Http\Requests\Api\V1\Landing\User\OrganizationTeamAccessRequest;
+use App\Exceptions\BusinessLogicException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -47,6 +50,34 @@ class OrganizationUserController extends Controller
             ]);
 
             return LandingResponse::error(trans_message('landing_users.team_list_error'), 500);
+        }
+    }
+
+    public function setAccess(OrganizationTeamAccessRequest $request, string $userId, OrganizationTeamAccess $access): JsonResponse
+    {
+        try {
+            $active = (bool) $request->validated('is_active');
+            $access->setActive(
+                $request->user(),
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $userId,
+                $active,
+            );
+
+            return LandingResponse::success(['id' => (int) $userId, 'is_active' => $active], trans_message('landing_users.team_access_updated'));
+        } catch (AuthorizationException $exception) {
+            throw $exception;
+        } catch (BusinessLogicException $exception) {
+            return LandingResponse::error($exception->getMessage(), (int) $exception->getCode());
+        } catch (Throwable $exception) {
+            Log::error('Organization employee access update failed', [
+                'user_id' => $request->user()?->getAuthIdentifier(),
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'member_id' => $userId,
+                'exception' => $exception,
+            ]);
+
+            return LandingResponse::error(trans_message('landing_users.team_access_error'), 500);
         }
     }
 
