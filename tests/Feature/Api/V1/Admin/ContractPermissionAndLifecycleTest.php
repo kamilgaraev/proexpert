@@ -629,6 +629,49 @@ final class ContractPermissionAndLifecycleTest extends TestCase
         self::assertNotSame('status_transition', $payload['data']['events'][0]['description']);
     }
 
+    public function test_timeline_distinguishes_carried_agreement_amount_from_a_new_change(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(84, 11);
+        $events = collect();
+        foreach ([[500, true], [-500, false]] as [$amount, $compensating]) {
+            $event = ContractStateEvent::query()->create([
+                'contract_id' => $contract->id,
+                'event_type' => ContractStateEventTypeEnum::AMENDED,
+                'triggered_by_type' => \App\Models\SupplementaryAgreement::class,
+                'triggered_by_id' => 45,
+                'amount_delta' => $amount,
+                'effective_from' => '2026-09-04',
+                'metadata' => ['agreement_number' => 'ДС-03', 'is_compensating' => $compensating],
+                'created_by_user_id' => 42,
+            ]);
+            $event->setRelation('createdBy', $this->user(7));
+            $event->setRelation('specification', null);
+            $events->push($event);
+        }
+
+        $contracts = \Mockery::mock(ContractService::class);
+        $contracts->shouldReceive('getContractById')->with(84, 7)->andReturn($contract);
+        $stateEvents = \Mockery::mock(ContractStateEventService::class);
+        $stateEvents->shouldReceive('getTimeline')->with($contract, null)->andReturn($events);
+        $acts = \Mockery::mock(ContractPerformanceActRepositoryInterface::class);
+        $acts->shouldReceive('getActsForContract')->with(84)->andReturn(collect());
+        $controller = new ContractStateEventController($contracts, $stateEvents, \Mockery::mock(ContractStateCalculatorService::class), $acts);
+        $request = Request::create('/__review/projects/11/contracts/84/state-events/timeline', 'GET');
+        $request->setUserResolver(fn (): User => $this->user(7));
+        $route = new LaravelRoute(['GET'], '__review/projects/{project}/contracts/{contract}/state-events/timeline', static fn () => null);
+        $route->bind($request);
+        $request->setRouteResolver(static fn () => $route);
+
+        $payload = json_decode($controller->timeline($request, 11, 84)->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertCount(2, $payload['data']['events']);
+        self::assertSame('Соглашение №ДС-03 сохраняет ранее учтённую сумму 500,00 ₽ при замене соглашений. Это не новое изменение суммы договора.', $payload['data']['events'][0]['description']);
+        self::assertSame('Применено соглашение №ДС-03: изменение суммы договора −500,00 ₽.', $payload['data']['events'][1]['description']);
+        self::assertEquals(500, $payload['data']['events'][0]['amount_delta']);
+        self::assertEquals(-500, $payload['data']['events'][1]['amount_delta']);
+    }
+
     public function test_timeline_presents_contract_events_and_performance_acts_for_the_current_user(): void
     {
         $this->createContractTables();

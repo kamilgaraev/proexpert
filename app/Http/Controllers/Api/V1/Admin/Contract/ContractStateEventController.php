@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use App\Services\Contract\ContractService;
+use App\Services\Contract\ContractAgreementEventFormatter;
 use App\Services\Contract\ContractStateCalculatorService;
 use App\Services\Contract\ContractStateEventService;
 use Carbon\Carbon;
@@ -377,6 +378,11 @@ class ContractStateEventController extends Controller
      */
     private function getEventDescription($event): string
     {
+        $agreementDescription = app(ContractAgreementEventFormatter::class)->format($event);
+        if ($agreementDescription !== null) {
+            return $agreementDescription;
+        }
+
         $type = $event->event_type->value;
         $delta = $this->formatMoney($event->amount_delta);
 
