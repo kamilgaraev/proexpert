@@ -12,6 +12,7 @@ final class ActingQuantityStatus
     {
         return [
             ContractPerformanceAct::STATUS_REJECTED,
+            ContractPerformanceAct::STATUS_ANNULLED,
             'cancelled',
             'canceled',
         ];
