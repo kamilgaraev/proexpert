@@ -5,16 +5,16 @@ declare(strict_types=1);
 namespace Tests\Unit\Acting;
 
 use App\Models\CompletedWork;
-use App\Models\Contract;
-use App\Models\ContractPerformanceAct;
-use App\Models\Contractor;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\ContractPerformanceAct;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\PerformanceActLine;
 use App\Models\Project;
-use App\Models\Estimate;
-use App\Models\EstimateItem;
 use App\Services\Acting\ActingAvailabilityService;
 use Tests\Support\ActingTestSchema;
 use Tests\TestCase;
@@ -314,6 +314,30 @@ class ActingAvailabilityServiceTest extends TestCase
             'completion_date' => '2026-04-29',
             'status' => 'confirmed',
         ]);
+
+        $service = app(ActingAvailabilityService::class);
+        $this->assertSame([], $service->getAvailableWorks($contract->id, '2026-04-01', '2026-04-30'));
+        $blocked = $service->getBlockedWorks($contract->id, '2026-04-01', '2026-04-30');
+        $this->assertCount(1, $blocked);
+        $this->assertSame('financial_basis_missing', $blocked[0]['blockers'][0]['code']);
+
+        $snapshot = [
+            'rates' => ['vat_rate' => 0],
+            'unsectioned_items' => [[
+                'id' => $estimateItem->id,
+                'quantity' => 30,
+                'total_amount' => 36000,
+            ]],
+        ];
+        $version = \App\Models\EstimateVersion::query()->create([
+            'estimate_id' => $estimate->id,
+            'organization_id' => $organization->id,
+            'version_number' => 1,
+            'status' => 'approved',
+            'snapshot' => $snapshot,
+            'snapshot_hash' => hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR)),
+        ]);
+        $estimate->forceFill(['current_version_id' => $version->id])->saveQuietly();
 
         $available = app(ActingAvailabilityService::class)->getAvailableWorks(
             $contract->id,

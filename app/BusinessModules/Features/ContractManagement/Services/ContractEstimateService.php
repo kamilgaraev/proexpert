@@ -47,6 +47,7 @@ class ContractEstimateService
                         'estimate_id' => $estimate->id,
                         'quantity' => $item->quantity_total ?? $item->quantity,
                         'amount' => $this->calculateAmount($item, $estimate, $includeVat),
+                        'amount_without_vat' => $this->calculateAmount($item, $estimate, false),
                     ]
                 );
 

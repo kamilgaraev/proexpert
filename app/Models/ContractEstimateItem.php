@@ -15,12 +15,14 @@ class ContractEstimateItem extends Model
         'estimate_item_id',
         'quantity',
         'amount',
+        'amount_without_vat',
         'notes',
     ];
 
     protected $casts = [
         'quantity' => 'decimal:8',
-        'amount'   => 'decimal:2',
+        'amount' => 'decimal:2',
+        'amount_without_vat' => 'decimal:2',
     ];
 
     public function contract(): BelongsTo

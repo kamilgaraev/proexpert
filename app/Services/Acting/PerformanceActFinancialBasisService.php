@@ -65,11 +65,12 @@ final class PerformanceActFinancialBasisService
             throw new BusinessLogicException(trans_message('act_reports.approved_estimate_version_required'), 422);
         }
 
-        $baseUnitPrice = $this->snapshotBaseUnitPrice($snapshotItem, (int) $contract->id);
         $vatRate = $this->decimal($version->snapshot['rates']['vat_rate'] ?? 0, 2);
-        $unitPrice = BigDecimal::of($baseUnitPrice)
+        [$baseAmount, $baseQuantity] = $this->snapshotBaseAmounts($snapshotItem, (int) $contract->id, $vatRate);
+        $baseUnitPrice = (string) $baseAmount->dividedBy($baseQuantity, 2, RoundingMode::HalfUp);
+        $unitPrice = $baseAmount
             ->multipliedBy(BigDecimal::one()->plus(BigDecimal::of($vatRate)->dividedBy(100, 8, RoundingMode::HalfUp)))
-            ->toScale(2, RoundingMode::HalfUp);
+            ->dividedBy($baseQuantity, 2, RoundingMode::HalfUp);
 
         return [
             'estimate_version_id' => (int) $version->id,
@@ -90,7 +91,7 @@ final class PerformanceActFinancialBasisService
         ];
     }
 
-    private function snapshotBaseUnitPrice(array $item, int $contractId): string
+    private function snapshotBaseAmounts(array $item, int $contractId, string $vatRate): array
     {
         foreach ($item['contract_links'] ?? [] as $link) {
             if ((int) ($link['contract_id'] ?? 0) !== $contractId) {
@@ -99,20 +100,39 @@ final class PerformanceActFinancialBasisService
 
             $quantity = BigDecimal::of((string) ($link['quantity'] ?? '0'));
             if ($quantity->isGreaterThan(0)) {
-                return (string) BigDecimal::of((string) ($link['amount'] ?? '0'))
-                    ->dividedBy($quantity, 2, RoundingMode::HalfUp);
+                if (($link['amount_without_vat'] ?? null) !== null) {
+                    return [BigDecimal::of((string) $link['amount_without_vat']), $quantity];
+                }
+
+                [$itemAmount, $itemQuantity] = $this->snapshotItemBaseAmounts($item);
+                $baseAmount = $itemAmount->multipliedBy($quantity)
+                    ->dividedBy($itemQuantity, 2, RoundingMode::HalfUp);
+                $grossAmount = $baseAmount->multipliedBy(
+                    BigDecimal::one()->plus(BigDecimal::of($vatRate)->dividedBy(100, 8, RoundingMode::HalfUp))
+                );
+                $amount = $this->money($link['amount'] ?? 0);
+                if ($amount === $this->money($baseAmount) || $amount === $this->money($grossAmount)) {
+                    return [$baseAmount, $quantity];
+                }
+
+                throw new BusinessLogicException(trans_message('act_reports.estimate_version_price_required'), 422);
             }
         }
 
+        return $this->snapshotItemBaseAmounts($item);
+    }
+
+    private function snapshotItemBaseAmounts(array $item): array
+    {
         $quantity = BigDecimal::of((string) ($item['quantity_total'] ?? $item['quantity'] ?? '0'));
         $amount = BigDecimal::of((string) ($item['current_total_amount'] ?? $item['total_amount'] ?? '0'));
         if ($quantity->isGreaterThan(0) && $amount->isGreaterThan(0)) {
-            return (string) $amount->dividedBy($quantity, 2, RoundingMode::HalfUp);
+            return [$amount, $quantity];
         }
 
         foreach (['actual_unit_price', 'current_unit_price', 'unit_price'] as $field) {
             if (($item[$field] ?? null) !== null && BigDecimal::of((string) $item[$field])->isGreaterThan(0)) {
-                return $this->decimal($item[$field], 2);
+                return [BigDecimal::of((string) $item[$field]), BigDecimal::one()];
             }
         }
 
