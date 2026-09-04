@@ -8,6 +8,11 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Services\RolePayloadFormatter;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Models\User;
+use App\Http\Controllers\Api\V1\Landing\OrganizationUserController;
+use App\Http\Requests\Api\V1\Landing\User\OrganizationTeamIndexRequest;
+use Illuminate\Contracts\Routing\ResponseFactory;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\Factory as ValidationFactory;
 use App\Services\PermissionTranslationService;
 use App\Services\User\OrganizationTeamDirectory;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -205,6 +210,73 @@ final class OrganizationTeamDirectoryTest extends TestCase
 
         $this->expectException(AuthorizationException::class);
         $directory->paginate($actor, 0);
+    }
+
+    public function test_controller_returns_the_paginated_contract_and_preserves_access_denial(): void
+    {
+        $this->member(1, 'Анна', 'anna@example.test', 7);
+        $this->member(2, 'Борис', 'boris@example.test', 7);
+        $request = $this->indexRequest(['page' => 2, 'per_page' => 1]);
+        $controller = new OrganizationUserController;
+
+        $response = $controller->index($request, $this->directory());
+        $body = $response->getData(true);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertTrue($body['success']);
+        self::assertSame([2], array_column($body['data'], 'id'));
+        self::assertSame(['current_page' => 2, 'last_page' => 2, 'per_page' => 1, 'total' => 2], $body['meta']);
+
+        $this->expectException(AuthorizationException::class);
+        $controller->index($request, $this->directory(false));
+    }
+
+    public function test_controller_hides_database_details_when_listing_fails(): void
+    {
+        $request = $this->indexRequest([]);
+        $this->database->schema()->drop('users');
+
+        $response = (new OrganizationUserController)->index($request, $this->directory());
+        $body = $response->getData(true);
+
+        self::assertSame(500, $response->getStatusCode());
+        self::assertFalse($body['success']);
+        self::assertNull($body['data']);
+        self::assertSame('Не удалось загрузить сотрудников. Попробуйте ещё раз.', $body['message']);
+        self::assertStringNotContainsString('SQL', $response->getContent());
+    }
+
+    public function test_request_rejects_invalid_pagination_search_and_missing_membership_context(): void
+    {
+        $request = $this->indexRequest([]);
+        $factory = new ValidationFactory(Container::getInstance()->make('translator'));
+        foreach ([['page' => 0], ['page' => 1000001], ['per_page' => 101], ['per_page' => 0], ['search' => ['invalid']], ['search' => str_repeat('я', 201)]] as $input) {
+            self::assertTrue($factory->make($input, $request->rules())->fails());
+        }
+        self::assertTrue($factory->make(['search' => null, 'page' => 1, 'per_page' => 100], $request->rules())->passes());
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->expects(self::once())->method('can')
+            ->with($request->user(), 'users.manage', ['organization_id' => 7])->willReturn(false);
+        Container::getInstance()->instance(AuthorizationService::class, $authorization);
+        self::assertFalse($request->authorize());
+        $request->attributes->remove('current_organization_id');
+        self::assertFalse($request->authorize());
+    }
+
+    private function indexRequest(array $input): OrganizationTeamIndexRequest
+    {
+        $container = Container::getInstance();
+        $responses = $this->createStub(ResponseFactory::class);
+        $responses->method('json')->willReturnCallback(fn ($data, $status = 200) => new JsonResponse($data, $status));
+        $container->instance(ResponseFactory::class, $responses);
+        $request = OrganizationTeamIndexRequest::create('/user-management/organization-users', 'GET', $input);
+        $request->setContainer($container);
+        $actor = new User;
+        $request->setUserResolver(fn () => $actor);
+        $request->attributes->set('current_organization_id', 7);
+        $request->setValidator((new ValidationFactory($container->make('translator')))->make($input, $request->rules()));
+
+        return $request;
     }
 
     private function directory(bool $allowed = true, ?RoleScanner $scanner = null): OrganizationTeamDirectory
