@@ -129,6 +129,34 @@ class ActReportsIndexContractTest extends TestCase
         $showResponse->assertJsonPath('data.id', $act->id);
     }
 
+    public function test_annulled_act_has_no_payable_balance_and_is_not_pending(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Contractor',
+        ]);
+        $contract = $this->createContract($context->organization, $project, $contractor, 'CANCEL-SUMMARY');
+        $act = $this->createAct($contract, $project, 'CANCELLED-ACT', 1000, false);
+        $act->update(['status' => ContractPerformanceAct::STATUS_ANNULLED]);
+
+        $balance = app(\App\BusinessModules\Core\Payments\Services\FinancialBalanceQuery::class)->forAct($act);
+        $this->assertEquals(0, $balance->debtAmount);
+        $this->assertEquals(0, $balance->invoicedAmount);
+        $this->assertEquals(1000, $act->fresh()->amount);
+
+        $this->createAct($contract, $project, 'DRAFT-ACT', 2000, false);
+        $pending = $this->createAct($contract, $project, 'PENDING-ACT', 3000, false);
+        $pending->update(['status' => ContractPerformanceAct::STATUS_PENDING_APPROVAL]);
+        $summary = app(\App\Services\ActReport\ActReportService::class)->getActsSummary(
+            $context->organization->id,
+            ['contract_id' => $contract->id],
+        );
+        $this->assertSame(1, $summary['pending_acts']);
+        $this->assertSame(3, $summary['total_acts']);
+    }
+
     private function createContract(
         Organization $organization,
         Project $project,

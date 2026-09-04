@@ -64,7 +64,7 @@ final class FinancialBalanceQuery
             ->where('payment_transactions.currency', $currency);
 
         return FinancialBalance::fromLedger(
-            (string) $act->amount,
+            $act->status === ContractPerformanceAct::STATUS_ANNULLED ? '0' : (string) $act->amount,
             (string) (clone $transactions)->where('payment_transactions.amount', '>', 0)->sum('payment_transactions.amount'),
             (string) BigDecimal::of((string) (clone $transactions)
                 ->where('payment_transactions.amount', '<', 0)->sum('payment_transactions.amount'))->abs(),

@@ -224,6 +224,17 @@ class ActingAvailabilityServiceTest extends TestCase
         $this->assertSame([], $service->getBlockedWorks($contract->id, '2026-04-01', '2026-04-30'));
         $this->assertNotNull($line->fresh());
         $this->assertSame(ContractPerformanceAct::STATUS_ANNULLED, $act->fresh()->status);
+        $nextAct = ContractPerformanceAct::create([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'act_document_number' => 'NEXT-DRAFT',
+            'act_date' => '2026-04-16',
+            'amount' => 0,
+            'status' => ContractPerformanceAct::STATUS_DRAFT,
+            'is_approved' => false,
+        ]);
+        $nextWorks = app(\App\Services\ActReport\ActReportService::class)->getAvailableWorks($nextAct);
+        $this->assertSame([$work->id], $nextWorks->modelKeys());
     }
 
     public function test_fully_acted_work_is_not_returned(): void
