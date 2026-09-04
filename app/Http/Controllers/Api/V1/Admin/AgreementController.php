@@ -266,6 +266,15 @@ class AgreementController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
+            if ($e instanceof DomainException) {
+                foreach (['contract_total_negative', 'contract_total_below_commitments', 'contract_terminal_change_forbidden'] as $reason) {
+                    $message = trans_message('agreements.'.$reason);
+                    if ($e->getMessage() === $message) {
+                        return AdminResponse::error($message, Response::HTTP_UNPROCESSABLE_ENTITY);
+                    }
+                }
+            }
+
             return AdminResponse::error(trans_message('agreements.apply_error'), Response::HTTP_BAD_REQUEST);
         }
     }
