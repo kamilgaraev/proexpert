@@ -92,14 +92,6 @@ class ContractResource extends JsonResource
                     }
                 }
 
-                // ДЕЛЬТА ДС = сумма только РЕАЛЬНЫХ активных событий от ДС
-                // Включаем: AMENDED от ДС (НЕ компенсирующие), SUPPL_AGREEMENT_CREATED от ДС
-                // Исключаем:
-                //   - CREATED (базовая сумма)
-                //   - PAYMENT_CREATED (платежи)
-                //   - SUPERSEDED (аннулирование)
-                //   - AMENDED не от ДС (изменения базовой суммы)
-                //   - Компенсирующие AMENDED (is_compensating === true)
                 $agreementsDelta = $activeEventsOnly
                     ->filter(function ($event) {
                         // Исключаем события, не связанные с ДС
@@ -111,20 +103,8 @@ class ContractResource extends JsonResource
                             return false;
                         }
 
-                        // Для AMENDED - проверяем, что это от ДС и НЕ компенсирующее
                         if ($event->event_type === \App\Enums\Contract\ContractStateEventTypeEnum::AMENDED) {
-                            // Должно быть от ДС
-                            if ($event->triggered_by_type !== \App\Models\SupplementaryAgreement::class) {
-                                return false;
-                            }
-
-                            // Исключаем компенсирующие события
-                            $metadata = $event->metadata ?? [];
-                            if (isset($metadata['is_compensating']) && $metadata['is_compensating'] === true) {
-                                return false;
-                            }
-
-                            return true;
+                            return $event->triggered_by_type === \App\Models\SupplementaryAgreement::class;
                         }
 
                         // Для SUPPL_AGREEMENT_CREATED - учитываем только если от ДС
