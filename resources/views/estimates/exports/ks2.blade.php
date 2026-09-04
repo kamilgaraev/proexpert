@@ -45,7 +45,6 @@
             margin: 8mm 10mm 10mm;
         }
 
-        html,
         body {
             margin: 0;
             padding: 0;
@@ -71,13 +70,13 @@
         }
 
         .header-area {
-            min-height: 80mm;
+            min-height: 65mm;
             position: relative;
         }
 
         .party-block {
             margin-right: 98mm;
-            padding-top: 25mm;
+            padding-top: 10mm;
         }
 
         .code-area {
@@ -139,7 +138,7 @@
         }
 
         .code-tall {
-            height: 10mm;
+            height: 6mm;
         }
 
         .document-block {
@@ -202,7 +201,7 @@
             border-bottom: 0.7pt solid #000;
             display: inline-block;
             margin-left: 2mm;
-            min-width: 136mm;
+            min-width: 42mm;
             padding-right: 2mm;
             text-align: right;
         }
@@ -230,6 +229,10 @@
             display: table-header-group;
         }
 
+        .official-table thead tr {
+            page-break-after: avoid;
+        }
+
         .official-table tr {
             page-break-inside: avoid;
         }
@@ -240,8 +243,7 @@
             text-align: center;
         }
 
-        .work-row td,
-        .blank-row td {
+        .work-row td {
             height: 7mm;
         }
 
@@ -261,7 +263,6 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
     <div class="header-area">
         <div class="top-note">
             <div>Унифицированная форма № КС-2</div>
@@ -394,23 +395,13 @@
     </div>
 
     <table class="official-table">
-        <colgroup>
-            <col style="width: 6.8%;">
-            <col style="width: 6.8%;">
-            <col style="width: 41.2%;">
-            <col style="width: 10.3%;">
-            <col style="width: 6.2%;">
-            <col style="width: 9.6%;">
-            <col style="width: 9.6%;">
-            <col style="width: 9.5%;">
-        </colgroup>
         <thead>
             <tr>
-                <th colspan="2">Номер</th>
-                <th rowspan="2">Наименование работ</th>
-                <th rowspan="2">Номер единичной расценки</th>
-                <th rowspan="2">Единица измерения</th>
-                <th colspan="3">Выполнено работ</th>
+                <th colspan="2" style="width: 13.6%;">Номер</th>
+                <th rowspan="2" style="width: 38.6%;">Наименование работ</th>
+                <th rowspan="2" style="width: 10.3%;">Номер единичной расценки</th>
+                <th rowspan="2" style="width: 8.8%;">Единица измерения</th>
+                <th colspan="3" style="width: 28.7%;">Выполнено работ</th>
             </tr>
             <tr>
                 <th>по порядку</th>
@@ -448,19 +439,6 @@
                     <td class="text-right">{{ $formatMoney($includedAmount) }}</td>
                 </tr>
             @endforeach
-
-            @for($blank = $workRows->count(); $blank < 3; $blank++)
-                <tr class="blank-row">
-                    <td></td>
-                    <td></td>
-                    <td></td>
-                    <td></td>
-                    <td></td>
-                    <td></td>
-                    <td></td>
-                    <td></td>
-                </tr>
-            @endfor
 
             <tr class="total-row">
                 <td colspan="5" class="text-right">Итого</td>
