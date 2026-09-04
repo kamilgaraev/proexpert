@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
-use App\Exceptions\BusinessLogicException;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
+use App\Enums\ProjectOrganizationRole;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\ProjectContextMiddleware;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
@@ -14,7 +15,6 @@ use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
 use App\Http\Responses\AdminResponse;
-use App\Enums\ProjectOrganizationRole;
 use App\Models\CompletedWork;
 use App\Models\Contractor;
 use App\Models\ProjectSchedule;
@@ -31,8 +31,9 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\Response;
+
 use function trans_message;
 
 class CompletedWorkController extends Controller
@@ -41,8 +42,7 @@ class CompletedWorkController extends Controller
         protected CompletedWorkService $completedWorkService,
         protected ScheduleTaskCompletedWorkService $scheduleTaskService,
         protected CompletedWorkFactService $completedWorkFactService,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -154,7 +154,7 @@ class CompletedWorkController extends Controller
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
-        if (!$this->canAccessProjectWork($completed_work, request())) {
+        if (! $this->canAccessProjectWork($completed_work, request())) {
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
@@ -167,12 +167,12 @@ class CompletedWorkController extends Controller
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
-        if (!$this->canAccessProjectWork($completed_work, $request)) {
+        if (! $this->canAccessProjectWork($completed_work, $request)) {
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
         $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        if ($projectContext && !$projectContext->roleConfig->canManageWorks) {
+        if ($projectContext && ! $projectContext->roleConfig->canManageWorks) {
             return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
         }
 
@@ -209,12 +209,12 @@ class CompletedWorkController extends Controller
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
-        if (!$this->canAccessProjectWork($completed_work, request())) {
+        if (! $this->canAccessProjectWork($completed_work, request())) {
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
         $projectContext = ProjectContextMiddleware::getProjectContext(request());
-        if ($projectContext && !$projectContext->roleConfig->canManageWorks) {
+        if ($projectContext && ! $projectContext->roleConfig->canManageWorks) {
             return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
         }
 
@@ -307,7 +307,7 @@ class CompletedWorkController extends Controller
                 ->with('schedule')
                 ->first();
 
-            if (!$task) {
+            if (! $task) {
                 return AdminResponse::error(trans_message('completed_work.schedule_task_not_found'), 404);
             }
 
@@ -347,7 +347,7 @@ class CompletedWorkController extends Controller
                 ->where('project_id', $project)
                 ->first();
 
-            if (!$schedule) {
+            if (! $schedule) {
                 return AdminResponse::error(trans_message('completed_work.schedule_not_found'), 404);
             }
 
@@ -383,7 +383,7 @@ class CompletedWorkController extends Controller
             $organizationId = (int) Auth::user()->current_organization_id;
             $worksPayload = $request->input('works', []);
 
-            if (!is_array($worksPayload) || $worksPayload === []) {
+            if (! is_array($worksPayload) || $worksPayload === []) {
                 return AdminResponse::error(trans_message('completed_work.bulk_payload_required'), Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 
@@ -404,6 +404,7 @@ class CompletedWorkController extends Controller
                     'total_amount' => ['nullable', 'numeric', 'min:0'],
                     'completion_date' => ['required', 'date_format:Y-m-d'],
                     'notes' => ['nullable', 'string'],
+                    'description' => ['nullable', 'string', 'max:65535'],
                     'status' => ['nullable', 'string', 'in:draft,pending,in_review,confirmed,cancelled,rejected'],
                     'work_origin_type' => ['nullable', 'string', 'in:manual,schedule,journal'],
                     'planning_status' => ['nullable', 'string', 'in:planned,requires_schedule'],
@@ -456,6 +457,7 @@ class CompletedWorkController extends Controller
                     status: $validated['status'] ?? 'draft',
                     additional_info: $validated['additional_info'] ?? null,
                     materials: $materials,
+                    description: $validated['description'] ?? null,
                 );
 
                 $createdWorks[] = $this->loadWorkRelations(
@@ -531,7 +533,7 @@ class CompletedWorkController extends Controller
                 ]
             );
 
-            $spreadsheet = new Spreadsheet();
+            $spreadsheet = new Spreadsheet;
             $sheet = $spreadsheet->getActiveSheet();
             $sheet->fromArray([
                 'ID',
@@ -573,7 +575,7 @@ class CompletedWorkController extends Controller
                     $work->user?->name,
                     $work->contractor?->name,
                     $work->notes,
-                ], null, 'A' . $row);
+                ], null, 'A'.$row);
                 $row++;
             }
 
@@ -581,8 +583,8 @@ class CompletedWorkController extends Controller
                 $sheet->getColumnDimension($column)->setAutoSize(true);
             }
 
-            $filePath = storage_path('app/temp/completed_works_export_' . now()->format('Ymd_His') . '.xlsx');
-            if (!is_dir(dirname($filePath))) {
+            $filePath = storage_path('app/temp/completed_works_export_'.now()->format('Ymd_His').'.xlsx');
+            if (! is_dir(dirname($filePath))) {
                 mkdir(dirname($filePath), 0777, true);
             }
 
@@ -591,7 +593,7 @@ class CompletedWorkController extends Controller
 
             return response()->download(
                 $filePath,
-                'completed_works_' . now()->format('Y-m-d_H-i-s') . '.xlsx',
+                'completed_works_'.now()->format('Y-m-d_H-i-s').'.xlsx',
                 ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
             )->deleteFileAfterSend(true);
         } catch (\Throwable $e) {
@@ -634,11 +636,11 @@ class CompletedWorkController extends Controller
             return true;
         }
 
-        if (!$projectContext) {
+        if (! $projectContext) {
             return false;
         }
 
-        if (!$this->projectContextRequiresOwnWorkScope($projectContext->role)) {
+        if (! $this->projectContextRequiresOwnWorkScope($projectContext->role)) {
             return true;
         }
 

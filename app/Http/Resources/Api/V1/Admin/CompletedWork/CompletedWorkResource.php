@@ -90,6 +90,7 @@ class CompletedWorkResource extends JsonResource
             'total_amount' => $totalAmount,
             'completion_date' => $this->completion_date->format('Y-m-d'),
             'notes' => $this->notes,
+            'description' => $this->description,
             'status' => $this->status,
             'additional_info' => $this->additional_info,
             'materials' => CompletedWorkMaterialResource::collection($this->whenLoaded('materials')),
@@ -162,7 +163,7 @@ class CompletedWorkResource extends JsonResource
         }
 
         $estimateItem = $scheduleTask?->estimateItem ?? $this->estimateItem;
-        if (!$estimateItem) {
+        if (! $estimateItem) {
             $baseQuantity = $this->resolveStoredAmountQuantity();
 
             return $this->total_amount !== null && $baseQuantity > 0
@@ -208,7 +209,7 @@ class CompletedWorkResource extends JsonResource
 
     private function resolveTaskCompletedQuantity(?ScheduleTask $scheduleTask, ?float $taskQuantity = null): ?float
     {
-        if (!$scheduleTask) {
+        if (! $scheduleTask) {
             return null;
         }
 
@@ -226,7 +227,7 @@ class CompletedWorkResource extends JsonResource
 
     private function resolveTaskQuantity(?ScheduleTask $scheduleTask): ?float
     {
-        if (!$scheduleTask) {
+        if (! $scheduleTask) {
             return $this->estimateItem?->quantity_total !== null ? (float) $this->estimateItem->quantity_total : null;
         }
 
@@ -235,7 +236,7 @@ class CompletedWorkResource extends JsonResource
         }
 
         $estimateItem = $scheduleTask->estimateItem;
-        if (!$estimateItem) {
+        if (! $estimateItem) {
             return null;
         }
 
@@ -256,7 +257,7 @@ class CompletedWorkResource extends JsonResource
 
     private function shouldSyncFromTask(?ScheduleTask $scheduleTask): bool
     {
-        if (!$scheduleTask || !in_array($this->status, ['draft', 'pending', 'in_review'], true)) {
+        if (! $scheduleTask || ! in_array($this->status, ['draft', 'pending', 'in_review'], true)) {
             return false;
         }
 
@@ -285,7 +286,7 @@ class CompletedWorkResource extends JsonResource
     {
         $measurementUnit = $scheduleTask?->measurementUnit ?? $scheduleTask?->estimateItem?->measurementUnit ?? $this->estimateItem?->measurementUnit;
 
-        if (!$measurementUnit) {
+        if (! $measurementUnit) {
             return null;
         }
 

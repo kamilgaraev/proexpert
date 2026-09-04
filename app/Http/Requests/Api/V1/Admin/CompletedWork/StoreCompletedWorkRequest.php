@@ -28,7 +28,7 @@ class StoreCompletedWorkRequest extends FormRequest
         $projectId = (int) $this->input('project_id');
 
         return [
-            'project_id' => ['required', 'integer', new ProjectAccessibleRule()],
+            'project_id' => ['required', 'integer', new ProjectAccessibleRule],
             'contract_id' => [
                 'nullable',
                 'integer',
@@ -93,6 +93,7 @@ class StoreCompletedWorkRequest extends FormRequest
             'total_amount' => 'nullable|numeric|min:0',
             'completion_date' => 'required|date_format:Y-m-d',
             'notes' => 'nullable|string|max:65535',
+            'description' => 'nullable|string|max:65535',
             'status' => 'required|string|in:draft,pending,in_review,confirmed,cancelled,rejected',
             'work_origin_type' => 'nullable|string|in:manual,schedule,journal',
             'planning_status' => 'nullable|string|in:planned,requires_schedule',
@@ -145,7 +146,8 @@ class StoreCompletedWorkRequest extends FormRequest
             notes: $validatedData['notes'] ?? null,
             status: $validatedData['status'],
             additional_info: $validatedData['additional_info'] ?? null,
-            materials: $materials
+            materials: $materials,
+            description: $validatedData['description'] ?? null
         );
     }
 
@@ -153,7 +155,7 @@ class StoreCompletedWorkRequest extends FormRequest
     {
         $project = $this->attributes->get('project');
 
-        if (!$project instanceof Project) {
+        if (! $project instanceof Project) {
             $projectId = $this->route('project') ?? $this->input('project_id');
             $project = $projectId ? Project::query()->find($projectId) : null;
         }

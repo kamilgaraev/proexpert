@@ -30,9 +30,9 @@ class CompletedWorkDTO
         public readonly ?string $notes,
         public readonly string $status,
         public readonly ?array $additional_info,
-        public readonly ?array $materials = null
-    ) {
-    }
+        public readonly ?array $materials = null,
+        public readonly ?string $description = null
+    ) {}
 
     public static function fromModel(object $model): self
     {
@@ -72,7 +72,8 @@ class CompletedWorkDTO
             notes: $model->notes,
             status: $model->status,
             additional_info: $model->additional_info,
-            materials: $materials
+            materials: $materials,
+            description: $model->description
         );
     }
 
@@ -98,6 +99,7 @@ class CompletedWorkDTO
                 ? $this->completion_date->toDateString()
                 : Carbon::parse($this->completion_date)->toDateString(),
             'notes' => $this->notes,
+            'description' => $this->description,
             'status' => $this->status,
             'additional_info' => $this->additional_info,
         ];

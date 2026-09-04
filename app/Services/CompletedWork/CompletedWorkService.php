@@ -121,7 +121,8 @@ class CompletedWorkService
                     notes: $dto->notes,
                     status: $dto->status,
                     additional_info: $dto->additional_info,
-                    materials: $dto->materials
+                    materials: $dto->materials,
+                    description: $dto->description
                 );
 
                 $this->logging->technical('contractor_id auto-filled', [
