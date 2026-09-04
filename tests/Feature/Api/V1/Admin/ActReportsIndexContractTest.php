@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
-use App\Models\Contract;
-use App\Models\ContractPerformanceAct;
-use App\Models\Contractor;
 use App\Enums\ContractorType;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\ContractPerformanceAct;
+use App\Models\Module;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -17,6 +18,36 @@ use Tests\TestCase;
 class ActReportsIndexContractTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_owner_act_details_include_invoice_recipient(): void
+    {
+        Module::query()->create([
+            'name' => 'Управление актами',
+            'slug' => 'act-reporting',
+            'version' => '1.0.0',
+            'type' => 'core',
+            'billing_model' => 'free',
+            'class_name' => \App\BusinessModules\Addons\ActReporting\ActReportingModule::class,
+            'is_active' => true,
+            'is_system_module' => true,
+            'can_deactivate' => false,
+        ]);
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Invoice recipient',
+        ]);
+        $contract = $this->createContract($context->organization, $project, $contractor, 'ACT-INVOICE');
+        $act = $this->createAct($contract, $project, 'KS-2-INVOICE', 1000, true);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/act-reports/{$act->id}");
+        $this->assertSame(200, $response->status(), $response->getContent());
+        $response->assertJsonPath('data.contractor_id', $contractor->id)
+            ->assertJsonPath('data.project_id', $project->id)
+            ->assertJsonPath('data.financial_summary.is_ready_for_payment', true);
+    }
 
     public function test_index_returns_paginated_contract_with_filtered_summary(): void
     {
@@ -80,7 +111,7 @@ class ActReportsIndexContractTest extends TestCase
         $act = $this->createAct($contract, $project, 'KS-2-CONTRACTOR', 3000, true);
 
         $indexResponse = $this->withHeaders($contractorContext->authHeaders())
-            ->getJson('/api/v1/admin/act-reports?' . http_build_query([
+            ->getJson('/api/v1/admin/act-reports?'.http_build_query([
                 'contract_id' => $contract->id,
                 'per_page' => 10,
             ]));

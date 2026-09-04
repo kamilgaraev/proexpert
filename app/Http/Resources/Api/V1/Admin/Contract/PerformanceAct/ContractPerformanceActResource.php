@@ -20,10 +20,11 @@ class ContractPerformanceActResource extends JsonResource
         return [
             'id' => $this->id,
             'contract_id' => $this->contract_id,
+            'contractor_id' => $this->whenLoaded('contract', fn () => $this->contract?->contractor_id),
             'project_id' => $this->project_id,
-            'contract_number' => $this->whenLoaded('contract', fn() => $this->contract->number),
-            'contract_date' => $this->whenLoaded('contract', fn() => $this->contract->date),
-            'contract_subject' => $this->whenLoaded('contract', fn() => $this->contract->subject),
+            'contract_number' => $this->whenLoaded('contract', fn () => $this->contract->number),
+            'contract_date' => $this->whenLoaded('contract', fn () => $this->contract->date),
+            'contract_subject' => $this->whenLoaded('contract', fn () => $this->contract->subject),
             'project_name' => $this->resolveProjectName(),
             'contractor_name' => $this->resolveContractorName(),
             'act_document_number' => $this->act_document_number,
@@ -51,10 +52,10 @@ class ContractPerformanceActResource extends JsonResource
             'financial_summary' => app(ActReportWorkflowService::class)->financialSummary($this->resource),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
-            
+
             // Связанные выполненные работы
-            'completed_works' => $this->whenLoaded('completedWorks', function() {
-                return $this->completedWorks->map(function($work) {
+            'completed_works' => $this->whenLoaded('completedWorks', function () {
+                return $this->completedWorks->map(function ($work) {
                     return [
                         'id' => $work->id,
                         'work_type_name' => $work->workType->name ?? 'Не указано',
@@ -88,8 +89,8 @@ class ContractPerformanceActResource extends JsonResource
                 });
             }, []),
 
-            'files' => $this->whenLoaded('files', function() {
-                return $this->files->map(function($file) {
+            'files' => $this->whenLoaded('files', function () {
+                return $this->files->map(function ($file) {
                     return [
                         'id' => $file->id,
                         'name' => $file->original_name,
@@ -127,4 +128,4 @@ class ContractPerformanceActResource extends JsonResource
 
         return null;
     }
-} 
+}
