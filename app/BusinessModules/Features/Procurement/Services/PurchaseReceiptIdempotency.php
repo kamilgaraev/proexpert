@@ -8,6 +8,7 @@ final class PurchaseReceiptIdempotency
 {
     public static function fingerprint(int $warehouseId, array $items, array $receiptData): string
     {
+        $documentMode = (string) ($receiptData['document_mode'] ?? 'torg12_paper');
         $normalizedItems = array_map(
             static fn (array $item): array => [
                 'item_id' => (int) $item['item_id'],
@@ -27,6 +28,10 @@ final class PurchaseReceiptIdempotency
             'items' => $normalizedItems,
             'receipt_date' => (string) ($receiptData['receipt_date'] ?? ''),
             'notes' => trim((string) ($receiptData['notes'] ?? '')),
+            'document_mode' => $documentMode,
+            'receipt_document_id' => $documentMode === 'upd_xml'
+                ? (int) ($receiptData['receipt_document_id'] ?? 0)
+                : null,
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 

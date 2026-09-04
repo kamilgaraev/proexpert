@@ -29,15 +29,19 @@ class PurchaseReceiptResource extends JsonResource
                 ->forPurchaseReceipt($this->resource, $request->user())
                 ->compact()
                 ->toArray(),
-            'warehouse' => $this->whenLoaded('warehouse', fn() => $this->warehouse ? [
+            'warehouse' => $this->whenLoaded('warehouse', fn () => $this->warehouse ? [
                 'id' => $this->warehouse->id,
                 'name' => $this->warehouse->name,
             ] : null),
-            'received_by_user' => $this->whenLoaded('receivedByUser', fn() => $this->receivedByUser ? [
+            'received_by_user' => $this->whenLoaded('receivedByUser', fn () => $this->receivedByUser ? [
                 'id' => $this->receivedByUser->id,
                 'name' => $this->receivedByUser->name,
             ] : null),
-            'lines' => $this->whenLoaded('lines', fn() => PurchaseReceiptLineResource::collection($this->lines)),
+            'document' => $this->whenLoaded(
+                'document',
+                fn () => $this->document ? new PurchaseReceiptDocumentResource($this->document) : null,
+            ),
+            'lines' => $this->whenLoaded('lines', fn () => PurchaseReceiptLineResource::collection($this->lines)),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

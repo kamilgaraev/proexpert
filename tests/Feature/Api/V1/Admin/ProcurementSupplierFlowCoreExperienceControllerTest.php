@@ -12,12 +12,14 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseReceiptDocumentStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptDocument;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
@@ -35,7 +37,10 @@ use App\Models\Project;
 use App\Models\Supplier;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Storage\DTO\CurrentStoredFile;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\Support\EnablesImmutableAuditWriter;
@@ -45,6 +50,8 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
 {
     use EnablesImmutableAuditWriter;
     use RefreshDatabase;
+
+    private const INCOMING_UPD_FILE_ID = 'ON_NSCHFDOPPR_2BM-7712345678-771201001-20260904-1_2BM-1654321098-165401001-20260904-1_20260904_1';
 
     public function test_admin_can_run_supplier_flow_to_purchase_order_receipt_without_organization_leaks(): void
     {
@@ -879,6 +886,106 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $this->assertSame($contractId, PaymentDocument::query()->findOrFail($paymentId)->source_id);
     }
 
+    public function test_validated_upd_is_attached_to_the_same_transaction_as_purchase_receipt(): void
+    {
+        [$context, $purchaseOrder, $item, $warehouse] = $this->createIncomingUpdReceiptScenario();
+
+        $uploadResponse = $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-documents/upd", [
+                'file' => UploadedFile::fake()->createWithContent(
+                    self::INCOMING_UPD_FILE_ID.'.xml',
+                    $this->validIncomingUpdXml(),
+                ),
+            ]);
+
+        $uploadResponse->assertCreated();
+        $uploadResponse->assertJsonPath('data.is_valid', true);
+        $documentId = (int) $uploadResponse->json('data.id');
+
+        $receiveResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
+                'warehouse_id' => $warehouse->id,
+                'idempotency_key' => '07aee87f-ab27-4b51-90d7-53f967a91e5d',
+                'document_mode' => 'upd_xml',
+                'receipt_document_id' => $documentId,
+                'items' => [[
+                    'item_id' => $item->id,
+                    'quantity_received' => 100,
+                    'price' => 15,
+                ]],
+            ]);
+
+        $receiveResponse->assertOk();
+        $receiveResponse->assertJsonPath('data.receipts.0.metadata.receipt_document.document_type', 'upd_xml');
+        $receiveResponse->assertJsonPath('data.receipts.0.document.id', $documentId);
+        $receiveResponse->assertJsonPath('data.receipts.0.document.status', PurchaseReceiptDocumentStatusEnum::ATTACHED->value);
+        $this->assertDatabaseHas('purchase_receipt_documents', [
+            'id' => $documentId,
+            'purchase_order_id' => $purchaseOrder->id,
+            'status' => PurchaseReceiptDocumentStatusEnum::ATTACHED->value,
+        ]);
+        $this->assertSame(
+            PurchaseReceipt::query()->where('purchase_order_id', $purchaseOrder->id)->value('id'),
+            PurchaseReceiptDocument::query()->findOrFail($documentId)->purchase_receipt_id,
+        );
+
+        $stockResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/balances");
+
+        $stockResponse->assertOk();
+        $stockResponse->assertJsonPath('data.0.receipt_documents.0.document_type', 'upd_xml');
+        $stockResponse->assertJsonPath('data.0.receipt_documents.0.document_id', $documentId);
+        $stockResponse->assertJsonPath('data.0.receipt_documents.0.document_number', 'УПД-2026-1');
+        $stockResponse->assertJsonPath('data.0.receipt_documents.0.filename', self::INCOMING_UPD_FILE_ID.'.xml');
+        $stockResponse->assertJsonPath('data.0.receipt_documents.0.has_pdf', false);
+    }
+
+    public function test_upd_with_different_receipt_items_rolls_back_receipt_and_stock_changes(): void
+    {
+        [$context, $purchaseOrder, $item, $warehouse, $material] = $this->createIncomingUpdReceiptScenario();
+
+        $uploadResponse = $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-documents/upd", [
+                'file' => UploadedFile::fake()->createWithContent(
+                    self::INCOMING_UPD_FILE_ID.'.xml',
+                    $this->validIncomingUpdXml(),
+                ),
+            ]);
+        $uploadResponse->assertCreated();
+        $documentId = (int) $uploadResponse->json('data.id');
+
+        $receiveResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
+                'warehouse_id' => $warehouse->id,
+                'idempotency_key' => 'f31ee143-edf9-4af8-a60a-a12d3748a052',
+                'document_mode' => 'upd_xml',
+                'receipt_document_id' => $documentId,
+                'items' => [[
+                    'item_id' => $item->id,
+                    'quantity_received' => 99,
+                    'price' => 15,
+                ]],
+            ]);
+
+        $receiveResponse->assertStatus(422);
+        $receiveResponse->assertJsonPath(
+            'message',
+            trans_message('procurement.upd.attachment_issues.receipt_items_mismatch'),
+        );
+        $this->assertDatabaseMissing('purchase_receipts', [
+            'purchase_order_id' => $purchaseOrder->id,
+        ]);
+        $this->assertDatabaseMissing('warehouse_balances', [
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+        ]);
+        $this->assertDatabaseHas('purchase_receipt_documents', [
+            'id' => $documentId,
+            'purchase_receipt_id' => null,
+            'status' => PurchaseReceiptDocumentStatusEnum::VALIDATED->value,
+        ]);
+    }
+
     public function test_purchase_order_payload_prefers_supplier_snapshot_from_offer(): void
     {
         $context = AdminApiTestContext::create();
@@ -917,6 +1024,90 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $showResponse->assertJsonPath('data.supplier.id', null);
         $showResponse->assertJsonPath('data.supplier.name', 'Supplier From Offer');
         $showResponse->assertJsonPath('data.supplier.inn', '7711999900');
+    }
+
+    /**
+     * @return array{AdminApiTestContext, PurchaseOrder, PurchaseOrderItem, OrganizationWarehouse, Material}
+     */
+    private function createIncomingUpdReceiptScenario(): array
+    {
+        $context = AdminApiTestContext::create();
+        $context->organization->forceFill(['tax_number' => '1654321098'])->save();
+        $unit = MeasurementUnit::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('short_name', 'кг')
+            ->firstOrFail();
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $material->forceFill(['name' => 'Цемент М500, мешок 50 кг'])->save();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $supplier = $this->createSupplier($context->organization->id, 'ООО Поставщик', 'upd@example.test');
+        $warehouse = $this->createWarehouse($context->organization->id);
+
+        $purchaseOrder = PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'supplier_id' => $supplier->id,
+            'order_number' => 'PO-UPD-'.uniqid(),
+            'order_date' => now()->toDateString(),
+            'status' => PurchaseOrderStatusEnum::IN_DELIVERY,
+            'total_amount' => 1500,
+            'currency' => 'RUB',
+            'supplier_snapshot' => [
+                'type' => 'registered',
+                'display_name' => 'ООО Поставщик',
+                'tax_id' => '7712345678',
+            ],
+        ]);
+        $item = PurchaseOrderItem::query()->create([
+            'purchase_order_id' => $purchaseOrder->id,
+            'material_id' => $material->id,
+            'material_name' => $material->name,
+            'quantity' => 100,
+            'unit' => 'кг',
+            'unit_price' => 15,
+            'total_price' => 1500,
+        ]);
+
+        $this->createPaidProcurementPaymentDocument($context, $purchaseOrder, 1500);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $this->mock(FileService::class, static function (MockInterface $mock): void {
+            $mock->shouldReceive('putPrivate')
+                ->andReturnUsing(static fn (string $key, string $contents, string $mime, string $sha256): CurrentStoredFile => new CurrentStoredFile(
+                    $key,
+                    'test-etag',
+                    strlen($contents),
+                    $sha256,
+                    $mime,
+                ));
+        });
+
+        return [$context, $purchaseOrder, $item, $warehouse, $material];
+    }
+
+    private function validIncomingUpdXml(): string
+    {
+        return <<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<Файл ИдФайл="ON_NSCHFDOPPR_2BM-7712345678-771201001-20260904-1_2BM-1654321098-165401001-20260904-1_20260904_1" ВерсФорм="5.03" ВерсПрог="МОСТ">
+  <Документ КНД="1115131" Функция="ДОП" НаимДокОпр="Универсальный передаточный документ" ДатаИнфПр="04.09.2026" ВремИнфПр="12.00.00">
+    <СвСчФакт НомерДок="УПД-2026-1" ДатаДок="04.09.2026">
+      <СвПрод><ИдСв><СвЮЛУч НаимОрг="ООО Поставщик" ИННЮЛ="7712345678" КПП="771201001"/></ИдСв></СвПрод>
+      <СвПокуп><ИдСв><СвЮЛУч НаимОрг="ООО МОСТ" ИННЮЛ="1654321098" КПП="165401001"/></ИдСв></СвПокуп>
+      <ДенИзм КодОКВ="643" НаимОКВ="Российский рубль"/>
+    </СвСчФакт>
+    <ТаблСчФакт>
+      <СведТов НомСтр="1" НаимТов="Цемент М500, мешок 50 кг" ОКЕИ_Тов="166" НаимЕдИзм="кг" КолТов="100" ЦенаТов="15.00" СтТовБезНДС="1500.00" НалСт="20%" СтТовУчНал="1800.00">
+        <Акциз><БезАкциз>без акциза</БезАкциз></Акциз>
+        <СумНал><СумНал>300.00</СумНал></СумНал>
+      </СведТов>
+      <ВсегоОпл СтТовБезНДСВсего="1500.00" СтТовУчНалВсего="1800.00"><СумНалВсего><СумНал>300.00</СумНал></СумНалВсего></ВсегоОпл>
+    </ТаблСчФакт>
+    <СвПродПер><СвПер СодОпер="Товары переданы" ДатаПер="04.09.2026"><БезДокОснПер>1</БезДокОснПер></СвПер></СвПродПер>
+    <Подписант СпосПодтПолном="1"><ФИО Фамилия="Иванов" Имя="Иван" Отчество="Иванович"/></Подписант>
+  </Документ>
+</Файл>
+XML;
     }
 
     private function createProposalThroughApi(

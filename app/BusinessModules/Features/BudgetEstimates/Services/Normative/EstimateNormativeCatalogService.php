@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceActivation;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use App\BusinessModules\Features\BudgetEstimates\Exceptions\EstimateStructureImmutableException;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
@@ -52,9 +53,9 @@ class EstimateNormativeCatalogService
         if (($filters['query'] ?? null) !== null) {
             $search = mb_strtolower(trim((string) $filters['query']));
             $query->where(function (Builder $builder) use ($search): void {
-                $builder->whereRaw('LOWER(code) LIKE ?', ['%' . $search . '%'])
-                    ->orWhereRaw('LOWER(name) LIKE ?', ['%' . $search . '%'])
-                    ->orWhereRaw('LOWER(COALESCE(section_name, \'\')) LIKE ?', ['%' . $search . '%']);
+                $builder->whereRaw('LOWER(code) LIKE ?', ['%'.$search.'%'])
+                    ->orWhereRaw('LOWER(name) LIKE ?', ['%'.$search.'%'])
+                    ->orWhereRaw('LOWER(COALESCE(section_name, \'\')) LIKE ?', ['%'.$search.'%']);
             });
         }
 
@@ -92,6 +93,10 @@ class EstimateNormativeCatalogService
 
     public function addItemsFromNormatives(Estimate $estimate, array $items): array
     {
+        if (! $estimate->canBeEdited()) {
+            throw new EstimateStructureImmutableException;
+        }
+
         return DB::transaction(function () use ($estimate, $items): array {
             $created = [];
             $priceVersions = $this->latestPriceVersions();
@@ -232,7 +237,7 @@ class EstimateNormativeCatalogService
             : collect();
 
         $priceSourceById = $priceVersions->mapWithKeys(
-            static fn (EstimateDatasetVersion $version): array => [$version->id => $version->source_type->value . '_base']
+            static fn (EstimateDatasetVersion $version): array => [$version->id => $version->source_type->value.'_base']
         );
 
         return $resources->flatMap(function ($resource) use ($prices, $priceSourceById): array {
@@ -283,7 +288,7 @@ class EstimateNormativeCatalogService
                 'estimate_section_id' => $work->estimate_section_id,
                 'parent_work_id' => $work->id,
                 'item_type' => $itemType,
-                'position_number' => $work->position_number . '.' . $positionIndex,
+                'position_number' => $work->position_number.'.'.$positionIndex,
                 'name' => $resource['name'] ?? $resource['resource_code'],
                 'description' => 'fsnb_norm_resource',
                 'normative_rate_code' => $resource['resource_code'],
@@ -423,7 +428,7 @@ class EstimateNormativeCatalogService
 
         return [
             'resource_code' => $driverCode,
-            'name' => trim('ОТм(ЗТм) Средний разряд машинистов ' . (string) $machinistCategory),
+            'name' => trim('ОТм(ЗТм) Средний разряд машинистов '.(string) $machinistCategory),
             'resource_type' => EstimateResourceType::MACHINE_LABOR->value,
             'unit' => 'чел.-ч',
             'quantity_per_unit' => round((float) $machineResource['quantity_per_unit'] * $machineLaborQuantity, 6),
@@ -459,7 +464,7 @@ class EstimateNormativeCatalogService
         $quantity = round($machineLaborQuantity * $totalQuantity, 6);
 
         return [
-            'name' => trim('ОТм(ЗТм) Средний разряд машинистов ' . (string) $machinistCategory),
+            'name' => trim('ОТм(ЗТм) Средний разряд машинистов '.(string) $machinistCategory),
             'resource_code' => $driverCode,
             'unit' => 'чел.-ч',
             'quantity' => $quantity,

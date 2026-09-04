@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
+use App\BusinessModules\Features\BudgetEstimates\Exceptions\EstimateStructureImmutableException;
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\SearchEstimateNormativesRequest;
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\StoreEstimateItemsFromNormativesRequest;
 use App\BusinessModules\Features\BudgetEstimates\Services\Normative\EstimateNormativeCatalogService;
@@ -12,9 +13,9 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateItemResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
-use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Log;
 
 use function trans_message;
@@ -84,6 +85,11 @@ class EstimateNormativeController extends Controller
     {
         try {
             $estimateModel = $this->resolveEstimate($request, $estimate);
+
+            if (! $estimateModel->canBeEdited()) {
+                throw new EstimateStructureImmutableException;
+            }
+
             $this->authorize('update', $estimateModel);
 
             $items = $this->catalogService->addItemsFromNormatives($estimateModel, $request->validated()['items']);
@@ -92,6 +98,11 @@ class EstimateNormativeController extends Controller
                 EstimateItemResource::collection($items),
                 trans_message('estimate.items_added'),
                 Response::HTTP_CREATED
+            );
+        } catch (EstimateStructureImmutableException) {
+            return AdminResponse::error(
+                trans_message('estimate.structure_locked'),
+                Response::HTTP_CONFLICT
             );
         } catch (\Throwable $e) {
             if ($e instanceof AuthorizationException) {

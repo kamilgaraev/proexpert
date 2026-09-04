@@ -1405,6 +1405,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'purchaseReceipt.purchaseOrder.supplier',
                 'purchaseReceipt.purchaseOrder.externalSupplierContact',
                 'purchaseReceipt.purchaseOrder.supplierParty',
+                'purchaseReceipt.document',
                 'purchaseOrderItem',
             ])
             ->whereHas('purchaseReceipt', static function ($query) use ($organizationId, $warehouseIds): void {
@@ -1423,7 +1424,10 @@ class WarehouseService implements WarehouseReportDataProvider
                 return $receipt !== null
                     && $item !== null
                     && $item->material_id !== null
-                    && is_array(data_get($receipt->metadata, 'receipt_document'));
+                    && (
+                        $receipt->document !== null
+                        || is_array(data_get($receipt->metadata, 'receipt_document'))
+                    );
             });
 
         return $receiptLines
@@ -1437,6 +1441,7 @@ class WarehouseService implements WarehouseReportDataProvider
                     $firstLine = $receiptLines->first();
                     $receipt = $firstLine->purchaseReceipt;
                     $order = $receipt?->purchaseOrder;
+                    $incomingDocument = $receipt?->document;
 
                     return [
                         'receipt_id' => (int) $receipt->id,
@@ -1448,7 +1453,11 @@ class WarehouseService implements WarehouseReportDataProvider
                         'supplier_name' => $this->purchaseReceiptSupplierName($order),
                         'quantity' => round((float) $receiptLines->sum('quantity_received'), 3),
                         'total_amount' => round((float) $receiptLines->sum('total_amount'), 2),
-                        'has_pdf' => true,
+                        'document_type' => $incomingDocument?->document_type ?? 'torg12_paper',
+                        'document_id' => $incomingDocument?->id,
+                        'document_number' => $incomingDocument?->document_number,
+                        'filename' => $incomingDocument?->original_name,
+                        'has_pdf' => $incomingDocument === null,
                     ];
                 })
                 ->sortByDesc(static fn (array $document): string => (string) ($document['receipt_date'] ?? ''))
@@ -1655,8 +1664,7 @@ class WarehouseService implements WarehouseReportDataProvider
         WarehouseMovement $movement,
         ?string $actorName,
         ?array $relatedUserIdentity,
-    ): array
-    {
+    ): array {
         return [
             'movement_id' => $movement->id,
             'movement_type' => $movement->movement_type,

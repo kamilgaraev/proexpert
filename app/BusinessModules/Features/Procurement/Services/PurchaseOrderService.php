@@ -49,6 +49,7 @@ class PurchaseOrderService
         private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
         private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
         private readonly PurchaseReceiptInventoryService $receiptInventory,
+        private readonly PurchaseReceiptDocumentService $receiptDocumentService,
         private readonly PurchaseReceiptReturnAuthorizer $returnAuthorizer,
         private readonly PurchaseReceiptReturnUnitOfWork $returnUnitOfWork,
     ) {}
@@ -635,14 +636,25 @@ class PurchaseOrderService
         $receiptNumber = $this->generateReceiptNumber();
         $receiptDate = $receiptData['receipt_date'] ?? now()->toDateString();
         $receiptMetadata = is_array($receiptData['metadata'] ?? null) ? $receiptData['metadata'] : [];
-        $receiptMetadata['receipt_document'] = $this->buildReceiptDocument(
-            $order,
-            $warehouse,
-            $orderItems,
-            $items,
-            $receiptNumber,
-            $receiptDate,
-        );
+        $documentMode = (string) ($receiptData['document_mode'] ?? 'torg12_paper');
+        if ($documentMode === 'torg12_paper') {
+            $receiptMetadata['receipt_document'] = $this->buildReceiptDocument(
+                $order,
+                $warehouse,
+                $orderItems,
+                $items,
+                $receiptNumber,
+                $receiptDate,
+            );
+        } elseif ($documentMode === 'upd_xml') {
+            $receiptMetadata['receipt_document'] = [
+                'document_type' => 'upd_xml',
+                'source' => 'supplier',
+                'status' => 'validated',
+            ];
+        } else {
+            throw new DomainException('unsupported_receipt_document_mode');
+        }
 
         $receipt = $order->receipts()->create([
             'organization_id' => $order->organization_id,
@@ -669,6 +681,15 @@ class PurchaseOrderService
             ]);
             $item['receipt_line_id'] = (int) $receiptLine->id;
             $receivedItems[] = $item;
+        }
+
+        if ($documentMode === 'upd_xml') {
+            $this->receiptDocumentService->attachValidatedUpd(
+                $order,
+                $receipt,
+                (int) ($receiptData['receipt_document_id'] ?? 0),
+                $items,
+            );
         }
 
         $order->update(['status' => $this->lifecycleService->resolveOrderReceiptStatus($order)]);
@@ -758,6 +779,7 @@ class PurchaseOrderService
             'receipts.warehouse',
             'receipts.receivedByUser',
             'receipts.lines',
+            'receipts.document',
         ]);
     }
 
