@@ -44,6 +44,34 @@ class PerformanceActLine extends Model
         'basis_snapshot' => 'array',
     ];
 
+    public function getUnitAttribute(?string $value): ?string
+    {
+        return trim($value ?? '') !== ''
+            ? $value
+            : self::unitFromSnapshot($this->basis_snapshot ?? []);
+    }
+
+    public static function unitFromSnapshot(array $snapshot): ?string
+    {
+        if (($snapshot['basis_type'] ?? null) !== 'estimate_version') {
+            return null;
+        }
+
+        $unit = $snapshot['estimate_item']['measurement_unit'] ?? null;
+        if (! is_array($unit)) {
+            return null;
+        }
+
+        foreach (['short_name', 'name'] as $key) {
+            $value = $unit[$key] ?? null;
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return null;
+    }
+
     protected static function booted(): void
     {
         static::saving(function (self $line): void {
