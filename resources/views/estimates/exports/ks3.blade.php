@@ -48,7 +48,6 @@
             margin: 8mm 10mm 10mm;
         }
 
-        html,
         body {
             margin: 0;
             padding: 0;
@@ -74,13 +73,13 @@
         }
 
         .header-area {
-            min-height: 80mm;
+            min-height: 65mm;
             position: relative;
         }
 
         .party-block {
             margin-right: 98mm;
-            padding-top: 29mm;
+            padding-top: 10mm;
         }
 
         .code-area {
@@ -142,11 +141,11 @@
         }
 
         .code-tall {
-            height: 10mm;
+            height: 6mm;
         }
 
         .document-block {
-            margin-top: 2mm;
+            margin-top: 12mm;
         }
 
         .doc-row td {
@@ -255,7 +254,6 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.most-brand-header')
     <div class="header-area">
         <div class="top-note">
             <div>Унифицированная форма № КС-3</div>
@@ -377,20 +375,12 @@
     </div>
 
     <table class="official-table">
-        <colgroup>
-            <col style="width: 6%;">
-            <col style="width: 48%;">
-            <col style="width: 7%;">
-            <col style="width: 13%;">
-            <col style="width: 13%;">
-            <col style="width: 13%;">
-        </colgroup>
         <thead>
             <tr>
-                <th rowspan="2">Номер по порядку</th>
-                <th rowspan="2">Наименование пусковых комплексов, этапов, объектов, видов выполненных работ, оборудования, затрат</th>
-                <th rowspan="2">Код</th>
-                <th colspan="3">Стоимость выполненных работ и затрат, руб.</th>
+                <th rowspan="2" style="width: 6%;">Номер по порядку</th>
+                <th rowspan="2" style="width: 48%;">Наименование пусковых комплексов, этапов, объектов, видов выполненных работ, оборудования, затрат</th>
+                <th rowspan="2" style="width: 7%;">Код</th>
+                <th colspan="3" style="width: 39%;">Стоимость выполненных работ и затрат, руб.</th>
             </tr>
             <tr>
                 <th>с начала проведения работ</th>
