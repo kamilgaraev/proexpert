@@ -131,6 +131,12 @@ class EstimateConstructorService
                     ->lockForUpdate()
                     ->firstOrFail();
 
+                if (isset($itemData['expected_updated_at'])
+                    && ! $item->updated_at?->equalTo(Carbon::parse($itemData['expected_updated_at']))) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'items' => trans_message('estimate_constructor.conflict'),
+                    ]);
+                }
                 $this->applyItemPatch($item, $itemData);
                 $item->save();
 
@@ -286,9 +292,20 @@ class EstimateConstructorService
 
     private function findEstimate(int $organizationId, int $estimateId): Estimate
     {
-        return Estimate::query()
+        $estimate = Estimate::query()
             ->where('organization_id', $organizationId)
             ->findOrFail($estimateId);
+        $actor = request()->user();
+        $context = ['context_type' => 'organization', 'organization_id' => $organizationId];
+        $permission = $estimate->isApproved() ? 'budget-estimates.edit_approved' : 'budget-estimates.edit';
+        if (! $actor instanceof \App\Models\User
+            || ! app(\App\Domain\Authorization\Services\AuthorizationService::class)->can($actor, $permission, $context)
+            || ! $estimate->project
+            || ! app(\App\Services\Project\UserProjectAccessService::class)->canAccessProject($actor, $estimate->project, $organizationId)) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('estimate_constructor.access_denied'));
+        }
+
+        return $estimate;
     }
 
     private function assertSectionBelongsToEstimate(int $sectionId, int $estimateId): void
@@ -414,9 +431,21 @@ class EstimateConstructorService
             $item->estimate_section_id = $this->nullableInt($itemData['section_id']);
         }
 
-        if (array_key_exists('quantity', $itemData) && $item->normativeRate) {
+        if (array_key_exists('quantity', $itemData) && !array_key_exists('unit_price', $itemData) && $item->normativeRate) {
             $this->calculationService->recalculateItem($item);
+            foreach (['materials', 'machinery', 'labor'] as $resource) {
+                $costField = $resource . '_cost';
+                $indexField = $resource . '_index';
+                $item->{$costField} = round((float) $item->{$costField} * (float) ($item->{$indexField} ?? 1), 4);
+            }
+            $item->direct_costs = round((float) $item->materials_cost + (float) $item->machinery_cost + (float) $item->labor_cost, 4);
+            if ((float) $item->quantity > 0) {
+                $item->unit_price = round((float) $item->direct_costs / (float) $item->quantity, 4);
+            }
+        } elseif (array_key_exists('quantity', $itemData) || array_key_exists('unit_price', $itemData)) {
+            $item->direct_costs = round((float) $item->quantity * (float) $item->unit_price, 4);
         }
+        $item->total_amount = round((float) $item->direct_costs + (float) $item->overhead_amount + (float) $item->profit_amount, 2);
     }
 
     private function nullableInt(mixed $value): ?int
