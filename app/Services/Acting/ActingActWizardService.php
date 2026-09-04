@@ -164,6 +164,9 @@ class ActingActWizardService
                 'estimate_version_id' => $basis['estimate_version_id'],
                 'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK,
                 'title' => $this->resolveCompletedWorkTitle($work),
+                'unit' => ($basis['snapshot']['basis_type'] ?? null) === 'estimate_version'
+                    ? PerformanceActLine::unitFromSnapshot($basis['snapshot'])
+                    : $work->workType?->measurementUnit?->short_name,
                 'quantity' => $quantityDecimal,
                 'unit_price' => $basis['unit_price'],
                 'amount' => $amount,
@@ -197,7 +200,7 @@ class ActingActWizardService
             ->with(
                 'estimateItem.contractLinks',
                 'estimateItem.estimate.currentVersion',
-                'workType',
+                'workType.measurementUnit',
                 'journalEntry',
             )
             ->where('organization_id', $organizationId)

@@ -64,7 +64,12 @@ final class PerformanceActFinancialBasisTest extends TestCase
             'approved_at' => now(),
             'approved_by_user_id' => $actor->id,
         ]);
+        $unit = \App\Models\MeasurementUnit::query()
+            ->where('organization_id', $organization->id)
+            ->where('short_name', 'кг')
+            ->firstOrFail();
         $item = EstimateItem::query()->create([
+            'measurement_unit_id' => $unit->id,
             'estimate_id' => $estimate->id,
             'position_number' => '1',
             'item_type' => 'work',
@@ -89,6 +94,7 @@ final class PerformanceActFinancialBasisTest extends TestCase
             label: 'Утверждённая версия',
             snapshotType: 'approval',
         );
+        $unit->forceFill(['short_name' => 'кг (изменено)'])->saveQuietly();
         $item->forceFill([
             'unit_price' => 9000,
             'current_unit_price' => 9000,
@@ -133,6 +139,7 @@ final class PerformanceActFinancialBasisTest extends TestCase
 
         $line = $act->lines()->firstOrFail();
 
+        self::assertSame('кг', $line->getRawOriginal('unit'));
         self::assertSame($version->id, $act->estimate_version_id);
         self::assertSame($version->id, $line->estimate_version_id);
         self::assertSame('1200.00', $line->unit_price);
@@ -234,6 +241,53 @@ final class PerformanceActFinancialBasisTest extends TestCase
             'performance_act_id' => $approved->id,
             'idempotency_key' => 'annul-act-fin-001',
         ]);
+
+        $workType = \App\Models\WorkType::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Работа без сметы',
+            'measurement_unit_id' => $unit->id,
+        ]);
+        $separateWork = $work->replicate();
+        $separateWork->estimate_item_id = null;
+        $separateWork->work_type_id = $workType->id;
+        $separateWork->saveQuietly();
+        $separateAct = app(ActingActWizardService::class)->createFromWizard(
+            $organization->id,
+            [
+                'contract_id' => $contract->id,
+                'act_document_number' => 'ACT-NO-ESTIMATE',
+                'act_date' => '2026-08-10',
+                'period_start' => '2026-08-01',
+                'period_end' => '2026-08-31',
+                'selected_works' => [['completed_work_id' => $separateWork->id, 'quantity' => 1]],
+            ],
+            $actor->id,
+            false,
+        );
+        self::assertSame('кг (изменено)', $separateAct->lines()->firstOrFail()->getRawOriginal('unit'));
+    }
+
+    public function test_act_line_unit_reads_its_own_snapshot_without_mutating_stored_attributes(): void
+    {
+        foreach ([
+            [null, ['short_name' => 'кг', 'name' => 'Килограмм'], 'кг'],
+            ['м²', ['short_name' => 'кг'], 'м²'],
+            [null, ['short_name' => '', 'name' => 'Килограмм'], 'Килограмм'],
+            [null, [], null],
+        ] as [$storedUnit, $snapshotUnit, $expected]) {
+            $line = new \App\Models\PerformanceActLine;
+            $line->setRawAttributes([
+                'unit' => $storedUnit,
+                'basis_snapshot' => json_encode([
+                    'basis_type' => 'estimate_version',
+                    'estimate_item' => ['measurement_unit' => $snapshotUnit],
+                ], JSON_THROW_ON_ERROR),
+            ], true);
+
+            self::assertSame($expected, $line->unit);
+            self::assertSame($storedUnit, $line->getRawOriginal('unit'));
+            self::assertFalse($line->isDirty());
+        }
     }
 
     public function test_manual_line_requires_approved_variation_order_and_respects_its_remaining_amount(): void
