@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 return [
+    'team_role_unavailable' => 'Роль недоступна',
+    'team_list_error' => 'Не удалось загрузить сотрудников. Попробуйте ещё раз.',
     'admin_created' => 'Администратор создан.',
     'admin_updated' => 'Администратор обновлен.',
     'admin_deleted' => 'Администратор удален.',
