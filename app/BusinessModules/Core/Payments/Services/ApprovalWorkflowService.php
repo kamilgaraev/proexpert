@@ -283,6 +283,13 @@ class ApprovalWorkflowService
             // Блокируем документ для предотвращения гонок
             $document = PaymentDocument::where('id', $document->id)->lockForUpdate()->first();
 
+            if (! in_array($document->status, [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL], true)) {
+                throw new \DomainException(sprintf(
+                    trans_message('payments.validation.approval_not_required_for_status'),
+                    $document->status->label()
+                ));
+            }
+
             // Найти pending утверждение для данного пользователя
             $user = User::find($userId);
             $approval = $this->approvalQueryForUser($document, $userId, $user)
@@ -638,18 +645,31 @@ class ApprovalWorkflowService
                 'count' => $documentsWithoutApprovals->count(),
             ]);
 
-            // Для таких документов создаем виртуальные записи утверждения для админа
             foreach ($documentsWithoutApprovals as $doc) {
-                // Проверяем, нет ли уже записи для этого документа и пользователя
-                $existingApproval = PaymentApproval::where('payment_document_id', $doc->id)
-                    ->where('approver_user_id', $userId)
-                    ->first();
+                DB::transaction(function () use ($doc, $organizationId, $userId): void {
+                    $document = PaymentDocument::query()
+                        ->where('organization_id', $organizationId)
+                        ->lockForUpdate()
+                        ->find($doc->id);
 
-                if (! $existingApproval) {
-                    // Создаем запись утверждения для админа
+                    if (! $document || $document->status !== PaymentDocumentStatus::PENDING_APPROVAL) {
+                        return;
+                    }
+
+                    $existingApproval = $document->approvals()
+                        ->where(function ($approvals) use ($userId): void {
+                            $approvals->where('status', 'pending')
+                                ->orWhere('approver_user_id', $userId);
+                        })
+                        ->exists();
+
+                    if ($existingApproval) {
+                        return;
+                    }
+
                     PaymentApproval::create([
-                        'payment_document_id' => $doc->id,
-                        'organization_id' => $doc->organization_id,
+                        'payment_document_id' => $document->id,
+                        'organization_id' => $document->organization_id,
                         'approval_role' => null,
                         'approval_permission' => self::PAYMENT_APPROVAL_PERMISSION,
                         'approver_user_id' => $userId,
@@ -658,7 +678,7 @@ class ApprovalWorkflowService
                         'status' => 'pending',
                         'decision_comment' => null,
                     ]);
-                }
+                });
             }
 
             // Перезагружаем запрос после создания записей
@@ -668,6 +688,9 @@ class ApprovalWorkflowService
         }
 
         return $query->orderBy('created_at', 'desc')
+            ->whereHas('paymentDocument', function ($documents): void {
+                $documents->where('status', PaymentDocumentStatus::PENDING_APPROVAL);
+            })
             ->get();
     }
 

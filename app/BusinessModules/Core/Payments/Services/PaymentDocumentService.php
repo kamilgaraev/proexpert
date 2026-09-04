@@ -717,27 +717,38 @@ class PaymentDocumentService
      */
     public function cancel(PaymentDocument $document, string $reason, ?\App\Models\User $user = null): PaymentDocument
     {
-        // Владелец организации может отменять платежи в любом статусе (GOD MODE)
-        $isOrganizationOwner = false;
-        if ($user) {
-            $isOrganizationOwner = $user->isOrganizationOwner($document->organization_id);
-        }
+        return DB::transaction(function () use ($document, $reason, $user): PaymentDocument {
+            $document = PaymentDocument::query()
+                ->where('organization_id', $document->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($document->id);
 
-        if (! $isOrganizationOwner && ! $document->canBeCancelled()) {
-            throw new \DomainException(trans_message('payments.validation.document_cancel_forbidden'));
-        }
+            $isOrganizationOwner = $user?->isOrganizationOwner($document->organization_id) ?? false;
 
-        $this->stateMachine->cancel($document, $reason);
-        $this->budgetLimitService->release($document, $reason);
+            if ($document->status !== PaymentDocumentStatus::CANCELLED) {
+                if (! $document->canBeCancelled()) {
+                    throw new \DomainException(trans_message('payments.validation.document_cancel_forbidden'));
+                }
 
-        Log::info('payment_document.cancelled', [
-            'document_id' => $document->id,
-            'reason' => $reason,
-            'cancelled_by_owner' => $isOrganizationOwner,
-            'user_id' => $user?->id,
-        ]);
+                $this->stateMachine->cancel($document, $reason);
+            }
 
-        return $document->fresh();
+            $document->approvals()->where('status', 'pending')->update([
+                'status' => 'skipped',
+                'decision_comment' => $reason,
+                'decided_at' => now(),
+            ]);
+            $this->budgetLimitService->release($document, $reason);
+
+            Log::info('payment_document.cancelled', [
+                'document_id' => $document->id,
+                'reason' => $reason,
+                'cancelled_by_owner' => $isOrganizationOwner,
+                'user_id' => $user?->id,
+            ]);
+
+            return $document->fresh();
+        });
     }
 
     /**

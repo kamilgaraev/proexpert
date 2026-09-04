@@ -24,7 +24,7 @@ class PaymentDocumentStateMachine
     private const ALLOWED_TRANSITIONS = [
         'draft' => ['submitted', 'cancelled'], // Черновик → Отправлен или Отменён
         'submitted' => ['pending_approval', 'approved', 'rejected', 'cancelled'], // Отправлен → На согласование/Утверждён/Отклонён
-        'pending_approval' => ['approved', 'rejected', 'submitted'], // На согласовании → Утверждён/Отклонён/Возврат
+        'pending_approval' => ['approved', 'rejected', 'submitted', 'cancelled'],
         'approved' => ['scheduled', 'paid', 'partially_paid', 'cancelled'], // Утверждён → Запланирован/Оплачен/Частично оплачен/Отменён
         'scheduled' => ['paid', 'partially_paid', 'cancelled'], // Запланирован → Оплачен/Частично оплачен/Отменён
         'partially_paid' => ['paid', 'scheduled'], // Частично оплачен → Полностью оплачен/Запланирован
