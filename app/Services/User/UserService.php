@@ -241,20 +241,21 @@ class UserService
             throw new BusinessLogicException(trans_message('landing_users.owner_target_not_found'), 404);
         }
 
-        $membership = DB::table('organization_user')
-            ->where('user_id', $targetUser->id)
-            ->where('organization_id', $intOrganizationId)
-            ->first();
-
-        if (!$membership) {
-            throw new BusinessLogicException(trans_message('landing_users.owner_target_not_in_organization'), 404);
-        }
-
-        if (! (bool) ($membership->is_active ?? false)) {
-            throw new BusinessLogicException(trans_message('landing_users.owner_target_inactive'), 422);
-        }
-
         DB::transaction(function () use ($targetUser, $intOrganizationId, $request): void {
+            $membership = DB::table('organization_user')
+                ->where('user_id', $targetUser->id)
+                ->where('organization_id', $intOrganizationId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$membership) {
+                throw new BusinessLogicException(trans_message('landing_users.owner_target_not_in_organization'), 404);
+            }
+
+            if (! (bool) ($membership->is_active ?? false)) {
+                throw new BusinessLogicException(trans_message('landing_users.owner_target_inactive'), 422);
+            }
+
             DB::table('organization_user')
                 ->where('user_id', $targetUser->id)
                 ->where('organization_id', $intOrganizationId)
