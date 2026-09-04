@@ -7,6 +7,7 @@ namespace App\Services\ActReport;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Core\Payments\Services\FinancialBalanceQuery;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -42,6 +43,7 @@ class ActReportWorkflowService
         private readonly ProductionAcceptanceEventRecorder $acceptanceEvents,
         private readonly PaymentDocumentService $paymentDocumentService,
         private readonly FixedContractActAmountGuard $contractAmountGuard,
+        private readonly FinancialBalanceQuery $financialBalances,
     ) {}
 
     public function preview(int $organizationId, array $data, ?User $user): array
@@ -576,33 +578,18 @@ class ActReportWorkflowService
 
     public function financialSummary(ContractPerformanceAct $act): array
     {
-        $contractId = (int) $act->contract_id;
-
-        $contractDocuments = PaymentDocument::query()
-            ->where('invoiceable_type', Contract::class)
-            ->where('invoiceable_id', $contractId);
-
+        $balance = $this->financialBalances->forAct($act);
         $actDocuments = PaymentDocument::query()
+            ->where('organization_id', $act->contract->organization_id)
+            ->where('currency', $act->currency ?: 'RUB')
             ->where('invoiceable_type', ContractPerformanceAct::class)
             ->where('invoiceable_id', $act->id);
 
-        $totalPaid = BigDecimal::of((string) (clone $contractDocuments)->sum('paid_amount'))
-            ->plus((string) (clone $actDocuments)->sum('paid_amount'))
-            ->toScale(2, RoundingMode::HalfUp);
-        $totalRemaining = BigDecimal::of((string) (clone $contractDocuments)->sum('remaining_amount'))
-            ->plus((string) (clone $actDocuments)->sum('remaining_amount'))
-            ->toScale(2, RoundingMode::HalfUp);
-        $acceptedAmount = BigDecimal::of((string) $act->amount)->toScale(2, RoundingMode::HalfUp);
-        $calculatedDebt = $acceptedAmount->minus($totalPaid);
-        $debtAmount = $totalRemaining->isPositive()
-            ? $totalRemaining
-            : ($calculatedDebt->isPositive() ? $calculatedDebt : BigDecimal::zero()->toScale(2));
-
         return [
-            'accepted_amount' => (string) $acceptedAmount,
-            'paid_amount' => (string) $totalPaid,
-            'debt_amount' => (string) $debtAmount,
-            'payment_documents_count' => (clone $contractDocuments)->count() + (clone $actDocuments)->count(),
+            'accepted_amount' => $balance->invoicedAmount,
+            'paid_amount' => (string) BigDecimal::of($balance->paidAmount)->minus($balance->refundedAmount),
+            'debt_amount' => $balance->debtAmount,
+            'payment_documents_count' => $actDocuments->count(),
             'is_ready_for_payment' => $act->isReadyForPayment(),
         ];
     }
