@@ -11,6 +11,221 @@ use PHPUnit\Framework\TestCase;
 
 final class ProcurementAwardManifestBuilderTest extends TestCase
 {
+    public function test_unavailable_incomplete_evidence_does_not_erase_eligible_ranks(): void
+    {
+        foreach (['expired', 'rejected'] as $availability) {
+            $excluded = $this->candidate(30, 301, '1');
+            if ($availability === 'expired') {
+                $excluded['proposal_valid_until'] = '2026-07-31';
+            } else {
+                $excluded['proposal_status'] = 'rejected';
+            }
+            $excluded['version_content_hash'] = null;
+            $excluded['commercial_snapshot']['total_amount'] = null;
+
+            $manifest = (new ProcurementAwardManifestBuilder)->build([
+                $this->candidate(10, 101, '100'),
+                $this->candidate(20, 201, '125'),
+                $excluded,
+            ], 20);
+
+            self::assertSame(ProcurementAwardCompleteness::COMPARABLE_SUBSET, $manifest->completeness);
+            self::assertSame(3, $manifest->candidateCount);
+            self::assertSame(2, $manifest->comparableCount);
+            self::assertSame(10, $manifest->cheapestProposalId);
+            self::assertSame(2, $manifest->selectedRank);
+            self::assertContains('legacy_unverified_proposal_version', $manifest->candidates[2]->exclusionCodes);
+            self::assertContains('missing_total_amount', $manifest->candidates[2]->exclusionCodes);
+        }
+    }
+
+    public function test_available_incomplete_evidence_still_blocks_subset_ranking(): void
+    {
+        foreach (['hash', 'amount'] as $missing) {
+            $incomplete = $this->candidate(30, 301, '1');
+            if ($missing === 'hash') {
+                $incomplete['version_content_hash'] = null;
+            } else {
+                $incomplete['commercial_snapshot']['total_amount'] = null;
+            }
+            $manifest = (new ProcurementAwardManifestBuilder)->build([
+                $this->candidate(10, 101, '100'),
+                $incomplete,
+            ], 10);
+
+            self::assertSame($missing === 'hash' ? ProcurementAwardCompleteness::LEGACY_UNVERIFIED : ProcurementAwardCompleteness::GAP, $manifest->completeness);
+            self::assertNull($manifest->cheapestProposalId);
+            self::assertNull($manifest->selectedRank);
+        }
+    }
+
+    public function test_payable_totals_remain_ranked_with_different_vat_rates(): void
+    {
+        $withoutVat = $this->candidate(20, 201, '90');
+        $withoutVat['commercial_snapshot']['vat_mode'] = 'excluded';
+        $withoutVat['commercial_snapshot']['vat_rate'] = '0';
+        $manifest = (new ProcurementAwardManifestBuilder)->build([$this->candidate(10, 101, '100'), $withoutVat], 20);
+
+        self::assertSame(2, $manifest->comparableCount);
+        self::assertSame(20, $manifest->cheapestProposalId);
+        self::assertSame(1, $manifest->selectedRank);
+        self::assertSame('0', $manifest->candidates[1]->vatRate);
+    }
+
+    public function test_unknown_delivery_does_not_erase_the_payable_price_ranking(): void
+    {
+        $unknown = $this->candidate(20, 201, '90');
+        $unknown['commercial_snapshot']['delivery_due_date'] = null;
+        $unknown['commercial_snapshot']['lead_time_days'] = null;
+        $manifest = (new ProcurementAwardManifestBuilder)->build([$this->candidate(10, 101, '100'), $unknown], 20);
+
+        self::assertSame(20, $manifest->cheapestProposalId);
+        self::assertNull($manifest->candidates[1]->deliveryDueDate);
+        self::assertNull($manifest->candidates[1]->leadTimeDays);
+    }
+
+    public function test_expired_foreign_currency_offer_does_not_erase_current_ranks(): void
+    {
+        $expired = $this->candidate(30, 301, '1');
+        $expired['proposal_valid_until'] = '2026-07-31';
+        $expired['commercial_snapshot']['currency'] = 'USD';
+        $expired['commercial_snapshot']['vat_rate'] = '0.00';
+
+        $manifest = (new ProcurementAwardManifestBuilder)->build([
+            $this->candidate(10, 101, '100'),
+            $this->candidate(20, 201, '125'),
+            $expired,
+        ], 20);
+
+        self::assertSame(3, $manifest->candidateCount);
+        self::assertSame(2, $manifest->comparableCount);
+        self::assertSame(10, $manifest->cheapestProposalId);
+        self::assertSame(2, $manifest->selectedRank);
+        self::assertContains('expired_proposal', $manifest->candidates[2]->exclusionCodes);
+    }
+
+    public function test_partial_supplier_request_does_not_disqualify_a_full_purchase_offer(): void
+    {
+        $full = $this->candidate(10, 101, '100');
+        $full['purchase_request_lines'] = [
+            ['id' => 81, 'quantity' => '2', 'unit' => 'kg'],
+            ['id' => 82, 'quantity' => '1', 'unit' => 'pcs'],
+        ];
+        $full['comparison_request_lines'] = [
+            ['id' => 1, 'purchase_request_line_id' => 81, 'quantity' => '2', 'unit' => 'kg'],
+            ['id' => 2, 'purchase_request_line_id' => 82, 'quantity' => '1', 'unit' => 'pcs'],
+        ];
+        $partial = $this->candidate(20, 201, '20');
+        $partial['supplier_request_id'] = 44;
+        $partial['supplier_request_version_hash'] = str_repeat('c', 64);
+        $partial['purchase_request_lines'] = $full['purchase_request_lines'];
+        $partial['comparison_request_lines'] = [$full['comparison_request_lines'][0]];
+        array_pop($partial['request_lines']);
+        array_pop($partial['commercial_snapshot']['lines']);
+
+        $manifest = (new ProcurementAwardManifestBuilder)->build([$full, $partial], 10);
+
+        self::assertSame(1, $manifest->comparableCount);
+        self::assertSame(10, $manifest->cheapestProposalId);
+        self::assertSame(1, $manifest->selectedRank);
+        self::assertContains('incomplete_purchase_line_coverage', $manifest->candidates[1]->exclusionCodes);
+    }
+
+    public function test_partial_offer_stays_in_evidence_without_erasing_eligible_ranks(): void
+    {
+        $partial = $this->candidate(30, 301, '20');
+        array_pop($partial['commercial_snapshot']['lines']);
+
+        $manifest = (new ProcurementAwardManifestBuilder)->build([
+            $this->candidate(10, 101, '100'),
+            $this->candidate(20, 201, '125'),
+            $partial,
+        ], 20);
+
+        self::assertSame('comparable_subset', $manifest->completeness->value);
+        self::assertSame(3, $manifest->candidateCount);
+        self::assertSame(2, $manifest->comparableCount);
+        self::assertSame(10, $manifest->cheapestProposalId);
+        self::assertSame(2, $manifest->selectedRank);
+        self::assertFalse($manifest->candidates[2]->comparable);
+        self::assertContains('incomplete_request_line_coverage', $manifest->candidates[2]->exclusionCodes);
+    }
+
+    public function test_ineligible_selected_offer_does_not_gain_a_subset_rank(): void
+    {
+        $partial = $this->candidate(30, 301, '20');
+        array_pop($partial['commercial_snapshot']['lines']);
+
+        $manifest = (new ProcurementAwardManifestBuilder)->build([
+            $this->candidate(10, 101, '100'),
+            $partial,
+        ], 30);
+
+        self::assertSame(ProcurementAwardCompleteness::NOT_COMPARABLE, $manifest->completeness);
+        self::assertNull($manifest->selectedRank);
+        self::assertNull($manifest->cheapestProposalId);
+    }
+
+    public function test_independent_requests_for_the_same_purchase_lines_are_comparable(): void
+    {
+        $first = $this->candidate(10, 101, '100');
+        $second = $this->candidate(20, 201, '125');
+        $first['comparison_request_lines'] = [
+            ['purchase_request_line_id' => 81, 'quantity' => '2', 'unit' => 'kg', 'name' => 'Cement', 'specification' => ['density' => 1.5]],
+            ['purchase_request_line_id' => 82, 'quantity' => '1', 'unit' => 'pcs', 'name' => 'Tape'],
+        ];
+        $second['supplier_request_id'] = 44;
+        $second['supplier_request_version_id'] = 55;
+        $second['supplier_request_version_hash'] = str_repeat('c', 64);
+        $second['comparison_request_lines'] = array_reverse($first['comparison_request_lines']);
+        $second['comparison_request_lines'][0]['quantity'] = '1.000';
+
+        $manifest = (new ProcurementAwardManifestBuilder)->build([$first, $second], 20);
+
+        self::assertSame(ProcurementAwardCompleteness::COMPLETE, $manifest->completeness);
+        self::assertSame(2, $manifest->comparableCount);
+        self::assertSame(10, $manifest->cheapestProposalId);
+        self::assertSame(2, $manifest->selectedRank);
+        self::assertSame(str_repeat('c', 64), $manifest->candidates[1]->supplierRequestVersionHash);
+    }
+
+    public function test_independent_request_scope_must_prove_every_line_and_specification(): void
+    {
+        $first = $this->candidate(10, 101, '100');
+        $first['comparison_request_lines'] = [
+            ['purchase_request_line_id' => 81, 'quantity' => '2', 'unit' => 'kg', 'name' => 'Cement', 'specification' => ['grade' => 'M500']],
+        ];
+        foreach ([
+            [],
+            [['purchase_request_line_id' => 82, 'quantity' => '2', 'unit' => 'kg', 'name' => 'Cement', 'specification' => ['grade' => 'M500']]],
+            [['purchase_request_line_id' => 81, 'quantity' => '2', 'unit' => 'kg', 'name' => 'Cement', 'specification' => ['grade' => 'M400']]],
+            [['purchase_request_line_id' => 81, 'quantity' => '1', 'unit' => 'kg', 'name' => 'Cement', 'specification' => ['grade' => 'M500']]],
+            array_merge($first['comparison_request_lines'], $first['comparison_request_lines']),
+        ] as $lines) {
+            $second = $this->candidate(20, 201, '90');
+            $second['supplier_request_id'] = 44;
+            $second['supplier_request_version_hash'] = str_repeat('c', 64);
+            $second['comparison_request_lines'] = $lines;
+
+            $manifest = (new ProcurementAwardManifestBuilder)->build([$first, $second], 10);
+
+            self::assertNull($manifest->cheapestProposalId);
+            self::assertSame(0, $manifest->comparableCount);
+        }
+    }
+
+    public function test_two_versions_of_one_supplier_request_are_not_silently_equated(): void
+    {
+        $first = $this->candidate(10, 101, '100');
+        $second = $this->candidate(20, 201, '90');
+        $second['supplier_request_version_hash'] = str_repeat('c', 64);
+
+        $manifest = (new ProcurementAwardManifestBuilder)->build([$first, $second], 10);
+
+        self::assertSame(0, $manifest->comparableCount);
+        self::assertNull($manifest->cheapestProposalId);
+    }
+
     public function test_complete_same_currency_manifest_has_stable_order_and_cheapest_exact_version(): void
     {
         $manifest = (new ProcurementAwardManifestBuilder)->build([
