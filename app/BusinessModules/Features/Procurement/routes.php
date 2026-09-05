@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementSetting
 use App\BusinessModules\Features\Procurement\Http\Controllers\PublicSupplierRequestController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseContractController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseOrderController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseReceiptDocumentController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseRequestController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalDecisionController;
@@ -135,6 +136,12 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/receipt-document/preview', [PurchaseOrderController::class, 'receiptDocumentPreview'])
                 ->middleware('authorize:procurement.purchase_orders.receive')
                 ->name('receipt_document_preview');
+            Route::post('/{id}/receipt-documents/upd', [PurchaseReceiptDocumentController::class, 'uploadUpd'])
+                ->middleware('authorize:procurement.purchase_orders.receive')
+                ->name('receipt_documents.upd.upload');
+            Route::get('/{id}/receipt-documents/{document}/download', [PurchaseReceiptDocumentController::class, 'download'])
+                ->middleware('authorize:procurement.purchase_orders.view')
+                ->name('receipt_documents.download');
             Route::get('/{id}/receipts/{receipt}/document/pdf', [PurchaseOrderController::class, 'receiptDocumentPdfFromReceipt'])
                 ->middleware('authorize:procurement.purchase_orders.view')
                 ->name('receipt_document_pdf.show');

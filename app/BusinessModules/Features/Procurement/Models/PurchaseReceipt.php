@@ -11,6 +11,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class PurchaseReceipt extends Model
@@ -63,5 +64,10 @@ class PurchaseReceipt extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(PurchaseReceiptLine::class);
+    }
+
+    public function document(): HasOne
+    {
+        return $this->hasOne(PurchaseReceiptDocument::class);
     }
 }

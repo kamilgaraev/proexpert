@@ -48,4 +48,33 @@ final class PurchaseReceiptIdempotencyTest extends TestCase
 
         self::assertNotSame($first, $second);
     }
+
+    public function test_fingerprint_distinguishes_the_receipt_document_choice(): void
+    {
+        $items = [['item_id' => 701, 'quantity_received' => 1, 'price' => 80000]];
+        $paperDefault = PurchaseReceiptIdempotency::fingerprint(
+            44,
+            $items,
+            ['receipt_date' => '2026-05-22'],
+        );
+        $paperExplicit = PurchaseReceiptIdempotency::fingerprint(
+            44,
+            $items,
+            ['receipt_date' => '2026-05-22', 'document_mode' => 'torg12_paper'],
+        );
+        $firstUpd = PurchaseReceiptIdempotency::fingerprint(
+            44,
+            $items,
+            ['receipt_date' => '2026-05-22', 'document_mode' => 'upd_xml', 'receipt_document_id' => 81],
+        );
+        $secondUpd = PurchaseReceiptIdempotency::fingerprint(
+            44,
+            $items,
+            ['receipt_date' => '2026-05-22', 'document_mode' => 'upd_xml', 'receipt_document_id' => 82],
+        );
+
+        self::assertSame($paperDefault, $paperExplicit);
+        self::assertNotSame($paperDefault, $firstUpd);
+        self::assertNotSame($firstUpd, $secondUpd);
+    }
 }
