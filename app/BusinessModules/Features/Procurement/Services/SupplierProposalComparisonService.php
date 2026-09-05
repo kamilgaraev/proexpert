@@ -49,7 +49,9 @@ class SupplierProposalComparisonService
 
         return $this->comparisonPayload($proposals, [
             'supplier_request_id' => $supplierRequest->id,
-        ], true, $decision);
+            'request_number' => $supplierRequest->request_number,
+            'needed_by' => $supplierRequest->purchaseRequest?->needed_by?->format('Y-m-d'),
+        ], $decision);
     }
 
     public function comparisonForPurchaseRequest(PurchaseRequest $purchaseRequest, bool $includeDecision = true): array
@@ -72,40 +74,67 @@ class SupplierProposalComparisonService
             ->get();
 
         $decision = $includeDecision ? $this->decisionForPurchaseRequest($purchaseRequest) : null;
+        $neededBy = $purchaseRequest->lines->pluck('needed_by')
+            ->push($purchaseRequest->needed_by)
+            ->filter()
+            ->map(static fn (\DateTimeInterface $date): string => $date->format('Y-m-d'))
+            ->min();
 
         return $this->comparisonPayload($proposals, [
             'purchase_request_id' => $purchaseRequest->id,
-        ], false, $decision);
+            'request_number' => $purchaseRequest->request_number,
+            'needed_by' => $neededBy,
+        ], $decision, $purchaseRequest->lines->toArray());
     }
 
     private function comparisonPayload(
         $proposals,
         array $scope,
-        bool $requireSameSupplierRequestVersion,
-        ?SupplierProposalDecision $decision
+        ?SupplierProposalDecision $decision,
+        ?array $purchaseLines = null,
     ): array {
         $rows = $proposals
-            ->map(fn (SupplierProposal $proposal): array => $this->proposalComparisonRow($proposal))
+            ->map(fn (SupplierProposal $proposal): array => $this->proposalComparisonRow($proposal, $purchaseLines))
             ->values()
             ->all();
 
-        $baseCurrency = $rows[0]['currency'] ?? null;
-        $baseRequestVersionId = $rows[0]['supplier_request_version_id'] ?? null;
+        $sameCurrency = count(array_unique(array_column($rows, 'currency'))) <= 1;
+        $completeProposalIds = array_fill_keys(array_column(array_filter(
+            $rows,
+            static fn (array $row): bool => $row['is_quantity_complete'],
+        ), 'id'), true);
+        $scopeRows = $proposals
+            ->filter(static fn (SupplierProposal $proposal): bool => isset($completeProposalIds[$proposal->id]))
+            ->map(static fn (SupplierProposal $proposal): array => [
+                'supplier_request_id' => $proposal->supplier_request_id,
+                'supplier_request_version_id' => $proposal->supplier_request_version_id,
+                'supplier_request_version_hash' => $proposal->supplierRequestVersion?->content_hash,
+                'comparison_request_lines' => $proposal->supplierRequestVersion?->line_snapshot,
+            ])->values()->all();
+        $sameScope = (new \App\BusinessModules\Features\Procurement\Reporting\Award\Services\ProcurementAwardRequestScopeComparator)
+            ->equivalent($scopeRows);
 
         $rows = collect($rows)
-            ->map(function (array $row) use ($baseCurrency, $baseRequestVersionId, $requireSameSupplierRequestVersion): array {
-                $row['is_directly_comparable'] = $baseCurrency === null || $row['currency'] === $baseCurrency;
+            ->map(function (array $row) use ($sameCurrency, $sameScope, $scope): array {
+                $row['delivery_assessment'] = (new SupplierProposalDeliveryAssessmentService)->evaluate(
+                    $scope['needed_by'] ?? null,
+                    is_string($row['delivery_due_date']) ? $row['delivery_due_date'] : null,
+                    is_numeric($row['lead_time_days']) ? (int) $row['lead_time_days'] : null,
+                    now()->toDateString(),
+                );
+                $row['is_directly_comparable'] = $sameCurrency;
                 $row['comparison_warnings'] = [];
 
                 if (! $row['is_directly_comparable']) {
                     $row['comparison_warnings'][] = trans_message('procurement_enterprise.proposal_decisions.currency_not_comparable');
                 }
 
-                if (
-                    $requireSameSupplierRequestVersion
-                    && $baseRequestVersionId !== null
-                    && $row['supplier_request_version_id'] !== $baseRequestVersionId
-                ) {
+                if (! $row['is_quantity_complete']) {
+                    $row['is_directly_comparable'] = false;
+                    $row['comparison_warnings'][] = trans_message('procurement.proposal_decisions.proposal_not_comparable');
+                }
+
+                if (! $sameScope) {
                     $row['is_directly_comparable'] = false;
                     $row['comparison_warnings'][] = trans_message('procurement_enterprise.proposal_decisions.request_version_not_comparable');
                 }
@@ -125,9 +154,21 @@ class SupplierProposalComparisonService
 
         $cheapestProposalId = $cheapestRow['id'] ?? null;
 
+        $onTimeRows = collect($rows)->filter(static fn (array $row): bool => $row['is_directly_comparable']
+            && $row['delivery_assessment']['is_late'] === false
+        );
+        $lowestOnTimeTotal = $onTimeRows->min('comparison_total');
+        $lowestOnTimeProposalIds = $onTimeRows
+            ->filter(static fn (array $row): bool => $row['comparison_total'] === $lowestOnTimeTotal)
+            ->pluck('id')
+            ->values()
+            ->all();
+
         $rows = collect($rows)
-            ->map(function (array $row) use ($cheapestProposalId): array {
-                $row['is_cheapest'] = $cheapestProposalId !== null && $row['id'] === $cheapestProposalId;
+            ->map(function (array $row) use ($cheapestRow): array {
+                $row['is_cheapest'] = $cheapestRow !== null
+                    && $row['is_directly_comparable']
+                    && $row['comparison_total'] === $cheapestRow['comparison_total'];
 
                 return $row;
             })
@@ -142,6 +183,7 @@ class SupplierProposalComparisonService
                 ->values()
                 ->all(),
             'cheapest_supplier_proposal_id' => $cheapestProposalId,
+            'lowest_on_time_supplier_proposal_ids' => $lowestOnTimeProposalIds,
             'decision' => $this->decisionPayload($decision),
             'rows' => $rows,
         ]);
@@ -231,7 +273,7 @@ class SupplierProposalComparisonService
                 ]);
             }
 
-            $isLowestPriceSelected = $proposal->id === $cheapestProposalId;
+            $isLowestPriceSelected = (bool) $selectedRow['is_cheapest'];
             $normalizedReason = $this->normalizeReason($reason);
             $cheapestRow = collect($comparison['rows'])->firstWhere('id', $cheapestProposalId);
             $cheapestProposalVersionId = is_array($cheapestRow)
@@ -371,7 +413,7 @@ class SupplierProposalComparisonService
                 ]);
             }
 
-            $isLowestPriceSelected = $proposal->id === $cheapestProposalId;
+            $isLowestPriceSelected = (bool) $selectedRow['is_cheapest'];
             $normalizedReason = $this->normalizeReason($reason);
             $cheapestRow = collect($comparison['rows'])->firstWhere('id', $cheapestProposalId);
             $cheapestProposalVersionId = is_array($cheapestRow)
@@ -588,10 +630,32 @@ class SupplierProposalComparisonService
         }
     }
 
-    private function proposalComparisonRow(SupplierProposal $proposal): array
+    private function proposalComparisonRow(SupplierProposal $proposal, ?array $purchaseLines = null): array
     {
         $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
         $commercial = $this->commercialSnapshot($proposal);
+        $offeredLines = $commercial['lines'] ?? [];
+        $requiredLines = $proposal->supplierRequestVersion?->line_snapshot ?? [];
+        $requiredLines = is_array($requiredLines) ? $requiredLines : [];
+        $offeredLines = is_array($offeredLines) ? $offeredLines : [];
+        $coverageService = new SupplierProposalLineCoverageService;
+        $coverage = $purchaseLines === null
+            ? $coverageService->evaluate($requiredLines, $offeredLines)
+            : $coverageService->evaluatePurchase($purchaseLines, $requiredLines, $offeredLines);
+
+        $lineNames = [];
+        foreach ($purchaseLines ?? $requiredLines as $line) {
+            $id = is_array($line) ? filter_var($line['id'] ?? null, FILTER_VALIDATE_INT) : false;
+            if (is_int($id) && $id > 0 && is_string($line['name'] ?? null)) {
+                $lineNames[$id] = trim($line['name']);
+            }
+        }
+        $displayCoverage = array_map(static function (array $line) use ($lineNames): array {
+            $id = $line['purchase_request_line_id'] ?? $line['supplier_request_line_id'] ?? null;
+            $line['name'] = $lineNames[$id] ?? null;
+
+            return $line;
+        }, $coverage['lines']);
 
         return [
             'id' => $proposal->id,
@@ -613,6 +677,8 @@ class SupplierProposalComparisonService
             'vat_amount' => (float) $commercial['vat_amount'],
             'total_amount' => (float) $commercial['total_amount'],
             'comparison_total' => $this->comparisonTotal($proposal),
+            'is_quantity_complete' => $coverage['complete'],
+            'line_coverage' => $displayCoverage,
             'currency' => (string) $commercial['currency'],
             'vat_mode' => $commercial['vat_mode'] ?? null,
             'vat_rate' => $commercial['vat_rate'] ?? null,
@@ -623,16 +689,16 @@ class SupplierProposalComparisonService
             'delivery_terms' => $commercial['delivery_terms'] ?? null,
             'warranty_terms' => $commercial['warranty_terms'] ?? null,
             'is_expired' => $proposal->isExpired(),
-            'lines' => $proposal->lines->map(fn ($line): array => [
-                'id' => $line->id,
-                'supplier_request_line_id' => $line->supplier_request_line_id,
-                'material_id' => $line->material_id,
-                'name' => $line->name,
-                'quantity' => (float) $line->quantity,
-                'unit' => $line->unit,
-                'unit_price' => (float) $line->unit_price,
-                'total_amount' => (float) $line->total_amount,
-                'comment' => $line->comment,
+            'lines' => collect($offeredLines)->filter(static fn ($line): bool => is_array($line))->map(static fn (array $line): array => [
+                'id' => $line['id'] ?? null,
+                'supplier_request_line_id' => $line['supplier_request_line_id'] ?? null,
+                'material_id' => $line['material_id'] ?? null,
+                'name' => $line['name'] ?? null,
+                'quantity' => (float) ($line['quantity'] ?? 0),
+                'unit' => $line['unit'] ?? null,
+                'unit_price' => (float) ($line['unit_price'] ?? 0),
+                'total_amount' => (float) ($line['total_amount'] ?? 0),
+                'comment' => $line['comment'] ?? null,
             ])->values()->all(),
         ];
     }

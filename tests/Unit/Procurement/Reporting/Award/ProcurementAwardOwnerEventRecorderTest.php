@@ -148,6 +148,11 @@ final class ProcurementAwardOwnerEventRecorderTest extends TestCase
         $secondCandidate = $this->candidate(20, 21, '100');
         $secondCandidate['supplier_request_id'] = 5;
         $secondCandidate['supplier_request_version_id'] = 6;
+        $secondCandidate['supplier_request_version_hash'] = str_repeat('c', 64);
+        $firstCandidate['comparison_request_lines'] = [
+            ['purchase_request_line_id' => 81, 'quantity' => '1', 'unit' => 'pcs', 'name' => 'Material'],
+        ];
+        $secondCandidate['comparison_request_lines'] = $firstCandidate['comparison_request_lines'];
         $source = new AwardSelectionSource([$firstCandidate, $secondCandidate]);
         $purchaseRequest = new PurchaseRequest;
         $purchaseRequest->forceFill(['id' => 3, 'organization_id' => 1]);

@@ -39,7 +39,24 @@ final class EloquentProcurementAwardSelectionSource implements ProcurementAwardS
             ->map(static fn (mixed $id): int => (int) $id)
             ->all();
 
-        return $this->candidateRowsForSupplierRequestIds($organizationId, $supplierRequestIds, $occurredAt);
+        $rows = $this->candidateRowsForSupplierRequestIds($organizationId, $supplierRequestIds, $occurredAt);
+        $purchaseLines = DB::table('purchase_request_lines as line')
+            ->join('purchase_requests as request', 'request.id', '=', 'line.purchase_request_id')
+            ->where('request.organization_id', $organizationId)
+            ->where('line.purchase_request_id', $purchaseRequestId)
+            ->orderBy('line.id')
+            ->lock('FOR UPDATE OF line')
+            ->get(['line.id', 'line.quantity', 'line.unit'])
+            ->map(static fn (object $line): array => [
+                'id' => (int) $line->id,
+                'quantity' => (string) $line->quantity,
+                'unit' => (string) $line->unit,
+            ])->all();
+
+        return array_map(static fn (array $row): array => [
+            ...$row,
+            'purchase_request_lines' => $purchaseLines,
+        ], $rows);
     }
 
     private function candidateRowsForSupplierRequestIds(
@@ -120,6 +137,7 @@ final class EloquentProcurementAwardSelectionSource implements ProcurementAwardS
             'selection_date' => $occurredAt->format('Y-m-d'),
             'version_content_hash' => $row->version_content_hash,
             'request_lines' => ProcurementAwardVersionProjection::requestLines(self::jsonArrayOrEmpty($row->request_lines)),
+            'comparison_request_lines' => self::jsonArrayOrEmpty($row->request_lines),
             'commercial_snapshot' => ProcurementAwardVersionProjection::proposal(self::jsonArrayOrEmpty($row->commercial_snapshot)),
         ])->all();
     }

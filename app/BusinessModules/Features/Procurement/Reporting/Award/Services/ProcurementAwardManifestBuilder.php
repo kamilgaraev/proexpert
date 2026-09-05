@@ -45,34 +45,37 @@ final class ProcurementAwardManifestBuilder
         }
 
         $currencies = [];
-        $vatBases = [];
         foreach ($rows as $row) {
+            if ($this->availabilityExclusions($row) !== []) {
+                continue;
+            }
             $snapshot = is_array($row['commercial_snapshot'] ?? null) ? $row['commercial_snapshot'] : [];
             $currency = strtoupper(trim((string) ($snapshot['currency'] ?? '')));
             if ($currency !== '') {
                 $currencies[] = $currency;
             }
-            $vatBases[] = [(string) ($snapshot['vat_mode'] ?? ''), (string) ($snapshot['vat_rate'] ?? '')];
         }
         $currencies = array_values(array_unique($currencies));
-        $vatBases = array_values(array_unique(array_map(
-            static fn (array $basis): string => implode('|', $basis),
-            $vatBases,
-        )));
-
-        $requestVersionHashes = array_values(array_unique(array_map(
-            static fn (array $row): string => (string) ($row['supplier_request_version_hash'] ?? ''),
-            $rows,
-        )));
 
         $candidates = [];
+        $scopeRows = [];
         foreach ($rows as $row) {
-            $candidates[] = $this->candidate(
+            $candidate = $this->candidate(
                 $row,
                 count($currencies) === 1,
-                count($vatBases) === 1,
-                count($requestVersionHashes) === 1,
+                true,
             );
+            $candidates[] = $candidate;
+            if ($candidate->comparable) {
+                $scopeRows[] = $row;
+            }
+        }
+        if (! (new ProcurementAwardRequestScopeComparator)->equivalent($scopeRows)) {
+            foreach ($candidates as $index => $candidate) {
+                if ($candidate->comparable) {
+                    $candidates[$index] = $this->candidate($rows[$index], true, false);
+                }
+            }
         }
 
         $selected = null;
@@ -86,8 +89,13 @@ final class ProcurementAwardManifestBuilder
             throw new DomainException('procurement_award_selected_candidate_missing');
         }
 
-        $legacy = array_filter(
+        $availableCandidates = array_filter(
             $candidates,
+            fn (int $index): bool => $this->availabilityExclusions($rows[$index]) === [],
+            ARRAY_FILTER_USE_KEY,
+        );
+        $legacy = array_filter(
+            $availableCandidates,
             static fn (ProcurementAwardCandidateEvidence $candidate): bool => in_array(
                 'legacy_unverified_proposal_version',
                 $candidate->exclusionCodes,
@@ -101,20 +109,23 @@ final class ProcurementAwardManifestBuilder
 
         $complete = count($comparable) === count($candidates) && $comparable !== [];
         $hasGap = array_filter(
-            $candidates,
+            $availableCandidates,
             static fn (ProcurementAwardCandidateEvidence $candidate): bool => array_filter(
                 $candidate->exclusionCodes,
                 static fn (string $code): bool => str_starts_with($code, 'missing_'),
             ) !== [],
         ) !== [];
+        $rankableSubset = $selected->comparable && $comparable !== [] && $legacy === [] && ! $hasGap;
         $completeness = $complete
             ? ProcurementAwardCompleteness::COMPLETE
-            : ($legacy !== []
+            : ($rankableSubset
+                ? ProcurementAwardCompleteness::COMPARABLE_SUBSET
+                : ($legacy !== []
                 ? ProcurementAwardCompleteness::LEGACY_UNVERIFIED
-                : ($hasGap ? ProcurementAwardCompleteness::GAP : ProcurementAwardCompleteness::NOT_COMPARABLE));
+                : ($hasGap ? ProcurementAwardCompleteness::GAP : ProcurementAwardCompleteness::NOT_COMPARABLE)));
 
         $ranked = [];
-        if ($complete) {
+        if ($complete || $rankableSubset) {
             $ranked = $comparable;
             usort($ranked, static function (
                 ProcurementAwardCandidateEvidence $left,
@@ -159,7 +170,6 @@ final class ProcurementAwardManifestBuilder
     private function candidate(
         array $row,
         bool $sameCurrency,
-        bool $sameVatBasis,
         bool $sameRequestVersion,
     ): ProcurementAwardCandidateEvidence {
         $snapshot = is_array($row['commercial_snapshot'] ?? null) ? $row['commercial_snapshot'] : [];
@@ -190,19 +200,8 @@ final class ProcurementAwardManifestBuilder
         }
 
         $proposalStatus = trim((string) ($row['proposal_status'] ?? '')) ?: null;
-        if (! in_array($proposalStatus, [
-            SupplierProposalStatusEnum::SUBMITTED->value,
-            SupplierProposalStatusEnum::ACCEPTED->value,
-        ], true)) {
-            $exclusions[] = 'proposal_status_not_comparable';
-        }
         $proposalValidUntil = $this->dateOrNull($row['proposal_valid_until'] ?? null);
-        $selectionDate = $this->dateOrNull($row['selection_date'] ?? null);
-        if (($row['proposal_valid_until'] ?? null) !== null && $proposalValidUntil === null) {
-            $exclusions[] = 'invalid_proposal_validity';
-        } elseif ($proposalValidUntil !== null && $selectionDate !== null && $proposalValidUntil < $selectionDate) {
-            $exclusions[] = 'expired_proposal';
-        }
+        $exclusions = array_merge($exclusions, $this->availabilityExclusions($row));
 
         $currency = strtoupper(trim((string) ($snapshot['currency'] ?? '')));
         if (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
@@ -211,14 +210,10 @@ final class ProcurementAwardManifestBuilder
         } elseif (! $sameCurrency) {
             $exclusions[] = 'currency_mismatch';
         }
-
         $vatMode = trim((string) ($snapshot['vat_mode'] ?? '')) ?: null;
         $vatRate = $this->decimalOrNull($snapshot['vat_rate'] ?? null, $exclusions, 'missing_vat_rate');
         if ($vatMode === null) {
             $exclusions[] = 'missing_vat_mode';
-        }
-        if (! $sameVatBasis) {
-            $exclusions[] = 'vat_basis_mismatch';
         }
 
         $subtotal = $this->decimalOrNull($snapshot['subtotal_amount'] ?? null, $exclusions, 'missing_subtotal_amount');
@@ -241,7 +236,6 @@ final class ProcurementAwardManifestBuilder
         $leadTimeDays = filter_var($snapshot['lead_time_days'] ?? null, FILTER_VALIDATE_INT, FILTER_NULL_ON_FAILURE);
         if ($deliveryDueDate === null && ($leadTimeDays === null || $leadTimeDays < 0)) {
             $leadTimeDays = null;
-            $exclusions[] = 'missing_delivery_promise';
         }
 
         $exclusions = array_values(array_unique($exclusions));
@@ -276,92 +270,48 @@ final class ProcurementAwardManifestBuilder
         );
     }
 
+    private function availabilityExclusions(array $row): array
+    {
+        $exclusions = [];
+        $proposalStatus = trim((string) ($row['proposal_status'] ?? ''));
+        if (! in_array($proposalStatus, [
+            SupplierProposalStatusEnum::SUBMITTED->value,
+            SupplierProposalStatusEnum::ACCEPTED->value,
+        ], true)) {
+            $exclusions[] = 'proposal_status_not_comparable';
+        }
+        $validUntil = $this->dateOrNull($row['proposal_valid_until'] ?? null);
+        $selectionDate = $this->dateOrNull($row['selection_date'] ?? null);
+        if (($row['proposal_valid_until'] ?? null) !== null && $validUntil === null) {
+            $exclusions[] = 'invalid_proposal_validity';
+        } elseif ($validUntil !== null && $selectionDate !== null && $validUntil < $selectionDate) {
+            $exclusions[] = 'expired_proposal';
+        }
+
+        return $exclusions;
+    }
+
     private function coverage(array $row, array &$exclusions): array
     {
         $requestLines = is_array($row['request_lines'] ?? null) ? $row['request_lines'] : [];
         $proposalLines = is_array($row['commercial_snapshot']['lines'] ?? null)
             ? $row['commercial_snapshot']['lines']
             : [];
-        $proposalByRequestLine = [];
-        $proposalLineCounts = [];
-        foreach ($proposalLines as $line) {
-            if (is_array($line) && isset($line['supplier_request_line_id'])) {
-                $lineId = filter_var($line['supplier_request_line_id'], FILTER_VALIDATE_INT);
-                if (! is_int($lineId) || $lineId < 1) {
-                    $exclusions[] = 'unlinked_proposal_line';
-
-                    continue;
-                }
-                $proposalLineCounts[$lineId] = ($proposalLineCounts[$lineId] ?? 0) + 1;
-                $proposalByRequestLine[$lineId] ??= $line;
-            } else {
-                $exclusions[] = 'unlinked_proposal_line';
-            }
-        }
-        if (array_filter($proposalLineCounts, static fn (int $count): bool => $count > 1) !== []) {
-            $exclusions[] = 'duplicate_proposal_request_line';
-        }
-
-        $coverage = [];
-        $requestLineIds = [];
-        foreach ($requestLines as $requestLine) {
-            if (! is_array($requestLine)) {
-                $exclusions[] = 'invalid_request_line';
-
-                continue;
-            }
-            $requestLineId = filter_var($requestLine['id'] ?? null, FILTER_VALIDATE_INT);
-            if (! is_int($requestLineId) || $requestLineId < 1) {
-                $exclusions[] = 'invalid_request_line';
-
-                continue;
-            }
-            if (isset($requestLineIds[$requestLineId])) {
-                $exclusions[] = 'duplicate_request_line_identity';
-
-                continue;
-            }
-            $requestLineIds[$requestLineId] = true;
-            $proposalLine = $proposalByRequestLine[$requestLineId] ?? null;
-            $requiredQuantity = $this->decimalOrNull(
-                $requestLine['quantity'] ?? null,
-                $exclusions,
-                'invalid_request_line_quantity',
+        $coverage = new \App\BusinessModules\Features\Procurement\Services\SupplierProposalLineCoverageService;
+        $result = $coverage->evaluate($requestLines, $proposalLines);
+        $exclusions = array_merge($exclusions, $result['issues']);
+        if (is_array($row['purchase_request_lines'] ?? null)) {
+            $purchaseCoverage = $coverage->evaluatePurchase(
+                $row['purchase_request_lines'],
+                is_array($row['comparison_request_lines'] ?? null) ? $row['comparison_request_lines'] : [],
+                $proposalLines,
             );
-            $requiredUnit = trim((string) ($requestLine['unit'] ?? ''));
-            $coveredQuantity = is_array($proposalLine)
-                ? $this->decimalOrNull(
-                    $proposalLine['quantity'] ?? null,
-                    $exclusions,
-                    'invalid_proposal_line_quantity',
-                )
-                : null;
-            $coveredUnit = is_array($proposalLine) ? trim((string) ($proposalLine['unit'] ?? '')) : null;
-            $covered = $proposalLine !== null
-                && $requiredQuantity !== null
-                && $coveredQuantity !== null
-                && $requiredUnit !== ''
-                && $coveredQuantity === $requiredQuantity
-                && $coveredUnit === $requiredUnit;
-            $coverage[] = [
-                'supplier_request_line_id' => $requestLineId,
-                'required_quantity' => $requiredQuantity,
-                'required_unit' => $requiredUnit,
-                'covered_quantity' => $coveredQuantity,
-                'covered_unit' => $coveredUnit,
-                'covered' => $covered,
-            ];
-            unset($proposalByRequestLine[$requestLineId]);
+            if (! $purchaseCoverage['complete']) {
+                $exclusions[] = 'incomplete_purchase_line_coverage';
+            }
         }
 
-        usort($coverage, static fn (array $left, array $right): int => $left['supplier_request_line_id'] <=> $right['supplier_request_line_id']);
-        if ($coverage === []
-            || $proposalByRequestLine !== []
-            || array_filter($coverage, static fn (array $line): bool => ! $line['covered']) !== []) {
-            $exclusions[] = 'incomplete_request_line_coverage';
-        }
-
-        return $coverage;
+        return $result['lines'];
     }
 
     private function decimalOrNull(mixed $value, array &$exclusions, string $code): ?string

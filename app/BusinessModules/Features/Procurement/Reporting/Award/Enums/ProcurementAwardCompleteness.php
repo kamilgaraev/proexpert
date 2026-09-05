@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Award\Enums;
 enum ProcurementAwardCompleteness: string
 {
     case COMPLETE = 'complete';
+    case COMPARABLE_SUBSET = 'comparable_subset';
     case NOT_COMPARABLE = 'not_comparable';
     case GAP = 'gap';
     case LEGACY_UNVERIFIED = 'legacy_unverified';
