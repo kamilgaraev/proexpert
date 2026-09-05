@@ -118,7 +118,13 @@ final class CorsMiddleware
     private function allowedOriginsFor(Request $request, ?string $audience): array
     {
         if ($audience === null) {
-            return $this->origins->originsFor('public');
+            $origins = $this->origins->originsFor('public');
+
+            if (preg_match('#^api/v1/procurement/supplier-requests/[^/]+(?:/proposals)?$#D', $request->path()) === 1) {
+                $origins = array_merge($origins, $this->origins->originsFor('lk'));
+            }
+
+            return array_values(array_unique($origins));
         }
 
         $origins = $this->origins->originsFor($audience);

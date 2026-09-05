@@ -8,9 +8,9 @@ use App\Http\Middleware\CorsMiddleware;
 use App\Services\Security\WebOriginPolicy;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Tests\TestCase;
+use Tests\Support\DatabaseLessTestCase;
 
-class CorsMiddlewareTest extends TestCase
+class CorsMiddlewareTest extends DatabaseLessTestCase
 {
     public function test_default_customer_origins_include_all_production_hosts(): void
     {
@@ -164,6 +164,59 @@ class CorsMiddlewareTest extends TestCase
 
         self::assertSame(Response::HTTP_FORBIDDEN, $response->getStatusCode());
         self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
+    }
+
+    public function test_supplier_public_routes_allow_lk_without_credentials(): void
+    {
+        $this->configureOrigins();
+
+        foreach (['GET' => '/api/v1/procurement/supplier-requests/token', 'POST' => '/api/v1/procurement/supplier-requests/token/proposals'] as $method => $path) {
+            foreach (['https://lk.example.test', 'https://www.example.test'] as $origin) {
+                $request = Request::create($path, $method, server: ['HTTP_ORIGIN' => $origin]);
+                $response = $this->middleware()->handle($request, static fn (): Response => response('ok'));
+
+                self::assertSame(Response::HTTP_OK, $response->getStatusCode());
+                self::assertSame($origin, $response->headers->get('Access-Control-Allow-Origin'));
+                self::assertNull($response->headers->get('Access-Control-Allow-Credentials'));
+            }
+        }
+    }
+
+    public function test_supplier_proposal_preflight_allows_lk_json_request_without_credentials(): void
+    {
+        $this->configureOrigins();
+        $request = Request::create('/api/v1/procurement/supplier-requests/token/proposals', 'OPTIONS', server: [
+            'HTTP_ORIGIN' => 'https://lk.example.test',
+            'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
+            'HTTP_ACCESS_CONTROL_REQUEST_HEADERS' => 'Content-Type',
+        ]);
+        $response = $this->middleware()->handle($request, static fn (): Response => response('ok'));
+
+        self::assertSame(Response::HTTP_NO_CONTENT, $response->getStatusCode());
+        self::assertSame('https://lk.example.test', $response->headers->get('Access-Control-Allow-Origin'));
+        self::assertNull($response->headers->get('Access-Control-Allow-Credentials'));
+    }
+
+    public function test_supplier_exception_does_not_allow_other_origins_or_other_routes(): void
+    {
+        $this->configureOrigins();
+
+        foreach ([
+            ['https://evil.example.test', '/api/v1/procurement/supplier-requests/token'],
+            ['https://customer.example.test', '/api/v1/procurement/supplier-requests/token'],
+            ['https://lk.example.test', '/api/v1/procurement/supplier-requests'],
+            ['https://lk.example.test', '/api/v1/procurement/supplier-requests/token/proposals/extra'],
+            ['https://lk.example.test', '/api/v1/procurement/other'],
+            ['https://lk.example.test', '/api/v1/admin/procurement/supplier-requests/1'],
+        ] as [$origin, $path]) {
+            $request = Request::create($path, 'GET', server: ['HTTP_ORIGIN' => $origin]);
+            $response = $this->middleware()->handle($request, static function (): never {
+                throw new \LogicException('The protected handler must not run.');
+            });
+
+            self::assertSame(Response::HTTP_FORBIDDEN, $response->getStatusCode());
+            self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
+        }
     }
 
     private function middleware(): CorsMiddleware
