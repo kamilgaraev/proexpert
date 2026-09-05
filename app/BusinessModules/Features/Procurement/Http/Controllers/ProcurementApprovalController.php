@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 use App\BusinessModules\Features\Procurement\Http\Resources\ProcurementApprovalResource;
 use App\BusinessModules\Features\Procurement\Models\ProcurementApproval;
 use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalService;
+use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalSummaryService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -20,7 +21,8 @@ use function trans_message;
 class ProcurementApprovalController extends Controller
 {
     public function __construct(
-        private readonly ProcurementApprovalService $service
+        private readonly ProcurementApprovalService $service,
+        private readonly ProcurementApprovalSummaryService $summaryService
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -82,7 +84,8 @@ class ProcurementApprovalController extends Controller
                     'total' => $approvals->total(),
                     'last_page' => $approvals->lastPage(),
                 ],
-                trans_message('procurement.approvals.index_loaded')
+                trans_message('procurement.approvals.index_loaded'),
+                summary: $this->summaryService->forOrganization($organizationId, $validated['reason_code'] ?? null)
             );
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('errors.validation_failed'), 422, $e->errors());
