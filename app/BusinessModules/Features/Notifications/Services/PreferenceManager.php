@@ -23,7 +23,7 @@ class PreferenceManager
 
         $preference = $this->getPreference($user, $notificationType, $organizationId);
 
-        if ($preference && !empty($preference->enabled_channels)) {
+        if ($preference && is_array($preference->enabled_channels)) {
             return array_intersect(
                 $preference->enabled_channels,
                 $this->getAvailableChannels()
