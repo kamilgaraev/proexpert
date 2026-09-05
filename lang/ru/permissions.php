@@ -49,6 +49,8 @@ return [
         'knowledge_hub' => 'База знаний',
         'machinery_operations' => 'Техника и механизмы',
         'material_analytics' => 'Аналитика материалов',
+        'materials' => 'Материалы',
+        'suppliers' => 'Поставщики',
         'multi_organization' => 'Мультиорганизация',
         'notifications' => 'Уведомления',
         'one_c_basic_exchange' => '1C: базовый обмен',
