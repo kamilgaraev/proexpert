@@ -18,6 +18,10 @@ final class CorsMiddleware
 
     public function handle(Request $request, Closure $next): Response
     {
+        if (! $request->is(...(array) config('cors.paths', []))) {
+            return $next($request);
+        }
+
         $origin = $request->header('Origin');
 
         if (! is_string($origin) || $origin === '') {
