@@ -198,6 +198,14 @@ class EstimateConstructorController extends Controller
                 $message,
                 $statusCode,
             );
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_constructor.access_denied'), Response::HTTP_FORBIDDEN);
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $isConflict = in_array(trans_message('estimate_constructor.conflict'), $exception->errors()['items'] ?? [], true);
+            return AdminResponse::error(
+                trans_message($isConflict ? 'estimate_constructor.conflict' : 'estimate_constructor.invalid_changes'),
+                $isConflict ? Response::HTTP_CONFLICT : Response::HTTP_UNPROCESSABLE_ENTITY,
+            );
         } catch (ModelNotFoundException) {
             return AdminResponse::error(
                 trans_message('estimate_constructor.not_found'),

@@ -23,6 +23,22 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        \App\Models\Module::query()->create([
+            'name' => 'Сметы',
+            'slug' => 'budget-estimates',
+            'version' => '1.0.0',
+            'type' => 'feature',
+            'billing_model' => 'free',
+            'class_name' => \App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesModule::class,
+            'is_active' => true,
+            'is_system_module' => true,
+            'can_deactivate' => false,
+        ]);
+    }
+
     public function test_adding_normative_to_approved_estimate_returns_conflict_without_writing(): void
     {
         $this->mock(AccessController::class, function (MockInterface $mock): void {
@@ -75,7 +91,7 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
 
     public function test_bulk_delete_returns_admin_contract_and_stays_inside_current_organization(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->createContext();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $estimate = $this->createEstimate($context->organization, $project);
         $unit = $this->createMeasurementUnit($context->organization);
@@ -109,7 +125,7 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
 
     public function test_move_and_copy_reject_entities_from_other_organizations_without_mutation(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->createContext();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $estimate = $this->createEstimate($context->organization, $project);
         $targetEstimate = $this->createEstimate($context->organization, $project, ['number' => 'TARGET-LOCAL']);
@@ -161,7 +177,7 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
 
     public function test_add_from_catalog_and_copy_generate_next_position_numbers(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->createContext();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $estimate = $this->createEstimate($context->organization, $project);
         $targetEstimate = $this->createEstimate($context->organization, $project, ['number' => 'TARGET-POSITIONS']);
@@ -215,8 +231,103 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
         $copySectionResponse->assertJsonPath('data.items.0.position_number', '1.3');
     }
 
+    public function test_bulk_update_recalculates_client_totals_and_rejects_invalid_values(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $item = $this->createItem($estimate, $this->createMeasurementUnit($context->organization));
+        $endpoint = "/api/v1/admin/estimates/constructor/{$estimate->id}/bulk-update";
+        $response = $this->withHeaders($context->authHeaders())->postJson($endpoint, ['items' => [[
+            'id' => $item->id, 'quantity' => 3, 'unit_price' => 150,
+            'direct_costs' => 1, 'overhead_amount' => 30, 'profit_amount' => 15, 'total_amount' => 1,
+        ]]]);
+        $this->assertSame(200, $response->status(), $response->getContent());
+        $this->assertEquals(450, $item->fresh()->direct_costs);
+        $this->assertEquals(495, $item->fresh()->total_amount);
+        $this->withHeaders($context->authHeaders())->postJson($endpoint, ['items' => [[
+            'id' => $item->id, 'quantity' => -1,
+        ]]])->assertUnprocessable();
+        $this->assertEquals(3, $item->fresh()->quantity);
+    }
+
+    public function test_normative_quantity_change_preserves_indices_and_recalculates_the_total(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $baseId = \Illuminate\Support\Facades\DB::table('normative_base_types')->insertGetId(['code' => 'TEST', 'name' => 'Test']);
+        $collectionId = \Illuminate\Support\Facades\DB::table('normative_collections')->insertGetId(['base_type_id' => $baseId, 'code' => 'TEST', 'name' => 'Test']);
+        $rateId = \Illuminate\Support\Facades\DB::table('normative_rates')->insertGetId([
+            'collection_id' => $collectionId, 'code' => 'TEST-1', 'name' => 'Test',
+            'materials_cost' => 100, 'machinery_cost' => 20, 'labor_cost' => 30,
+        ]);
+        $item = $this->createItem($estimate, $this->createMeasurementUnit($context->organization), [
+            'normative_rate_id' => $rateId, 'quantity' => 1, 'unit_price' => 350,
+            'materials_index' => 2, 'machinery_index' => 3, 'labor_index' => 3,
+        ]);
+        $endpoint = "/api/v1/admin/estimates/constructor/{$estimate->id}/bulk-update";
+        $this->withHeaders($context->authHeaders())->postJson($endpoint, ['items' => [[
+            'id' => $item->id, 'quantity' => 2, 'overhead_amount' => 30, 'profit_amount' => 15, 'total_amount' => 1,
+        ]]])->assertOk();
+        $updated = $item->fresh();
+        $this->assertEquals(400, $updated->materials_cost);
+        $this->assertEquals(120, $updated->machinery_cost);
+        $this->assertEquals(180, $updated->labor_cost);
+        $this->assertEquals(700, $updated->direct_costs);
+        $this->assertEquals(350, $updated->unit_price);
+        $this->assertEquals(745, $updated->total_amount);
+    }
+
+    public function test_constructor_denies_a_project_without_assignment(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $project->users()->detach($context->user->id);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
+        $item = $this->createItem($estimate, $this->createMeasurementUnit($context->organization));
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/estimates/constructor/{$estimate->id}/bulk-delete", ['item_ids' => [$item->id]])
+            ->assertForbidden();
+        $this->assertNotSoftDeleted('estimate_items', ['id' => $item->id]);
+    }
+
+    public function test_constructor_denies_missing_edit_permission(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $item = $this->createItem($estimate, $this->createMeasurementUnit($context->organization));
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/estimates/constructor/{$estimate->id}/bulk-delete", ['item_ids' => [$item->id]])
+            ->assertForbidden();
+        $this->assertNotSoftDeleted('estimate_items', ['id' => $item->id]);
+    }
+
+    public function test_stale_bulk_update_is_rejected_without_mutation(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $item = $this->createItem($estimate, $this->createMeasurementUnit($context->organization));
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/estimates/constructor/{$estimate->id}/bulk-update", ['items' => [[
+                'id' => $item->id, 'quantity' => 2, 'expected_updated_at' => '2000-01-01T00:00:00Z',
+            ]]])->assertConflict();
+        $this->assertEquals(1, $item->fresh()->quantity);
+    }
+
+    private function createContext(): AdminApiTestContext
+    {
+        return AdminApiTestContext::create(roleSlug: 'organization_owner');
+    }
+
     private function createEstimate(Organization $organization, Project $project, array $overrides = []): Estimate
     {
+        foreach ($organization->users as $user) {
+            $project->users()->syncWithoutDetaching([$user->id => ['role' => 'member', 'is_active' => true]]);
+        }
         return Estimate::query()->create(array_merge([
             'organization_id' => $organization->id,
             'project_id' => $project->id,

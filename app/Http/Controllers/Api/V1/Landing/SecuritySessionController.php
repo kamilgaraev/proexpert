@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Landing\SecuritySessionsRequest;
+use App\Services\Auth\UserAuthSessionQuery;
 use App\Http\Resources\Auth\UserAuthSessionResource;
 use App\Http\Resources\Auth\UserSecurityEventResource;
 use App\Http\Responses\LandingResponse;
@@ -20,14 +22,25 @@ class SecuritySessionController extends Controller
     {
     }
 
-    public function index(Request $request): JsonResponse
+    public function index(SecuritySessionsRequest $request, UserAuthSessionQuery $query): JsonResponse
     {
         try {
-            $sessions = $request->user()->authSessions()
-                ->latest('last_seen_at')
-                ->get();
+            $sessions = $query->paginate(
+                $request->user(),
+                (string) $request->validated('group', 'all'),
+                (int) $request->validated('per_page', 20),
+                (int) $request->validated('page', 1),
+            );
 
-            return LandingResponse::success(UserAuthSessionResource::collection($sessions)->resolve($request));
+            return LandingResponse::paginated(
+                UserAuthSessionResource::collection($sessions->items())->resolve($request),
+                [
+                    'current_page' => $sessions->currentPage(),
+                    'per_page' => $sessions->perPage(),
+                    'last_page' => $sessions->lastPage(),
+                    'total' => $sessions->total(),
+                ],
+            );
         } catch (\Throwable $e) {
             Log::error('Failed to list security sessions', [
                 'user_id' => $request->user()?->id,
