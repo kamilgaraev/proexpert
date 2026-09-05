@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'brand' => 'МОСТ',
     'groups' => [
         'dashboard' => 'Обзор',
         'platform' => 'Платформа',

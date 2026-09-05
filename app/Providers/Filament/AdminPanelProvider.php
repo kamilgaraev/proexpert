@@ -43,6 +43,7 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
+            ->brandName(trans_message('filament_navigation.brand'))
             ->viteTheme([
                 'resources/css/filament/admin/theme.css',
                 'resources/js/filament/blog-inline-block-editor.js',

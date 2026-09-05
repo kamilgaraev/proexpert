@@ -254,6 +254,7 @@ class KnowledgeArticleResource extends Resource
                         ->columnSpanFull(),
                     Infolists\Components\TextEntry::make('surfaces')
                         ->label(trans_message('knowledge_hub.filament.field_surfaces'))
+                        ->formatStateUsing(fn (string $state): string => KnowledgeSurface::options()[$state] ?? $state)
                         ->badge(),
                     Infolists\Components\TextEntry::make('module_slugs')
                         ->label(trans_message('knowledge_hub.filament.field_module_slugs'))
@@ -299,6 +300,7 @@ class KnowledgeArticleResource extends Resource
                     ->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('surfaces')
                     ->label(trans_message('knowledge_hub.filament.field_surfaces'))
+                    ->formatStateUsing(fn (string $state): string => KnowledgeSurface::options()[$state] ?? $state)
                     ->badge()
                     ->toggleable(),
                 Tables\Columns\TextColumn::make('module_slugs')
