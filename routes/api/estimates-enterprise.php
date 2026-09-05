@@ -65,7 +65,7 @@ Route::prefix('estimates')->group(function () {
         Route::get('/ks-both/{actId}', [OfficialFormsExportController::class, 'exportBothForms']);
     });
 
-    Route::prefix('constructor')->group(function () {
+    Route::prefix('constructor')->middleware('authorize:budget-estimates.edit')->group(function () {
         Route::post('/{estimateId}/add-from-normatives', [EstimateConstructorController::class, 'addItemsFromNormatives']);
         Route::post('/{estimateId}/add-from-catalog', [EstimateConstructorController::class, 'addItemsFromCatalog']);
         Route::post('/{estimateId}/bulk-update', [EstimateConstructorController::class, 'bulkUpdate']);
