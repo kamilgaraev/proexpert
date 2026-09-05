@@ -112,13 +112,14 @@ final class ProcurementChainService
         $organizationId = $this->organizationId($graph);
         [$currentKey, $nextAction, $blockers] = $this->resolveCurrentState($graph, $actor, $organizationId);
         $linkedDocuments = $this->linkedDocuments($graph);
-        $currentDocument = $this->documentForStage($currentKey, $linkedDocuments);
+        $currentDocument = $this->documentForStage($currentKey, $linkedDocuments, $graph);
         $currentStage = $this->stage($currentKey, 'current', $currentDocument, $blockers->first());
         $stages = $this->stages(
             $currentKey,
             $linkedDocuments,
             $blockers,
-            $this->usesFulfillmentStages($graph, $currentKey, $linkedDocuments)
+            $this->usesFulfillmentStages($graph, $currentKey, $linkedDocuments),
+            $graph
         );
 
         return new ProcurementChainSummary(
@@ -477,11 +478,14 @@ final class ProcurementChainService
      */
     private function warehouseDelivery(Collection $deliveries): ?ProjectMaterialDelivery
     {
-        return $deliveries
+        $activeDeliveries = $deliveries
             ->filter(static fn (ProjectMaterialDelivery $delivery): bool => $delivery->source_type === 'warehouse')
             ->reject(static fn (ProjectMaterialDelivery $delivery): bool => $delivery->status === ProjectMaterialDeliveryStatusEnum::CANCELLED)
-            ->sortByDesc('id')
-            ->first();
+            ->sortByDesc('id');
+
+        return $activeDeliveries->first(
+            static fn (ProjectMaterialDelivery $delivery): bool => $delivery->status !== ProjectMaterialDeliveryStatusEnum::ACCEPTED
+        ) ?? $activeDeliveries->first();
     }
 
     /**
@@ -735,8 +739,33 @@ final class ProcurementChainService
     /**
      * @param  Collection<int, ProcurementChainDocumentLink>  $documents
      */
-    private function documentForStage(string $stage, Collection $documents): ?ProcurementChainDocumentLink
+    private function documentForStage(string $stage, Collection $documents, array $graph): ?ProcurementChainDocumentLink
     {
+        $selectedProposal = ($graph['purchase_order'] ?? null)?->acceptedSupplierProposal
+            ?? ($graph['selected_proposal'] ?? null);
+
+        if (in_array($stage, ['warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted'], true)) {
+            $delivery = $this->warehouseDelivery($graph['material_deliveries'] ?? collect());
+
+            return $delivery instanceof ProjectMaterialDelivery ? $this->projectMaterialDeliveryLink($delivery) : null;
+        }
+
+        if ($stage === 'proposal_selected') {
+            return $selectedProposal instanceof SupplierProposal
+                ? $this->supplierProposalLink($selectedProposal)
+                : null;
+        }
+
+        if (
+            in_array($stage, ['supplier_request_created', 'supplier_request_sent'], true)
+            && $selectedProposal instanceof SupplierProposal
+        ) {
+            return $documents->first(
+                static fn (ProcurementChainDocumentLink $document): bool => $document->type === 'supplier_request'
+                    && $document->id === $selectedProposal->supplier_request_id
+            );
+        }
+
         $type = match ($stage) {
             'site_request_created', 'site_request_approved', 'fulfillment_source_required' => 'site_request',
             'warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted' => 'project_material_delivery',
@@ -768,14 +797,23 @@ final class ProcurementChainService
         string $currentKey,
         Collection $documents,
         Collection $blockers,
-        bool $includeFulfillmentStages
+        bool $includeFulfillmentStages,
+        array $graph
     ): Collection {
-        $stageOrder = $this->stageOrder($documents, $includeFulfillmentStages);
+        $warehouseDeliveries = ($graph['material_deliveries'] ?? collect())
+            ->filter(static fn (ProjectMaterialDelivery $delivery): bool => $delivery->source_type === 'warehouse'
+                && $delivery->status !== ProjectMaterialDeliveryStatusEnum::CANCELLED);
+        $warehouseIds = $warehouseDeliveries->pluck('id');
+        $stageDocuments = $documents->reject(
+            static fn (ProcurementChainDocumentLink $document): bool => $document->type === 'project_material_delivery'
+                && ! $warehouseIds->contains($document->id)
+        );
+        $stageOrder = $this->stageOrder($stageDocuments, $includeFulfillmentStages);
         $currentIndex = array_search($currentKey, $stageOrder, true);
         $currentIndex = $currentIndex === false ? count($stageOrder) - 1 : $currentIndex;
 
         return collect($stageOrder)
-            ->map(function (string $stageKey, int $index) use ($currentKey, $currentIndex, $documents, $blockers): ProcurementChainStage {
+            ->map(function (string $stageKey, int $index) use ($currentKey, $currentIndex, $documents, $blockers, $graph, $warehouseDeliveries): ProcurementChainStage {
                 $status = 'pending';
 
                 if ($index < $currentIndex) {
@@ -788,14 +826,50 @@ final class ProcurementChainService
                     $status = 'done';
                 }
 
+                $status = $this->warehouseStageStatus($stageKey, $warehouseDeliveries) ?? $status;
+
                 return $this->stage(
                     $stageKey,
                     $status,
-                    $this->documentForStage($stageKey, $documents),
+                    $this->documentForStage($stageKey, $documents, $graph),
                     $stageKey === $currentKey ? $blockers->first() : null
                 );
             })
             ->values();
+    }
+
+    private function warehouseStageStatus(string $stage, Collection $deliveries): ?string
+    {
+        if (! in_array($stage, ['warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted'], true)) {
+            return null;
+        }
+
+        $statuses = $deliveries->pluck('status');
+        $accepted = ProjectMaterialDeliveryStatusEnum::ACCEPTED;
+        if ($statuses->isNotEmpty() && $statuses->every(static fn ($status): bool => $status === $accepted)) {
+            return 'done';
+        }
+
+        $moving = [
+            ProjectMaterialDeliveryStatusEnum::IN_TRANSIT,
+            ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED,
+            ProjectMaterialDeliveryStatusEnum::DELIVERED,
+            $accepted,
+        ];
+
+        if ($stage === 'warehouse_reserved') {
+            $reserved = [...$moving, ProjectMaterialDeliveryStatusEnum::RESERVED, ProjectMaterialDeliveryStatusEnum::PREPARING];
+
+            return $statuses->isNotEmpty() && $statuses->every(static fn ($status): bool => in_array($status, $reserved, true))
+                ? 'done'
+                : 'pending';
+        }
+
+        if ($stage === 'warehouse_in_transit' && $statuses->contains(static fn ($status): bool => in_array($status, $moving, true))) {
+            return 'current';
+        }
+
+        return 'pending';
     }
 
     /**

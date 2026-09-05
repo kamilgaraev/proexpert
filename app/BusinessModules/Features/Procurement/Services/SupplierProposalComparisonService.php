@@ -131,7 +131,7 @@ class SupplierProposalComparisonService
 
                 if (! $row['is_quantity_complete']) {
                     $row['is_directly_comparable'] = false;
-                    $row['comparison_warnings'][] = trans_message('procurement.proposal_decisions.proposal_not_comparable');
+                    $row['comparison_warnings'][] = trans_message('procurement.proposal_decisions.line_coverage_mismatch');
                 }
 
                 if (! $sameScope) {

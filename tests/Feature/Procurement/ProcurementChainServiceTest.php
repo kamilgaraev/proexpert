@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
@@ -25,6 +26,7 @@ use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\Models\Material;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -151,6 +153,32 @@ final class ProcurementChainServiceTest extends TestCase
         $this->assertNotNull($summary->nextAction?->disabledReason);
     }
 
+    public function test_order_chain_links_the_accepted_proposal_in_a_five_supplier_contest(): void
+    {
+        $organization = Organization::factory()->create();
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $winningRequest = $this->createSupplierRequest($purchaseRequest, SupplierRequestStatusEnum::SENT);
+        $winner = $this->createSupplierProposal($winningRequest);
+        $winner->update(['status' => SupplierProposalStatusEnum::ACCEPTED]);
+
+        for ($index = 1; $index <= 4; $index++) {
+            $competitorRequest = $winningRequest->replicate();
+            $competitorRequest->request_number .= '-'.$index;
+            $competitorRequest->public_token .= '-'.$index;
+            $competitorRequest->save();
+            $this->createSupplierProposal($competitorRequest);
+        }
+
+        $order = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED);
+        $order->update(['accepted_supplier_proposal_id' => $winner->id]);
+
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+
+        $this->assertCount(5, $summary->linkedDocuments->where('type', 'supplier_proposal'));
+        $this->assertSame($winner->id, $summary->stages->firstWhere('key', 'proposal_selected')?->document?->id);
+        $this->assertSame($winningRequest->id, $summary->stages->firstWhere('key', 'supplier_request_sent')?->document?->id);
+    }
+
     public function test_confirmed_order_without_payment_points_to_payment_document(): void
     {
         $organization = Organization::factory()->create();
@@ -163,6 +191,95 @@ final class ProcurementChainServiceTest extends TestCase
         $this->assertSame('create_or_open_payment_document', $summary->nextAction?->key);
         $this->assertSame('payment_document_missing', $summary->blockers->first()?->key);
         $this->assertTrue($summary->compact()->isBlocked);
+    }
+
+    public function test_purchase_delivery_does_not_claim_warehouse_fulfillment(): void
+    {
+        $organization = Organization::factory()->create();
+        $siteRequest = $this->createSiteRequest($organization);
+        $purchaseRequest = $this->createPurchaseRequest($organization, $siteRequest);
+        $order = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED);
+        $this->createMaterialDelivery($siteRequest, 'purchase');
+
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order);
+
+        foreach (['warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted'] as $key) {
+            $this->assertNull($summary->stages->firstWhere('key', $key));
+        }
+        $this->assertCount(1, $summary->linkedDocuments->where('type', 'project_material_delivery'));
+    }
+
+    public function test_parallel_warehouse_delivery_uses_its_actual_progress(): void
+    {
+        $organization = Organization::factory()->create();
+        $siteRequest = $this->createSiteRequest($organization);
+        $purchaseRequest = $this->createPurchaseRequest($organization, $siteRequest);
+        $order = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED);
+        $delivery = $this->createMaterialDelivery($siteRequest, 'warehouse');
+
+        foreach ([
+            'processing' => ['pending', 'pending', 'pending'],
+            'reserved' => ['done', 'pending', 'pending'],
+            'in_transit' => ['done', 'current', 'pending'],
+            'accepted' => ['done', 'done', 'done'],
+        ] as $status => $expected) {
+            $delivery->update(['status' => $status]);
+            $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+            foreach (['warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted'] as $index => $key) {
+                $this->assertSame($expected[$index], $summary->stages->firstWhere('key', $key)?->status, $status.': '.$key);
+            }
+        }
+    }
+
+    public function test_unfinished_warehouse_delivery_remains_actionable_after_a_newer_delivery_is_accepted(): void
+    {
+        $organization = Organization::factory()->create();
+        $siteRequest = $this->createSiteRequest($organization);
+        $unfinished = $this->createMaterialDelivery($siteRequest, 'warehouse');
+        $accepted = $this->createMaterialDelivery($siteRequest, 'warehouse');
+        $accepted->update(['status' => 'accepted']);
+        $cancelled = $this->createMaterialDelivery($siteRequest, 'warehouse');
+        $cancelled->update(['status' => 'cancelled']);
+        $this->createMaterialDelivery($siteRequest, 'purchase');
+
+        foreach (['processing' => 'warehouse_reserved', 'in_transit' => 'warehouse_in_transit'] as $status => $stage) {
+            $unfinished->update(['status' => $status]);
+            $summary = app(ProcurementChainService::class)->forSiteRequest($siteRequest->fresh());
+
+            $this->assertSame($stage, $summary->currentStage->key);
+            $this->assertSame('/warehouse?tab=project-material-deliveries&delivery_id='.$unfinished->id, $summary->nextAction?->href);
+            foreach (['warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted'] as $key) {
+                $this->assertSame($unfinished->id, $summary->stages->firstWhere('key', $key)?->document?->id);
+            }
+        }
+
+        $unfinished->update(['status' => 'accepted']);
+        $summary = app(ProcurementChainService::class)->forSiteRequest($siteRequest->fresh());
+        $this->assertSame('project_material_accepted', $summary->currentStage->key);
+        $this->assertNull($summary->nextAction);
+        foreach (['warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted'] as $key) {
+            $this->assertSame('done', $summary->stages->firstWhere('key', $key)?->status);
+            $this->assertSame($accepted->id, $summary->stages->firstWhere('key', $key)?->document?->id);
+        }
+    }
+
+    private function createMaterialDelivery(SiteRequest $siteRequest, string $source): ProjectMaterialDelivery
+    {
+        return ProjectMaterialDelivery::query()->create([
+            'organization_id' => $siteRequest->organization_id,
+            'project_id' => $siteRequest->project_id,
+            'site_request_id' => $siteRequest->id,
+            'material_id' => Material::query()->create([
+                'organization_id' => $siteRequest->organization_id,
+                'name' => 'Арматура',
+                'code' => 'CHAIN-MATERIAL-'.uniqid(),
+                'default_price' => 100,
+                'is_active' => true,
+            ])->id,
+            'source_type' => $source,
+            'status' => 'processing',
+            'requested_quantity' => 5,
+        ]);
     }
 
     public function test_draft_payment_document_points_to_submission(): void
