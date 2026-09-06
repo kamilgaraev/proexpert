@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Normative;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\NormativeRate;
@@ -14,7 +15,8 @@ use Illuminate\Support\Facades\DB;
 class EnhancedCalculationService
 {
     public function __construct(
-        protected PriceIndexRepository $priceIndexRepository
+        protected PriceIndexRepository $priceIndexRepository,
+        protected EstimateCalculationService $estimateCalculationService
     ) {}
 
     public function calculateItemFromNormativeRate(
@@ -106,6 +108,8 @@ class EnhancedCalculationService
     {
         // ИСКЛЮЧАЕМ ресурсы из расчета (is_not_accounted = true)
         $totals = $estimate->items()
+            ->reorder()
+            ->whereNull('parent_work_id')
             ->where('is_not_accounted', false)
             ->selectRaw('
                 SUM(materials_cost) as total_materials,
@@ -137,17 +141,19 @@ class EnhancedCalculationService
     public function recalculateEstimate(Estimate $estimate, array $options = []): Estimate
     {
         DB::transaction(function () use ($estimate, $options) {
-            $items = $estimate->items()->with('normativeRate')->get();
+            $items = $estimate->items()->with('normativeRate')->withExists('childItems')->get();
 
             foreach ($items as $item) {
-                if ($item->normativeRate) {
+                if ($item->normativeRate && !$item->child_items_exists && !$item->is_manual) {
                     $this->recalculateItem($item, $options);
+                    if ((float) $item->quantity > 0) {
+                        $item->unit_price = round((float) $item->direct_costs / (float) $item->quantity, 4);
+                    }
                     $item->save();
                 }
             }
 
-            $this->calculateEstimateTotal($estimate);
-            $estimate->save();
+            $this->estimateCalculationService->recalculateAll($estimate);
         });
 
         return $estimate->fresh();
