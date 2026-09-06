@@ -261,6 +261,18 @@ class Organization extends Model
         return ! empty($this->tax_number) && ! empty($this->address);
     }
 
+    public function getVerificationDataAttribute(mixed $value): ?array
+    {
+        for ($depth = 0; $depth < 2 && is_string($value); $depth++) {
+            $value = json_decode($value, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return null;
+            }
+        }
+
+        return is_array($value) ? $value : null;
+    }
+
     /**
      * Получить оценку верификации из данных верификации.
      */
