@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
+use App\Support\EstimatePositionOrder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -162,10 +163,9 @@ class EstimateItemNumberingService
      */
     protected function recalculateGlobal(int $estimateId, array $orderedItemIds = []): void
     {
-        $items = EstimateItem::where('estimate_id', $estimateId)
-            ->orderBy('estimate_section_id')
-            ->orderBy('id')
-            ->get();
+        $items = EstimatePositionOrder::apply(
+            EstimateItem::where('estimate_id', $estimateId)->orderBy('estimate_section_id')
+        )->orderBy('id')->get();
 
         $items = $this->applyRequestedOrder($items, $orderedItemIds);
 
@@ -182,10 +182,9 @@ class EstimateItemNumberingService
     protected function recalculateBySection(int $estimateId, array $orderedItemIds = []): void
     {
         // Сначала позиции без секции
-        $itemsWithoutSection = EstimateItem::where('estimate_id', $estimateId)
-            ->whereNull('estimate_section_id')
-            ->orderBy('id')
-            ->get();
+        $itemsWithoutSection = EstimatePositionOrder::apply(
+            EstimateItem::where('estimate_id', $estimateId)->whereNull('estimate_section_id')
+        )->orderBy('id')->get();
 
         $itemsWithoutSection = $this->applyRequestedOrder($itemsWithoutSection, $orderedItemIds);
 
@@ -201,10 +200,9 @@ class EstimateItemNumberingService
             ->get();
 
         foreach ($sections as $section) {
-            $items = EstimateItem::where('estimate_id', $estimateId)
-                ->where('estimate_section_id', $section->id)
-                ->orderBy('id')
-                ->get();
+            $items = EstimatePositionOrder::apply(
+                EstimateItem::where('estimate_id', $estimateId)->where('estimate_section_id', $section->id)
+            )->orderBy('id')->get();
 
             $items = $this->applyRequestedOrder($items, $orderedItemIds);
 
@@ -222,10 +220,9 @@ class EstimateItemNumberingService
     protected function recalculateHierarchical(int $estimateId, array $orderedItemIds = []): void
     {
         // Позиции без секции
-        $itemsWithoutSection = EstimateItem::where('estimate_id', $estimateId)
-            ->whereNull('estimate_section_id')
-            ->orderBy('id')
-            ->get();
+        $itemsWithoutSection = EstimatePositionOrder::apply(
+            EstimateItem::where('estimate_id', $estimateId)->whereNull('estimate_section_id')
+        )->orderBy('id')->get();
 
         $itemsWithoutSection = $this->applyRequestedOrder($itemsWithoutSection, $orderedItemIds);
 
@@ -241,10 +238,9 @@ class EstimateItemNumberingService
             ->get();
 
         foreach ($sections as $section) {
-            $items = EstimateItem::where('estimate_id', $estimateId)
-                ->where('estimate_section_id', $section->id)
-                ->orderBy('id')
-                ->get();
+            $items = EstimatePositionOrder::apply(
+                EstimateItem::where('estimate_id', $estimateId)->where('estimate_section_id', $section->id)
+            )->orderBy('id')->get();
 
             $items = $this->applyRequestedOrder($items, $orderedItemIds);
 
@@ -299,7 +295,7 @@ class EstimateItemNumberingService
             $query->where('estimate_section_id', $sectionId);
         }
 
-        $items = $query->orderBy('id')->get();
+        $items = EstimatePositionOrder::apply($query)->orderBy('id')->get();
 
         $counter = 1;
         foreach ($items as $item) {
@@ -353,12 +349,13 @@ class EstimateItemNumberingService
         }
 
         $orderById = array_flip($orderedItemIds);
+        $existingOrderById = array_flip($items->pluck('id')->all());
 
         return $items
             ->sortBy(static fn (EstimateItem $item): string => sprintf(
                 '%020d-%020d',
                 $orderById[$item->id] ?? PHP_INT_MAX,
-                $item->id
+                $existingOrderById[$item->id]
             ))
             ->values();
     }

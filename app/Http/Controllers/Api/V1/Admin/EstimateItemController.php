@@ -184,10 +184,16 @@ class EstimateItemController extends Controller
 
         $this->authorize('update', $item->estimate);
 
-        $item = $this->workflowService->moveToSection(
-            $item,
-            (int) $request->validated('section_id')
-        );
+        try {
+            $item = $this->workflowService->moveToSection(
+                $item,
+                $request->validated('section_id') === null ? null : (int) $request->validated('section_id'),
+                $request->validated('anchor_item_id') === null ? null : (int) $request->validated('anchor_item_id'),
+                $request->validated('placement', 'after')
+            );
+        } catch (\DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         return AdminResponse::success(
             new EstimateItemResource($item),
@@ -209,7 +215,7 @@ class EstimateItemController extends Controller
         $this->authorize('update', $estimateModel);
 
         $validated = $request->validated();
-        $numberingMode = $validated['numbering_mode'] ?? EstimateItemNumberingService::NUMBERING_BY_SECTION;
+        $numberingMode = $validated['numbering_mode'] ?? null;
 
         try {
             $items = $this->workflowService->reorder(
@@ -222,6 +228,8 @@ class EstimateItemController extends Controller
                 EstimateItemResource::collection($items),
                 trans_message('estimate.items_reordered')
             );
+        } catch (\DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (Throwable $exception) {
             $this->workflowService->logFailure('reorder', $estimateModel, $exception, [
                 'user_id' => $request->user()?->id,
