@@ -328,10 +328,28 @@ class EstimateCalculationService
     {
         $startTime = microtime(true);
         
-        $items = $this->itemRepository->getAllByEstimate($estimate->id);
-        
+        $items = $this->itemRepository->getAllByEstimate($estimate->id)->keyBy('id');
+        $remainingChildren = array_fill_keys($items->keys()->all(), 0);
         foreach ($items as $item) {
-            $this->calculateItemTotal($item, $estimate);
+            if ($item->parent_work_id !== null && $items->has($item->parent_work_id)) {
+                $remainingChildren[$item->parent_work_id]++;
+            }
+        }
+        $orderedIds = array_keys(array_filter($remainingChildren, static fn (int $count): bool => $count === 0));
+        for ($index = 0; $index < count($orderedIds); $index++) {
+            $parentId = $items[$orderedIds[$index]]->parent_work_id;
+            if ($parentId !== null && isset($remainingChildren[$parentId])) {
+                $remainingChildren[$parentId]--;
+                if ($remainingChildren[$parentId] === 0) {
+                    $orderedIds[] = $parentId;
+                }
+            }
+        }
+        if (count($orderedIds) !== $items->count()) {
+            throw new \LogicException('Estimate item hierarchy contains a cycle.');
+        }
+        foreach ($orderedIds as $itemId) {
+            $this->calculateItemTotal($items[$itemId], $estimate);
         }
         
         $rootSections = $this->sectionRepository->getRootSections($estimate->id);
