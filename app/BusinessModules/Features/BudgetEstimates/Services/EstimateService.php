@@ -119,6 +119,13 @@ class EstimateService
         unset($data['contract_id']);
 
         return DB::transaction(function () use ($estimate, $data) {
+            $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            if ($estimate->isApproved()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'estimate' => trans_message('estimate.structure_locked'),
+                ])->status(409);
+            }
+
             if (array_key_exists('estimate_regional_price_version_id', $data)) {
                 $data = $this->applyRegionalPriceVersion($data, $data['estimate_regional_price_version_id'] !== null ? (int) $data['estimate_regional_price_version_id'] : null);
             }

@@ -318,6 +318,79 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
         $this->assertEquals(1, $item->fresh()->quantity);
     }
 
+    public function test_approved_estimate_rejects_constructor_and_card_mutations_before_writing(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $item = $this->createItem($estimate, $this->createMeasurementUnit($context->organization));
+        DB::table('estimates')->where('id', $estimate->id)->update(['status' => 'approved']);
+        $before = $item->fresh()->getAttributes();
+        $constructor = "/api/v1/admin/estimates/constructor/{$estimate->id}";
+        $card = "/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}";
+
+        foreach ([
+            ['postJson', "{$constructor}/bulk-delete", ['item_ids' => [$item->id]]],
+            ['postJson', "{$constructor}/bulk-update", ['items' => [['id' => $item->id, 'quantity' => 2]]]],
+            ['postJson', "{$constructor}/recalculate", []],
+            ['postJson', "{$card}/recalculate", []],
+            ['putJson', $card, ['vat_rate' => 10]],
+        ] as [$method, $url, $payload]) {
+            $response = $this->withHeaders($context->authHeaders())->{$method}($url, $payload);
+            $response->assertConflict();
+            $response->assertJsonPath('success', false);
+            $response->assertJsonPath('message', trans_message('estimate.structure_locked'));
+            $this->assertSame($before, $item->fresh()->getAttributes());
+            $this->assertSame('approved', $estimate->fresh()->status);
+        }
+    }
+
+    public function test_copy_from_approved_estimate_to_draft_preserves_source_and_rejects_approved_target(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $source = $this->createEstimate($context->organization, $project);
+        $target = $this->createEstimate($context->organization, $project);
+        $item = $this->createItem($source, $this->createMeasurementUnit($context->organization));
+        DB::table('estimates')->where('id', $source->id)->update(['status' => 'approved']);
+        $before = $item->fresh()->getAttributes();
+        $url = "/api/v1/admin/estimates/constructor/{$source->id}/copy-items";
+        $payload = ['item_ids' => [$item->id], 'target_estimate_id' => $target->id];
+
+        $this->withHeaders($context->authHeaders())->postJson($url, $payload)
+            ->assertCreated()->assertJsonPath('data.copied_count', 1);
+        $this->assertSame($before, $item->fresh()->getAttributes());
+        $this->assertSame(1, $target->items()->count());
+        DB::table('estimates')->where('id', $target->id)->update(['status' => 'approved']);
+        $this->withHeaders($context->authHeaders())->postJson($url, $payload)
+            ->assertConflict()->assertJsonPath('message', trans_message('estimate.structure_locked'));
+        $this->assertSame(1, $target->items()->count());
+    }
+
+    public function test_stale_draft_model_cannot_update_or_recalculate_an_approved_estimate(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $item = $this->createItem($estimate, $this->createMeasurementUnit($context->organization));
+        DB::table('estimates')->where('id', $estimate->id)->update(['status' => 'approved']);
+        $before = $item->fresh()->getAttributes();
+
+        foreach ([
+            fn () => app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateService::class)->update($estimate, ['vat_rate' => 10]),
+            fn () => app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService::class)->recalculateAll($estimate),
+        ] as $operation) {
+            try {
+                $operation();
+                $this->fail('Approved estimate must reject a stale draft model');
+            } catch (\Illuminate\Validation\ValidationException $exception) {
+                $this->assertSame(409, $exception->status);
+                $this->assertSame([trans_message('estimate.structure_locked')], $exception->errors()['estimate']);
+            }
+            $this->assertSame($before, $item->fresh()->getAttributes());
+        }
+    }
+
     private function createContext(): AdminApiTestContext
     {
         return AdminApiTestContext::create(roleSlug: 'organization_owner');
