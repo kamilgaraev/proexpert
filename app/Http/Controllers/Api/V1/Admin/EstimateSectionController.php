@@ -157,14 +157,18 @@ class EstimateSectionController extends Controller
                 Rule::exists('estimate_sections', 'id')->where('estimate_id', $section->estimate_id),
                 Rule::notIn([$section->id]),
             ],
-            'sort_order' => 'nullable|integer',
+            'sort_order' => 'nullable|integer|min:0',
         ]);
         
-        $section = $this->sectionService->moveSection(
-            $section,
-            $validated['parent_section_id'] ?? null,
-            $validated['sort_order'] ?? null
-        );
+        try {
+            $section = $this->sectionService->moveSection(
+                $section,
+                $validated['parent_section_id'] ?? null,
+                $validated['sort_order'] ?? null
+            );
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
         
         return AdminResponse::success(
             new EstimateSectionResource($section),
@@ -204,41 +208,7 @@ class EstimateSectionController extends Controller
         ]);
 
         try {
-            $sectionIds = collect($validated['sections'])->pluck('id')->toArray();
-            $sections = EstimateSection::whereIn('id', $sectionIds)->get()->keyBy('id');
-            
-            // Обновляем порядок и родителей
-            foreach ($validated['sections'] as $sectionData) {
-                if (!isset($sections[$sectionData['id']])) {
-                    continue;
-                }
-                
-                $section = $sections[$sectionData['id']];
-                
-                // Проверяем принадлежность к смете
-                if ($section->estimate_id !== $estimate->id) {
-                    return AdminResponse::error(
-                        trans_message('estimate.section_not_belongs_to_estimate'),
-                        Response::HTTP_UNPROCESSABLE_ENTITY
-                    );
-                }
-
-                if (($sectionData['parent_section_id'] ?? null) === $section->id) {
-                    return AdminResponse::error(
-                        trans_message('estimate.section_parent_self_forbidden'),
-                        Response::HTTP_UNPROCESSABLE_ENTITY
-                    );
-                }
-                
-                $section->update([
-                    'sort_order' => $sectionData['sort_order'],
-                    'parent_section_id' => $sectionData['parent_section_id'] ?? null,
-                ]);
-            }
-
-            // Пересчитываем номера
-            $this->numberingService->recalculateAllSectionNumbers($estimate->id);
-            $this->cacheService->invalidateStructure($estimate);
+            $this->sectionService->reorderSections($estimate, $validated['sections']);
 
             // Возвращаем обновленную иерархию
             $updatedSections = $estimate->sections()
@@ -258,6 +228,8 @@ class EstimateSectionController extends Controller
                 EstimateSectionResource::collection($updatedSections),
                 trans_message('estimate.sections_reordered')
             );
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\Exception $e) {
             Log::error('estimate.sections.reorder.error', [
                 'estimate_id' => $estimate->id,

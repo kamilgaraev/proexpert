@@ -84,14 +84,117 @@ class EstimateSectionService
 
     public function moveSection(EstimateSection $section, ?int $newParentId, ?int $newSortOrder = null): EstimateSection
     {
-        if ($newSortOrder === null) {
-            $newSortOrder = $this->repository->getNextSortOrder($section->estimate_id, $newParentId);
-        }
-        
-        $this->repository->moveSection($section, $newParentId, $newSortOrder);
-        $this->invalidateEstimateStructure((int) $section->estimate_id);
-        
+        $estimateId = (int) $section->estimate_id;
+
+        DB::transaction(function () use ($section, $estimateId, $newParentId, $newSortOrder): void {
+            Estimate::whereKey($estimateId)->lockForUpdate()->firstOrFail();
+            $sections = EstimateSection::where('estimate_id', $estimateId)
+                ->orderBy('sort_order')->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $moving = $sections->get($section->id);
+
+            if (!$moving || ($newParentId !== null && !$sections->has($newParentId))) {
+                throw new \DomainException(trans_message('estimate.section_not_belongs_to_estimate'));
+            }
+
+            $oldParentId = $moving->parent_section_id;
+            $moving->parent_section_id = $newParentId;
+            $this->validateSectionStructure($sections->all());
+
+            $siblings = $sections->filter(fn (EstimateSection $candidate): bool =>
+                $candidate->id !== $moving->id && $candidate->parent_section_id === $newParentId
+            )->values()->all();
+            $position = $newSortOrder === null ? count($siblings) : max(0, min($newSortOrder, count($siblings)));
+            array_splice($siblings, $position, 0, [$moving]);
+
+            foreach ($siblings as $index => $sibling) {
+                $sibling->sort_order = $index;
+            }
+
+            if ($oldParentId !== $newParentId) {
+                $oldSiblings = $sections->filter(fn (EstimateSection $candidate): bool =>
+                    $candidate->parent_section_id === $oldParentId
+                )->values();
+                foreach ($oldSiblings as $index => $sibling) {
+                    $sibling->sort_order = $index;
+                }
+            }
+
+            $this->persistSectionStructure($estimateId, $sections->all());
+        });
+
+        $this->invalidateEstimateStructure($estimateId);
+
         return $section->fresh();
+    }
+
+    public function reorderSections(Estimate $estimate, array $changes): void
+    {
+        DB::transaction(function () use ($estimate, $changes): void {
+            Estimate::whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            $sections = EstimateSection::where('estimate_id', $estimate->id)
+                ->orderBy('sort_order')->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+
+            foreach ($changes as $change) {
+                $section = $sections->get($change['id']);
+                $parentId = $change['parent_section_id'] ?? null;
+                if (!$section || ($parentId !== null && !$sections->has($parentId))) {
+                    throw new \DomainException(trans_message('estimate.section_not_belongs_to_estimate'));
+                }
+                $section->parent_section_id = $parentId;
+                $section->sort_order = $change['sort_order'];
+            }
+
+            $this->validateSectionStructure($sections->all());
+            foreach ($sections->groupBy(fn (EstimateSection $section) => $section->parent_section_id ?? 'root') as $siblings) {
+                foreach ($siblings->sortBy('sort_order')->values() as $index => $section) {
+                    $section->sort_order = $index;
+                }
+            }
+            $this->persistSectionStructure((int) $estimate->id, $sections->all());
+        });
+
+        $this->invalidateEstimateStructure((int) $estimate->id);
+    }
+
+    private function validateSectionStructure(array $sections): void
+    {
+        foreach ($sections as $section) {
+            $seen = [];
+            $current = $section;
+            $depth = 0;
+            while ($current !== null) {
+                if (isset($seen[$current->id])) {
+                    $key = $section->parent_section_id === $section->id
+                        ? 'estimate.section_parent_self_forbidden'
+                        : 'estimate.section_parent_descendant_forbidden';
+                    throw new \DomainException(trans_message($key));
+                }
+                $seen[$current->id] = true;
+                $depth++;
+                if ($depth > 5) {
+                    throw new \DomainException(trans_message('estimate.section_depth_exceeded'));
+                }
+                $parentId = $current->parent_section_id;
+                if ($parentId !== null && !isset($sections[$parentId])) {
+                    throw new \DomainException(trans_message('estimate.section_not_belongs_to_estimate'));
+                }
+                $current = $parentId === null ? null : $sections[$parentId];
+            }
+        }
+    }
+
+    private function persistSectionStructure(int $estimateId, array $sections): void
+    {
+        foreach ($sections as $section) {
+            if ($section->isDirty(['parent_section_id', 'sort_order'])) {
+                EstimateSection::where('estimate_id', $estimateId)->whereKey($section->id)->update([
+                    'parent_section_id' => $section->parent_section_id,
+                    'sort_order' => $section->sort_order,
+                ]);
+            }
+        }
+
+        app(EstimateSectionNumberingService::class)->recalculateAllSectionNumbers($estimateId);
     }
 
     public function updateSortOrder(array $sectionsWithOrders): void

@@ -303,6 +303,248 @@ class EstimateItemControllerWorkflowTest extends TestCase
         $this->assertSame('4.1', $secondItem->position_number);
     }
 
+    public function test_reorder_preserves_existing_order_in_other_sections_and_at_root(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $target = $this->createSection($estimate, ['section_number' => '1', 'sort_order' => 0]);
+        $untouched = $this->createSection($estimate, ['section_number' => '2', 'sort_order' => 1]);
+        $first = $this->createItem($estimate, $unit, ['estimate_section_id' => $target->id, 'position_number' => '1']);
+        $second = $this->createItem($estimate, $unit, ['estimate_section_id' => $target->id, 'position_number' => '2']);
+        $untouchedLast = $this->createItem($estimate, $unit, ['estimate_section_id' => $untouched->id, 'position_number' => '2']);
+        $untouchedFirst = $this->createItem($estimate, $unit, ['estimate_section_id' => $untouched->id, 'position_number' => '1']);
+        $rootLast = $this->createItem($estimate, $unit, ['position_number' => '2']);
+        $rootFirst = $this->createItem($estimate, $unit, ['position_number' => '1']);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/reorder", [
+                'items' => [
+                    ['id' => $second->id, 'estimate_section_id' => $target->id, 'sort_order' => 0],
+                    ['id' => $first->id, 'estimate_section_id' => $target->id, 'sort_order' => 1],
+                ],
+                'numbering_mode' => 'section',
+            ])->assertOk();
+
+        $this->assertSame('1', $second->fresh()->position_number);
+        $this->assertSame('2', $first->fresh()->position_number);
+        $this->assertSame('1', $untouchedFirst->fresh()->position_number);
+        $this->assertSame('2', $untouchedLast->fresh()->position_number);
+        $this->assertSame('1', $rootFirst->fresh()->position_number);
+        $this->assertSame('2', $rootLast->fresh()->position_number);
+    }
+
+    public function test_reorder_moves_work_resources_and_recalculates_parent_section_totals(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $sourceParent = $this->createSection($estimate, ['section_total_amount' => 1500]);
+        $source = $this->createSection($estimate, ['parent_section_id' => $sourceParent->id, 'section_total_amount' => 1500]);
+        $destinationParent = $this->createSection($estimate, ['section_total_amount' => 0]);
+        $destination = $this->createSection($estimate, ['parent_section_id' => $destinationParent->id, 'section_total_amount' => 0]);
+        $work = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id, 'total_amount' => 1000]);
+        $resource = $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $source->id,
+            'parent_work_id' => $work->id,
+            'item_type' => EstimatePositionItemType::MATERIAL->value,
+            'total_amount' => 300,
+        ]);
+        $remaining = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id, 'total_amount' => 500]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/reorder", [
+                'items' => [
+                    ['id' => $work->id, 'estimate_section_id' => $destination->id, 'sort_order' => 0],
+                ],
+                'numbering_mode' => 'section',
+            ])->assertOk();
+
+        $this->assertSame($destination->id, $work->fresh()->estimate_section_id);
+        $this->assertSame($destination->id, $resource->fresh()->estimate_section_id);
+        $this->assertSame($work->id, $resource->fresh()->parent_work_id);
+        $this->assertSame($source->id, $remaining->fresh()->estimate_section_id);
+        $this->assertEquals(500, $source->fresh()->section_total_amount);
+        $this->assertEquals(500, $sourceParent->fresh()->section_total_amount);
+        $this->assertEquals(1000, $destination->fresh()->section_total_amount);
+        $this->assertEquals(1000, $destinationParent->fresh()->section_total_amount);
+    }
+
+    public function test_move_appends_work_with_resources_to_destination(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $source = $this->createSection($estimate);
+        $destination = $this->createSection($estimate);
+        $existing = $this->createItem($estimate, $unit, ['estimate_section_id' => $destination->id]);
+        $work = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id]);
+        $resource = $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $source->id,
+            'parent_work_id' => $work->id,
+            'item_type' => EstimatePositionItemType::MATERIAL->value,
+        ]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/{$work->id}/move", [
+                'section_id' => $destination->id,
+            ])->assertOk();
+
+        $this->assertSame($destination->id, $work->fresh()->estimate_section_id);
+        $this->assertSame($destination->id, $resource->fresh()->estimate_section_id);
+        $this->assertSame($work->id, $resource->fresh()->parent_work_id);
+        $this->assertSame('1', $existing->fresh()->position_number);
+        $this->assertSame('2', $work->fresh()->position_number);
+        $this->assertEquals(0, $source->fresh()->section_total_amount);
+        $this->assertEquals(2000, $destination->fresh()->section_total_amount);
+    }
+
+    public function test_reorder_rejects_conflicting_resource_destination_atomically(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $source = $this->createSection($estimate, ['section_total_amount' => 1000]);
+        $destination = $this->createSection($estimate, ['section_total_amount' => 0]);
+        $work = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id]);
+        $resource = $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $source->id,
+            'parent_work_id' => $work->id,
+            'item_type' => EstimatePositionItemType::MATERIAL->value,
+        ]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/reorder", [
+                'items' => [
+                    ['id' => $work->id, 'estimate_section_id' => $destination->id, 'sort_order' => 0],
+                    ['id' => $resource->id, 'estimate_section_id' => $source->id, 'sort_order' => 1],
+                ],
+            ])->assertStatus(422);
+
+        $this->assertSame($source->id, $work->fresh()->estimate_section_id);
+        $this->assertSame($source->id, $resource->fresh()->estimate_section_id);
+        $this->assertEquals(1000, $source->fresh()->section_total_amount);
+        $this->assertEquals(0, $destination->fresh()->section_total_amount);
+    }
+
+    public function test_move_preserves_selected_and_existing_numbering_modes(): void
+    {
+        foreach ([['hierarchical', true], ['global', true], ['hierarchical', false], ['global', false]] as [$mode, $remembered]) {
+            $context = AdminApiTestContext::create();
+            $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+            $estimate = $this->createEstimate($context->organization, $project);
+            $unit = $this->createMeasurementUnit($context->organization);
+            $source = $this->createSection($estimate, ['section_number' => '1', 'sort_order' => 1]);
+            $destination = $this->createSection($estimate, ['section_number' => '2', 'sort_order' => 2]);
+            $untouched = $this->createSection($estimate, ['section_number' => '3', 'sort_order' => 3]);
+            $work = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id]);
+            $this->createItem($estimate, $unit, ['estimate_section_id' => $destination->id]);
+            $untouchedItem = $this->createItem($estimate, $unit, ['estimate_section_id' => $untouched->id]);
+            $this->allowAdminAccess();
+            $url = "/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items";
+
+            $this->withHeaders($context->authHeaders())->postJson("{$url}/recalculate-numbers", [
+                'numbering_mode' => $mode,
+            ])->assertOk();
+            $this->assertSame($mode, $estimate->fresh()->metadata['numbering_mode']);
+            $untouchedNumber = $untouchedItem->fresh()->position_number;
+            if (!$remembered) {
+                $estimate->update(['metadata' => []]);
+            }
+
+            $this->withHeaders($context->authHeaders())->postJson("{$url}/{$work->id}/move", [
+                'section_id' => $destination->id,
+            ])->assertOk();
+
+            $this->assertSame($destination->id, $work->fresh()->estimate_section_id);
+            $this->assertSame($untouchedNumber, $untouchedItem->fresh()->position_number);
+            $this->assertSame($mode, $estimate->fresh()->metadata['numbering_mode']);
+            $this->assertSame($mode === 'hierarchical' ? '2.2' : '2', $work->fresh()->position_number);
+        }
+    }
+
+    public function test_move_places_work_before_after_and_at_root_with_resources(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project, ['metadata' => ['numbering_mode' => 'section']]);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $source = $this->createSection($estimate);
+        $destination = $this->createSection($estimate);
+        $first = $this->createItem($estimate, $unit, ['estimate_section_id' => $destination->id, 'position_number' => '1']);
+        $last = $this->createItem($estimate, $unit, ['estimate_section_id' => $destination->id, 'position_number' => '2']);
+        $work = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id]);
+        $resource = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id, 'parent_work_id' => $work->id]);
+        $root = $this->createItem($estimate, $unit);
+        $this->allowAdminAccess();
+        $url = "/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/{$work->id}/move";
+
+        foreach ([['before', '1', '2'], ['after', '2', '1']] as [$placement, $workNumber, $firstNumber]) {
+            $this->withHeaders($context->authHeaders())->postJson($url, [
+                'section_id' => $destination->id,
+                'anchor_item_id' => $first->id,
+                'placement' => $placement,
+            ])->assertOk();
+            $this->assertSame($workNumber, $work->fresh()->position_number);
+            $this->assertSame($firstNumber, $first->fresh()->position_number);
+            $this->assertSame('3', $last->fresh()->position_number);
+            $this->assertSame($destination->id, $resource->fresh()->estimate_section_id);
+        }
+
+        $this->withHeaders($context->authHeaders())->postJson($url, [
+            'section_id' => null,
+            'anchor_item_id' => $root->id,
+            'placement' => 'before',
+        ])->assertOk();
+        $this->assertNull($work->fresh()->estimate_section_id);
+        $this->assertNull($resource->fresh()->estimate_section_id);
+        $this->assertSame($work->id, $resource->fresh()->parent_work_id);
+        $this->assertSame('1', $work->fresh()->position_number);
+        $this->assertSame('2', $root->fresh()->position_number);
+        $this->assertEquals(2000, $destination->fresh()->section_total_amount);
+    }
+
+    public function test_move_rejects_invalid_anchor_without_changing_work_or_resources(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $source = $this->createSection($estimate);
+        $destination = $this->createSection($estimate);
+        $work = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id]);
+        $resource = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id, 'parent_work_id' => $work->id]);
+        $wrongSection = $this->createItem($estimate, $unit, ['estimate_section_id' => $source->id]);
+        $foreignEstimate = $this->createEstimate($context->organization, $project);
+        $foreignItem = $this->createItem($foreignEstimate, $unit);
+        $this->allowAdminAccess();
+        $url = "/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items";
+
+        foreach ([$work->id, $resource->id, $wrongSection->id, $foreignItem->id] as $anchorId) {
+            $this->withHeaders($context->authHeaders())->postJson("{$url}/{$work->id}/move", [
+                'section_id' => $destination->id,
+                'anchor_item_id' => $anchorId,
+                'placement' => 'before',
+            ])->assertStatus(422);
+            $this->assertSame($source->id, $work->fresh()->estimate_section_id);
+            $this->assertSame($source->id, $resource->fresh()->estimate_section_id);
+        }
+
+        $this->withHeaders($context->authHeaders())->postJson("{$url}/{$resource->id}/move", [
+            'section_id' => null,
+        ])->assertStatus(422);
+        $this->assertSame($work->id, $resource->fresh()->parent_work_id);
+        $this->assertSame($source->id, $resource->fresh()->estimate_section_id);
+    }
+
     private function createEstimate(Organization $organization, Project $project, array $overrides = []): Estimate
     {
         return Estimate::query()->create(array_merge([

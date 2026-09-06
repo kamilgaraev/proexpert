@@ -113,6 +113,107 @@ class EstimateSectionControllerWorkflowTest extends TestCase
         $this->assertNull($section->parent_section_id);
     }
 
+    public function test_move_section_persists_requested_sibling_order(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $first = $this->createSection($estimate, ['sort_order' => 0]);
+        $second = $this->createSection($estimate, ['sort_order' => 1]);
+        $third = $this->createSection($estimate, ['sort_order' => 2]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/sections/{$third->id}/move", [
+                'parent_section_id' => null,
+                'sort_order' => 0,
+            ])->assertOk()->assertJsonPath('success', true);
+
+        $this->assertSame([$third->id, $first->id, $second->id], $estimate->sections()->orderBy('sort_order')->pluck('id')->all());
+        $this->assertSame([0, 1, 2], $estimate->sections()->orderBy('sort_order')->pluck('sort_order')->all());
+    }
+
+    public function test_move_section_rejects_descendant_without_mutation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $parent = $this->createSection($estimate);
+        $child = $this->createSection($estimate, ['parent_section_id' => $parent->id]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/sections/{$parent->id}/move", [
+                'parent_section_id' => $child->id,
+                'sort_order' => 0,
+            ])->assertStatus(422)->assertJsonPath('success', false);
+
+        $this->assertNull($parent->fresh()->parent_section_id);
+        $this->assertSame($parent->id, $child->fresh()->parent_section_id);
+    }
+
+    public function test_reorder_rejects_cycle_before_saving_any_section(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $first = $this->createSection($estimate, ['sort_order' => 0]);
+        $second = $this->createSection($estimate, ['sort_order' => 1]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/sections/reorder", [
+                'sections' => [
+                    ['id' => $first->id, 'parent_section_id' => $second->id, 'sort_order' => 4],
+                    ['id' => $second->id, 'parent_section_id' => $first->id, 'sort_order' => 3],
+                ],
+            ])->assertStatus(422)->assertJsonPath('success', false);
+
+        $this->assertNull($first->fresh()->parent_section_id);
+        $this->assertNull($second->fresh()->parent_section_id);
+        $this->assertSame(0, $first->fresh()->sort_order);
+        $this->assertSame(1, $second->fresh()->sort_order);
+    }
+
+    public function test_move_rejects_subtree_exceeding_five_levels(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $target = $this->createSection($estimate);
+        for ($level = 1; $level < 4; $level++) {
+            $target = $this->createSection($estimate, ['parent_section_id' => $target->id]);
+        }
+        $moving = $this->createSection($estimate);
+        $child = $this->createSection($estimate, ['parent_section_id' => $moving->id]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/sections/{$moving->id}/move", [
+                'parent_section_id' => $target->id,
+                'sort_order' => 0,
+            ])->assertStatus(422)->assertJsonPath('success', false);
+
+        $this->assertNull($moving->fresh()->parent_section_id);
+        $this->assertSame($moving->id, $child->fresh()->parent_section_id);
+    }
+
+    public function test_model_structure_update_renumbers_without_persisting_observer_flags(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $first = $this->createSection($estimate, ['sort_order' => 0]);
+        $second = $this->createSection($estimate, ['sort_order' => 1]);
+
+        $second->update(['sort_order' => -1]);
+
+        $this->assertSame('1', $second->fresh()->section_number);
+        $this->assertSame('2', $first->fresh()->section_number);
+        $second->update(['name' => 'Updated section']);
+        $this->assertSame('Updated section', $second->fresh()->name);
+    }
+
     private function createEstimate(Organization $organization, Project $project, array $overrides = []): Estimate
     {
         return Estimate::query()->create(array_merge([

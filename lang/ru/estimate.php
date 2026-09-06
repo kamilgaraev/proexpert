@@ -19,6 +19,8 @@ return [
     'section_moved' => 'Раздел перемещен.',
     'section_not_belongs_to_estimate' => 'Раздел не относится к выбранной смете.',
     'section_parent_self_forbidden' => 'Раздел нельзя вложить сам в себя.',
+    'section_parent_descendant_forbidden' => 'Раздел нельзя переместить внутрь собственного подраздела.',
+    'section_depth_exceeded' => 'Допускается не более пяти уровней вложенности разделов.',
     'section_estimate_not_found' => 'Смета раздела не найдена.',
     'sections_reordered' => 'Порядок разделов обновлен.',
     'sections_reorder_error' => 'Не удалось обновить порядок разделов.',
