@@ -326,6 +326,21 @@ class EstimateCalculationService
 
     public function recalculateAll(Estimate $estimate): array
     {
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($estimate): array {
+            $lockedEstimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+
+            return $this->recalculateMutableEstimate($lockedEstimate);
+        });
+    }
+
+    private function recalculateMutableEstimate(Estimate $estimate): array
+    {
+        if ($estimate->isApproved()) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'estimate' => trans_message('estimate.structure_locked'),
+            ])->status(409);
+        }
+
         $startTime = microtime(true);
         
         $items = $this->itemRepository->getAllByEstimate($estimate->id)->keyBy('id');

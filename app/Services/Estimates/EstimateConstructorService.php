@@ -25,11 +25,12 @@ class EstimateConstructorService
     public function addItemsFromNormatives(int $organizationId, int $estimateId, array $payload): array
     {
         $estimate = $this->findEstimate($organizationId, $estimateId);
+        $this->assertMutable($estimate);
         $this->assertSectionsBelongToEstimate($this->sectionIdsFromItems($payload['items']), $estimate->id);
 
         $addedItems = [];
 
-        DB::transaction(function () use ($estimate, $payload, &$addedItems): void {
+        $this->withMutableEstimate($estimate, function () use ($estimate, $payload, &$addedItems): void {
             foreach ($payload['items'] as $itemData) {
                 $sectionId = $this->nullableInt($itemData['section_id'] ?? null);
                 $rate = NormativeRate::with('resources')->findOrFail($itemData['normative_rate_id']);
@@ -68,11 +69,12 @@ class EstimateConstructorService
     public function addItemsFromCatalog(int $organizationId, int $estimateId, array $payload): array
     {
         $estimate = $this->findEstimate($organizationId, $estimateId);
+        $this->assertMutable($estimate);
         $this->assertSectionsBelongToEstimate($this->sectionIdsFromItems($payload['items']), $estimate->id);
 
         $addedItems = [];
 
-        DB::transaction(function () use ($estimate, $payload, &$addedItems): void {
+        $this->withMutableEstimate($estimate, function () use ($estimate, $payload, &$addedItems): void {
             foreach ($payload['items'] as $itemData) {
                 $sectionId = $this->nullableInt($itemData['section_id'] ?? null);
                 $catalogItem = EstimatePositionCatalog::query()
@@ -117,13 +119,14 @@ class EstimateConstructorService
     public function bulkUpdate(int $organizationId, int $estimateId, array $payload): array
     {
         $estimate = $this->findEstimate($organizationId, $estimateId);
+        $this->assertMutable($estimate);
         $items = collect($payload['items']);
         $this->assertItemsBelongToEstimate($items->pluck('id')->map(fn ($id): int => (int) $id)->all(), $estimate->id);
         $this->assertSectionsBelongToEstimate($this->sectionIdsFromItems($payload['items']), $estimate->id);
 
         $updated = [];
 
-        DB::transaction(function () use ($estimate, $items, &$updated): void {
+        $this->withMutableEstimate($estimate, function () use ($estimate, $items, &$updated): void {
             foreach ($items as $itemData) {
                 $item = EstimateItem::query()
                     ->where('estimate_id', $estimate->id)
@@ -153,10 +156,11 @@ class EstimateConstructorService
     public function bulkDelete(int $organizationId, int $estimateId, array $payload): array
     {
         $estimate = $this->findEstimate($organizationId, $estimateId);
+        $this->assertMutable($estimate);
         $itemIds = array_map('intval', $payload['item_ids']);
         $this->assertItemsBelongToEstimate($itemIds, $estimate->id);
 
-        $deleted = DB::transaction(
+        $deleted = $this->withMutableEstimate($estimate,
             fn (): int => EstimateItem::query()
                 ->where('estimate_id', $estimate->id)
                 ->whereIn('id', $itemIds)
@@ -169,12 +173,13 @@ class EstimateConstructorService
     public function reorderItems(int $organizationId, int $estimateId, array $payload): array
     {
         $estimate = $this->findEstimate($organizationId, $estimateId);
+        $this->assertMutable($estimate);
         $items = collect($payload['items']);
         $itemIds = $items->pluck('id')->map(fn ($id): int => (int) $id)->all();
         $this->assertItemsBelongToEstimate($itemIds, $estimate->id);
         $this->assertSectionsBelongToEstimate($this->sectionIdsFromItems($payload['items']), $estimate->id);
 
-        DB::transaction(function () use ($estimate, $items): void {
+        $this->withMutableEstimate($estimate, function () use ($estimate, $items): void {
             foreach ($items as $itemData) {
                 $sectionId = $this->nullableInt($itemData['section_id'] ?? null);
 
@@ -195,12 +200,13 @@ class EstimateConstructorService
     public function moveItemsToSection(int $organizationId, int $estimateId, array $payload): array
     {
         $estimate = $this->findEstimate($organizationId, $estimateId);
+        $this->assertMutable($estimate);
         $itemIds = array_map('intval', $payload['item_ids']);
         $sectionId = (int) $payload['section_id'];
         $this->assertItemsBelongToEstimate($itemIds, $estimate->id);
         $this->assertSectionBelongsToEstimate($sectionId, $estimate->id);
 
-        $updated = DB::transaction(
+        $updated = $this->withMutableEstimate($estimate,
             fn (): int => EstimateItem::query()
                 ->where('estimate_id', $estimate->id)
                 ->whereIn('id', $itemIds)
@@ -218,6 +224,7 @@ class EstimateConstructorService
     {
         $sourceEstimate = $this->findEstimate($organizationId, $estimateId);
         $targetEstimate = $this->findEstimate($organizationId, (int) $payload['target_estimate_id']);
+        $this->assertMutable($targetEstimate);
         $itemIds = array_map('intval', $payload['item_ids']);
         $targetSectionId = $this->nullableInt($payload['target_section_id'] ?? null);
 
@@ -228,7 +235,7 @@ class EstimateConstructorService
 
         $copiedItems = [];
 
-        DB::transaction(function () use ($sourceEstimate, $targetEstimate, $targetSectionId, $itemIds, &$copiedItems): void {
+        $this->withMutableEstimate($targetEstimate, function () use ($sourceEstimate, $targetEstimate, $targetSectionId, $itemIds, &$copiedItems): void {
             $items = EstimateItem::query()
                 ->where('estimate_id', $sourceEstimate->id)
                 ->whereIn('id', $itemIds)
@@ -255,10 +262,11 @@ class EstimateConstructorService
     public function applyCoefficientsToItems(int $organizationId, int $estimateId, array $payload): array
     {
         $estimate = $this->findEstimate($organizationId, $estimateId);
+        $this->assertMutable($estimate);
         $itemIds = array_map('intval', $payload['item_ids']);
         $this->assertItemsBelongToEstimate($itemIds, $estimate->id);
 
-        $updated = DB::transaction(
+        $updated = $this->withMutableEstimate($estimate,
             fn (): int => $this->calculationService->bulkApplyCoefficients($itemIds, $payload['coefficients'])
         );
 
@@ -268,10 +276,11 @@ class EstimateConstructorService
     public function applyIndicesToItems(int $organizationId, int $estimateId, array $payload): array
     {
         $estimate = $this->findEstimate($organizationId, $estimateId);
+        $this->assertMutable($estimate);
         $itemIds = array_map('intval', $payload['item_ids']);
         $this->assertItemsBelongToEstimate($itemIds, $estimate->id);
 
-        $updated = DB::transaction(
+        $updated = $this->withMutableEstimate($estimate,
             fn (): int => $this->calculationService->bulkApplyIndices($itemIds, Carbon::parse($payload['calculation_date']))
         );
 
@@ -281,13 +290,34 @@ class EstimateConstructorService
     public function recalculateEstimate(int $organizationId, int $estimateId): array
     {
         $estimate = $this->findEstimate($organizationId, $estimateId);
+        $this->assertMutable($estimate);
 
-        return [
+        return $this->withMutableEstimate($estimate, fn (): array => [
             'estimate' => $this->calculationService->recalculateEstimate($estimate, [
                 'apply_indices' => true,
                 'calculation_date' => now(),
             ]),
-        ];
+        ]);
+    }
+
+    private function withMutableEstimate(Estimate $estimate, callable $operation): mixed
+    {
+        return DB::transaction(function () use ($estimate, $operation): mixed {
+            $lockedEstimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            $this->assertMutable($lockedEstimate);
+            $estimate->setRawAttributes($lockedEstimate->getAttributes(), true);
+
+            return $operation();
+        });
+    }
+
+    private function assertMutable(Estimate $estimate): void
+    {
+        if ($estimate->isApproved()) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'estimate' => trans_message('estimate.structure_locked'),
+            ])->status(409);
+        }
     }
 
     private function findEstimate(int $organizationId, int $estimateId): Estimate

@@ -201,6 +201,9 @@ class EstimateConstructorController extends Controller
         } catch (\Illuminate\Auth\Access\AuthorizationException) {
             return AdminResponse::error(trans_message('estimate_constructor.access_denied'), Response::HTTP_FORBIDDEN);
         } catch (\Illuminate\Validation\ValidationException $exception) {
+            if (in_array(trans_message('estimate.structure_locked'), $exception->errors()['estimate'] ?? [], true)) {
+                return AdminResponse::error(trans_message('estimate.structure_locked'), Response::HTTP_CONFLICT);
+            }
             $isConflict = in_array(trans_message('estimate_constructor.conflict'), $exception->errors()['items'] ?? [], true);
             return AdminResponse::error(
                 trans_message($isConflict ? 'estimate_constructor.conflict' : 'estimate_constructor.invalid_changes'),
