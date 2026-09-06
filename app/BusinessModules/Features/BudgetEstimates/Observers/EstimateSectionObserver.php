@@ -83,10 +83,6 @@ class EstimateSectionObserver
         $sortOrderChanged = $originalSortOrder !== $section->sort_order;
 
         if ($parentChanged || $sortOrderChanged) {
-            // Сохраняем флаг, что нужен пересчет после обновления
-            $section->setAttribute('_needs_renumbering', true);
-            $section->setAttribute('_original_parent_id', $originalParentId);
-
             Log::debug('estimate.section.structure_changed', [
                 'section_id' => $section->id,
                 'parent_changed' => $parentChanged,
@@ -104,26 +100,16 @@ class EstimateSectionObserver
      */
     public function updated(EstimateSection $section): void
     {
-        // Если была изменена структура - пересчитываем номера
-        if ($section->getAttribute('_needs_renumbering')) {
-            $originalParentId = $section->getAttribute('_original_parent_id');
-
-            Log::info('estimate.section.updated_with_renumbering', [
-                'section_id' => $section->id,
-                'estimate_id' => $section->estimate_id,
-            ]);
-
-            // Пересчитываем номера после перемещения
-            $this->numberingService->recalculateAfterMove($section);
-
-            // Пересчитываем номера в старом родителе (если родитель изменился)
-            if ($originalParentId !== $section->parent_section_id) {
-                $this->numberingService->recalculateAfterDelete(
-                    $section->estimate_id,
-                    $originalParentId
-                );
-            }
+        if (!$section->wasChanged(['parent_section_id', 'sort_order'])) {
+            return;
         }
+
+        Log::info('estimate.section.updated_with_renumbering', [
+            'section_id' => $section->id,
+            'estimate_id' => $section->estimate_id,
+        ]);
+
+        $this->numberingService->recalculateAllSectionNumbers($section->estimate_id);
     }
 
     /**
