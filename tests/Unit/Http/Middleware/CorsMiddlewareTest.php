@@ -219,6 +219,51 @@ class CorsMiddlewareTest extends DatabaseLessTestCase
         }
     }
 
+    public function test_web_admin_requests_reach_session_and_csrf_middleware_without_cors_headers(): void
+    {
+        $this->configureOrigins();
+
+        foreach (['/admin/login', '/admin/knowledge-articles/1/edit', '/livewire/update'] as $path) {
+            $request = Request::create($path, 'POST', server: [
+                'HTTP_ORIGIN' => 'https://api.xn--1-xtbgmf.xn--p1ai',
+            ]);
+            $downstreamResponse = new Response('csrf check', 419);
+            $response = $this->middleware()->handle($request, static fn (): Response => $downstreamResponse);
+
+            self::assertSame($downstreamResponse, $response);
+            self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
+            self::assertNull($response->headers->get('Access-Control-Allow-Credentials'));
+        }
+    }
+
+    public function test_preflight_outside_configured_paths_is_not_intercepted(): void
+    {
+        $this->configureOrigins();
+        $request = Request::create('/livewire/update', 'OPTIONS', server: [
+            'HTTP_ORIGIN' => 'https://www.example.test',
+            'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
+        ]);
+        $downstreamResponse = new Response('method not allowed', Response::HTTP_METHOD_NOT_ALLOWED);
+        $response = $this->middleware()->handle($request, static fn (): Response => $downstreamResponse);
+
+        self::assertSame($downstreamResponse, $response);
+        self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
+    }
+
+    public function test_cors_path_configuration_is_respected(): void
+    {
+        $this->configureOrigins();
+        config()->set('cors.paths', ['integration/*']);
+        $request = Request::create('/integration/callback', 'POST', server: [
+            'HTTP_ORIGIN' => 'https://evil.example.test',
+        ]);
+        $response = $this->middleware()->handle($request, static function (): never {
+            throw new \LogicException('The configured handler must not run.');
+        });
+
+        self::assertSame(Response::HTTP_FORBIDDEN, $response->getStatusCode());
+    }
+
     private function middleware(): CorsMiddleware
     {
         return new CorsMiddleware(new WebOriginPolicy);

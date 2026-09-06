@@ -16,8 +16,7 @@ class KnowledgeAccessContextFactory
 {
     public function fromRequest(Request $request, KnowledgeSurface $defaultSurface): KnowledgeAccessContext
     {
-        $surface = KnowledgeSurface::tryFrom((string) $request->input('surface', $defaultSurface->value))
-            ?? $defaultSurface;
+        $surface = $defaultSurface;
 
         $user = $request->user();
         $permissionKeys = $this->permissionKeys($user);
