@@ -58,19 +58,15 @@ class EstimateCalculationService
              // на случай если иерархия не проставилась.
              if ($resourcesSum <= 0 && $hasChildren) {
                  $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
+                    ->where('is_not_accounted', false)
                     ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
                     ->sum('total_amount');
              }
 
              // Оборудование всегда считаем отдельно (оно не база для НР/СП)
              $equipmentSum = (float) EstimateItem::where('parent_work_id', $item->id)
-                 ->where(function ($query) {
-                     $query->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
-                           ->orWhere(function ($q) {
-                               $q->where('item_type', \App\Enums\EstimatePositionItemType::MATERIAL->value)
-                                 ->where('unit_price', '>', 5000000); // Порог поднят до 5 млн, чтобы не цеплять стройматериалы
-                           });
-                 })
+                 ->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
+                 ->where('is_not_accounted', false)
                  ->sum('total_amount');
              
              // ⭐ УМНЫЙ СБОР ФОТ И ТРУДОЗАТРАТ ИЗ ДЕТЕЙ (MAX-BASED DEDUPLICATION)
@@ -80,14 +76,16 @@ class EstimateCalculationService
              $hoursOtmAgg = 0; $hoursOtmDet = 0;
              $machineryHours = 0;
 
-             $allChildren = EstimateItem::where('parent_work_id', $item->id)->get();
+             $allChildren = EstimateItem::where('parent_work_id', $item->id)
+                 ->where('is_not_accounted', false)
+                 ->get();
 
              foreach ($allChildren as $child) {
                  $code = trim($child->normative_rate_code ?? '');
                  $name = mb_strtolower(trim($child->name));
                  $type = $child->item_type;
 
-                 if ($type === \App\Enums\EstimatePositionItemType::LABOR->value) {
+                 if ($type === \App\Enums\EstimatePositionItemType::LABOR) {
                      // Детальные разряды (1-100-XXX)
                      if (str_starts_with($code, '1-100-')) {
                          $fotOtDet += (float)$child->labor_cost;
@@ -108,7 +106,7 @@ class EstimateCalculationService
                          $fotOtAgg += (float)$child->labor_cost;
                          $hoursOtAgg += (float)$child->labor_hours;
                      }
-                 } elseif ($type === \App\Enums\EstimatePositionItemType::MACHINERY->value) {
+                 } elseif ($type === \App\Enums\EstimatePositionItemType::MACHINERY) {
                      $machineryHours += (float)$child->machinery_hours;
                  }
              }
@@ -117,15 +115,9 @@ class EstimateCalculationService
              $finalFot = max($fotOtAgg, $fotOtDet) + max($fotOtmAgg, $fotOtmDet);
              $finalHours = max($hoursOtAgg, $hoursOtDet) + max($hoursOtmAgg, $hoursOtmDet);
 
-             if ($finalFot > 0) $item->labor_cost = $finalFot;
-             if ($finalHours > 0) $item->labor_hours = $finalHours;
-             if ($machineryHours > 0) $item->machinery_hours = $machineryHours;
-
-             // Самостоятельная детекция оборудования для корневой позиции
-             if ($item->isMaterial() && $item->unit_price > 50000 && !$hasChildren) {
-                 $equipmentSum = $item->quantity * $item->unit_price;
-                 $resourcesSum = 0;
-             }
+             if ($hasChildren || $finalFot > 0) $item->labor_cost = $finalFot;
+             if ($hasChildren || $finalHours > 0) $item->labor_hours = $finalHours;
+             if ($hasChildren || $machineryHours > 0) $item->machinery_hours = $machineryHours;
 
              if ($item->isEquipment()) {
                  $equipmentSum = $resourcesSum != 0 ? $resourcesSum + $equipmentSum : ($item->quantity * $item->unit_price);
@@ -142,14 +134,7 @@ class EstimateCalculationService
             $directCosts = (float)$item->direct_costs;
             $equipmentSum = 0;
 
-            // КРИТЕРИЙ ОБОРУДОВАНИЯ:
-            // 1. Прямой тип оборудование
-            // 2. Материал дороже 500к (поднят порог) + отсутствие ресурсов + отсутствие нормативного шифра (материалы по ГОСТ/ФССЦ не оборудование!)
-            $hasNormativeCode = !empty($item->normative_rate_code) && 
-                preg_match('/^(ФСБЦ|ФССЦ|ТССЦ|ТСЦ|01\.|ПРАЙС)/ui', $item->normative_rate_code);
-                
-            $isEquipment = $item->isEquipment() || 
-                ($item->unit_price > 500000 && !$hasChildren && !$hasNormativeCode);
+            $isEquipment = $item->isEquipment();
 
             $overheadAmount = (float)($item->overhead_amount ?? 0);
             $profitAmount = (float)($item->profit_amount ?? 0);
@@ -209,7 +194,7 @@ class EstimateCalculationService
             }
         } else {
             // АВТОМАТИЧЕСКАЯ КАЛЬКУЛЯЦИЯ (Снизу вверх, если позиция не пришла из Excel или изменена вручную)
-            $isEquipment = $item->isEquipment() || ($item->unit_price > 50000);
+            $isEquipment = $item->isEquipment();
             
             if ($isEquipment) {
                 $directCosts = $resourcesSum;
@@ -219,10 +204,10 @@ class EstimateCalculationService
                 if ($equipmentSum < 0) $equipmentSum = $item->quantity * $item->unit_price; // Fallback
                 $totalAmount = $directCosts + $overheadAmount + $profitAmount + $equipmentSum;
             } else {
-                $directCosts = $resourcesSum > 0 ? $resourcesSum : $item->quantity * $item->unit_price;
+                $directCosts = $hasChildren ? $resourcesSum : $item->quantity * $item->unit_price;
                 $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
                 $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
-                $totalAmount = $directCosts + $overheadAmount + $profitAmount;
+                $totalAmount = $directCosts + $overheadAmount + $profitAmount + $equipmentSum;
             }
         }
         
