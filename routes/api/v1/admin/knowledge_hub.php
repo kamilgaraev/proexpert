@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('knowledge-hub')
     ->name('knowledgeHub.')
     ->group(function (): void {
+        Route::post('/assistant', [\App\Http\Controllers\Api\V1\KnowledgeAssistantController::class, 'admin'])
+            ->middleware('throttle:10,1')->name('assistant');
         Route::get('/overview', [AdminKnowledgeHubController::class, 'overview'])->name('overview');
         Route::get('/tree', [AdminKnowledgeHubController::class, 'tree'])->name('tree');
         Route::get('/search', [AdminKnowledgeHubController::class, 'search'])->name('search');
