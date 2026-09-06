@@ -9,6 +9,8 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.con
     ->prefix('knowledge-hub')
     ->name('knowledgeHub.')
     ->group(function (): void {
+        Route::post('/assistant', [\App\Http\Controllers\Api\V1\KnowledgeAssistantController::class, 'landing'])
+            ->middleware('throttle:10,1')->name('assistant');
         Route::get('/overview', [KnowledgeHubController::class, 'overview'])->name('overview');
         Route::get('/tree', [KnowledgeHubController::class, 'tree'])->name('tree');
         Route::get('/search', [KnowledgeHubController::class, 'search'])->name('search');

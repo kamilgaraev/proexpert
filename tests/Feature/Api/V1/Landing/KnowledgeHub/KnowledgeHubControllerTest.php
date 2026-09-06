@@ -390,6 +390,58 @@ class KnowledgeHubControllerTest extends TestCase
         ]);
     }
 
+    public function test_assistant_searches_real_sources_filters_access_and_enforces_quota(): void
+    {
+        \Illuminate\Support\Facades\DB::statement("ALTER TABLE knowledge_articles ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (to_tsvector('russian', coalesce(title, '') || ' ' || coalesce(content_plain_text, ''))) STORED");
+        self::assertTrue(app(\App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeFullTextSearchService::class)->supportsPostgresFullText());
+        self::assertTrue(app()->bound(\App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface::class));
+
+        $base = [
+            'kind' => KnowledgeArticleKind::GUIDE,
+            'status' => KnowledgeArticleStatus::PUBLISHED,
+            'title' => 'Приглашение сотрудника',
+            'content' => '<p>Откройте раздел сотрудников.</p>',
+            'published_at' => now()->subHour(),
+            'surfaces' => ['lk'],
+            'audiences' => ['all'],
+        ];
+        $visible = KnowledgeArticle::query()->create(array_merge($base, ['slug' => 'assistant-visible']));
+        KnowledgeArticle::query()->create(array_merge($base, ['slug' => 'assistant-draft', 'status' => KnowledgeArticleStatus::DRAFT]));
+        KnowledgeArticle::query()->create(array_merge($base, ['slug' => 'assistant-private', 'permission_keys' => ['billing.manage']]));
+        KnowledgeArticle::query()->create(array_merge($base, ['slug' => 'assistant-internal', 'surfaces' => ['superadmin']]));
+
+        $model = \Mockery::mock(\App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface::class);
+        $model->shouldReceive('isAvailable')->twice()->andReturnTrue();
+        $model->shouldReceive('getModel')->andReturn('test');
+        $model->shouldReceive('chat')->once()->withArgs(function (array $messages, array $options) use ($visible): bool {
+            $input = json_decode($messages[1]['content'], true, flags: JSON_THROW_ON_ERROR);
+            self::assertSame([(int) $visible->id], array_column($input['sources'], 'id'));
+            self::assertStringContainsString('Откройте раздел сотрудников.', $input['sources'][0]['text']);
+            self::assertSame('fast', $options['profile']);
+
+            return true;
+        })->andReturn([
+            'content' => json_encode(['answer' => 'Откройте раздел сотрудников.', 'source_ids' => [(int) $visible->id]], JSON_THROW_ON_ERROR),
+            'provider' => 'test', 'model' => 'test', 'finish_reason' => 'stop',
+        ]);
+        $usage = \Mockery::mock(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class);
+        $usage->shouldReceive('recordUsage')->once()->andReturnNull();
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface::class, $model);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class, $usage);
+        config(['knowledge_assistant.monthly_request_limit' => 1]);
+        \Illuminate\Support\Facades\RateLimiter::clear('knowledge-assistant:monthly:'.now()->format('Y-m'));
+        $this->actingAs(new \Illuminate\Auth\GenericUser(['id' => 1]), 'api_landing');
+
+        $payload = ['question' => 'Как пригласить сотрудника?', 'surface' => 'superadmin', 'module_slug' => 'billing'];
+        $this->postJson('/api/v1/landing/knowledge-hub/assistant', $payload)
+            ->assertOk()
+            ->assertJsonPath('data.status', 'answered')
+            ->assertJsonPath('data.sources.0.id', (int) $visible->id)
+            ->assertJsonCount(1, 'data.sources');
+        $this->postJson('/api/v1/landing/knowledge-hub/assistant', $payload)
+            ->assertStatus(429);
+    }
+
     private function createSchema(): void
     {
         Schema::dropIfExists('knowledge_search_events');

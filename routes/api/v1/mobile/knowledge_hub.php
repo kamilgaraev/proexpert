@@ -9,6 +9,8 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
     ->prefix('knowledge-hub')
     ->name('knowledgeHub.')
     ->group(function (): void {
+        Route::post('/assistant', [\App\Http\Controllers\Api\V1\KnowledgeAssistantController::class, 'mobile'])
+            ->middleware('throttle:10,1')->name('assistant');
         Route::get('/overview', [MobileKnowledgeHubController::class, 'overview'])->name('overview');
         Route::get('/tree', [MobileKnowledgeHubController::class, 'tree'])->name('tree');
         Route::get('/search', [MobileKnowledgeHubController::class, 'search'])->name('search');
