@@ -239,56 +239,62 @@ class EstimateService
                         'status' => 'draft',
                         'version' => 1,
                         'parent_estimate_id' => null,
+                        'current_version_id' => null,
+                        'structure_cache_path' => null,
                         'approved_at' => null,
                         'approved_by_user_id' => null,
                     ];
                     
                     $newEstimate = $this->repository->duplicate($estimate, $overrides);
             
-            $sections = $this->sectionRepository->getByEstimate($estimate->id);
-            $sectionMapping = [];
-            
-            foreach ($sections as $section) {
-                $newSection = $this->sectionRepository->create([
-                    'estimate_id' => $newEstimate->id,
-                    'parent_section_id' => isset($sectionMapping[$section->parent_section_id]) 
-                        ? $sectionMapping[$section->parent_section_id] 
-                        : null,
-                    'section_number' => $section->section_number,
-                    'name' => $section->name,
-                    'description' => $section->description,
-                    'sort_order' => $section->sort_order,
-                    'is_summary' => $section->is_summary,
-                ]);
-                
-                $sectionMapping[$section->id] = $newSection->id;
-            }
-            
-            $items = $this->itemRepository->getAllByEstimate($estimate->id);
-            foreach ($items as $item) {
-                $this->itemRepository->create([
-                    'estimate_id' => $newEstimate->id,
-                    'estimate_section_id' => isset($sectionMapping[$item->estimate_section_id]) 
-                        ? $sectionMapping[$item->estimate_section_id] 
-                        : null,
-                    'position_number' => $item->position_number,
-                    'name' => $item->name,
-                    'description' => $item->description,
-                    'work_type_id' => $item->work_type_id,
-                    'measurement_unit_id' => $item->measurement_unit_id,
-                    'quantity' => $item->quantity,
-                    'unit_price' => $item->unit_price,
-                    'direct_costs' => $item->direct_costs,
-                    'overhead_amount' => $item->overhead_amount,
-                    'profit_amount' => $item->profit_amount,
-                    'total_amount' => $item->total_amount,
-                    'justification' => $item->justification,
-                    'is_manual' => $item->is_manual,
-                    'metadata' => $item->metadata,
-                ]);
-            }
-            
-            return $newEstimate;
+                    $sections = $this->sectionRepository->getByEstimate($estimate->id);
+                    $sectionMapping = [];
+
+                    foreach ($sections as $section) {
+                        $data = array_intersect_key($section->attributesToArray(), array_flip($section->getFillable()));
+                        $data['estimate_id'] = $newEstimate->id;
+                        $data['parent_section_id'] = null;
+                        $sectionMapping[$section->id] = $this->sectionRepository->create($data);
+                    }
+
+                    foreach ($sections as $section) {
+                        $sectionMapping[$section->id]->updateQuietly([
+                            'parent_section_id' => $sectionMapping[$section->parent_section_id]->id ?? null,
+                            'section_number' => $section->section_number,
+                            'full_section_number' => $section->getRawOriginal('full_section_number'),
+                        ]);
+                    }
+
+                    $items = $this->itemRepository->getAllByEstimate($estimate->id);
+                    $items->loadMissing(['works', 'totals']);
+                    $itemMapping = [];
+
+                    foreach ($items as $item) {
+                        $data = array_intersect_key($item->attributesToArray(), array_flip($item->getFillable()));
+                        $data['estimate_id'] = $newEstimate->id;
+                        $data['estimate_section_id'] = $sectionMapping[$item->estimate_section_id]->id ?? null;
+                        $data['parent_work_id'] = null;
+                        $newItem = $this->itemRepository->create($data);
+                        $itemMapping[$item->id] = $newItem;
+
+                        foreach (['resources', 'works', 'totals'] as $relation) {
+                            foreach ($item->getRelation($relation) as $record) {
+                                $recordData = array_intersect_key($record->attributesToArray(), array_flip($record->getFillable()));
+                                $recordData['estimate_item_id'] = $newItem->id;
+                                $record->newInstance($recordData)->save();
+                            }
+                        }
+                    }
+
+                    foreach ($items as $item) {
+                        if ($item->parent_work_id !== null) {
+                            $itemMapping[$item->id]->updateQuietly([
+                                'parent_work_id' => $itemMapping[$item->parent_work_id]->id ?? null,
+                            ]);
+                        }
+                    }
+
+                    return $newEstimate;
                 });
             } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
                 $attempt++;
