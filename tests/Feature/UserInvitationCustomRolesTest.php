@@ -11,6 +11,7 @@ use App\Exceptions\BusinessLogicException;
 use App\Http\Requests\Api\V1\Landing\UserInvitation\StoreUserInvitationRequest;
 use App\Models\Organization;
 use App\Models\User;
+use App\Models\UserInvitation;
 use App\Services\Logging\LoggingService;
 use App\Services\UserInvitationCustomRoles;
 use App\Services\UserInvitationService;
@@ -199,6 +200,74 @@ final class UserInvitationCustomRolesTest extends TestCase
             self::assertFalse($users[$case]->fresh()->hasVerifiedEmail(), $case);
         }
         self::assertSame('2026-09-07 12:30:00', $users['verified']->fresh()->email_verified_at->format('Y-m-d H:i:s'));
+    }
+
+    public function test_http_invitation_preserves_custom_roles_and_rejects_unavailable_roles(): void
+    {
+        Mail::fake();
+        $organization = Organization::factory()->verified()->create();
+        $owner = User::factory()->create(['current_organization_id' => $organization->id]);
+        $organization->users()->attach($owner->id, ['is_owner' => true, 'is_active' => true]);
+        $context = AuthorizationContext::getOrganizationContext((int) $organization->id);
+        UserRoleAssignment::assignRole($owner, 'organization_owner', $context);
+        $sessionUuid = (string) \Illuminate\Support\Str::uuid();
+        \App\Models\UserAuthSession::query()->create([
+            'user_id' => $owner->id,
+            'organization_id' => $organization->id,
+            'session_uuid' => $sessionUuid,
+            'device_fingerprint' => hash('sha256', $sessionUuid),
+            'device_name' => 'Invitation HTTP test',
+            'ip_address' => '127.0.0.1',
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => \App\Enums\AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+        $tokens = app(\App\Services\Auth\WebAuthTokenService::class)->issue(
+            $owner, 'lk', $sessionUuid, (int) $organization->id, false,
+        );
+        $this->withHeaders([
+            'Authorization' => 'Bearer '.$tokens->accessToken,
+            'Accept' => 'application/json',
+            'Origin' => 'https://lk.1мост.рф',
+        ]);
+        $role = $this->role($organization, $owner, 'Юрист', 'iurist');
+        $payload = [
+            'email' => 'invitation.http.regression@gmail.com',
+            'name' => 'Учебный юрист',
+            'role_slugs' => [],
+            'custom_role_ids' => [(int) $role->id],
+        ];
+
+        $this->postJson('/api/v1/landing/user-management/invitations', $payload)->assertCreated();
+        $invitation = UserInvitation::query()->where('email', $payload['email'])->sole();
+        self::assertSame((int) $organization->id, (int) $invitation->organization_id);
+        self::assertSame([], $invitation->role_slugs);
+        self::assertEquals([['id' => $role->id, 'slug' => 'iurist', 'name' => 'Юрист']], $invitation->custom_roles);
+        Mail::assertSent(\App\Mail\UserInvitationMail::class, 1);
+
+        $this->postJson('/api/v1/landing/user-management/invitations', [
+            ...$payload,
+            'email' => 'invitation.mixed.regression@gmail.com',
+            'role_slugs' => ['organization_admin'],
+            'custom_role_ids' => [(string) $role->id],
+        ])->assertCreated();
+        $mixed = UserInvitation::query()->where('email', 'invitation.mixed.regression@gmail.com')->sole();
+        self::assertSame(['organization_admin'], $mixed->role_slugs);
+        self::assertEquals([['id' => $role->id, 'slug' => 'iurist', 'name' => 'Юрист']], $mixed->custom_roles);
+
+        $foreign = $this->role(Organization::factory()->create(), $owner, 'Чужая', 'foreign');
+        $inactive = $this->role($organization, $owner, 'Архивная', 'inactive', false);
+        foreach ([[$foreign->id], [$inactive->id], [], [$role->id, $role->id], ['invalid']] as $roleIds) {
+            $this->postJson('/api/v1/landing/user-management/invitations', [
+                ...$payload,
+                'email' => 'invitation.rejected.regression@gmail.com',
+                'custom_role_ids' => $roleIds,
+            ])->assertUnprocessable();
+        }
+        self::assertSame(2, UserInvitation::query()->count());
+        Mail::assertSent(\App\Mail\UserInvitationMail::class, 2);
     }
 
     private function mockLogging(): void

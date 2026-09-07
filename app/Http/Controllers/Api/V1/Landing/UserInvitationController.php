@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Landing\UserInvitation\StoreUserInvitationRequest;
 use App\Http\Resources\Api\V1\Landing\UserInvitationResource;
 use App\Http\Responses\LandingResponse;
 use App\Models\UserInvitation;
@@ -37,15 +38,9 @@ class UserInvitationController extends Controller
         return LandingResponse::success(UserInvitationResource::collection($invitations));
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreUserInvitationRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'email' => 'required|email',
-            'name' => 'required|string|max:255',
-            'role_slugs' => 'array',
-            'role_slugs.*' => 'string',
-            'metadata' => 'array',
-        ]);
+        $data = $request->validated();
 
         $creator = Auth::user();
         $organizationId = $creator?->current_organization_id;
@@ -60,6 +55,7 @@ class UserInvitationController extends Controller
                     'email' => $data['email'],
                     'name' => $data['name'],
                     'role_slugs' => $data['role_slugs'] ?? [],
+                    'custom_role_ids' => array_map(static fn (mixed $id): int => (int) $id, $data['custom_role_ids'] ?? []),
                     'metadata' => $data['metadata'] ?? null,
                 ],
                 (int) $organizationId,
