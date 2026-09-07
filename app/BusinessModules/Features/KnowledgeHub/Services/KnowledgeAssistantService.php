@@ -90,7 +90,7 @@ final class KnowledgeAssistantService
                 if ($characters > 160000) {
                     throw new RuntimeException('knowledge_assistant_catalog_limit');
                 }
-                $sources[] = ['id' => (int) $article->id, 'title' => (string) $article->title, 'text' => $text];
+                $sources[] = ['id' => (int) $article->id, 'title' => (string) $article->title, 'slug' => (string) $article->slug, 'text' => $text];
             }
             $page++;
         } while ($page <= $articles->lastPage());
@@ -138,13 +138,13 @@ final class KnowledgeAssistantService
         if (! is_array($ids) || ! array_is_list($ids) || count($ids) > 6) {
             throw new RuntimeException('knowledge_assistant_invalid_sources');
         }
-        $allowed = array_column($sources, 'title', 'id');
+        $allowed = array_column($sources, null, 'id');
         $references = [];
         foreach ($ids as $id) {
             if (! is_int($id) || ! isset($allowed[$id])) {
                 throw new RuntimeException('knowledge_assistant_invalid_sources');
             }
-            $references[$id] = ['id' => $id, 'title' => $allowed[$id]];
+            $references[$id] = ['id' => $id, 'title' => $allowed[$id]['title'], 'slug' => $allowed[$id]['slug']];
         }
 
         return array_values($references);

@@ -46,7 +46,7 @@ final class KnowledgeAssistantServiceTest extends DatabaseLessTestCase
         $result = $service->answer('Не пускает в кабинет', $this->context());
 
         self::assertSame('answered', $result['status']);
-        self::assertSame([['id' => 4, 'title' => 'Авторизация']], $result['sources']);
+        self::assertSame([['id' => 4, 'title' => 'Авторизация', 'slug' => 'auth-and-login']], $result['sources']);
         self::assertCount(2, $calls);
         self::assertSame([4, 8], array_column($calls[0]['sources'], 'id'));
         self::assertSame([4], array_column($calls[1]['sources'], 'id'));
@@ -187,8 +187,8 @@ final class KnowledgeAssistantServiceTest extends DatabaseLessTestCase
 
             return true;
         })->andReturn(new LengthAwarePaginator([
-            (object) ['id' => 4, 'title' => 'Авторизация', 'content_plain_text' => 'Введите почту и пароль.'],
-            (object) ['id' => 8, 'title' => 'Приглашение сотрудника', 'content_plain_text' => 'Откройте список сотрудников.'],
+            (object) ['id' => 4, 'title' => 'Авторизация', 'slug' => 'auth-and-login', 'content_plain_text' => 'Введите почту и пароль.'],
+            (object) ['id' => 8, 'title' => 'Приглашение сотрудника', 'slug' => 'invite-organization-user', 'content_plain_text' => 'Откройте список сотрудников.'],
         ], 2, 30));
         $model = Mockery::mock(LLMProviderInterface::class);
         $model->shouldReceive('isAvailable')->once()->andReturnTrue();
