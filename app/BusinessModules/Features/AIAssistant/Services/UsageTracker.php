@@ -316,6 +316,7 @@ class UsageTracker
         $normalized = strtolower(str_replace(['_', ' ', '/', ':'], '-', $model));
 
         $pricing = [
+            'qwen3.5-flash' => ['input' => 14.0, 'output' => 52.0],
             'gemini-3.1-flash-lite' => ['input' => 34.0, 'output' => 203.0],
             'gemini-3-flash-preview' => ['input' => 68.0, 'output' => 405.0],
             'gemini-3-pro-preview' => ['input' => 270.0, 'output' => 1620.0],
