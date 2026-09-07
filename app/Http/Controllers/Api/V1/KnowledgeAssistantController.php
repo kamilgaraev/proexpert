@@ -54,7 +54,7 @@ final class KnowledgeAssistantController extends Controller
             $context = $this->contexts->fromRequest($input, $surface);
 
             return $response::success(
-                $this->assistant->answer((string) $request->validated('question'), $context),
+                $this->assistant->answer((string) $request->validated('question'), $context, $request->validated('history', [])),
                 trans_message('knowledge_assistant.answered'),
             );
         } catch (Throwable $exception) {

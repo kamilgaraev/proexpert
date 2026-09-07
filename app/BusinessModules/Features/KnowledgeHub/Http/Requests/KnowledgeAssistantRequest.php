@@ -16,7 +16,11 @@ final class KnowledgeAssistantRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'question' => ['required', 'string', 'min:3', 'max:1000'],
+            'question' => ['required', 'string', 'min:1', 'max:1000'],
+            'history' => ['sometimes', 'array', 'max:8'],
+            'history.*' => ['required', 'array:role,content'],
+            'history.*.role' => ['required', 'in:user,assistant'],
+            'history.*.content' => ['required', 'string', 'max:2000'],
             'context_key' => ['nullable', 'string', 'max:120'],
         ];
     }

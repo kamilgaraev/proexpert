@@ -56,7 +56,7 @@ final class TimewebProvider implements LLMProviderInterface
                 'temperature' => $temperature,
             ];
 
-            foreach (['tools', 'tool_choice', 'response_format'] as $optionKey) {
+            foreach (['tools', 'tool_choice', 'response_format', 'enable_thinking'] as $optionKey) {
                 if (array_key_exists($optionKey, $options)) {
                     $requestPayload[$optionKey] = $options[$optionKey];
                 }
