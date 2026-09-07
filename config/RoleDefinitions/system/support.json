@@ -57,7 +57,8 @@
     ]
   },
   "interface_access": [
-    "admin"
+    "admin",
+    "mobile"
   ],
   "hierarchy": {
     "can_manage_roles": [],

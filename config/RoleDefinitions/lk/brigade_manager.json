@@ -28,7 +28,8 @@
     ]
   },
   "interface_access": [
-    "lk"
+    "lk",
+    "mobile"
   ],
   "hierarchy": {
     "can_manage_roles": [

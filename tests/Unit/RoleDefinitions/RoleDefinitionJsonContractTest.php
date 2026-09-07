@@ -182,6 +182,19 @@ class RoleDefinitionJsonContractTest extends TestCase
         $this->assertContains('warehouse.manage_stock', $role['module_permissions']['basic-warehouse'] ?? []);
     }
 
+    public function test_system_roles_allow_mobile_except_separate_customer_roles(): void
+    {
+        foreach ($this->roleDefinitionFiles() as $filePath) {
+            $role = json_decode((string) file_get_contents($filePath), true, 512, JSON_THROW_ON_ERROR);
+            if (str_contains(str_replace('\\', '/', $filePath), '/customer/')) {
+                $this->assertNotContains('mobile', $role['interface_access'], $role['slug']);
+                continue;
+            }
+
+            $this->assertContains('mobile', $role['interface_access'], $role['slug']);
+        }
+    }
+
     public function test_duplicate_and_internal_roles_are_not_assignable(): void
     {
         $rolePaths = [
