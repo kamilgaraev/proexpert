@@ -148,20 +148,20 @@ class StoreContractRequest extends FormRequest
         $projectIdRules = [
             'nullable',
             'integer',
-            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            $this->availableProjectRule($organizationId),
             'required_without:project_ids',
         ];
         $projectIdsRules = ['nullable', 'required_if:is_multi_project,true,1', 'array', 'min:1'];
         $projectIdsItemRules = [
             'integer',
-            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            $this->availableProjectRule($organizationId),
         ];
 
         if ($routeProjectId !== null) {
             $projectIdRules = [
                 $isMultiProject ? 'nullable' : 'required',
                 'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+                $this->availableProjectRule($organizationId),
                 Rule::in([$routeProjectId]),
             ];
             $projectIdsItemRules[] = 'distinct';
@@ -235,6 +235,9 @@ class StoreContractRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'project_id.exists' => trans_message('contracts.project_unavailable'),
+            'project_ids.*.exists' => trans_message('contracts.project_unavailable'),
+            'project_id.in' => trans_message('contracts.route_project_required'),
             'advance_payments.*.budget_article_id.required' => trans_message('contracts.advance_article_required'),
             'advance_payments.*.responsibility_center_id.required' => trans_message('contracts.advance_center_required'),
             'advance_payments.*.amount.gt' => trans_message('contracts.advance_amount_positive'),
@@ -248,6 +251,21 @@ class StoreContractRequest extends FormRequest
             ?? $this->user()?->current_organization_id
             ?? $this->input('organization_id_for_creation')
         );
+    }
+
+    private function availableProjectRule(int $organizationId): \Illuminate\Validation\Rules\Exists
+    {
+        return Rule::exists('projects', 'id')->where(function ($query) use ($organizationId): void {
+            $query->where(function ($scope) use ($organizationId): void {
+                $scope->where('organization_id', $organizationId)
+                    ->orWhereIn('id', function ($participants) use ($organizationId): void {
+                        $participants->select('project_id')
+                            ->from('project_organization')
+                            ->where('organization_id', $organizationId)
+                            ->where('is_active', true);
+                    });
+            });
+        });
     }
 
     protected function prepareForValidation(): void

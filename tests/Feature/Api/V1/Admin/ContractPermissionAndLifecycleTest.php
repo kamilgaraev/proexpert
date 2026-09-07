@@ -41,6 +41,49 @@ final class ContractPermissionAndLifecycleTest extends TestCase
 {
     public function refreshDatabase(): void {}
 
+    public function test_creation_accepts_active_shared_projects_and_explains_unavailable_projects(): void
+    {
+        $this->createProjectsTable();
+        Schema::create('project_organization', static function (Blueprint $table): void {
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->boolean('is_active');
+        });
+        \DB::table('projects')->insert([
+            ['id' => 11, 'organization_id' => 7],
+            ['id' => 12, 'organization_id' => 8],
+            ['id' => 13, 'organization_id' => 8],
+            ['id' => 14, 'organization_id' => 8],
+        ]);
+        \DB::table('project_organization')->insert([
+            ['project_id' => 12, 'organization_id' => 7, 'is_active' => true],
+            ['project_id' => 13, 'organization_id' => 7, 'is_active' => false],
+        ]);
+        $this->mock(\App\Modules\Core\AccessController::class, static function (MockInterface $mock): void {
+            $mock->shouldReceive('hasModuleAccess')->andReturn(false);
+        });
+        foreach ([11 => true, 12 => true, 13 => false, 14 => false, 999 => false] as $projectId => $valid) {
+            $request = $this->requestWithProjectRoute(StoreContractRequest::class, $this->user(7), $projectId);
+            $rules = $request->rules();
+            $validator = \Illuminate\Support\Facades\Validator::make(
+                ['project_id' => $projectId],
+                ['project_id' => $rules['project_id']],
+                $request->messages(),
+            );
+            self::assertSame($valid, $validator->passes());
+            if (! $valid) {
+                self::assertSame(trans_message('contracts.project_unavailable'), $validator->errors()->first('project_id'));
+                self::assertStringNotContainsString('project_id', $validator->errors()->first('project_id'));
+            }
+            $validator = \Illuminate\Support\Facades\Validator::make(
+                ['project_ids' => [$projectId]],
+                ['project_ids.*' => $rules['project_ids.*']],
+                $request->messages(),
+            );
+            self::assertSame($valid, $validator->passes());
+        }
+    }
+
     public function test_partial_period_updates_preserve_clear_and_validate_dates(): void
     {
         $this->createContractTables();
