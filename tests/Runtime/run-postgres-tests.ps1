@@ -45,7 +45,7 @@ foreach ($node in $phpunitConfiguration.phpunit.php.env) {
 if (
     $environment.DB_CONNECTION -ne 'pgsql' -or
     $environment.DB_HOST -ne '127.0.0.1' -or
-    $environment.DB_PORT -ne '55433' -or
+    $environment.DB_PORT -ne '45433' -or
     $environment.DB_DATABASE -notmatch '_testing$'
 ) {
     throw 'postgres_test_database_configuration_unsafe'
