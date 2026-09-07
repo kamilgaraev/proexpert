@@ -113,6 +113,7 @@ final class UserInvitationCustomRolesTest extends TestCase
         self::assertSame(['Документы'], $invitation->role_names);
 
         $user = app(UserInvitationService::class)->acceptInvitation($invitation->token, ['password' => 'Strong-password-2026']);
+        self::assertTrue($user->fresh()->hasVerifiedEmail());
         $context = AuthorizationContext::getOrganizationContext((int) $organization->id);
         self::assertDatabaseHas('user_role_assignments', [
             'user_id' => $user->id,
@@ -162,6 +163,42 @@ final class UserInvitationCustomRolesTest extends TestCase
                 self::assertSame(trans_message('user_invitations.errors.invalid_roles'), $exception->getMessage());
             }
         }
+    }
+
+    public function test_restores_only_new_accounts_with_matching_accepted_invitation(): void
+    {
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create();
+        $createdAt = '2026-09-07 12:29:54';
+        $users = [];
+
+        foreach (['matching', 'pending', 'different_email', 'existing', 'verified'] as $case) {
+            $user = User::factory()->unverified()->create(['created_at' => $createdAt]);
+            if ($case === 'verified') {
+                $user->forceFill(['email_verified_at' => '2026-09-07 12:30:00'])->save();
+            }
+            \App\Models\UserInvitation::create([
+                'organization_id' => $organization->id,
+                'invited_by_user_id' => $actor->id,
+                'accepted_by_user_id' => $user->id,
+                'email' => $case === 'different_email' ? 'different@example.test' : $user->email,
+                'name' => $user->name,
+                'role_slugs' => [],
+                'status' => $case === 'pending' ? 'pending' : 'accepted',
+                'accepted_at' => $case === 'existing' ? '2026-09-07 12:31:00' : $createdAt,
+            ]);
+            $users[$case] = $user;
+        }
+
+        $migration = require database_path('migrations/2026_09_07_130000_restore_invited_user_email_verification.php');
+        $migration->up();
+        $migration->up();
+
+        self::assertSame($createdAt, $users['matching']->fresh()->email_verified_at->format('Y-m-d H:i:s'));
+        foreach (['pending', 'different_email', 'existing'] as $case) {
+            self::assertFalse($users[$case]->fresh()->hasVerifiedEmail(), $case);
+        }
+        self::assertSame('2026-09-07 12:30:00', $users['verified']->fresh()->email_verified_at->format('Y-m-d H:i:s'));
     }
 
     private function mockLogging(): void
