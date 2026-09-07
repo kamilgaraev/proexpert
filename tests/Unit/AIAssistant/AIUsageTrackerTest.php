@@ -42,6 +42,19 @@ class AIUsageTrackerTest extends TestCase
         );
     }
 
+    public function test_calculates_knowledge_qwen_cost_with_actual_gateway_identifier(): void
+    {
+        $prices = (new UsageTracker)->calculateCostBreakdown(
+            totalTokens: 2_000_000,
+            model: 'dashscope/qwen3.5-flash',
+            inputTokens: 1_000_000,
+            outputTokens: 1_000_000,
+            providerName: 'timeweb'
+        );
+
+        $this->assertSame(['input' => 14.0, 'output' => 52.0, 'total' => 66.0], $prices);
+    }
+
     public function test_monthly_usage_casts_cached_string_counter_to_integer(): void
     {
         $organizationId = 123456;
