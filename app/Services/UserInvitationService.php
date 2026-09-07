@@ -488,10 +488,10 @@ class UserInvitationService
             'name' => $invitation->name,
             'email' => $invitation->email,
             'password' => Hash::make($password),
-            'email_verified_at' => now(),
             // 'user_type' => 'organization_user', // Удалена в новой системе авторизации
         ]);
 
+        $user->markEmailAsVerified();
         $user->organizations()->attach($invitation->organization_id);
 
         return $user;
