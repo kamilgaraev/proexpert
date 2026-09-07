@@ -118,7 +118,8 @@
   },
   "interface_access": [
     "lk",
-    "admin"
+    "admin",
+    "mobile"
   ],
   "hierarchy": {
     "can_manage_roles": [],
