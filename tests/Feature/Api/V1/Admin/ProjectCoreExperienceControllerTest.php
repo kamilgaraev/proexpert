@@ -330,6 +330,39 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $workTypesResponse->assertJsonPath('message', trans_message('project.access_denied'));
     }
 
+    public function test_draft_project_can_be_created_and_updated_with_database_status_guard(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/projects', [
+            'name' => 'Draft status regression',
+            'status' => 'draft',
+        ]);
+        $response->assertCreated()->assertJsonPath('data.status', 'draft');
+        $id = $response->json('data.id');
+        $this->assertDatabaseHas('projects', ['id' => $id, 'status' => 'draft', 'organization_id' => $context->organization->id]);
+
+        foreach (['active', 'completed', 'paused', 'cancelled', 'draft'] as $status) {
+            $this->withHeaders($context->authHeaders())
+                ->patchJson("/api/v1/admin/projects/{$id}", ['status' => $status])
+                ->assertOk()->assertJsonPath('data.status', $status);
+        }
+
+        $this->withHeaders($context->authHeaders())
+            ->patchJson("/api/v1/admin/projects/{$id}", ['status' => 'unknown'])
+            ->assertUnprocessable();
+
+        try {
+            \Illuminate\Support\Facades\DB::transaction(static function () use ($id): void {
+                \Illuminate\Support\Facades\DB::table('projects')->where('id', $id)->update(['status' => 'unknown']);
+            });
+            self::fail('Invalid project status was accepted by PostgreSQL');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertSame('23514', $exception->errorInfo[0]);
+        }
+        $this->assertDatabaseHas('projects', ['id' => $id, 'status' => 'draft']);
+    }
+
     private function allowAdminAccess(): void
     {
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
