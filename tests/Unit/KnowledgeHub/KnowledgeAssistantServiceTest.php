@@ -194,7 +194,7 @@ final class KnowledgeAssistantServiceTest extends DatabaseLessTestCase
         $model->shouldReceive('isAvailable')->once()->andReturnTrue();
         $model->shouldReceive('getModel')->andReturn('test');
         $model->shouldReceive('chat')->times(count($responses))->andReturnUsing(function (array $messages, array $options) use (&$responses, &$calls): array {
-            self::assertSame('zai/glm-4.7-flashx', $options['model']);
+            self::assertSame('dashscope/qwen3.5-flash', $options['model']);
             self::assertFalse($options['enable_thinking']);
             self::assertSame(900, $options['max_tokens']);
             self::assertArrayNotHasKey('tools', $options);
@@ -203,7 +203,7 @@ final class KnowledgeAssistantServiceTest extends DatabaseLessTestCase
 
             return [
                 'content' => is_string($response) ? $response : json_encode($response, JSON_THROW_ON_ERROR),
-                'provider' => 'timeweb', 'model' => 'zai/glm-4.7-flashx',
+                'provider' => 'timeweb', 'model' => 'dashscope/qwen3.5-flash',
                 'input_tokens' => 10, 'output_tokens' => 5, 'tokens_used' => 15, 'finish_reason' => 'stop',
             ];
         });
