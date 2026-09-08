@@ -1,3 +1,4 @@
+<x-email-layout :title="trans_message('mail.new_device', [], 'ru')">
 @php
     $loginTime = optional($session->first_seen_at)->format('d.m.Y H:i') ?? now()->format('d.m.Y H:i');
 @endphp
@@ -13,3 +14,4 @@
 </p>
 
 <p>Если это были вы, ничего делать не нужно. Если вход выполнен не вами, завершите активные сеансы в настройках безопасности и смените пароль.</p>
+</x-email-layout>
