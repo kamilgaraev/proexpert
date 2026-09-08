@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\IndexWarehouseMovementRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\StoreWarehouseRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseBalancesRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseDashboardService;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseCreationService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -43,53 +45,20 @@ class WarehouseController extends Controller
         }
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreWarehouseRequest $request, WarehouseCreationService $creationService): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
 
         try {
-            $validated = $request->validate([
-                'name' => 'required|string|max:255',
-                'code' => [
-                    'required',
-                    'string',
-                    'max:50',
-                    Rule::unique('organization_warehouses', 'code')
-                        ->where('organization_id', $organizationId),
-                ],
-                'warehouse_type' => 'nullable|in:central,project,external',
-                'description' => 'nullable|string',
-                'address' => 'nullable|string',
-                'contact_person' => 'nullable|string|max:255',
-                'contact_phone' => 'nullable|string|max:50',
-                'working_hours' => 'nullable|string|max:255',
-                'is_main' => 'nullable|boolean',
-                'is_active' => 'nullable|boolean',
-                'settings' => 'nullable|array',
-                'storage_conditions' => 'nullable|array',
-            ]);
-
-            $warehouse = OrganizationWarehouse::create([
-                'organization_id' => $organizationId,
-                'name' => $validated['name'],
-                'code' => $validated['code'],
-                'warehouse_type' => $validated['warehouse_type'] ?? 'central',
-                'description' => $validated['description'] ?? null,
-                'address' => $validated['address'] ?? null,
-                'contact_person' => $validated['contact_person'] ?? null,
-                'contact_phone' => $validated['contact_phone'] ?? null,
-                'working_hours' => $validated['working_hours'] ?? null,
-                'is_main' => $validated['is_main'] ?? false,
-                'is_active' => $validated['is_active'] ?? true,
-                'settings' => $validated['settings'] ?? [],
-                'storage_conditions' => $validated['storage_conditions'] ?? [],
-            ]);
+            $warehouse = $creationService->create($request->user(), $request->validated());
 
             return AdminResponse::success(
                 $warehouse,
                 trans_message('basic_warehouse.warehouse.created'),
                 201
             );
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            throw $exception;
         } catch (\Throwable $exception) {
             Log::error('WarehouseController::store error', [
                 'organization_id' => $organizationId,
