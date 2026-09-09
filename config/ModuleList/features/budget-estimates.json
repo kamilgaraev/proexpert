@@ -27,6 +27,8 @@
     "estimates.approve",
     "estimates.import",
     "estimates.export",
+    "budget-estimates.finance.view",
+    "budget-estimates.finance.edit",
     "estimates.templates.manage",
     "estimates.analytics",
     "budget-estimates.versions.create",

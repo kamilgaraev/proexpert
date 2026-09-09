@@ -73,10 +73,13 @@ class EstimateVersionRestoreService
             throw new InvalidArgumentException('Версия не принадлежит выбранной смете');
         }
 
-        $this->applyEstimateSnapshot($estimate, $version->snapshot ?? []);
-        $this->replaceStructure($estimate, $version->snapshot ?? []);
-
-        return $this->loadRestoredEstimate($estimate);
+        return DB::transaction(function () use ($estimate, $version): Estimate {
+            $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            $this->assertStructureReplaceable($estimate);
+            $this->applyEstimateSnapshot($estimate, $version->snapshot ?? []);
+            $this->replaceStructure($estimate, $version->snapshot ?? []);
+            return $this->loadRestoredEstimate($estimate);
+        });
     }
 
     private function applyEstimateSnapshot(Estimate $estimate, array $snapshot): void
@@ -134,6 +137,7 @@ class EstimateVersionRestoreService
 
     private function replaceStructure(Estimate $estimate, array $snapshot): void
     {
+        $this->assertStructureReplaceable($estimate);
         $existingSectionsByStableKey = EstimateSection::query()
             ->where('estimate_id', $estimate->id)
             ->whereNotNull('stable_key')
@@ -372,7 +376,6 @@ class EstimateVersionRestoreService
 
     private function restoreContractLinks(Estimate $estimate, EstimateItem $item, array $links): void
     {
-        ContractEstimateItem::query()->where('estimate_item_id', $item->id)->delete();
 
         foreach ($links as $linkPayload) {
             if (! is_array($linkPayload)) {
@@ -390,7 +393,7 @@ class EstimateVersionRestoreService
                 throw new InvalidArgumentException('Договор позиции не принадлежит проекту и организации сметы');
             }
 
-            ContractEstimateItem::query()->create([
+            ContractEstimateItem::query()->firstOrCreate(['contract_id' => $contractId, 'estimate_item_id' => $item->id], [
                 'contract_id' => $contractId,
                 'estimate_id' => $estimate->id,
                 'estimate_item_id' => $item->id,
@@ -399,6 +402,14 @@ class EstimateVersionRestoreService
                 'amount_without_vat' => $linkPayload['amount_without_vat'] ?? null,
                 'notes' => $linkPayload['notes'] ?? null,
             ]);
+        }
+    }
+
+    private function assertStructureReplaceable(Estimate $estimate): void
+    {
+        if (ContractEstimateItem::query()->where('estimate_id', $estimate->id)->exists()
+            || \App\Models\EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->exists()) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['estimate' => trans_message('estimate_finance.linked')]);
         }
     }
 
