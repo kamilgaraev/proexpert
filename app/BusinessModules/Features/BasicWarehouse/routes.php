@@ -202,6 +202,7 @@ Route::middleware(AdminRouteStack::middleware())
 
         // Управление активами (по типам: материалы, расходники, оборудование и т.д.)
         Route::prefix('assets')->name('assets.')->group(function () {
+            Route::get('/categories', [\App\BusinessModules\Features\BasicWarehouse\Controllers\AssetCategoryController::class, 'index'])->name('categories.index');
             Route::get('/types', [AssetController::class, 'types'])->name('types');
             Route::get('/statistics', [AssetController::class, 'statistics'])->name('statistics');
             Route::post('/export-labels-pdf', [AssetController::class, 'exportLabelsPdf'])->name('export-labels-pdf');

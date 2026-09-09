@@ -73,6 +73,10 @@ class AssetLabelExportService
             $query->ofType((string) $filters['asset_type']);
         }
 
+        if (! empty($filters['asset_category'])) {
+            $query->ofCategory((string) $filters['asset_category']);
+        }
+
         if (! empty($filters['warehouse_id'])) {
             $warehouseId = (int) $filters['warehouse_id'];
             $query->whereHas('warehouseBalances', static function ($balanceQuery) use ($organizationId, $warehouseId): void {

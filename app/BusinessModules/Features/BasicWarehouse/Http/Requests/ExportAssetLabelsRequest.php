@@ -27,6 +27,7 @@ class ExportAssetLabelsRequest extends FormRequest
                 Rule::exists('organization_warehouses', 'id')->where('organization_id', $organizationId),
             ],
             'search' => 'nullable|string|max:255',
+            'asset_category' => 'nullable|string|max:100',
             'asset_ids' => 'nullable|array',
             'asset_ids.*' => [
                 'integer',

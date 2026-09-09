@@ -30,6 +30,9 @@ Route::prefix('auth')->name('auth.')->group(function () {
     // Защищенные маршруты с более щадящим лимитом
     Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'auth.session', 'throttle:dashboard'])->group(function () {
         Route::get('me', [AuthController::class, 'me'])->name('me');
+        Route::get('organizations', [\App\Http\Controllers\Api\V1\OrganizationSessionController::class, 'index'])->name('organizations');
+        Route::post('organization', [\App\Http\Controllers\Api\V1\OrganizationSessionController::class, 'switch'])
+            ->middleware(['origin.web:admin', 'csrf.web:admin'])->name('organization.switch');
         Route::post('logout', [AuthController::class, 'logout'])
             ->middleware('csrf.web:admin')
             ->name('logout');

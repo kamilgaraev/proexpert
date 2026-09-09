@@ -303,6 +303,7 @@ class WarehouseOperationsController extends Controller
                         'document_number' => $validated['document_number'] ?? null,
                         'reason' => $validated['reason'] ?? null,
                         'metadata' => $validated['metadata'] ?? [],
+                        'description' => $validated['metadata']['description'] ?? null,
                         'idempotency_key' => $validated['idempotency_key'],
                     ],
                     $this->storageCellResolver->metadata($cell)

@@ -33,6 +33,93 @@ class WarehouseOperationsControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_category_migration_preserves_assets_and_merges_old_text_categories(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $first = $this->createMaterial($context->organization->id, $unit->id, 'Дрель', 'DRILL');
+        $second = $this->createMaterial($context->organization->id, $unit->id, 'Пила', 'SAW');
+        $first->update(['additional_properties' => ['asset_type' => 'tool', 'asset_category' => '  Инструмент  ']]);
+        $second->update(['category' => 'ИНСТРУМЕНТ']);
+        \Illuminate\Support\Facades\Schema::drop('asset_categories');
+        $migration = require database_path('migrations/2026_09_09_120000_create_asset_categories_table.php');
+        $migration->up();
+        $this->assertDatabaseCount('asset_categories', 1);
+        $this->assertSame('Инструмент', $first->fresh()->additional_properties['asset_category']);
+        $this->assertSame('Инструмент', $second->fresh()->additional_properties['asset_category']);
+        $this->assertSame('tool', $first->fresh()->additional_properties['asset_type']);
+        $this->assertSame('Дрель', $first->fresh()->name);
+    }
+
+    public function test_participant_can_receive_and_allocate_material_with_description_but_cannot_use_unrelated_project(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $unit = $this->createUnit($context->organization->id);
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main', 'PARTICIPANT');
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Heater', 'HEATER');
+        $project = Project::factory()->create(['is_archived' => false]);
+        $project->organizations()->attach($context->organization->id, ['role' => 'contractor', 'is_active' => true]);
+        $payload = [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'project_id' => $project->id,
+            'quantity' => 2,
+            'price' => 100,
+            'metadata' => ['description' => 'Проверено при приемке'],
+        ];
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', $payload)->assertSuccessful();
+        $movement = WarehouseMovement::query()->where('material_id', $material->id)->firstOrFail();
+        $this->assertSame('Проверено при приемке', $movement->metadata['description']);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/project-allocations', array_merge($payload, [
+                'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                'quantity' => 1,
+            ]))->assertSuccessful();
+        $unrelated = Project::factory()->create(['is_archived' => false]);
+        $payload['project_id'] = $unrelated->id;
+        $payload['idempotency_key'] = (string) \Illuminate\Support\Str::uuid();
+        foreach (['/warehouses/operations/receipt', '/project-allocations'] as $path) {
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin'.$path, $payload)->assertUnprocessable()->assertJsonValidationErrors('project_id');
+        }
+        $payload['project_id'] = $project->id;
+        $payload['metadata']['description'] = str_repeat('x', 1001);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', $payload)
+            ->assertUnprocessable()->assertJsonValidationErrors('metadata.description');
+    }
+
+    public function test_category_dictionary_normalizes_duplicates_isolates_organizations_and_supports_clearing(): void
+    {
+        $context = AdminApiTestContext::create();
+        $other = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $categories = app(\App\BusinessModules\Features\BasicWarehouse\Services\AssetCategoryService::class);
+        $this->assertSame('Ручной инструмент', $categories->resolve($context->organization->id, '  Ручной   инструмент  '));
+        $this->assertSame('Ручной инструмент', $categories->resolve($context->organization->id, 'РУЧНОЙ ИНСТРУМЕНТ'));
+        $categories->resolve($other->organization->id, 'Чужая категория');
+        $this->assertDatabaseCount('asset_categories', 2);
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/assets/categories?search='.urlencode('инстру'))
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Ручной инструмент');
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/assets/categories')
+            ->assertOk()->assertJsonMissing(['name' => 'Чужая категория']);
+        $unit = $this->createUnit($context->organization->id);
+        $assets = app(\App\BusinessModules\Features\BasicWarehouse\Services\AssetService::class);
+        $asset = $assets->createAsset($context->organization->id, [
+            'name' => 'Дрель', 'measurement_unit_id' => $unit->id, 'asset_category' => 'ручной инструмент',
+        ]);
+        $this->assertSame('Ручной инструмент', $asset->asset_category);
+        $asset = $assets->updateAsset($context->organization->id, $asset->id, [
+            'asset_category' => null, 'asset_subcategory' => null, 'default_price' => null,
+        ]);
+        $this->assertNull($asset->asset_category);
+        $this->assertNull($asset->asset_subcategory);
+        $this->assertNull($asset->default_price);
+    }
+
     public function test_owner_can_partially_place_only_unlocated_stock_into_a_cell_idempotently(): void
     {
         $context = AdminApiTestContext::create();
