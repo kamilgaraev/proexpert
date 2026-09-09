@@ -219,14 +219,11 @@ class ImportPipelineService
             $footerTotal = (float) ($savedFooter['total_estimate_cost'] ?? 0);
             $footerOverhead = (float) ($savedFooter['overhead_cost'] ?? 0);
             $footerProfit = (float) ($savedFooter['profit_cost'] ?? 0);
+            $importedTotals = $this->financialSettingsResolver->resolveImportedTotals($savedFooter);
 
-            if ($this->shouldPreserveImportedTotals($session) && $footerTotal > 0 && ($footerOverhead > 0 || $footerProfit > 0)) {
-                $footerDirect = round($footerTotal - $footerOverhead - $footerProfit, 2);
-                $estimate->update([
-                    'total_amount' => $footerTotal,
-                    'total_overhead_costs' => $footerOverhead,
-                    'total_estimated_profit' => $footerProfit,
-                    'total_direct_costs' => $footerDirect,
+            if ($this->shouldPreserveImportedTotals($session) && $importedTotals !== null) {
+                $footerDirect = $importedTotals['total_direct_costs'];
+                $estimate->update($importedTotals + [
                     'total_amount_with_vat' => round($footerTotal * (1 + $estimate->vat_rate / 100), 2),
                 ]);
                 Log::info("[ImportPipeline] Footer override applied for estimate #{$estimate->id}", [
@@ -363,30 +360,14 @@ class ImportPipelineService
         $batchDTOs = [];
         $sectionMap = []; // path -> section_id (e.g. "1" -> 101, "1.1" -> 102)
         $lastSectionId = null; // For items without explicit section path?
+        $rowPolicy = new ImportRowPolicy($this->rowMapper);
 
         foreach ($stream as $rowDTO) {
             if (! $rowDTO instanceof EstimateImportRowDTO) {
                 $rowDTO = EstimateImportRowDTO::fromArray((array) $rowDTO);
             }
 
-            if (is_array($rowDTO->rawData) && $this->rowMapper->isTechnicalRow($rowDTO->rawData)) {
-                continue;
-            }
-
-            // Skip rows that are identified as footers (totals, summaries, etc.)
-            if ($rowDTO->isFooter) {
-                continue;
-            }
-
-            // Skip rows that have no numeric value (Quantity=0 AND Price=0 AND Total=0)
-            // This filters out headers that were technically mapped but contain no data.
-            if (! $rowDTO->isSection &&
-                ($rowDTO->quantity === null || $rowDTO->quantity == 0) &&
-                ($rowDTO->unitPrice === null || $rowDTO->unitPrice == 0) &&
-                ($rowDTO->currentTotalAmount === null || $rowDTO->currentTotalAmount == 0)
-            ) {
-                Log::info("[ImportPipeline] Skipping empty/garbage item: '{$rowDTO->itemName}'");
-
+            if (!$rowPolicy->shouldImport($rowDTO)) {
                 continue;
             }
 
@@ -672,9 +653,7 @@ class ImportPipelineService
 
         // Значит Итог с учетом налогов (полная стоимость) - это ПЗ + НР + СП
         // Для подпунктов математика налогов не применяется (их сумма заложена в ПЗ родителя)
-        $actualTotalAmount = (! $isInformative && ! $isSubItem && $totalAmount > 0 && ($overheadAmount > 0 || $profitAmount > 0))
-            ? $totalAmount
-            : $directCosts + $overheadAmount + $profitAmount;
+        $actualTotalAmount = (new ImportRowPolicy($this->rowMapper))->totalAmount($dto, $overheadAmount, $profitAmount);
 
         // 4. Все подпункты делают задвоение, поэтому их исключаем из учета итоговых сумм
         $isNotAccounted = $isInformative || $isSubItem;
@@ -790,28 +769,7 @@ class ImportPipelineService
      */
     private function isInformativeGrandSmetaRow($dto): bool
     {
-        $name = mb_strtolower($dto->itemName ?? '');
-        $code = mb_strtolower($dto->code ?? '');
-
-        // 1. Агрегирующие заголовки (ОТ, ЭМ, М, ОТм) - они несут ФОТ/ПЗ заголовка,
-        // но ниже идут детали с теми же деньгами. Чтобы не двоить - помечаем как инфо.
-        $aggregates = ['от(зт)', 'эм', 'отм(зтм)', 'м', 'зтм', 'зт', 'от', 'отм', 'мат'];
-        if (in_array($name, $aggregates) && (empty($code) || strlen($code) <= 2)) {
-            return true;
-        }
-
-        // 2. Строки зарплаты машиниста под конкретной машиной (шифр 4-100-XXX)
-        // Их стоимость уже заложена в стоимость самой машины
-        if (str_starts_with($code, '4-100-')) {
-            return true;
-        }
-
-        // 3. Дублирующие информационные строки (редко, но бывает)
-        if (str_contains($name, 'всего по позиции')) {
-            return true;
-        }
-
-        return false;
+        return (new ImportRowPolicy($this->rowMapper))->isInformative($dto);
     }
 
     /**
