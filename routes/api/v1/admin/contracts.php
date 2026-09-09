@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
+use App\Http\Controllers\Api\V1\Admin\Contract\ContractTypeProfileController;
 use Illuminate\Support\Facades\Route;
 
 // ContractPaymentController удален - используйте модуль Payments
@@ -14,6 +15,9 @@ Route::get('contracts', [ContractController::class, 'index'])
 Route::post('contracts', [ContractController::class, 'store'])
     ->middleware('authorize:contracts.create')
     ->name('contracts.store');
+Route::get('contracts/type-profiles', [ContractTypeProfileController::class, 'index'])
+    ->middleware('authorize:contracts.create')
+    ->name('contracts.type-profiles');
 Route::get('contracts/{contract}', [ContractController::class, 'show'])
     ->middleware('authorize:contracts.view')
     ->name('contracts.show');

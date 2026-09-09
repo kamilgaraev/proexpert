@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\ProjectAccessibleRule;
 
 class ReceiptRequest extends FormRequest
 {
@@ -73,11 +74,13 @@ class ReceiptRequest extends FormRequest
             'price' => 'required|numeric|min:0',
             'project_id' => [
                 'nullable',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+                'integer',
+                new ProjectAccessibleRule($organizationId),
             ],
             'document_number' => 'nullable|string|max:100',
             'reason' => 'nullable|string|max:255',
             'metadata' => 'nullable|array',
+            'metadata.description' => 'nullable|string|max:1000',
             'photos' => 'nullable|array|max:4',
             'photos.*' => 'file|image|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ];

@@ -6,12 +6,12 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\M
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Excel\CustomExcelHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportDetectionResult;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetSampleLoader;
 use App\Models\ImportSession;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 
 final class MostTemplateHandler extends CustomExcelHandler
 {
-    private const PREVIOUS_TEMPLATE_MARKER_PREFIX = 'PRO' . 'HELPER_TEMPLATE';
+    private const PREVIOUS_TEMPLATE_MARKER_PREFIX = 'PRO'.'HELPER_TEMPLATE';
 
     public function slug(): string
     {
@@ -25,9 +25,12 @@ final class MostTemplateHandler extends CustomExcelHandler
 
     public function detect(ImportSession $session, string $filePath): ImportDetectionResult
     {
-        $spreadsheet = IOFactory::load($filePath);
-        $description = (string) $spreadsheet->getProperties()->getDescription();
-        $spreadsheet->disconnectWorksheets();
+        $spreadsheet = (new SpreadsheetSampleLoader)->load($filePath, 0);
+        try {
+            $description = (string) $spreadsheet->getProperties()->getDescription();
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+        }
 
         if (str_contains($description, 'MOST_TEMPLATE') || str_contains($description, self::PREVIOUS_TEMPLATE_MARKER_PREFIX)) {
             return new ImportDetectionResult(

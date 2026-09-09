@@ -36,7 +36,9 @@ final class SpreadsheetTableReader
      */
     public function readWorksheets(string $filePath, ?int $maxRows = null): array
     {
-        $spreadsheet = IOFactory::load($filePath);
+        $spreadsheet = $maxRows !== null
+            ? (new SpreadsheetSampleLoader)->load($filePath, $maxRows)
+            : IOFactory::load($filePath);
         try {
             $worksheets = [];
             $index = 0;
@@ -45,7 +47,7 @@ final class SpreadsheetTableReader
                 $worksheets[] = [
                     'index' => $index,
                     'name' => $sheet->getTitle(),
-                    'rows' => $this->rowsFromWorksheet($sheet, $maxRows),
+                    'rows' => $this->rowsFromWorksheet($sheet, $maxRows, $maxRows !== null),
                 ];
                 $index++;
             }
@@ -59,7 +61,7 @@ final class SpreadsheetTableReader
     /**
      * @return array<int, array<int, mixed>>
      */
-    private function rowsFromWorksheet(Worksheet $sheet, ?int $maxRows): array
+    private function rowsFromWorksheet(Worksheet $sheet, ?int $maxRows, bool $sample = false): array
     {
         $highestRow = $sheet->getHighestDataRow();
         if ($maxRows !== null) {
@@ -70,7 +72,15 @@ final class SpreadsheetTableReader
         $rows = [];
 
         for ($row = 1; $row <= $highestRow; $row++) {
-            $values = $sheet->rangeToArray("A{$row}:{$highestColumn}{$row}", null, true, false)[0] ?? [];
+            $values = $sheet->rangeToArray("A{$row}:{$highestColumn}{$row}", null, ! $sample, false)[0] ?? [];
+            if ($sample) {
+                foreach ($values as $column => $value) {
+                    $cell = $sheet->getCell([$column + 1, $row]);
+                    if ($cell->isFormula()) {
+                        $values[$column] = $cell->getOldCalculatedValue() ?? $value;
+                    }
+                }
+            }
             $rows[$row] = array_map(
                 static fn (mixed $value): mixed => is_string($value) ? trim($value) : $value,
                 $values

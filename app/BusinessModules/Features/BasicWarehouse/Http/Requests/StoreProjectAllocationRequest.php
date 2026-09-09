@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\Rules\ProjectAccessibleRule;
 
 final class StoreProjectAllocationRequest extends FormRequest
 {
@@ -33,7 +34,7 @@ final class StoreProjectAllocationRequest extends FormRequest
             'project_id' => [
                 'required',
                 'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+                new ProjectAccessibleRule($organizationId),
             ],
             'quantity' => ['required', 'numeric', 'min:0.001'],
             'notes' => ['nullable', 'string', 'max:1000'],

@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime;
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportFinancialSettingsResolver;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportRowPolicy;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetSampleLoader;
 use App\Models\ImportSession;
 use Generator;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -56,8 +59,12 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
             );
         }
 
-        $content = $this->loadSpreadsheet($filePath);
-        $handlerResult = $this->spreadsheetHandler->canHandle($content, $extension);
+        $content = (new SpreadsheetSampleLoader)->load($filePath, 15);
+        try {
+            $handlerResult = $this->spreadsheetHandler->canHandle($content, $extension);
+        } finally {
+            $content->disconnectWorksheets();
+        }
 
         return new ImportDetectionResult(
             detectedType: $handlerResult->detectedType,
@@ -118,25 +125,37 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
         $sections = [];
         $items = [];
         $totalAmount = 0.0;
+        $policy = new ImportRowPolicy;
 
         foreach ($this->streamRows($session, $filePath, $structure) as $row) {
-            $payload = $row instanceof EstimateImportRowDTO ? $row->toArray() : (array) $row;
+            $dto = $row instanceof EstimateImportRowDTO ? $row : EstimateImportRowDTO::fromArray((array) $row);
+            if (! $policy->shouldImport($dto)) {
+                continue;
+            }
+            $payload = $dto->toArray();
 
             if (($payload['is_section'] ?? false) === true) {
                 $sections[] = $payload;
+
                 continue;
             }
 
             $items[] = $payload;
-            $totalAmount += (float) ($payload['current_total_amount'] ?? $payload['total_amount'] ?? 0);
+            if (! $dto->isSubItem && ! $policy->isInformative($dto)) {
+                $totalAmount += $policy->totalAmount($dto);
+            }
         }
+
+        $footer = in_array(strtolower(pathinfo($filePath, PATHINFO_EXTENSION)), ['xml', 'gsfx'], true)
+            ? [] : $this->getFooterData();
+        $importedTotals = (new EstimateImportFinancialSettingsResolver)->resolveImportedTotals($footer);
 
         return new ImportPreviewResult(
             formatSlug: $this->slug(),
             sections: $sections,
             items: $items,
             totals: [
-                'total_amount' => $totalAmount,
+                'total_amount' => $importedTotals['total_amount'] ?? round($totalAmount, 2),
                 'items_count' => count($items),
                 'sections_count' => count($sections),
             ],
@@ -174,6 +193,7 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
 
         if (in_array($extension, ['xml', 'gsfx'], true)) {
             yield from $this->xmlParser->getStream($filePath, $structure->toArray());
+
             return;
         }
 

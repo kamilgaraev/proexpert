@@ -70,6 +70,9 @@ class AssetService
         ]);
 
         $asset = DB::transaction(function () use ($assetData, $organizationId, $warehouseId): Asset {
+            $assetData['additional_properties']['asset_category'] = app(AssetCategoryService::class)->resolve(
+                $organizationId, $assetData['asset_category'] ?? $assetData['category'] ?? null,
+            );
             $asset = Asset::create($assetData);
 
             if ($warehouseId !== null) {
@@ -102,26 +105,17 @@ class AssetService
             $this->assertMeasurementUnitBelongsToOrganization((int) $data['measurement_unit_id'], $organizationId);
         }
 
-        // Обновляем additional_properties
-        if (isset($data['asset_type']) || isset($data['asset_category']) ||
-            isset($data['asset_subcategory']) || isset($data['asset_attributes'])) {
-
-            $additionalProperties = $asset->additional_properties ?? [];
-
-            if (isset($data['asset_type'])) {
-                $additionalProperties['asset_type'] = $data['asset_type'];
+        if (array_key_exists('asset_category', $data) || array_key_exists('category', $data)) {
+            $data['asset_category'] = app(AssetCategoryService::class)->resolve(
+                $organizationId, array_key_exists('asset_category', $data) ? $data['asset_category'] : $data['category'],
+            );
+        }
+        foreach (['asset_type', 'asset_category', 'asset_subcategory', 'asset_attributes'] as $property) {
+            if (array_key_exists($property, $data)) {
+                $data['additional_properties'] ??= $asset->additional_properties ?? [];
+                $data['additional_properties'][$property] = $data[$property];
+                unset($data[$property]);
             }
-            if (isset($data['asset_category'])) {
-                $additionalProperties['asset_category'] = $data['asset_category'];
-            }
-            if (isset($data['asset_subcategory'])) {
-                $additionalProperties['asset_subcategory'] = $data['asset_subcategory'];
-            }
-            if (isset($data['asset_attributes'])) {
-                $additionalProperties['asset_attributes'] = $data['asset_attributes'];
-            }
-
-            $data['additional_properties'] = $additionalProperties;
         }
 
         $asset->update($data);

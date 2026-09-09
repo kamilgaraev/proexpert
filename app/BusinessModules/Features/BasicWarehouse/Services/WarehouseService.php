@@ -219,6 +219,10 @@ class WarehouseService implements WarehouseReportDataProvider
         DB::beginTransaction();
         try {
             $this->lockWarehouses($organizationId, [$warehouseId]);
+            if (! empty($metadata['project_id'])) {
+                Project::query()->accessibleByOrganization($organizationId)
+                    ->findOrFail((int) $metadata['project_id']);
+            }
             $operation = ($metadata['is_transfer'] ?? false) === true ? 'transfer_in' : 'receipt';
             $metadata = $this->prepareIdempotencyMetadata($operation, [
                 'warehouse_id' => $warehouseId,

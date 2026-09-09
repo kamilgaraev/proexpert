@@ -13,6 +13,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 
@@ -28,6 +29,9 @@ final class ProjectAllocationService
     {
         return DB::transaction(function () use ($organizationId, $actor, $data): ProjectAllocationResult {
             Organization::query()->lockForUpdate()->findOrFail($organizationId);
+
+            app(UserProjectAccessService::class)->queryAccessibleProjects($actor, $organizationId)
+                ->findOrFail((int) $data['project_id']);
 
             $fingerprint = WarehouseOperationIdempotency::fingerprint('project_allocation_create', $data);
             $existingEvent = ProjectMaterialDeliveryEvent::query()

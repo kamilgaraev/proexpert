@@ -28,6 +28,9 @@ Route::prefix('auth')->name('auth.')->group(function () {
 
     Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'auth.session'])->group(function () {
         Route::get('me', [AuthController::class, 'me'])->name('me');
+        Route::get('organizations', [\App\Http\Controllers\Api\V1\OrganizationSessionController::class, 'index'])->name('organizations');
+        Route::post('organization', [\App\Http\Controllers\Api\V1\OrganizationSessionController::class, 'switch'])
+            ->middleware(['origin.web:lk', 'csrf.web:lk'])->name('organization.switch');
         Route::patch('me', [ProfileController::class, 'update'])->name('me.update');
         Route::post('logout', [AuthController::class, 'logout'])
             ->middleware('csrf.web:lk')

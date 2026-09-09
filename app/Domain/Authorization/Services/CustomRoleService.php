@@ -316,7 +316,7 @@ class CustomRoleService
     public function getAvailableSystemPermissions(int $organizationId): array
     {
         // Базовые системные права, которые можно назначать в кастомных ролях
-        return [
+        $permissions = [
             'admin.access' => 'Доступ к административной панели',
             'admin.view' => 'Просмотр административной панели',
             'dashboard.view' => 'Просмотр дашборда',
@@ -327,6 +327,14 @@ class CustomRoleService
             'users.invite' => 'Приглашение пользователей',
             'roles.view_custom' => 'Просмотр кастомных ролей',
         ];
+
+        foreach ($this->roleScanner->getSystemPermissions('organization_owner') as $permission) {
+            if (str_starts_with($permission, 'legal_archive.')) {
+                $permissions[$permission] = $permission;
+            }
+        }
+
+        return $permissions;
     }
 
     /**

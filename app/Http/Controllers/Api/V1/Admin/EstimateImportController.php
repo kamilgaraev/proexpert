@@ -162,6 +162,7 @@ class EstimateImportController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+            report($e);
             
             return AdminResponse::error(
                 trans_message('estimate.import_detect_type_error'),
