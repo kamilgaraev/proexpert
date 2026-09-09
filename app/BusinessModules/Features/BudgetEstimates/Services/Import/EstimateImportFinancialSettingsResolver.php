@@ -6,6 +6,24 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 
 class EstimateImportFinancialSettingsResolver
 {
+    public function resolveImportedTotals(array $footer): ?array
+    {
+        $total = (float) ($footer['total_estimate_cost'] ?? 0);
+        $overhead = (float) ($footer['overhead_cost'] ?? 0);
+        $profit = (float) ($footer['profit_cost'] ?? 0);
+
+        if ($total <= 0 || ($overhead <= 0 && $profit <= 0)) {
+            return null;
+        }
+
+        return [
+            'total_amount' => $total,
+            'total_overhead_costs' => $overhead,
+            'total_estimated_profit' => $profit,
+            'total_direct_costs' => round($total - $overhead - $profit, 2),
+        ];
+    }
+
     public function resolve(array $settings): array
     {
         $mode = $settings['financial_mode'] ?? 'plain';
