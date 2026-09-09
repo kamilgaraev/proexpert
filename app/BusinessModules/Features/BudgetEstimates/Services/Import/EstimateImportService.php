@@ -60,11 +60,26 @@ class EstimateImportService
     {
         $session = ImportSession::findOrFail($sessionId);
 
-        return $this->fileStorage->withLocalCopy(
-            $session,
-            function (string $fullPath) use ($session, $sessionId): EstimateTypeDetectionDTO {
-                try {
-                    $detection = $this->runtimeDetector->detect($session, $fullPath);
+        $startedAt = microtime(true);
+        $phase = 'storage';
+        $stats = $session->stats ?? [];
+        $stats['detection_started_at'] = $startedAt;
+        $stats['detection_phase'] = $phase;
+        $timeout = (int) config('octane.max_request_timeout', 30);
+        $stats['detection_deadline_at'] = $timeout > 0 ? time() + $timeout + 15 : null;
+        $session->update(['status' => 'detecting', 'error_message' => null, 'stats' => $stats]);
+        Log::info('[EstimateImport] Type detection started', ['session_id' => $sessionId, 'phase' => $phase]);
+
+        try {
+            return $this->fileStorage->withLocalCopy(
+                $session,
+                function (string $fullPath) use ($session, $sessionId, $startedAt, &$phase): EstimateTypeDetectionDTO {
+                    $phase = 'recognizing';
+                    $session->update(['stats' => array_merge($session->stats ?? [], ['detection_phase' => $phase])]);
+                    $detection = $this->runtimeDetector->detect($session, $fullPath, function (string $handler) use ($sessionId, &$phase): void {
+                        $phase = $handler;
+                        Log::info('[EstimateImport] Format detector started', ['session_id' => $sessionId, 'handler' => $handler]);
+                    });
                     if ($detection === null || $detection->confidence <= 0.0) {
                         throw UnsupportedEstimateImportFormatException::create();
                     }
@@ -76,6 +91,12 @@ class EstimateImportService
                     $session->update([
                         'status' => 'detecting',
                         'options' => $options,
+                        'stats' => array_merge($session->stats ?? [], ['detection_phase' => 'completed']),
+                    ]);
+                    Log::info('[EstimateImport] Type detection completed', [
+                        'session_id' => $sessionId,
+                        'format' => $detection->formatSlug,
+                        'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
                     ]);
 
                     return new EstimateTypeDetectionDTO(
@@ -90,23 +111,25 @@ class EstimateImportService
                             'warnings' => $detection->warnings,
                         ],
                     );
-                } catch (UnsupportedEstimateImportFormatException $e) {
-                    Log::warning('[EstimateImport] Unsupported import format', [
-                        'session_id' => $sessionId,
-                        'error' => $e->getMessage(),
-                    ]);
+                },
+            );
+        } catch (Throwable $e) {
+            $session->update([
+                'status' => 'failed',
+                'error_message' => $e instanceof UnsupportedEstimateImportFormatException
+                    ? 'estimate.import_unsupported_format'
+                    : 'estimate.import_detect_type_error',
+                'stats' => array_merge($session->stats ?? [], ['detection_phase' => $phase]),
+            ]);
+            Log::error('[EstimateImport] Type detection failed', [
+                'session_id' => $sessionId,
+                'phase' => $phase,
+                'exception' => $e,
+                'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
+            ]);
 
-                    throw $e;
-                } catch (Throwable $e) {
-                    Log::error('[EstimateImport] Type detection failed', [
-                        'session_id' => $sessionId,
-                        'error' => $e->getMessage(),
-                    ]);
-
-                    throw $e;
-                }
-            },
-        );
+            throw $e;
+        }
     }
 
     public function detectFormat(string $sessionId, ?int $suggestedHeaderRow = null): array
@@ -321,6 +344,21 @@ class EstimateImportService
                 'status' => 'failed',
                 'error' => trans_message('estimate.import_status_not_found'),
             ];
+        }
+
+        $deadline = $session->stats['detection_deadline_at'] ?? null;
+        if ($session->status === 'detecting'
+            && ($session->stats['detection_phase'] ?? null) !== 'completed'
+            && is_numeric($deadline) && microtime(true) > (float) $deadline) {
+            $updated = ImportSession::query()->whereKey($session->id)
+                ->where('status', 'detecting')
+                ->where('stats->detection_deadline_at', $deadline)
+                ->where('stats->detection_phase', '!=', 'completed')
+                ->update(['status' => 'failed', 'error_message' => 'estimate.import_detection_interrupted']);
+            if ($updated > 0) {
+                Log::error('[EstimateImport] Type detection interrupted', ['session_id' => $session->id]);
+            }
+            $session->refresh();
         }
 
         $progress = \Illuminate\Support\Facades\Cache::get("import_session_progress_{$id}");
