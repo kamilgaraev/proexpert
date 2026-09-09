@@ -8,6 +8,7 @@ use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetSampleLoader;
 use App\Models\ImportSession;
 use Generator;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -56,8 +57,12 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
             );
         }
 
-        $content = $this->loadSpreadsheet($filePath);
-        $handlerResult = $this->spreadsheetHandler->canHandle($content, $extension);
+        $content = (new SpreadsheetSampleLoader)->load($filePath, 15);
+        try {
+            $handlerResult = $this->spreadsheetHandler->canHandle($content, $extension);
+        } finally {
+            $content->disconnectWorksheets();
+        }
 
         return new ImportDetectionResult(
             detectedType: $handlerResult->detectedType,
@@ -124,6 +129,7 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
 
             if (($payload['is_section'] ?? false) === true) {
                 $sections[] = $payload;
+
                 continue;
             }
 
@@ -174,6 +180,7 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
 
         if (in_array($extension, ['xml', 'gsfx'], true)) {
             yield from $this->xmlParser->getStream($filePath, $structure->toArray());
+
             return;
         }
 
