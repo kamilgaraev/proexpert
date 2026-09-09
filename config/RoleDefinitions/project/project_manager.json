@@ -200,6 +200,8 @@
       "budget-estimates.edit",
       "budget-estimates.import",
       "budget-estimates.export",
+      "budget-estimates.finance.view",
+      "budget-estimates.finance.edit",
       "budget-estimates.templates.manage",
       "construction-journal.view",
       "construction-journal.create",

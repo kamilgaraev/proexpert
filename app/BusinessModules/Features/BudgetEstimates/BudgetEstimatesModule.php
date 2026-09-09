@@ -90,6 +90,8 @@ class BudgetEstimatesModule implements ModuleInterface, ConfigurableInterface
             'budget-estimates.approve',
             'budget-estimates.import',
             'budget-estimates.export',
+            'budget-estimates.finance.view',
+            'budget-estimates.finance.edit',
             'budget-estimates.templates.manage',
             'budget-estimates.analytics',
             'budget-estimates.versions.create',

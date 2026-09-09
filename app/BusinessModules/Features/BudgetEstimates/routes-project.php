@@ -29,6 +29,17 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
     ->group(function () {
         
         Route::prefix('estimates')->group(function () {
+            Route::get('/finance', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateFinanceController::class, 'project'])
+                ->middleware('authorize:budget-estimates.finance.view,project,project')->name('finance.project');
+            Route::get('/finance/export', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateFinanceController::class, 'export'])
+                ->middleware('authorize:budget-estimates.finance.view,project,project')->name('finance.project.export');
+            Route::prefix('{estimate}/finance')->where(['estimate' => '[0-9]+'])->group(function () {
+                Route::get('/', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateFinanceController::class, 'show'])->middleware('authorize:budget-estimates.finance.view,project,project');
+                Route::get('/export', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateFinanceController::class, 'export'])->middleware('authorize:budget-estimates.finance.view,project,project');
+                Route::get('/items/{item}', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateFinanceController::class, 'item'])->whereNumber('item')->middleware('authorize:budget-estimates.finance.view,project,project');
+                Route::post('/preview', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateFinanceController::class, 'preview'])->middleware('authorize:budget-estimates.finance.edit,project,project');
+                Route::put('/', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateFinanceController::class, 'save'])->middleware('authorize:budget-estimates.finance.edit,project,project');
+            });
             // Импорт смет
             Route::prefix('import')->name('import.')->group(function () {
                 Route::get('/template', [EstimateImportController::class, 'downloadTemplate'])->name('template');

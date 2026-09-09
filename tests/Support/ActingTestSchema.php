@@ -58,6 +58,7 @@ trait ActingTestSchema
             'construction_journals',
             'schedule_tasks',
             'project_schedules',
+            'estimate_finance_allocations',
             'contract_estimate_items',
             'estimate_items',
             'estimate_versions',
@@ -443,8 +444,18 @@ trait ActingTestSchema
             $table->foreignId('estimate_item_id');
             $table->decimal('quantity', 15, 8)->nullable();
             $table->decimal('amount', 15, 2)->nullable();
+            $table->decimal('amount_without_vat', 20, 2)->nullable();
             $table->text('notes')->nullable();
             $table->timestamps();
+        });
+
+        Schema::create('estimate_finance_allocations', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('estimate_id');
+            $table->foreignId('estimate_item_id');
+            $table->foreignId('resource_id')->nullable();
+            $table->foreignId('contract_id')->nullable();
+            $table->foreignId('contract_estimate_item_id')->nullable();
         });
 
         Schema::create('construction_journals', function (Blueprint $table): void {

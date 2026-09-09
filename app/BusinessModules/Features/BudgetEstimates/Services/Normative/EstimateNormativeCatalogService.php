@@ -315,6 +315,8 @@ class EstimateNormativeCatalogService
             $this->calculationService->calculateItemTotal($child, $work->estimate);
 
             EstimateItemResource::query()->create([
+                'finance_representation' => 'child',
+                'represented_by_item_id' => $child->id,
                 'estimate_item_id' => $work->id,
                 'resource_type' => $itemType === EstimatePositionItemType::MACHINERY->value ? 'equipment' : $itemType,
                 'name' => $resource['name'] ?? $resource['resource_code'],

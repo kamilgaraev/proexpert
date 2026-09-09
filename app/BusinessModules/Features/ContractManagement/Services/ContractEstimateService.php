@@ -23,6 +23,10 @@ class ContractEstimateService
     public function attachItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
     {
         $attached = DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat) {
+            Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            if ((int) $contract->organization_id !== (int) $estimate->organization_id || (int) $contract->project_id !== (int) $estimate->project_id) {
+                throw new DomainException('contract_estimate_items_invalid');
+            }
             $allIds = $this->resolveWithChildren($estimate->id, $itemIds);
 
             $items = EstimateItem::whereIn('id', $allIds)
@@ -38,7 +42,7 @@ class ContractEstimateService
 
             foreach ($allIds as $itemId) {
                 $item = $items->get($itemId);
-                $link = ContractEstimateItem::updateOrCreate(
+                $link = ContractEstimateItem::firstOrCreate(
                     [
                         'contract_id' => $contract->id,
                         'estimate_item_id' => $item->id,
@@ -80,6 +84,11 @@ class ContractEstimateService
                 ->unique()
                 ->values();
 
+            Estimate::query()->whereIn('id', $estimateIds)->orderBy('id')->lockForUpdate()->get();
+            if (\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contract->id)->whereIn('estimate_item_id', $allIds)->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['items' => trans_message('estimate_finance.linked')]);
+            }
+
             ContractEstimateItem::where('contract_id', $contract->id)
                 ->whereIn('estimate_item_id', $allIds)
                 ->delete();
@@ -99,8 +108,16 @@ class ContractEstimateService
     public function syncItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
     {
         return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat) {
+            Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            $allIds = $this->resolveWithChildren($estimate->id, $itemIds);
+            $removed = ContractEstimateItem::where('contract_id', $contract->id)
+                ->where('estimate_id', $estimate->id)->whereNotIn('estimate_item_id', $allIds);
+            if (\App\Models\EstimateFinanceAllocation::query()->whereIn('contract_estimate_item_id', (clone $removed)->select('id'))->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['items' => trans_message('estimate_finance.linked')]);
+            }
             ContractEstimateItem::where('contract_id', $contract->id)
                 ->where('estimate_id', $estimate->id)
+                ->whereNotIn('estimate_item_id', $allIds)
                 ->delete();
 
             if (empty($itemIds)) {

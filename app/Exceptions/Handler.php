@@ -113,6 +113,10 @@ class Handler extends ExceptionHandler
             
             // Определяем класс ответа в зависимости от API
             $responseClass = $this->getResponseClassForRequest($request);
+            if ($e instanceof \Illuminate\Database\QueryException && ($e->errorInfo[0] ?? null) === '23503'
+                && str_contains((string) ($e->errorInfo[2] ?? ''), 'estimate_finance_source_is_allocated')) {
+                return $respond($responseClass::error(trans_message('estimate_finance.linked'), 422));
+            }
             
             // ============================================================
             // ОБРАБОТКА СПЕЦИФИЧНЫХ ИСКЛЮЧЕНИЙ
