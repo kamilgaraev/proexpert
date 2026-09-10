@@ -99,6 +99,7 @@ class EstimateCoverageService
 
         $links = ContractEstimateItem::query()
             ->where('estimate_id', $estimate->id)
+            ->countedInCoverage()
             ->with('contract.contractor')
             ->get()
             ->groupBy('contract_id');
@@ -148,6 +149,7 @@ class EstimateCoverageService
     {
         $links = ContractEstimateItem::query()
             ->where('contract_id', $contract->id)
+            ->countedInCoverage()
             ->with(['estimate', 'estimateItem'])
             ->get()
             ->groupBy('estimate_id');
