@@ -182,6 +182,17 @@ $app = Application::configure(basePath: dirname(__DIR__))
             return $responseClass::error($message, $exception->status, $errors);
         });
 
+        $exceptions->render(function (\Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException $exception, Request $request) use ($responseClassForRequest) {
+            if (! $request->expectsJson() && ! $request->is('api/*')) {
+                return null;
+            }
+
+            $responseClass = $responseClassForRequest($request);
+
+            return $responseClass::error(trans_message('errors.too_many_attempts'), 429)
+                ->withHeaders($exception->getHeaders());
+        });
+
         $exceptions->render(function (ReportContractException $exception, Request $request) {
             if (! str_starts_with($request->path(), 'api/v1/admin/reports/')) {
                 return null;
