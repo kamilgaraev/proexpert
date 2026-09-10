@@ -8,10 +8,13 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportS
 use App\Models\ImportSession;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Storage\DTO\CurrentStoredFile;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Mockery;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
@@ -23,6 +26,18 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
     public function test_grand_smeta_detection_and_preview_stay_stable(): void
     {
         Storage::fake('s3');
+        $disk = Storage::disk('s3');
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('putPrivate')->once()->andReturnUsing(
+            static function (string $key, mixed $contents, string $mime, string $sha256) use ($disk): CurrentStoredFile {
+                $disk->put($key, $contents);
+
+                return new CurrentStoredFile($key, 'test-etag', $disk->size($key), $sha256, $mime);
+            }
+        );
+        $files->shouldReceive('existsCurrent')->andReturnUsing(static fn (string $key): bool => $disk->exists($key));
+        $files->shouldReceive('readCurrent')->andReturnUsing(static fn (string $key) => $disk->readStream($key));
+        $this->app->instance(FileService::class, $files);
 
         $user = User::factory()->create();
         $organization = Organization::factory()->create();
@@ -64,7 +79,7 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
 
     private function createGrandSmetaSpreadsheet(): string
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
 
         $sheet->setCellValue('A1', 'ГРАНД-Смета');
@@ -85,7 +100,7 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         $sheet->setCellValue('J5', 100);
         $sheet->setCellValue('L5', 200);
 
-        $filePath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'grand-smeta-golden-' . Str::uuid() . '.xlsx';
+        $filePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'grand-smeta-golden-'.Str::uuid().'.xlsx';
         (new Xlsx($spreadsheet))->save($filePath);
         $spreadsheet->disconnectWorksheets();
 

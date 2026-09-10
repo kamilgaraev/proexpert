@@ -31,7 +31,9 @@ class GrandSmetaHandler extends AbstractFormatHandler
             $found = false;
             
             foreach ($sheet->getRowIterator(1, 15) as $row) {
-                foreach ($row->getCellIterator() as $cell) {
+                $iterator = $row->getCellIterator();
+                $iterator->setIterateOnlyExistingCells(true);
+                foreach ($iterator as $cell) {
                     if (str_contains((string)$cell->getValue(), $searchText)) {
                         $found = true;
                         break 2;
@@ -72,7 +74,9 @@ class GrandSmetaHandler extends AbstractFormatHandler
 
         foreach ($sheet->getRowIterator($headerRow + 1) as $row) {
             $rowData = [];
-            foreach ($row->getCellIterator() as $cell) {
+            $iterator = $row->getCellIterator();
+            $iterator->setIterateOnlyExistingCells(true);
+            foreach ($iterator as $cell) {
                 $rowData[$cell->getColumn()] = $cell->getCalculatedValue();
             }
 
@@ -100,7 +104,9 @@ class GrandSmetaHandler extends AbstractFormatHandler
             $foundMarkers = 0;
             $tempMapping = [];
             
-            foreach ($row->getCellIterator() as $cell) {
+            $iterator = $row->getCellIterator();
+            $iterator->setIterateOnlyExistingCells(true);
+            foreach ($iterator as $cell) {
                 $val = trim((string)$cell->getValue());
                 $col = $cell->getColumn();
                 
