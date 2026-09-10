@@ -5,13 +5,17 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportPipelineService;
+use App\Models\EstimateItem;
 use App\Models\ImportSession;
 use App\Models\Organization;
+use App\Models\Project;
 use App\Models\User;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Mockery;
@@ -23,9 +27,12 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
 {
     use RefreshDatabase;
 
+    private const LONG_CODE = "ГЭСН05-01-002-02\nС40.30-1-F150-W8-B25 (5шт), С90.30-8-F150-W8-B25 (5шт), С120.30-8-F150-W8-B25 (15шт)";
+
     public function test_grand_smeta_detection_and_preview_stay_stable(): void
     {
         Storage::fake('s3');
+        Queue::fake();
         $disk = Storage::disk('s3');
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('putPrivate')->once()->andReturnUsing(
@@ -41,6 +48,7 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
 
         $user = User::factory()->create();
         $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
         $filePath = $this->createGrandSmetaSpreadsheet();
 
         $uploadedFile = new UploadedFile(
@@ -75,6 +83,24 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         self::assertNotEmpty($preview->sections);
         self::assertNotEmpty($preview->items);
         self::assertGreaterThanOrEqual(200.0, $preview->getTotalAmount());
+
+        $session->refresh();
+        $options = $session->options ?? [];
+        $options['estimate_settings'] = ['project_id' => $project->id, 'name' => 'Проверка длинного кода'];
+        $session->update(['options' => $options]);
+        app(ImportPipelineService::class)->run($session->fresh());
+        $session->refresh();
+
+        self::assertSame('completed', $session->status, $session->error_message ?? '');
+        $item = EstimateItem::query()->where('estimate_id', $session->stats['estimate_id'])->sole();
+        self::assertSame(self::LONG_CODE, $item->normative_rate_code);
+        self::assertSame(self::LONG_CODE, $item->metadata['raw_data']['B']);
+        self::assertEquals(200, $item->total_amount);
+
+        $boundaryCode = str_repeat('Я', 1000);
+        $item->update(['normative_rate_code' => $boundaryCode]);
+        self::assertSame($boundaryCode, $item->fresh()->normative_rate_code);
+        unlink($filePath);
     }
 
     private function createGrandSmetaSpreadsheet(): string
@@ -93,8 +119,8 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
 
         $sheet->setCellValue('A4', 'Раздел 1. Монтажные работы');
         $sheet->setCellValue('A5', '1');
-        $sheet->setCellValue('B5', 'ФЕР01-01-001-01');
-        $sheet->setCellValue('C5', 'Монтаж оборудования');
+        $sheet->setCellValue('B5', self::LONG_CODE);
+        $sheet->setCellValue('C5', 'Погружение дизель-молотом копровой установки на базе экскаватора железобетонных свай длиной: до 6 м в грунты группы 2');
         $sheet->setCellValue('D5', 'шт');
         $sheet->setCellValue('G5', 2);
         $sheet->setCellValue('J5', 100);
