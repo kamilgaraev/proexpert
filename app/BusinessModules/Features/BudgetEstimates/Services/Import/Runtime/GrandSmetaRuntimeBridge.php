@@ -8,12 +8,12 @@ use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportFinancialSettingsResolver;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaSpreadsheetLoader;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportRowPolicy;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetSampleLoader;
 use App\Models\ImportSession;
 use Generator;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
@@ -94,12 +94,15 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
         }
 
         $spreadsheet = $this->loadSpreadsheet($filePath);
-        $sheet = $spreadsheet->getActiveSheet();
-        $detection = $this->spreadsheetHandler->findHeaderAndMapping($sheet);
-        $mapping = $detection['mapping'];
-        $headerRow = (int) $detection['header_row'];
-        $rawHeaders = $this->readRow($sheet, $headerRow);
-        $spreadsheet->disconnectWorksheets();
+        try {
+            $sheet = $spreadsheet->getActiveSheet();
+            $detection = $this->spreadsheetHandler->findHeaderAndMapping($sheet);
+            $mapping = $detection['mapping'];
+            $headerRow = (int) $detection['header_row'];
+            $rawHeaders = $this->readRow($sheet, $headerRow);
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+        }
 
         return new ImportStructureResult(
             formatSlug: $this->slug(),
@@ -210,7 +213,7 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
 
     private function loadSpreadsheet(string $filePath): Spreadsheet
     {
-        return IOFactory::load($filePath);
+        return GrandSmetaSpreadsheetLoader::load($filePath);
     }
 
     /**
