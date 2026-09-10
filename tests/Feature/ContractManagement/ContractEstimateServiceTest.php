@@ -7,6 +7,7 @@ namespace Tests\Feature\ContractManagement;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\Models\Contract;
+use App\Models\ContractEstimateItem;
 use App\Models\Contractor;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -286,6 +287,54 @@ class ContractEstimateServiceTest extends TestCase
         $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
 
         $this->assertEquals(1200.0, $coverage['primary_contract']['linked_amount']);
+    }
+
+    public function test_excluded_import_rows_do_not_inflate_new_or_existing_coverage(): void
+    {
+        $this->estimate->update(['vat_rate' => 20]);
+        $this->contract->update(['total_amount' => 1100]);
+        $parent = $this->createEstimateItem(['total_amount' => 1000, 'is_not_accounted' => false]);
+        $this->createEstimateItem([
+            'parent_work_id' => $parent->id,
+            'total_amount' => 100,
+            'is_not_accounted' => false,
+        ]);
+        $excluded = $this->createEstimateItem([
+            'name' => 'Всего по разделу',
+            'parent_work_id' => $parent->id,
+            'item_type' => 'material',
+            'total_amount' => 90000000,
+            'is_not_accounted' => true,
+        ]);
+
+        self::assertSame(1100.0, $this->service->calculateItemsTotal($this->estimate, [$parent->id]));
+        self::assertSame(1320.0, $this->service->calculateItemsTotal($this->estimate, [$parent->id], true));
+        self::assertSame(0.0, $this->service->calculateItemsTotal($this->estimate, [$excluded->id], true));
+
+        $this->service->attachItems($this->contract, $this->estimate, [$parent->id]);
+        $this->assertDatabaseHas('contract_estimate_items', [
+            'contract_id' => $this->contract->id,
+            'estimate_item_id' => $excluded->id,
+            'amount' => 0,
+            'amount_without_vat' => 0,
+        ]);
+
+        ContractEstimateItem::query()->where('estimate_item_id', $excluded->id)
+            ->update(['amount' => 90000000, 'amount_without_vat' => 90000000]);
+
+        $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
+        self::assertSame(1100.0, $coverage['contracts'][0]['linked_amount']);
+        self::assertSame(1, $coverage['contracts'][0]['linked_items_count']);
+        $summary = $this->coverageService->getContractCoverageSummary($this->contract);
+        self::assertSame(1100.0, $summary['summary']['linked_amount']);
+        self::assertSame(1000.0, $summary['linked_estimates'][0]['linked_items_summary']['max_amount']);
+        self::assertSame(1100.0, $this->service->calculateContractEstimateTotal($this->contract));
+        self::assertSame(1100.0, $this->service->getSummary($this->contract)['total_amount']);
+
+        $validation = $this->coverageService->validateContractAmount($this->estimate, $this->contract);
+        self::assertTrue($validation['valid']);
+        self::assertSame(0.0, $validation['difference']);
+        self::assertSame(90000000.0, (float) $excluded->fresh()->total_amount);
     }
 
     private function createContract(array $attributes = []): Contract
