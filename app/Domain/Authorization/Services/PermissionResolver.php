@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Log;
  */
 class PermissionResolver
 {
-    private const CACHE_SCHEMA_VERSION = 'v3';
+    private const CACHE_SCHEMA_VERSION = 'v4';
 
     protected RoleScanner $roleScanner;
 
@@ -656,6 +656,10 @@ class PermissionResolver
             str_replace('_', '-', $resolvedModule),
             str_replace('-', '_', $resolvedModule),
         ]);
+
+        if (in_array($requestedModule, ['estimates', 'budget-estimates', 'budget_estimates'], true)) {
+            $moduleVariants = array_merge($moduleVariants, ['estimates', 'budget-estimates', 'budget_estimates']);
+        }
 
         $variants = [];
 
