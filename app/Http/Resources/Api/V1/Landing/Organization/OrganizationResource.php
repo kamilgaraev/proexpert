@@ -4,6 +4,7 @@ namespace App\Http\Resources\Api\V1\Landing\Organization;
 
 use App\Http\Resources\ModelJsonResource;
 use App\Models\Organization;
+use App\Services\OrganizationVerificationService;
 use Illuminate\Http\Request;
 
 class OrganizationResource extends ModelJsonResource
@@ -16,6 +17,7 @@ class OrganizationResource extends ModelJsonResource
     public function toArray(Request $request): array
     {
         $organization = $this->typedResource(Organization::class);
+        $verification = app(OrganizationVerificationService::class)->getVerificationRecommendations($organization);
 
         return [
             'id' => $this->id,
@@ -35,11 +37,11 @@ class OrganizationResource extends ModelJsonResource
             'is_active' => $this->is_active,
 
             'verification' => [
-                'is_verified' => $this->is_verified,
-                'verified_at' => $this->verified_at?->toISOString(),
-                'verification_status' => $this->verification_status,
-                'verification_status_text' => $this->verification_status_text,
-                'verification_score' => $this->verification_score,
+                'is_verified' => $verification['status'] === 'verified',
+                'verified_at' => $verification['status'] === 'verified' ? $this->verified_at?->toISOString() : null,
+                'verification_status' => $verification['status'],
+                'verification_status_text' => $verification['status_text'],
+                'verification_score' => $verification['current_score'],
                 'verification_data' => $this->verification_data,
                 'verification_notes' => $this->verification_notes,
                 'can_be_verified' => $organization->canBeVerified(),
