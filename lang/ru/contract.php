@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 return [
+    'coverage_vat_rate_required' => 'Укажите ставку НДС в смете перед включением НДС в привязку.',
+    'coverage_vat_updated' => 'Учёт НДС в привязке обновлён.',
     'organization_context_missing' => 'Не удалось определить организацию для выполнения операции с договором.',
     'create_error' => 'Не удалось создать договор.',
     'contract_not_found' => 'Договор не найден.',

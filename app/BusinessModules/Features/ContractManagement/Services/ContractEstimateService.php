@@ -136,13 +136,37 @@ class ContractEstimateService
             'estimateItem.section.parent',
             'estimateItem.measurementUnit',
             'estimateItem.childItems',
-        ])->where('contract_id', $contract->id);
+        ])->countedInCoverage()->where('contract_id', $contract->id);
 
         if ($estimateId !== null) {
             $query->where('estimate_id', $estimateId);
         }
 
         return $query->get();
+    }
+
+    public function updateCoverageVat(Contract $contract, Estimate $estimate, bool $includeVat): void
+    {
+        DB::transaction(function () use ($contract, $estimate, $includeVat): void {
+            Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            if ((int) $contract->organization_id !== (int) $estimate->organization_id || (int) $contract->project_id !== (int) $estimate->project_id) {
+                throw new DomainException('contract_estimate_items_invalid');
+            }
+
+            $links = ContractEstimateItem::query()->where('contract_id', $contract->id)
+                ->where('estimate_id', $estimate->id)->with('estimateItem')->lockForUpdate()->get();
+            if ($links->isEmpty()) {
+                throw new DomainException('contract_estimate_items_invalid');
+            }
+
+            foreach ($links as $link) {
+                $baseAmount = $link->estimateItem?->is_not_accounted ? 0.0 : (float) $link->amount_without_vat;
+                $link->amount = round($baseAmount * ($includeVat ? 1 + (float) $estimate->vat_rate / 100 : 1), 2);
+                $link->save();
+            }
+
+            $this->estimateCacheService->invalidateStructure($estimate);
+        });
     }
 
     public function getContractsByEstimateItem(EstimateItem $item): Collection

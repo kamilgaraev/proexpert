@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\ContractManagement\Http\Controllers;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\BusinessModules\Features\ContractManagement\Http\Requests\AttachEstimateItemsRequest;
 use App\BusinessModules\Features\ContractManagement\Http\Requests\DetachEstimateItemsRequest;
+use App\BusinessModules\Features\ContractManagement\Http\Requests\UpdateCoverageVatRequest;
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource;
 use App\Http\Responses\AdminResponse;
@@ -75,6 +76,22 @@ class ContractEstimateItemController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('contract.estimate_items_attach_error'), 500);
+        }
+    }
+
+    public function updateVat(UpdateCoverageVatRequest $request, Contract $contract)
+    {
+        $estimate = Estimate::query()->findOrFail($request->integer('estimate_id'));
+        if ($request->boolean('include_vat') && (float) $estimate->vat_rate <= 0) {
+            return AdminResponse::error(trans_message('contract.coverage_vat_rate_required'), 422);
+        }
+
+        try {
+            $this->service->updateCoverageVat($contract, $estimate, $request->boolean('include_vat'));
+
+            return AdminResponse::success(null, trans_message('contract.coverage_vat_updated'));
+        } catch (\DomainException) {
+            return AdminResponse::error(trans_message('contract.estimate_project_mismatch'), 422);
         }
     }
 
