@@ -14,17 +14,18 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
 use App\BusinessModules\Features\DesignManagement\Support\DesignNormativeCatalog;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
 use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Storage\FileService;
+use BackedEnum;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
-use BackedEnum;
 
 final class DesignManagementService implements Contracts\DesignModelRegistrationService
 {
@@ -54,8 +55,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
         private readonly DesignStoragePathService $pathService,
         private readonly FileService $fileService,
         private readonly DesignSectionGenerationService $sectionGenerationService,
-    ) {
-    }
+    ) {}
 
     public function listPackages(int $organizationId, array $filters): LengthAwarePaginator
     {
@@ -63,12 +63,12 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
 
         return DesignPackage::forOrganization($organizationId)
             ->with(self::PACKAGE_RELATIONS)
-            ->when(!empty($filters['project_id']), static fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), static fn ($query) => $query->where('status', (string) $filters['status']))
-            ->when(!empty($filters['discipline']), static fn ($query) => $query->where('discipline', (string) $filters['discipline']))
-            ->when(!empty($filters['project_stage']), static fn ($query) => $query->where('project_stage', (string) $filters['project_stage']))
-            ->when(!empty($filters['object_type']), static fn ($query) => $query->where('object_type', (string) $filters['object_type']))
-            ->when(!empty($filters['normative_profile_code']), static fn ($query) => $query->where('normative_profile_code', (string) $filters['normative_profile_code']))
+            ->when(! empty($filters['project_id']), static fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), static fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['discipline']), static fn ($query) => $query->where('discipline', (string) $filters['discipline']))
+            ->when(! empty($filters['project_stage']), static fn ($query) => $query->where('project_stage', (string) $filters['project_stage']))
+            ->when(! empty($filters['object_type']), static fn ($query) => $query->where('object_type', (string) $filters['object_type']))
+            ->when(! empty($filters['normative_profile_code']), static fn ($query) => $query->where('normative_profile_code', (string) $filters['normative_profile_code']))
             ->orderByDesc('id')
             ->paginate($perPage);
     }
@@ -99,7 +99,11 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
                 'metadata' => $payload['metadata'] ?? [],
             ]);
 
-            $this->sectionGenerationService->generateForPackage($package);
+            if (is_array($payload['composition'] ?? null)) {
+                $this->materializeCompositionSections($package, $payload['composition']);
+            } else {
+                $this->sectionGenerationService->generateForPackage($package);
+            }
 
             return $package;
         });
@@ -112,6 +116,29 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
         return DesignPackage::forOrganization($organizationId)
             ->with(self::PACKAGE_RELATIONS)
             ->find($packageId);
+    }
+
+    private function materializeCompositionSections(DesignPackage $package, array $composition): void
+    {
+        $stage = $this->value($package->project_stage);
+        $items = match ($stage) {
+            'pd' => array_values($composition['sections'] ?? []),
+            'rd' => array_values($composition['document_groups'] ?? []),
+            'survey', 'bim' => array_values($composition['items'] ?? []),
+            default => [],
+        };
+        foreach ($items as $index => $item) {
+            if (! is_array($item) || trim((string) ($item['code'] ?? '')) === '') {
+                continue;
+            }
+            $code = mb_strtoupper(trim((string) $item['code']), 'UTF-8');
+            DesignPackageSection::query()->create(['organization_id' => $package->organization_id, 'project_id' => $package->project_id, 'package_id' => $package->id, 'code' => $code, 'title' => trim((string) ($item['title'] ?? $code)), 'project_stage' => $stage, 'object_type' => $this->value($package->object_type), 'required' => (bool) ($item['required'] ?? true), 'sort_order' => ($index + 1) * 10, 'metadata' => ['documents' => array_values($item['documents'] ?? [])]]);
+        }
+    }
+
+    private function value(mixed $value): ?string
+    {
+        return $value instanceof BackedEnum ? $value->value : ($value !== null ? (string) $value : null);
     }
 
     public function findVersion(int $organizationId, int $versionId): ?DesignArtifactVersion
@@ -367,7 +394,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
                     && DesignViewerConverter::isCurrent($item);
             });
 
-        if (!$derivative instanceof DesignModelDerivative || empty($derivative->derivative_file_path)) {
+        if (! $derivative instanceof DesignModelDerivative || empty($derivative->derivative_file_path)) {
             throw new DomainException(trans_message('design_management.errors.derivative_file_not_available'));
         }
 
@@ -386,7 +413,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             $version->loadMissing('artifact.package');
             $package = $version->artifact?->package;
 
-            if (!$package instanceof DesignPackage) {
+            if (! $package instanceof DesignPackage) {
                 throw new DomainException(trans_message('design_management.errors.version_not_found'));
             }
 
@@ -407,7 +434,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
         $version->loadMissing('artifact.package');
         $package = $version->artifact?->package;
 
-        if (!$package instanceof DesignPackage) {
+        if (! $package instanceof DesignPackage) {
             throw new DomainException(trans_message('design_management.errors.version_not_found'));
         }
 
@@ -416,7 +443,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
 
     private function resolveArtifact(DesignPackage $package, int $userId, array $payload): DesignArtifact
     {
-        if (!empty($payload['artifact_id'])) {
+        if (! empty($payload['artifact_id'])) {
             $artifact = DesignArtifact::forOrganization((int) $package->organization_id)
                 ->where('package_id', $package->id)
                 ->find((int) $payload['artifact_id']);
@@ -470,7 +497,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             fclose($stream);
         }
 
-        if (!$stored) {
+        if (! $stored) {
             throw new DomainException(trans_message('design_management.errors.file_upload_failed'));
         }
     }
@@ -479,7 +506,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
     {
         $realPath = $file->getRealPath();
 
-        if (!$realPath || !is_file($realPath)) {
+        if (! $realPath || ! is_file($realPath)) {
             throw new DomainException(trans_message('design_management.errors.file_upload_failed'));
         }
 
@@ -509,7 +536,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
         $organization = Organization::query()->find($organizationId);
         $stream = $this->fileService->disk($organization)->readStream($path);
 
-        if (!is_resource($stream)) {
+        if (! is_resource($stream)) {
             throw new DomainException($errorMessage);
         }
 
@@ -527,7 +554,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             ->where('organization_id', $organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('design_management.errors.project_not_found'));
         }
     }
@@ -546,7 +573,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             ->lockForUpdate()
             ->first();
 
-        if (!$lockedPackage instanceof DesignPackage) {
+        if (! $lockedPackage instanceof DesignPackage) {
             throw new DomainException(trans_message('design_management.errors.package_not_found'));
         }
 
@@ -557,7 +584,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
 
     private function assertPackageAcceptsModelChanges(DesignPackage $package): void
     {
-        if (!DesignPackageWorkflow::canChangeModels($package)) {
+        if (! DesignPackageWorkflow::canChangeModels($package)) {
             throw new DomainException(trans_message('design_management.errors.package_locked_for_model_changes'));
         }
     }
@@ -615,7 +642,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
 
     private function derivativePayload(?DesignModelDerivative $derivative, ?Organization $organization): array
     {
-        if (!$derivative instanceof DesignModelDerivative) {
+        if (! $derivative instanceof DesignModelDerivative) {
             return [
                 'id' => null,
                 'status' => DesignDerivativeStatusEnum::MISSING->value,

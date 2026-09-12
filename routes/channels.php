@@ -7,6 +7,7 @@ use App\Broadcasting\UserChannel;
 use Illuminate\Support\Facades\Broadcast;
 
 Broadcast::channel('App.Models.User.{id}.{interface}.global', UserChannel::class);
+Broadcast::channel('design-model-session.{sessionId}', \App\Broadcasting\DesignModelSessionChannel::class);
 Broadcast::channel(
     'App.Models.User.{id}.{interface}.org.{organizationId}',
     OrganizationUserChannel::class

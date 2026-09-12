@@ -13,7 +13,7 @@ final class PhpUnitPostgresProfileTest extends TestCase
     {
         self::assertSame('pgsql', getenv('DB_CONNECTION'));
         self::assertSame('127.0.0.1', getenv('DB_HOST'));
-        self::assertSame('45433', getenv('DB_PORT'));
+        self::assertSame('55433', getenv('DB_PORT'));
         self::assertMatchesRegularExpression(
             '/^most_phpunit_[a-f0-9]{24}_testing$/D',
             (string) getenv('DB_DATABASE'),

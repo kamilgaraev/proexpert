@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\DesignManagement\Models;
 
-use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignObjectTypeEnum;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignProjectStageEnum;
 use App\Models\Organization;
 use App\Models\Project;
@@ -34,6 +34,8 @@ final class DesignPackage extends Model
         'issued_at',
         'issued_by',
         'metadata',
+        'composition_status',
+        'composition_revision_id',
     ];
 
     protected $casts = [
@@ -43,6 +45,7 @@ final class DesignPackage extends Model
         'planned_issue_date' => 'date',
         'issued_at' => 'datetime',
         'metadata' => 'array',
+        'composition_revision_id' => 'integer',
     ];
 
     protected $attributes = [

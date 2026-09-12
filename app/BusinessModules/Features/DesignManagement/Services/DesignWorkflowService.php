@@ -7,6 +7,8 @@ namespace App\BusinessModules\Features\DesignManagement\Services;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignCompletenessStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
+use App\BusinessModules\Features\DesignManagement\Models\DesignSourceLink;
 use App\BusinessModules\Features\DesignManagement\Models\DesignWorkflowEvent;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
 use BackedEnum;
@@ -17,11 +19,19 @@ final class DesignWorkflowService
 {
     public function __construct(
         private readonly DesignCompletenessService $completenessService,
-    ) {
-    }
+        private readonly DesignSourceLinkService $sourceLinks,
+    ) {}
 
     public function transition(DesignPackage $package, int $userId, string $action, ?string $comment = null): DesignPackage
     {
+        $comment = trim((string) $comment);
+
+        if (DesignPackageWorkflow::requiresComment($action) && $comment === '') {
+            throw new DomainException(trans_message('design_management.errors.workflow_comment_required'));
+        }
+
+        $comment = $comment !== '' ? $comment : null;
+
         return DB::transaction(function () use ($package, $userId, $action, $comment): DesignPackage {
             $lockedPackage = DesignPackage::forOrganization((int) $package->organization_id)
                 ->whereKey($package->id)
@@ -29,7 +39,7 @@ final class DesignWorkflowService
                 ->lockForUpdate()
                 ->first();
 
-            if (!$lockedPackage instanceof DesignPackage) {
+            if (! $lockedPackage instanceof DesignPackage) {
                 throw new DomainException(trans_message('design_management.errors.package_not_found'));
             }
 
@@ -40,7 +50,7 @@ final class DesignWorkflowService
             $this->assertWorkflowGuards($lockedPackage, $action, $userId);
             $nextStatus = DesignPackageWorkflow::nextStatus($lockedPackage, $action);
 
-            if (!$nextStatus instanceof DesignPackageStatusEnum) {
+            if (! $nextStatus instanceof DesignPackageStatusEnum) {
                 throw new DomainException(trans_message('design_management.errors.workflow_action_not_available'));
             }
 
@@ -72,6 +82,10 @@ final class DesignWorkflowService
 
             $lockedPackage->update($update);
 
+            if ($nextStatus === DesignPackageStatusEnum::ISSUED) {
+                $this->createImpactReviews($lockedPackage);
+            }
+
             DesignWorkflowEvent::query()->create([
                 'organization_id' => $lockedPackage->organization_id,
                 'project_id' => $lockedPackage->project_id,
@@ -83,11 +97,43 @@ final class DesignWorkflowService
                 'comment' => $comment,
                 'metadata' => [
                     'latest_completeness_check_id' => $lockedPackage->latestCompletenessCheck?->id,
+                    ...($nextStatus === DesignPackageStatusEnum::ISSUED ? [
+                        'composition_revision_id' => $lockedPackage->composition_revision_id,
+                        'artifact_version_ids' => $lockedPackage->artifacts
+                            ->map(fn ($artifact) => $artifact->currentVersion?->id)
+                            ->filter()
+                            ->sort()
+                            ->values()
+                            ->all(),
+                    ] : []),
                 ],
             ]);
 
             return $lockedPackage->fresh($this->relations());
         });
+    }
+
+    private function createImpactReviews(DesignPackage $package): void
+    {
+        foreach ($package->artifacts as $artifact) {
+            $current = $artifact->currentVersion;
+            if (! $current instanceof DesignArtifactVersion) {
+                continue;
+            }
+
+            DesignArtifactVersion::query()
+                ->forOrganization((int) $package->organization_id)
+                ->forProject((int) $package->project_id)
+                ->where('artifact_id', $artifact->id)
+                ->where('id', '<', $current->id)
+                ->whereIn('id', DesignSourceLink::query()
+                    ->where('organization_id', $package->organization_id)
+                    ->where('project_id', $package->project_id)
+                    ->select('source_version_id'))
+                ->each(function (DesignArtifactVersion $previous) use ($current): void {
+                    $this->sourceLinks->createImpactReviewsForRevision($previous, $current);
+                });
+        }
     }
 
     private function assertWorkflowGuards(DesignPackage $package, string $action, int $userId): void
@@ -100,7 +146,7 @@ final class DesignWorkflowService
         ], true)) {
             $check = $package->latestCompletenessCheck;
 
-            if ($check === null) {
+            if (! $this->completenessService->isFreshForPackage($package, $check)) {
                 $check = $this->completenessService->run($package, $userId);
                 $package->setRelation('latestCompletenessCheck', $check);
             }
