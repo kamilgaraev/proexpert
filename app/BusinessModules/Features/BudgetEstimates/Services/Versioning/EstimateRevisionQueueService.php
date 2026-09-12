@@ -76,7 +76,7 @@ final class EstimateRevisionQueueService
         Gate::forUser($actor)->authorize('view', $estimate);
 
         return EstimateRevisionOperation::query()->where('estimate_id', $estimateId)
-            ->where('organization_id', $organizationId)->orderByDesc('created_at')->orderByDesc('id')->first();
+            ->where('organization_id', $organizationId)->orderByDesc('sequence')->first();
     }
 
     public function process(string $id): void
@@ -109,15 +109,14 @@ final class EstimateRevisionQueueService
 
     public function fail(string $id, ?Throwable $exception, string $code = 'processing_failed'): void
     {
-        $operation = EstimateRevisionOperation::query()->find($id);
-        if ($operation === null) {
-            return;
-        }
-        $changed = EstimateRevisionOperation::query()->whereKey($id)->whereIn('status', ['queued', 'processing'])
-            ->update(['status' => 'failed', 'error_code' => $code, 'finished_at' => now(), 'updated_at' => now()]);
-        if ($changed) {
+        DB::transaction(function () use ($id, $exception, $code): void {
+            $operation = EstimateRevisionOperation::query()->whereKey($id)->lock('FOR UPDATE SKIP LOCKED')->first();
+            if ($operation === null || ! in_array($operation->status, ['queued', 'processing'], true)) {
+                return;
+            }
+            $operation->update(['status' => 'failed', 'error_code' => $code, 'finished_at' => now()]);
             $this->logError($exception, $this->context($operation) + ['error_code' => $code]);
-        }
+        });
     }
 
     public function recover(): void

@@ -12,7 +12,8 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('estimate_revision_operations', function (Blueprint $table): void {
-            $table->uuid('id')->primary();
+            $table->bigIncrements('sequence');
+            $table->uuid('id')->unique();
             $table->foreignId('estimate_id')->constrained()->cascadeOnDelete();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->foreignId('actor_id')->constrained('users');
@@ -28,6 +29,7 @@ return new class extends Migration
             $table->timestamps();
             $table->unique(['estimate_id', 'idempotency_key'], 'estimate_revision_idempotency');
             $table->index(['status', 'updated_at']);
+            $table->index(['estimate_id', 'sequence']);
         });
         DB::statement("CREATE UNIQUE INDEX estimate_revision_active ON estimate_revision_operations (estimate_id) WHERE status IN ('queued', 'processing')");
     }

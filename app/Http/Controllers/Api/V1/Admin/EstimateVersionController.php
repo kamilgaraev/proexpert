@@ -130,6 +130,9 @@ class EstimateVersionController extends Controller
         } catch (\Illuminate\Auth\Access\AuthorizationException $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
+            if ($exception instanceof \Illuminate\Database\QueryException && $exception->getCode() === '55P03') {
+                return AdminResponse::error(trans_message('estimate.revision_conflict'), Response::HTTP_CONFLICT);
+            }
             $this->revisionService->logError($exception, [
                 'estimate_id' => $estimate->id,
                 'organization_id' => $estimate->organization_id,

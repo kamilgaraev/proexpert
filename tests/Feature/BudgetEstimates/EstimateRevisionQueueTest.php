@@ -11,6 +11,7 @@ use App\Http\Requests\Admin\Estimate\StartEstimateRevisionRequest;
 use App\Jobs\CreateEstimateRevision;
 use App\Models\Estimate;
 use App\Models\EstimateRevisionOperation;
+use App\Models\EstimateVersion;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -113,6 +114,49 @@ final class EstimateRevisionQueueTest extends TestCase
         (new CreateEstimateRevision($id))->failed(new \RuntimeException('timeout'));
         $this->assertSame('failed', EstimateRevisionOperation::findOrFail($id)->status);
         $this->assertSame('approved', $estimate->fresh()->status);
+    }
+
+    public function test_failure_during_snapshot_rolls_back_revision_and_logs_safe_context(): void
+    {
+        [$estimate, $actor] = $this->fixture();
+        Queue::fake();
+        $id = $this->request($estimate, $actor)->getData(true)['data']['id'];
+        $logger = \Mockery::spy(\Psr\Log\LoggerInterface::class);
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('channel')->with('estimate_revisions')->andReturn($logger);
+        EstimateVersion::creating(static function (EstimateVersion $version): void {
+            if ($version->snapshot_type === 'revision_start') {
+                throw new \RuntimeException('private exception details');
+            }
+        });
+        try {
+            app(EstimateRevisionQueueService::class)->process($id);
+            $this->fail('Expected snapshot failure');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('private exception details', $exception->getMessage());
+        }
+        $this->assertSame('approved', $estimate->fresh()->status);
+        $this->assertDatabaseCount('estimate_versions', 1);
+        $this->assertSame('failed', EstimateRevisionOperation::findOrFail($id)->status);
+        $logger->shouldHaveReceived('error')->once()->withArgs(static function (string $event, array $context) use ($id): bool {
+            return $event === 'revision.failed' && $context['operation_id'] === $id
+                && $context['exception_class'] === \RuntimeException::class
+                && ! str_contains(json_encode($context), 'private exception details');
+        });
+    }
+
+    public function test_latest_operation_uses_creation_order_when_timestamps_are_equal(): void
+    {
+        [$estimate, $actor] = $this->fixture();
+        Queue::fake();
+        $this->freezeTime();
+        $first = $this->request($estimate, $actor)->getData(true)['data']['id'];
+        app(EstimateRevisionQueueService::class)->fail($first, null);
+        EstimateRevisionOperation::whereKey($first)->update(['id' => 'ffffffff-ffff-4fff-bfff-ffffffffffff']);
+        $second = $this->request($estimate, $actor, 'next-revision-request')->getData(true)['data']['id'];
+        app(EstimateRevisionQueueService::class)->process($second);
+        $latest = app(EstimateRevisionQueueService::class)->latest($estimate->id, $estimate->organization_id, $actor);
+        $this->assertSame($second, $latest->id);
+        $this->assertSame('completed', $latest->status);
     }
 
     private function request(Estimate $estimate, User $actor, string $key = 'revision-request-0001'): \Illuminate\Http\JsonResponse
