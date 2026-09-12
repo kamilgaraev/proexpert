@@ -17,13 +17,15 @@ final class PrepareDesignModelViewerJob implements ShouldQueue
 
     public int $tries = 1;
 
-    public int $timeout = 7200;
+    public int $timeout;
 
     public bool $failOnTimeout = true;
 
     public function __construct(
         public readonly int $derivativeId,
     ) {
+        $this->timeout = (int) config('design_management.viewer_job_timeout', 6900);
+        $this->onConnection('redis_ifc');
         $this->onQueue(self::QUEUE);
     }
 

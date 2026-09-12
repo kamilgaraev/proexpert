@@ -90,6 +90,9 @@ final class QualityDefectService
     {
         $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
         $this->assertOptionalUserBelongsToOrganization($data['assigned_to'] ?? null, $organizationId);
+        if (($data['kind'] ?? 'construction') === 'project') {
+            $this->assertProjectAssignee($data['assigned_to'] ?? null, $organizationId, (int) $data['project_id']);
+        }
         $this->assertOptionalContractorBelongsToOrganization($data['contractor_id'] ?? null, $organizationId);
 
         return DB::transaction(function () use ($organizationId, $userId, $data): QualityDefect {
@@ -100,6 +103,7 @@ final class QualityDefectService
             $defect = QualityDefect::query()->create([
                 'organization_id' => $organizationId,
                 'project_id' => (int) $data['project_id'],
+                'kind' => $data['kind'] ?? 'construction',
                 'contractor_id' => $data['contractor_id'] ?? null,
                 'created_by' => $userId,
                 'assigned_to' => $data['assigned_to'] ?? null,
@@ -125,7 +129,9 @@ final class QualityDefectService
                 $userId,
                 trans_message('quality_control.history.created'),
             );
-            $this->flowRecorder->record($defect, $history, QualityDefectFlowEventKind::CREATED);
+            if ($defect->kind === 'construction') {
+                $this->flowRecorder->record($defect, $history, QualityDefectFlowEventKind::CREATED);
+            }
 
             return $defect->fresh(self::RESOURCE_RELATIONS);
         });
@@ -138,6 +144,9 @@ final class QualityDefectService
         }
 
         $this->assertOptionalUserBelongsToOrganization($assigneeId, (int) $defect->organization_id);
+        if ($defect->kind === 'project') {
+            $this->assertProjectAssignee($assigneeId, (int) $defect->organization_id, (int) $defect->project_id);
+        }
 
         return $this->transition(
             $defect,
@@ -179,6 +188,7 @@ final class QualityDefectService
         }
 
         return DB::transaction(function () use ($defect, $userId, $comment, $photos): QualityDefect {
+            $defect = $this->lockCurrentProjectIssue($defect);
             $this->storePhotos($defect, $photos, (int) $defect->organization_id, $userId);
 
             return $this->transition(
@@ -270,16 +280,47 @@ final class QualityDefectService
             $comment,
             $terminalReason,
         ): QualityDefect {
+            $defect = $this->lockCurrentProjectIssue($defect);
+            if ($defect->kind === 'project') {
+                $extra['row_version'] = (int) $defect->getAttribute('row_version') + 1;
+            }
             $fromStatus = $defect->status;
             $defect->update(array_merge($extra, [
                 'status' => $toStatus,
             ]));
 
             $history = $this->recordStatus($defect, $fromStatus, $toStatus, $userId, $comment);
-            $this->flowRecorder->record($defect, $history, $eventKind, $terminalReason);
+            if ($defect->kind === 'construction') {
+                $this->flowRecorder->record($defect, $history, $eventKind, $terminalReason);
+            }
 
             return $defect->fresh(self::RESOURCE_RELATIONS);
         });
+    }
+
+    public function assertExpectedRevision(QualityDefect $defect, int $expectedRevision): void
+    {
+        if ($defect->kind === 'project' && (int) $defect->getAttribute('row_version') !== $expectedRevision) {
+            throw new DomainException(trans_message('design_issues.errors.stale_revision'));
+        }
+    }
+
+    private function lockCurrentProjectIssue(QualityDefect $defect): QualityDefect
+    {
+        if ($defect->kind !== 'project') {
+            return $defect;
+        }
+
+        $locked = QualityDefect::query()->forOrganization((int) $defect->organization_id)
+            ->where('project_id', $defect->project_id)->projectIssues()->whereKey($defect->id)
+            ->lockForUpdate()->firstOrFail();
+
+        if ((int) $locked->getAttribute('row_version') !== (int) $defect->getAttribute('row_version')
+            || $locked->status !== $defect->status) {
+            throw new DomainException(trans_message('design_issues.errors.stale_revision'));
+        }
+
+        return $locked;
     }
 
     private function storePhotos(QualityDefect $defect, array $photos, int $organizationId, int $userId): void
@@ -353,6 +394,10 @@ final class QualityDefectService
             'reporting_evidence_refs' => [],
         ]);
 
+        if ($defect->kind === 'project') {
+            app(QualityProjectIssueNotificationService::class)->statusChanged($defect, $history);
+        }
+
         return $history;
     }
 
@@ -387,6 +432,28 @@ final class QualityDefectService
 
         if (! $exists) {
             throw new DomainException(trans_message('quality_control.errors.assignee_not_found'));
+        }
+    }
+
+    private function assertProjectAssignee(mixed $userId, int $organizationId, int $projectId): void
+    {
+        if ($userId === null || $userId === '') {
+            return;
+        }
+
+        $exists = User::query()->whereKey((int) $userId)
+            ->whereHas('organizations', static function ($query) use ($organizationId): void {
+                $query->where('organizations.id', $organizationId)->where('organization_user.is_active', true);
+            })
+            ->whereExists(static function ($query) use ($projectId): void {
+                $query->selectRaw('1')->from('project_user')
+                    ->whereColumn('project_user.user_id', 'users.id')
+                    ->where('project_user.project_id', $projectId)
+                    ->where('project_user.is_active', true);
+            })->exists();
+
+        if (! $exists) {
+            throw new DomainException(trans_message('design_issues.errors.assignee_not_in_project'));
         }
     }
 

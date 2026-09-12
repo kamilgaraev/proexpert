@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\DesignManagement\Services;
 
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
+use App\BusinessModules\Features\DesignManagement\Models\DesignIfcUploadSession;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelRegistrationService;
@@ -32,6 +33,8 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
 
     private const CACHE_LOCK_WAIT_SECONDS = 5;
 
+    private const COMPLETION_LOCK_SECONDS = 900;
+
     public function __construct(
         private readonly FileService $files,
         private readonly DesignStoragePathService $pathService,
@@ -41,8 +44,24 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
     public function start(DesignPackage $package, int $userId, array $payload): array
     {
         $this->designManagementService->ensurePackageAcceptsModelChanges($package);
+        $this->cleanupExpiredSessions((int) $package->organization_id, $userId);
 
         $fileSizeBytes = (int) $payload['file_size_bytes'];
+        $identity = $this->fileIdentity($payload);
+        $resumable = DesignIfcUploadSession::query()
+            ->where('organization_id', $package->organization_id)
+            ->where('project_id', $package->project_id)
+            ->where('package_id', $package->id)
+            ->where('user_id', $userId)
+            ->where('file_identity', $identity)
+            ->whereIn('status', ['active', 'completing'])
+            ->where('expires_at', '>', now())
+            ->latest('created_at')
+            ->first();
+
+        if ($resumable instanceof DesignIfcUploadSession) {
+            return $this->startPayload($this->sessionArray($resumable));
+        }
         $partsCount = max(1, (int) ceil($fileSizeBytes / self::PART_SIZE_BYTES));
 
         if ($partsCount > self::MAX_PARTS) {
@@ -108,25 +127,40 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
             'payload' => $this->modelPayload($payload),
         ];
         try {
+            DesignIfcUploadSession::query()->create([
+                'id' => $uploadId,
+                'organization_id' => $session['organization_id'],
+                'project_id' => $session['project_id'],
+                'package_id' => $session['package_id'],
+                'user_id' => $session['user_id'],
+                'file_identity' => $identity,
+                's3_upload_id' => $session['s3_upload_id'],
+                'source_path' => $session['source_path'],
+                'original_name' => $session['file']['original_name'],
+                'mime_type' => $session['file']['mime_type'],
+                'size_bytes' => $session['file']['size_bytes'],
+                'part_size_bytes' => $session['part_size_bytes'],
+                'parts_count' => $session['parts_count'],
+                'uploaded_parts' => [],
+                'payload' => $session['payload'],
+                'status' => 'active',
+                'expires_at' => $expiresAt,
+            ]);
             $sessionStored = Cache::put($this->cacheKey($uploadId), $session, $expiresAt);
         } catch (Throwable $exception) {
+            DesignIfcUploadSession::query()->whereKey($uploadId)->delete();
             $this->abortUntrackedUpload($storageUpload);
 
             throw $this->storageFailure($exception);
         }
         if (! $sessionStored) {
+            DesignIfcUploadSession::query()->whereKey($uploadId)->delete();
             $this->abortUntrackedUpload($storageUpload);
 
             throw $this->storageFailure(new \RuntimeException('multipart_session_store_failed'));
         }
 
-        return [
-            'upload_id' => $uploadId,
-            'part_size_bytes' => self::PART_SIZE_BYTES,
-            'parts_count' => $partsCount,
-            'expires_at' => $expiresAt->toISOString(),
-            'parts' => $parts,
-        ];
+        return $this->startPayload($session);
     }
 
     public function uploadPart(
@@ -175,6 +209,17 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
 
     public function complete(int $organizationId, int $userId, string $uploadId): DesignArtifactVersion
     {
+        $completed = DesignIfcUploadSession::query()
+            ->with('completedVersion')
+            ->whereKey($uploadId)
+            ->where('organization_id', $organizationId)
+            ->where('user_id', $userId)
+            ->where('status', 'completed')
+            ->first();
+        if ($completed?->completedVersion instanceof DesignArtifactVersion) {
+            return $completed->completedVersion;
+        }
+
         $session = $this->session($organizationId, $userId, $uploadId);
         $upload = $this->multipartUpload($session);
         $parts = $this->multipartParts($session, $upload);
@@ -212,17 +257,47 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
         $fileInfo['size_bytes'] = $stored->sizeBytes;
         $fileInfo['sha256'] = $stored->sha256;
 
+        $registrationAttempted = false;
         try {
-            $version = $this->designManagementService->registerStoredIfcModel(
-                $package,
-                $userId,
-                $stored->key,
-                $fileInfo,
-                $session['payload']
-            );
+            $version = Cache::lock($this->cacheKey($uploadId).':completion-lock', self::COMPLETION_LOCK_SECONDS)
+                ->block(self::CACHE_LOCK_WAIT_SECONDS, function () use ($uploadId, $package, $userId, $stored, $fileInfo, $session, &$registrationAttempted): DesignArtifactVersion {
+                    $alreadyCompleted = DesignIfcUploadSession::query()
+                        ->with('completedVersion')
+                        ->whereKey($uploadId)
+                        ->lockForUpdate()
+                        ->first();
+                    if ($alreadyCompleted?->completedVersion instanceof DesignArtifactVersion) {
+                        return $alreadyCompleted->completedVersion;
+                    }
+
+                    $registrationAttempted = true;
+                    $registered = $this->designManagementService->registerStoredIfcModel(
+                        $package,
+                        $userId,
+                        $stored->key,
+                        $fileInfo,
+                        $session['payload'],
+                    );
+                    DesignIfcUploadSession::query()->whereKey($uploadId)->update([
+                        'status' => 'completed',
+                        'completed_version_id' => $registered->id,
+                    ]);
+
+                    return $registered;
+                });
+            if (! $version instanceof DesignArtifactVersion) {
+                throw new \RuntimeException('multipart_completion_lock_failed');
+            }
         } catch (Throwable $exception) {
-            $this->deleteUnregisteredObject($stored->key);
-            Cache::forget($this->cacheKey($uploadId));
+            $registered = DesignIfcUploadSession::query()
+                ->whereKey($uploadId)
+                ->whereNotNull('completed_version_id')
+                ->exists();
+            if ($registrationAttempted && ! $registered) {
+                $this->deleteUnregisteredObject($stored->key);
+                DesignIfcUploadSession::query()->whereKey($uploadId)->delete();
+                Cache::forget($this->cacheKey($uploadId));
+            }
 
             throw $exception;
         }
@@ -257,16 +332,59 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
             throw $this->storageFailure($exception);
         }
 
+        DesignIfcUploadSession::query()->whereKey($uploadId)->update(['status' => 'aborted', 'cleaned_at' => now()]);
         Cache::forget($this->cacheKey($uploadId));
+    }
+
+    public function cleanupExpiredSessions(int $organizationId, int $userId, int $limit = 20): void
+    {
+        $sessions = DesignIfcUploadSession::query()
+            ->where('organization_id', $organizationId)
+            ->where('user_id', $userId)
+            ->whereIn('status', ['active', 'completing'])
+            ->whereNull('completed_version_id')
+            ->where('expires_at', '<=', now())
+            ->limit($limit)
+            ->get();
+
+        foreach ($sessions as $stored) {
+            try {
+                $session = $this->sessionArray($stored);
+                $completion = $this->multipartCompletion($session);
+                if ($completion instanceof CurrentMultipartCompletion) {
+                    $this->deleteCurrentIfExists($completion->key);
+                } else {
+                    $this->files->abortMultipart($this->multipartUpload($session));
+                }
+                $stored->forceFill(['status' => 'expired', 'cleaned_at' => now()])->save();
+                Cache::forget($this->cacheKey((string) $stored->id));
+            } catch (Throwable $exception) {
+                Log::warning('design_management.ifc_upload_expiry_cleanup_failed', [
+                    'upload_id' => $stored->id,
+                    'organization_id' => $organizationId,
+                    'exception' => $exception::class,
+                ]);
+            }
+        }
     }
 
     private function session(int $organizationId, int $userId, string $uploadId): array
     {
         $session = Cache::get($this->cacheKey($uploadId));
+        if (! is_array($session)) {
+            $stored = DesignIfcUploadSession::query()
+                ->whereKey($uploadId)
+                ->where('organization_id', $organizationId)
+                ->where('user_id', $userId)
+                ->whereIn('status', ['active', 'completing', 'completed'])
+                ->first();
+            $session = $stored instanceof DesignIfcUploadSession ? $this->sessionArray($stored) : null;
+        }
 
         if (! is_array($session)
             || (int) $session['organization_id'] !== $organizationId
             || (int) $session['user_id'] !== $userId
+            || Carbon::parse((string) ($session['expires_at'] ?? now()))->isPast()
         ) {
             throw new DomainException(trans_message('design_management.errors.multipart_upload_not_found'));
         }
@@ -405,6 +523,11 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
                     'ChecksumSHA256' => $part->checksumSha256,
                 ];
 
+                DesignIfcUploadSession::query()->whereKey($uploadId)->update([
+                    'uploaded_parts' => $session['uploaded_parts'],
+                    'status' => 'active',
+                ]);
+
                 return Cache::put(
                     $this->cacheKey($uploadId),
                     $session,
@@ -443,6 +566,11 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
                     'size_bytes' => $completion->sizeBytes,
                     'mime' => $completion->mime,
                 ];
+
+                DesignIfcUploadSession::query()->whereKey($uploadId)->update([
+                    'completion' => $session['completion'],
+                    'status' => 'completing',
+                ]);
 
                 return Cache::put(
                     $this->cacheKey($uploadId),
@@ -538,5 +666,56 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
     private function cacheKey(string $uploadId): string
     {
         return self::CACHE_PREFIX.$uploadId;
+    }
+
+    private function fileIdentity(array $payload): string
+    {
+        $provided = strtolower(trim((string) ($payload['file_sha256'] ?? '')));
+        if (preg_match('/^[a-f0-9]{64}$/', $provided) === 1) {
+            return $provided;
+        }
+
+        return hash('sha256', implode("\0", [
+            (string) $payload['original_name'],
+            (string) $payload['file_size_bytes'],
+            (string) ($payload['last_modified_at'] ?? ''),
+        ]));
+    }
+
+    private function startPayload(array $session): array
+    {
+        $uploaded = array_map('intval', array_keys($session['uploaded_parts'] ?? []));
+        $parts = [];
+        for ($part = 1; $part <= (int) $session['parts_count']; $part++) {
+            $parts[] = ['part_number' => $part, 'method' => 'POST', 'uploaded' => in_array($part, $uploaded, true)];
+        }
+
+        return [
+            'upload_id' => $session['upload_id'],
+            'part_size_bytes' => (int) $session['part_size_bytes'],
+            'parts_count' => (int) $session['parts_count'],
+            'expires_at' => $session['expires_at'],
+            'parts' => $parts,
+        ];
+    }
+
+    private function sessionArray(DesignIfcUploadSession $session): array
+    {
+        return [
+            'upload_id' => $session->id,
+            's3_upload_id' => $session->s3_upload_id,
+            'source_path' => $session->source_path,
+            'organization_id' => $session->organization_id,
+            'project_id' => $session->project_id,
+            'package_id' => $session->package_id,
+            'user_id' => $session->user_id,
+            'part_size_bytes' => $session->part_size_bytes,
+            'parts_count' => $session->parts_count,
+            'file' => ['original_name' => $session->original_name, 'mime_type' => $session->mime_type, 'size_bytes' => $session->size_bytes],
+            'uploaded_parts' => $session->uploaded_parts ?? [],
+            'completion' => $session->completion,
+            'expires_at' => $session->expires_at?->toISOString(),
+            'payload' => $session->payload ?? [],
+        ];
     }
 }

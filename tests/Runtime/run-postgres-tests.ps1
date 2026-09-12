@@ -45,22 +45,22 @@ foreach ($node in $phpunitConfiguration.phpunit.php.env) {
 if (
     $environment.DB_CONNECTION -ne 'pgsql' -or
     $environment.DB_HOST -ne '127.0.0.1' -or
-    $environment.DB_PORT -ne '45433' -or
+    $environment.DB_PORT -ne '55433' -or
     $environment.DB_DATABASE -notmatch '_testing$'
 ) {
     throw 'postgres_test_database_configuration_unsafe'
 }
 
-$revisionTestsMutex = [System.Threading.Mutex]::new($false, 'Local\MostPostgresTests')
-$revisionTestsLockAcquired = $false
+$pirTestsMutex = [System.Threading.Mutex]::new($false, 'Local\MostPostgresTests')
+$pirTestsLockAcquired = $false
 try {
-    while (-not $revisionTestsLockAcquired) {
+    while (-not $pirTestsLockAcquired) {
         try {
-            $revisionTestsLockAcquired = $revisionTestsMutex.WaitOne([TimeSpan]::FromSeconds(30))
+            $pirTestsLockAcquired = $pirTestsMutex.WaitOne([TimeSpan]::FromSeconds(30))
         } catch [System.Threading.AbandonedMutexException] {
-            $revisionTestsLockAcquired = $true
+            $pirTestsLockAcquired = $true
         }
-        if (-not $revisionTestsLockAcquired) {
+        if (-not $pirTestsLockAcquired) {
             Write-Host 'Ожидание завершения другого запуска PostgreSQL-тестов...'
         }
     }
@@ -117,8 +117,8 @@ try {
 
 exit $testExitCode
 } finally {
-    if ($revisionTestsLockAcquired) {
-        $revisionTestsMutex.ReleaseMutex()
+    if ($pirTestsLockAcquired) {
+        $pirTestsMutex.ReleaseMutex()
     }
-    $revisionTestsMutex.Dispose()
+    $pirTestsMutex.Dispose()
 }

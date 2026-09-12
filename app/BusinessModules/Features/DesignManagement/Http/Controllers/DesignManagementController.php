@@ -11,10 +11,11 @@ use App\BusinessModules\Features\DesignManagement\Enums\DesignProjectStageEnum;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignArtifactVersionResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelDerivativeResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
+use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
+use App\BusinessModules\Features\DesignManagement\Services\DesignCompositionService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelViewerPreparationService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignWorkflowService;
-use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
@@ -34,13 +35,13 @@ final class DesignManagementController extends Controller
 {
     public function __construct(
         private readonly DesignManagementService $service,
+        private readonly DesignCompositionService $compositionService,
         private readonly DesignWorkflowService $workflowService,
         private readonly DesignModelViewerPreparationService $viewerPreparationService,
         private readonly DesignModelMultipartUploader $multipartUploadService,
         private readonly DesignManagementModule $module,
         private readonly AuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     public function packages(Request $request): JsonResponse
     {
@@ -84,10 +85,19 @@ final class DesignManagementController extends Controller
                 'status' => ['nullable', 'string', Rule::in($this->packageStatuses())],
                 'planned_issue_date' => ['nullable', 'date'],
                 'metadata' => ['nullable', 'array'],
+                'composition' => ['required', 'array'],
             ]);
 
+            $this->compositionService->preview(
+                $this->organizationId($request),
+                $request->user(),
+                $validated,
+            );
+            $package = $this->service->createPackage($this->organizationId($request), (int) auth()->id(), $validated);
+            $this->compositionService->createRevision($package, $request->user(), $validated);
+
             return AdminResponse::success(
-                new DesignPackageResource($this->service->createPackage($this->organizationId($request), (int) auth()->id(), $validated)),
+                new DesignPackageResource($this->service->findPackage($this->organizationId($request), (int) $package->id)),
                 trans_message('design_management.messages.package_created'),
                 201
             );
@@ -122,7 +132,7 @@ final class DesignManagementController extends Controller
     {
         try {
             $validated = $request->validate([
-                'file' => ['required', 'file', 'max:' . $this->maxIfcSizeKilobytes(), $this->extensionRule('ifc')],
+                'file' => ['required', 'file', 'max:'.$this->maxIfcSizeKilobytes(), $this->extensionRule('ifc')],
                 'title' => ['required', 'string', 'max:255'],
                 'version_number' => ['required', 'string', 'max:80'],
                 'revision' => ['nullable', 'string', 'max:80'],
@@ -171,7 +181,7 @@ final class DesignManagementController extends Controller
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
             }
 
-            if (!$this->canRunWorkflowAction($request, $package->project_id, (string) $validated['action'])) {
+            if (! $this->canRunWorkflowAction($request, $package->project_id, (string) $validated['action'])) {
                 return AdminResponse::error(trans_message('design_management.errors.workflow_action_forbidden'), 403);
             }
 
@@ -260,8 +270,10 @@ final class DesignManagementController extends Controller
         try {
             $validated = $request->validate([
                 'original_name' => ['required', 'string', 'max:255', $this->extensionNameRule('ifc')],
-                'file_size_bytes' => ['required', 'integer', 'min:1', 'max:' . ($this->maxIfcSizeKilobytes() * 1024)],
+                'file_size_bytes' => ['required', 'integer', 'min:1', 'max:'.($this->maxIfcSizeKilobytes() * 1024)],
                 'content_type' => ['nullable', 'string', 'max:120'],
+                'file_sha256' => ['nullable', 'string', 'regex:/^[A-Fa-f0-9]{64}$/'],
+                'last_modified_at' => ['nullable', 'date'],
                 'title' => ['required', 'string', 'max:255'],
                 'version_number' => ['required', 'string', 'max:80'],
                 'revision' => ['nullable', 'string', 'max:80'],
@@ -315,7 +327,7 @@ final class DesignManagementController extends Controller
     {
         try {
             $validated = $request->validate([
-                'chunk' => ['required', 'file', 'max:' . $this->maxIfcSizeKilobytes()],
+                'chunk' => ['required', 'file', 'max:'.$this->maxIfcSizeKilobytes()],
             ]);
 
             return AdminResponse::success(
@@ -357,7 +369,7 @@ final class DesignManagementController extends Controller
     {
         try {
             $validated = $request->validate([
-                'file' => ['required', 'file', 'max:' . $this->maxDerivativeSizeKilobytes(), $this->extensionRule('frag')],
+                'file' => ['required', 'file', 'max:'.$this->maxDerivativeSizeKilobytes(), $this->extensionRule('frag')],
                 'viewer_provider' => ['nullable', 'string', Rule::in(['thatopen'])],
                 'derivative_format' => ['nullable', 'string', Rule::in(['thatopen_frag'])],
                 'metadata' => ['nullable', 'array'],
@@ -440,7 +452,7 @@ final class DesignManagementController extends Controller
     private function extensionRule(string $extension): callable
     {
         return static function (string $attribute, mixed $value, \Closure $fail) use ($extension): void {
-            if (!$value instanceof UploadedFile || strtolower($value->getClientOriginalExtension()) !== $extension) {
+            if (! $value instanceof UploadedFile || strtolower($value->getClientOriginalExtension()) !== $extension) {
                 $fail(trans_message("design_management.errors.{$extension}_file_required"));
             }
         };
@@ -449,7 +461,7 @@ final class DesignManagementController extends Controller
     private function extensionNameRule(string $extension): callable
     {
         return static function (string $attribute, mixed $value, \Closure $fail) use ($extension): void {
-            if (!is_string($value) || strtolower((string) pathinfo($value, PATHINFO_EXTENSION)) !== $extension) {
+            if (! is_string($value) || strtolower((string) pathinfo($value, PATHINFO_EXTENSION)) !== $extension) {
                 $fail(trans_message("design_management.errors.{$extension}_file_required"));
             }
         };
@@ -486,7 +498,7 @@ final class DesignManagementController extends Controller
     {
         $user = $request->user();
 
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             return false;
         }
 
@@ -525,7 +537,7 @@ final class DesignManagementController extends Controller
     }
 
     /**
-     * @param array{stream: resource, filename: string, mime_type: string} $file
+     * @param  array{stream: resource, filename: string, mime_type: string}  $file
      */
     private function streamModelFile(array $file): StreamedResponse
     {

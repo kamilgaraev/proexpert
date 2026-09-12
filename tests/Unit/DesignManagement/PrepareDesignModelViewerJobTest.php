@@ -6,6 +6,7 @@ namespace Tests\Unit\DesignManagement;
 
 use App\BusinessModules\Features\DesignManagement\Jobs\PrepareDesignModelViewerJob;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
+use App\BusinessModules\Features\DesignManagement\Models\DesignIfcModelElement;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
@@ -41,6 +42,16 @@ final class PrepareDesignModelViewerJobTest extends TestCase
 
                     $progress(45, 'converting');
                     file_put_contents($outputPath, 'fragment binary');
+                    file_put_contents($outputPath.'.ifc-index.ndjson', json_encode([
+                        'express_id' => 42,
+                        'global_id' => '0A1B2C3D4E5F6G7H8I9J0K',
+                        'category' => 'IFCWALL',
+                        'name' => 'Wall 42',
+                        'properties' => ['Pset_WallCommon' => ['IsExternal' => true]],
+                        'quantities' => ['BaseQuantities' => ['Length' => 5000]],
+                        'materials' => ['Concrete'],
+                        'classifications' => ['Structural'],
+                    ], JSON_THROW_ON_ERROR)."\n");
 
                     return DesignViewerConversionResult::fromPayload([
                         'metrics' => [
@@ -53,6 +64,11 @@ final class PrepareDesignModelViewerJobTest extends TestCase
                             'bounding_box' => [
                                 'min' => ['x' => -2.5, 'y' => -1.0, 'z' => 0.0],
                                 'max' => ['x' => 8.0, 'y' => 12.0, 'z' => 3.5],
+                            ],
+                            'ifc_metadata' => [
+                                'indexed_element_count' => 1,
+                                'units' => [['type' => 'IFCSIUNIT', 'unit_type' => 'LENGTHUNIT', 'name' => 'METRE']],
+                                'coordination_matrix' => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
                             ],
                         ],
                     ]);
@@ -74,7 +90,14 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         $this->assertSame('fragment binary', Storage::disk('s3')->get($derivative->derivative_file_path));
         $this->assertSame(strlen('IFC source'), $derivative->metadata['source_size_bytes']);
         $this->assertSame(strlen('fragment binary'), $derivative->metadata['derivative_size_bytes']);
-        $this->assertSame(4, $derivative->metadata['converter_version']);
+        $this->assertSame(5, $derivative->metadata['converter_version']);
+        $this->assertSame(1, $derivative->metadata['indexed_element_count']);
+        $this->assertSame('LENGTHUNIT', $derivative->metadata['ifc_units'][0]['unit_type']);
+        $element = DesignIfcModelElement::query()->where('version_id', $version->id)->where('express_id', 42)->firstOrFail();
+        $this->assertSame('IFCWALL', $element->category);
+        $this->assertSame(true, $element->properties['Pset_WallCommon']['IsExternal']);
+        $this->assertSame(['Concrete'], $element->properties['materials']);
+        $this->assertSame(['Structural'], $element->classifications);
         $this->assertSame(12, $derivative->metadata['geometry']['local_id_count']);
         $this->assertSame(24, $derivative->metadata['geometry']['sample_count']);
         $this->assertSame(8, $derivative->metadata['geometry']['representation_count']);
