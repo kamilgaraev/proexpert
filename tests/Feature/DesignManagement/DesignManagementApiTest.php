@@ -286,22 +286,54 @@ final class DesignManagementApiTest extends TestCase
             $models[] = ['version_id' => $version->id, 'transform' => ['shift' => [10, 20, 30], 'rotation' => 45]];
         }
         $url = '/api/v1/admin/design-management/projects/'.$project->id.'/issues';
-        $payload = ['title' => 'Проверить совмещение', 'severity' => 'major', 'version_id' => $models[0]['version_id'], 'view_models' => $models, 'point' => ['x' => 12.5, 'y' => -3, 'z' => 0]];
+        $annotations = [
+            'schema_version' => 1,
+            'width' => 1280,
+            'height' => 720,
+            'strokes' => [
+                ['kind' => 'arrow', 'color' => '#FF6600', 'width' => 3, 'points' => [['x' => 0.1, 'y' => 0.2], ['x' => 0.8, 'y' => 0.7]]],
+                ['kind' => 'freehand', 'color' => '#0055aa', 'width' => 2, 'points' => [['x' => 0, 'y' => 0], ['x' => 0.25, 'y' => 0.5], ['x' => 1, 'y' => 1]]],
+            ],
+        ];
+        $payload = ['title' => 'Проверить совмещение', 'severity' => 'major', 'version_id' => $models[0]['version_id'], 'view_models' => $models, 'camera' => ['position' => [1, 2, 3], 'target' => [0, 0, 0]], 'point' => ['x' => 12.5, 'y' => -3, 'z' => 0], 'annotations' => $annotations];
         $response = $this->postJson($url, $payload, $context->authHeaders())->assertCreated()
             ->assertJsonCount(2, 'data.context.view_models')
-            ->assertJsonPath('data.context.view_models.1.version_id', $models[1]['version_id']);
+            ->assertJsonPath('data.context.view_models.1.version_id', $models[1]['version_id'])
+            ->assertJsonPath('data.context.annotations.strokes.0.color', '#ff6600');
         $id = $response->json('data.id');
+        $this->assertDatabaseHas('quality_defects', ['id' => $id]);
+        self::assertSame('#ff6600', \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->findOrFail($id)->metadata['design_issue_context']['annotations']['strokes'][0]['color']);
         $this->getJson('/api/v1/admin/design-management/issues/'.$id.'/bim-context', $context->authHeaders())->assertOk()
             ->assertJsonPath('data.models', array_column($models, 'version_id'))
             ->assertJsonPath('data.transforms.'.$models[1]['version_id'].'.shift', [10, 20, 30])
             ->assertJsonPath('data.point', ['x' => 12.5, 'y' => -3, 'z' => 0])
+            ->assertJsonPath('data.annotations', $response->json('data.context.annotations'))
+            ->assertJsonPath('data.snapshot_url', null)
             ->assertJsonPath('data.transforms.'.$models[1]['version_id'].'.rotation', 45);
         $this->postJson($url, array_replace($payload, ['point' => ['x' => 1, 'y' => 2]]), $context->authHeaders())->assertUnprocessable();
         $this->postJson($url, array_replace($payload, ['point' => ['x' => 'not-a-number', 'y' => 2, 'z' => 3]]), $context->authHeaders())->assertUnprocessable();
         $this->postJson($url, array_replace($payload, ['view_models' => [$models[0], $models[0]]]), $context->authHeaders())->assertUnprocessable();
         $models[0]['transform']['shift'] = [10, 20];
         $this->postJson($url, array_replace($payload, ['view_models' => $models]), $context->authHeaders())->assertUnprocessable();
-        $this->assertSame(1, \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->where('project_id', $project->id)->count());
+        $this->postJson($url, array_replace($payload, ['annotations' => array_replace_recursive($annotations, ['strokes' => [['points' => [['x' => 1.01, 'y' => 0], ['x' => 0, 'y' => 0]]]]])]), $context->authHeaders())->assertUnprocessable();
+        $this->postJson($url, array_replace($payload, ['annotations' => array_replace($annotations, ['unexpected' => '<svg onload=alert(1)>'])]), $context->authHeaders())->assertUnprocessable();
+        $this->postJson($url, array_diff_key($payload, ['camera' => true]), $context->authHeaders())->assertUnprocessable();
+        $this->postJson($url, array_replace($payload, ['camera' => []]), $context->authHeaders())->assertUnprocessable();
+        $this->postJson($url, array_replace($payload, ['annotations' => array_replace($annotations, ['width' => 0])]), $context->authHeaders())->assertUnprocessable();
+        $this->postJson($url, array_replace($payload, ['annotations' => array_replace($annotations, ['width' => 4000, 'height' => 4000])]), $context->authHeaders())->assertUnprocessable();
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $foreignPackage = DesignPackage::query()->create([
+            'organization_id' => $foreignContext->organization->id, 'project_id' => $foreignProject->id,
+            'created_by' => $foreignContext->user->id, 'updated_by' => $foreignContext->user->id,
+            'title' => 'Чужая модель', 'status' => 'draft', 'metadata' => [],
+        ]);
+        $foreignVersion = $this->storedVersion($foreignPackage, $foreignContext->user);
+        $foreignVersion->update(['file_format' => 'ifc']);
+        $this->postJson($url, array_replace($payload, ['version_id' => $foreignVersion->id, 'view_models' => [['version_id' => $foreignVersion->id, 'transform' => ['shift' => [0, 0, 0], 'rotation' => 0]]]]), $context->authHeaders())->assertUnprocessable();
+        $this->postJson($url, array_replace($payload, ['annotations' => null]), $context->authHeaders())->assertCreated()
+            ->assertJsonPath('data.context.annotations', null);
+        $this->assertSame(2, \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->where('project_id', $project->id)->count());
     }
 
     public function test_saved_model_set_opens_exact_revision_without_creating_a_session(): void
