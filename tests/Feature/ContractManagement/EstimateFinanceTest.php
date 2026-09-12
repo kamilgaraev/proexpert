@@ -120,6 +120,19 @@ final class EstimateFinanceTest extends TestCase
         foreach ($result['estimates'] as $report) {
             self::assertSame('300.00', $report['cash']['summary']['totals']['RUB']['difference']);
         }
+        $result['estimates'][0]['contracts'][0]['number'] = '=NOT_A_FORMULA()';
+        $book = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExport::class)
+            ->workbook($result['estimates'], 'without_vat', [], 'cash', null, $result['cash']);
+        self::assertSame(3, $book->getSheetCount());
+        self::assertSame(2, $book->getSheet(0)->getHighestRow());
+        self::assertEquals(300, $book->getSheet(0)->getCell('E2')->getValue());
+        self::assertSame('Поступления минус выплаты', $book->getSheet(0)->getCell('E1')->getValue());
+        self::assertSame(2, $book->getSheet(1)->getHighestRow());
+        self::assertSame(3, $book->getSheet(2)->getHighestRow());
+        self::assertEquals(-100, $book->getSheet(2)->getCell('G3')->getValue());
+        self::assertSame('s', $book->getSheet(2)->getCell('D2')->getDataType());
+        self::assertSame((string) $payment->id, $book->getSheet(2)->getCell('I3')->getValue());
+        $book->disconnectWorksheets();
     }
 
     public function test_cash_sources_resolve_act_contract_and_flag_missing_history_and_direction(): void
@@ -138,6 +151,11 @@ final class EstimateFinanceTest extends TestCase
         self::assertTrue($result['sources'][0]['direction_requires_review']);
         self::assertNull($result['summary']['totals']['RUB']['difference']);
         self::assertSame(1, $result['summary']['totals']['RUB']['unclassified_count']);
+        $book = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExport::class)
+            ->workbook([['name' => 'Cash', 'contracts' => [], 'cash' => $result]], 'with_vat', [], 'cash');
+        self::assertSame('', $book->getSheet(0)->getCell('E2')->getValue());
+        self::assertSame('Требует проверки или распределения', $book->getSheet(0)->getCell('L2')->getValue());
+        $book->disconnectWorksheets();
         self::assertTrue(array_values(array_filter($result['documents'], fn ($entry) => $entry['id'] === $missing->id))[0]['payment_history_missing']);
     }
 
@@ -153,6 +171,12 @@ final class EstimateFinanceTest extends TestCase
         $project = app(EstimateFinanceService::class)->projectReport($this->actor, $this->estimate->project_id, 'with_vat', false, 'cash');
         self::assertFalse($project['cash']['available']);
         self::assertNull($project['cash']['sources']);
+        $book = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExport::class)
+            ->workbook($project['estimates'], 'with_vat', [], 'cash', null, $project['cash']);
+        self::assertSame('Нет доступа к платёжным документам или транзакциям', $book->getSheet(0)->getCell('L2')->getValue());
+        self::assertSame(1, $book->getSheet(1)->getHighestRow());
+        self::assertSame(1, $book->getSheet(2)->getHighestRow());
+        $book->disconnectWorksheets();
         self::assertSame([], array_values(array_filter($queries, fn ($sql) => str_contains($sql, 'payment_documents') || str_contains($sql, 'payment_transactions'))));
     }
 

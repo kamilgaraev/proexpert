@@ -20,12 +20,12 @@ final class EstimateFinanceExport
 
     public function download(User $actor, int $projectId, ?int $estimateId, string $basis, string $view = 'plan'): Response
     {
-        if (! in_array($view, ['plan', 'execution'], true)) {
+        if (! in_array($view, ['plan', 'execution', 'cash'], true)) {
             throw ValidationException::withMessages(['view' => trans_message('estimate_finance.invalid')]);
         }
         $project = $estimateId === null ? $this->finance->projectReport($actor, $projectId, $basis, true, $view) : null;
         $reports = $project !== null ? $project['estimates'] : [$this->finance->report($actor, $projectId, $estimateId, $basis, $view)];
-        $book = $this->workbook($reports, $basis, $project['totals'] ?? [], $view, $project['execution'] ?? null);
+        $book = $this->workbook($reports, $basis, $project['totals'] ?? [], $view, $project['execution'] ?? null, $project['cash'] ?? null);
         ob_start();
         try {
             (new Xlsx($book))->save('php://output');
@@ -41,8 +41,11 @@ final class EstimateFinanceExport
         return new Response($content, 200, ['Content-Type' => $mime, 'Content-Disposition' => 'attachment; filename="estimate-finance.xlsx"']);
     }
 
-    public function workbook(array $reports, string $basis, array $projectTotals = [], string $view = 'plan', ?array $projectExecution = null): Spreadsheet
+    public function workbook(array $reports, string $basis, array $projectTotals = [], string $view = 'plan', ?array $projectExecution = null, ?array $projectCash = null): Spreadsheet
     {
+        if ($view === 'cash') {
+            return $this->cashWorkbook($reports, $projectCash);
+        }
         if ($view === 'execution') {
             return $this->executionWorkbook($reports, $basis, $projectExecution);
         }
@@ -89,6 +92,72 @@ final class EstimateFinanceExport
         foreach ($projectTotals as $total) {
             $this->row($summary, [trans_message('estimate_finance.project_total'), $total['currency'], null, $total['revenue'], $total['contract_cost'],
                 $total['own_cost'], $total['complete_margin'], $total['incomplete_count'], trans_message('estimate_finance.'.$basis), null], [4, 5, 6, 7, 8]);
+        }
+        foreach ($book->getAllSheets() as $sheet) {
+            $sheet->setAutoFilter('A1:'.$sheet->getHighestColumn().$sheet->getHighestRow());
+        }
+        $book->setActiveSheetIndex(0);
+
+        return $book;
+    }
+
+    private function cashWorkbook(array $reports, ?array $projectCash): Spreadsheet
+    {
+        $book = new Spreadsheet;
+        $summary = $book->getActiveSheet();
+        $this->header($summary, 'cash_summary', ['name', 'currency', 'cash_receipts', 'cash_payments', 'cash_difference',
+            'customer_refunds', 'contractor_refunds', 'known_receipts', 'known_payments', 'unknown_direction', 'cash_scope', 'status']);
+        $documents = $book->createSheet();
+        $this->header($documents, 'cash_documents', ['name', 'document_id', 'document_number', 'document_date', 'number', 'currency',
+            'cash_document_amount', 'recorded_paid', 'confirmed_currency', 'confirmed_paid', 'status']);
+        $sources = $book->createSheet();
+        $this->header($sources, 'cash_sources', ['name', 'transaction_id', 'document_id', 'number', 'transaction_date',
+            'currency', 'cash_amount', 'direction', 'reverses_id', 'cash_operation', 'act_id']);
+        $contracts = [];
+        foreach ($reports as $report) {
+            $contracts += array_column($report['contracts'], null, 'id');
+        }
+        $packages = $projectCash === null ? array_map(static fn (array $report): array => [
+            'name' => $report['name'], 'cash' => $report['cash'] ?? ['available' => false],
+        ], $reports) : [['name' => trans_message('estimate_finance.project_total'), 'cash' => $projectCash]];
+        foreach ($packages as $package) {
+            $name = $package['name'];
+            $cash = $package['cash'];
+            $scope = trans_message('estimate_finance.cash_contract_scope');
+            if (! $cash['available']) {
+                $this->row($summary, [$name, null, null, null, null, null, null, null, null, null, $scope,
+                    trans_message('estimate_finance.cash_unavailable')], []);
+                continue;
+            }
+            foreach ($cash['summary']['totals'] as $currency => $total) {
+                $this->row($summary, [$name, $currency, $total['receipts'], $total['payments'], $total['difference'],
+                    $total['customer_refunds'], $total['contractor_refunds'], $total['known_receipts'], $total['known_payments'],
+                    $total['unclassified_count'], $scope, trans_message('estimate_finance.'.($total['unclassified_count'] > 0 ? 'incomplete' : 'cash_confirmed'))],
+                    [3, 4, 5, 6, 7, 8, 9, 10]);
+            }
+            if ($cash['summary']['totals'] === []) {
+                $this->row($summary, [$name, null, null, null, null, null, null, null, null, null, $scope,
+                    trans_message('estimate_finance.cash_empty')], []);
+            }
+            foreach ($cash['documents'] as $document) {
+                foreach ($document['confirmed_amounts'] ?: ['' => null] as $currency => $amount) {
+                    $this->row($documents, [$name, $document['id'], $document['number'], $document['date'],
+                        $contracts[$document['contract_id']]['number'] ?? $document['contract_id'], $document['currency'],
+                        $document['amount'], $document['recorded_paid_amount'], $currency, $amount,
+                        trans_message('estimate_finance.'.($document['payment_history_missing'] ? 'cash_history_missing'
+                            : ($document['direction_requires_review'] ? 'incomplete' : 'cash_confirmed')))], [7, 8, 10]);
+                }
+            }
+            foreach ($cash['sources'] as $source) {
+                $refund = $source['amount'] !== null && FinanceDecimal::compare($source['amount'], '0') < 0;
+                $direction = $source['direction_requires_review'] || $source['side'] === 'unknown' ? 'incomplete'
+                    : ($source['side'] === 'revenue' ? ($refund ? 'customer_refunds' : 'cash_receipts') : ($refund ? 'contractor_refunds' : 'cash_payments'));
+                $this->row($sources, [$name, $source['transaction_id'], $source['document_id'],
+                    $contracts[$source['contract_id']]['number'] ?? $source['contract_id'], $source['date'], $source['currency'],
+                    $source['amount'], trans_message('estimate_finance.'.$direction), $source['reverses_transaction_id'],
+                    trans_message('estimate_finance.'.($source['reverses_transaction_id'] !== null ? 'cash_refund'
+                        : ($source['invoice_type'] === 'advance' ? 'cash_advance' : 'cash_payment'))), $source['act_id']], [7]);
+            }
         }
         foreach ($book->getAllSheets() as $sheet) {
             $sheet->setAutoFilter('A1:'.$sheet->getHighestColumn().$sheet->getHighestRow());
