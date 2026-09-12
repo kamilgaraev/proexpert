@@ -85,11 +85,11 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
                 $mime,
                 self::PART_SIZE_BYTES,
                 [
-                    'organization_id' => (string) $package->organization_id,
-                    'project_id' => (string) $package->project_id,
-                    'package_id' => (string) $package->id,
-                    'user_id' => (string) $userId,
-                    'upload_id' => $uploadId,
+                    'organization-id' => (string) $package->organization_id,
+                    'project-id' => (string) $package->project_id,
+                    'package-id' => (string) $package->id,
+                    'user-id' => (string) $userId,
+                    'upload-id' => $uploadId,
                 ],
             );
         } catch (Throwable $exception) {
