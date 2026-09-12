@@ -258,6 +258,30 @@ final class EstimateFinanceTest extends TestCase
             'lines' => [['allocation_key' => $allocation->key, 'condition_version' => (int) $allocation->condition_version, 'version' => $version, 'amount' => $amount]]];
     }
 
+    public function test_own_cost_options_paginate_active_organization_categories_and_search_literal_text(): void
+    {
+        $rows = [];
+        for ($index = 1; $index <= 52; $index++) {
+            $rows[] = ['organization_id' => $this->estimate->organization_id, 'name' => 'Категория '.$index,
+                'code' => 'OWN-CAT-'.$index, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()];
+        }
+        \Illuminate\Support\Facades\DB::table('cost_categories')->insert($rows);
+        $foreign = Organization::factory()->create();
+        \App\Models\CostCategory::query()->create(['organization_id' => $foreign->id, 'name' => 'Чужая', 'code' => 'FOREIGN', 'is_active' => true]);
+        \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id, 'name' => 'Неактивная', 'code' => 'INACTIVE', 'is_active' => false]);
+        $command = ['preview_operation' => 'own_cost_options', 'kind' => 'categories'];
+        $first = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        self::assertCount(50, $first['data']);
+        self::assertNotNull($first['next_cursor']);
+        $second = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command + ['after' => $first['next_cursor']]);
+        self::assertCount(2, $second['data']);
+        self::assertNull($second['next_cursor']);
+        self::assertSame([], array_values(array_intersect(array_column($first['data'], 'id'), array_column($second['data'], 'id'))));
+        $special = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id, 'name' => 'Скидка 5%', 'code' => 'PERCENT', 'is_active' => true]);
+        $search = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command + ['query' => '%']);
+        self::assertSame([$special->id], array_column($search['data'], 'id'));
+    }
+
     public function test_own_cost_distribution_caps_all_estimates_and_keeps_exact_net_and_history(): void
     {
         $db = \Illuminate\Support\Facades\DB::class;
@@ -432,7 +456,12 @@ final class EstimateFinanceTest extends TestCase
         }
         unset($command['source_hash']);
         $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
+        $optionsCommand = ['preview_operation' => 'own_cost_options', 'kind' => 'documents'];
+        $options = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $optionsCommand);
+        self::assertSame([$source->id], array_column($options['data'], 'id'));
+        self::assertNull($options['data'][0]['currency']);
         $this->save($command);
+        self::assertSame([], $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $optionsCommand)['data']);
         $second = array_replace($command, ['revision' => (int) $this->estimate->fresh()->finance_revision, 'mutation_id' => (string) Str::uuid(), 'cost_key' => (string) Str::uuid()]);
         try {
             $this->save($second);
@@ -471,6 +500,9 @@ final class EstimateFinanceTest extends TestCase
         self::assertArrayNotHasKey('basis', $deniedReport['sources'][0]);
         self::assertNull($deniedReport['source_totals']['']['amount']);
         self::assertNull($deniedReport['allocated_totals']['']['amount']);
+        $deniedOptions = app(EstimateFinanceService::class)->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $optionsCommand);
+        self::assertFalse($deniedOptions['available']);
+        self::assertSame([], $deniedOptions['data']);
         $queries = \Illuminate\Support\Facades\DB::getQueryLog();
         \Illuminate\Support\Facades\DB::disableQueryLog();
         self::assertSame([], array_values(array_filter($queries, fn ($query) => str_contains($query['query'], 'advance_account_transactions'))));

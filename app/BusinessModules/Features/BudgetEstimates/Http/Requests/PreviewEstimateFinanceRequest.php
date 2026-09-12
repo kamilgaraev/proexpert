@@ -8,6 +8,9 @@ final class PreviewEstimateFinanceRequest extends SaveEstimateFinanceRequest
 {
     public function rules(): array
     {
+        if ($this->input('preview_operation') === 'own_cost_options') {
+            return self::ownCostOptionsRules();
+        }
         if ($this->input('operation') === 'own_cost_distribution') {
             return self::ownCostDistributionRules(true);
         }
@@ -18,6 +21,16 @@ final class PreviewEstimateFinanceRequest extends SaveEstimateFinanceRequest
             return self::cashRules(true);
         }
         return $this->input('preview_operation') === 'source_amount' ? self::sourceRules() : parent::rules();
+    }
+
+    public static function ownCostOptionsRules(): array
+    {
+        return [
+            'preview_operation' => ['required', 'in:own_cost_options'],
+            'kind' => ['required', 'in:categories,documents'],
+            'query' => ['sometimes', 'string', 'max:200'],
+            'after' => ['sometimes', 'integer', 'min:0'],
+        ];
     }
 
     public static function sourceRules(): array

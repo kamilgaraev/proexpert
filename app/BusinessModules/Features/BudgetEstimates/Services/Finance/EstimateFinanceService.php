@@ -34,6 +34,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceOwnCost $ownCost,
         private readonly EstimateFinanceOwnCostDistribution $ownCostDistribution,
         private readonly EstimateFinanceOwnCostReport $ownCostReport,
+        private readonly EstimateFinanceOwnCostOptions $ownCostOptions,
         private readonly EstimateFinanceCashDistribution $cashDistribution,
     ) {}
 
@@ -237,6 +238,9 @@ final class EstimateFinanceService
 
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['preview_operation'] ?? null) === 'own_cost_options') {
+            return $this->ownCostOptions->search($actor, $projectId, $estimateId, $input);
+        }
         if (($input['operation'] ?? null) === 'own_cost_distribution') {
             return $this->ownCostDistribution->handle($actor, $projectId, $estimateId, $input, false);
         }
