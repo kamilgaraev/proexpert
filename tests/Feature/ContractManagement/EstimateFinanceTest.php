@@ -121,6 +121,79 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_accepted_volume_cannot_be_removed_or_reduced_and_annulment_releases_it(): void
+    {
+        $line = $this->line($this->contractor, '100', '800000');
+        $this->save($this->command([$line]));
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'ACCEPTED-1', 'act_date' => '2026-09-12',
+            'amount' => '120000', 'currency' => 'RUB', 'status' => 'draft', 'created_by_user_id' => $this->actor->id]);
+        \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Бетон', 'quantity' => '15', 'unit_price' => '8000', 'amount' => '120000',
+            'currency' => 'RUB', 'manual_reason' => 'Принятые работы', 'created_by' => $this->actor->id]);
+        $act->update(['status' => 'signed', 'is_approved' => true]);
+        $before = $act->fresh()->getAttributes();
+        $reduced = $line;
+        $reduced['quantity'] = '14';
+        foreach ([[], [$reduced]] as $lines) {
+            try {
+                $this->save($this->command($lines));
+                self::fail('Accepted volume was removed');
+            } catch (ValidationException) {
+                self::assertSame('100.00000000', EstimateFinanceAllocation::query()->where('key', $line['key'])->firstOrFail()->quantity);
+                self::assertDatabaseCount('estimate_finance_condition_versions', 1);
+            }
+        }
+        $reduced['quantity'] = '15';
+        $reduced['amount'] = '120000';
+        $this->save($this->command([$reduced]));
+        self::assertSame($before, $act->fresh()->getAttributes());
+        $act->update(['status' => 'annulled', 'annulled_at' => now()]);
+        $this->save($this->command([]));
+        self::assertDatabaseCount('estimate_finance_allocations', 0);
+    }
+
+    public function test_draft_act_does_not_prevent_removing_planned_allocation(): void
+    {
+        $line = $this->line($this->contractor, '100', '800000');
+        $this->save($this->command([$line]));
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'DRAFT-1', 'act_date' => '2026-09-12',
+            'amount' => '120000', 'currency' => 'RUB', 'status' => 'draft', 'created_by_user_id' => $this->actor->id]);
+        \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Бетон', 'quantity' => '15', 'unit_price' => '8000', 'amount' => '120000',
+            'currency' => 'RUB', 'manual_reason' => 'Черновик', 'created_by' => $this->actor->id]);
+        $this->save($this->command([]));
+        self::assertDatabaseCount('estimate_finance_allocations', 0);
+    }
+
+    public function test_accepted_volume_uses_lines_once_and_falls_back_to_legacy_acts(): void
+    {
+        $work = \App\Models\CompletedWork::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'estimate_item_id' => $this->item->id, 'contract_id' => $this->contractor->id,
+            'user_id' => $this->actor->id, 'quantity' => '30', 'completed_quantity' => '30', 'price' => '8000',
+            'total_amount' => '240000', 'completion_date' => '2026-09-09', 'status' => 'confirmed', 'description' => 'Бетонирование']);
+        foreach (['LINES', 'LEGACY'] as $kind) {
+            $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+                'project_id' => $this->estimate->project_id, 'act_document_number' => $kind, 'act_date' => '2026-09-12',
+                'amount' => '120000', 'currency' => 'RUB', 'status' => 'draft', 'created_by_user_id' => $this->actor->id]);
+            $act->completedWorks()->attach($work->id, ['included_quantity' => '15', 'included_amount' => '120000', 'currency' => 'RUB']);
+            if ($kind === 'LINES') {
+                \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $this->item->id,
+                    'line_type' => 'manual', 'title' => 'Бетон', 'quantity' => '15', 'unit_price' => '8000', 'amount' => '120000',
+                    'currency' => 'RUB', 'manual_reason' => 'Принятые работы', 'created_by' => $this->actor->id]);
+            }
+            $act->update(['status' => 'approved', 'is_approved' => true]);
+        }
+        $accepted = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAcceptedVolume::class);
+        $quantities = $accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id]);
+        self::assertSame(0, \App\BusinessModules\Features\BudgetEstimates\Services\Finance\FinanceDecimal::compare(
+            $quantities[$this->contractor->id.':'.$this->item->id], '30'));
+        $otherOrganization = clone $this->estimate;
+        $otherOrganization->organization_id = 0;
+        self::assertSame([], $accepted->quantities($otherOrganization, [$this->contractor->id], [$this->item->id]));
+    }
+
     public function test_condition_history_preserves_snapshots_after_edit_and_delete(): void
     {
         $line = $this->line($this->customer, '100', '1000000');

@@ -24,6 +24,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceCalculator $calculator,
         private readonly EstimateCacheService $cache,
         private readonly EstimateFinanceHistory $history,
+        private readonly EstimateFinanceAcceptedVolume $acceptedVolume,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat'): array
@@ -405,6 +406,8 @@ final class EstimateFinanceService
         if (isset($data['expected_total']) && (count($bases) !== 1 || FinanceDecimal::compare($total, $data['expected_total']) !== 0)) {
             $this->invalid('total');
         }
+
+        $this->acceptedVolume->assertRetained($estimate, $data['target_keys'], $rows);
 
         return $rows;
     }
