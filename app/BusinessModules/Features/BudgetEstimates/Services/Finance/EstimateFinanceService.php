@@ -193,6 +193,8 @@ final class EstimateFinanceService
             }
             unset($line);
 
+            $this->normalize($actor, $estimate, $data, $targets);
+
             return $data;
         }
         if (! isset($data['expected_total'])) {
@@ -254,15 +256,20 @@ final class EstimateFinanceService
             $existing = EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->get();
             $this->validateResourceChanges($data, $targets, $normalized, $existing->toArray());
             $before = [];
+            $retainedKeys = array_fill_keys(array_column($normalized, 'key'), true);
+            $existingByKey = $existing->keyBy('key');
             foreach ($existing as $row) {
                 $key = $row->resource_id ? 'r:'.$row->resource_id : 'i:'.$row->estimate_item_id;
                 if (in_array($key, $data['target_keys'], true)) {
                     $before[] = $row->toArray();
-                    $row->delete();
+                    if (! isset($retainedKeys[$row->key])) {
+                        $row->delete();
+                    }
                 }
             }
             foreach ($normalized as $row) {
-                EstimateFinanceAllocation::query()->create($row);
+                $allocation = $existingByKey->get($row['key']) ?? new EstimateFinanceAllocation;
+                $allocation->fill($row)->save();
             }
             $this->projectLinks($estimate, $data['target_keys']);
             $revision = (int) $estimate->fresh()->finance_revision + 1;
@@ -281,6 +288,8 @@ final class EstimateFinanceService
 
     private function normalize(User $actor, Estimate $estimate, array $data, array $targets): array
     {
+        $this->access->editContracts($actor, $estimate, $data['target_keys'],
+            array_values(array_filter(array_column($data['lines'], 'contract_id'))));
         foreach ($data['target_keys'] as $key) {
             if (! isset($targets[$key]) || $targets[$key]['excluded']) {
                 $this->invalid();
@@ -388,14 +397,16 @@ final class EstimateFinanceService
 
     private function projectLinks(Estimate $estimate, array $keys): void
     {
-        foreach ($keys as $key) {
-            if (! str_starts_with($key, 'i:')) {
-                continue;
-            }
-            $itemId = (int) substr($key, 2);
-            $links = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('estimate_item_id', $itemId)->get();
-            $allocations = EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)
-                ->where('estimate_item_id', $itemId)->whereNull('resource_id')->whereNotNull('contract_id')->get()->groupBy('contract_id');
+        $itemIds = array_map(static fn (string $key): int => (int) substr($key, 2),
+            array_values(array_filter($keys, static fn (string $key): bool => str_starts_with($key, 'i:'))));
+        $linksByItem = ContractEstimateItem::query()->where('estimate_id', $estimate->id)
+            ->whereIn('estimate_item_id', $itemIds)->get()->groupBy('estimate_item_id');
+        $allocationsByItem = EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)
+            ->whereIn('estimate_item_id', $itemIds)->whereNull('resource_id')->whereNotNull('contract_id')
+            ->get()->groupBy('estimate_item_id');
+        foreach ($itemIds as $itemId) {
+            $links = $linksByItem->get($itemId, collect());
+            $allocations = $allocationsByItem->get($itemId, collect())->groupBy('contract_id');
             foreach ($links as $link) {
                 $link->forceFill(['finance_managed' => true] + (! $allocations->has($link->contract_id)
                     ? ['quantity' => '0', 'amount' => '0', 'amount_without_vat' => '0'] : []))->save();
@@ -412,7 +423,8 @@ final class EstimateFinanceService
                     $value = $allocation->legacy_amount ?? $allocation->amount_with_vat ?? $allocation->amount_without_vat;
                     $storedAmount = $storedAmount !== null && $value !== null ? FinanceDecimal::add($storedAmount, $value) : null;
                 }
-                $link = ContractEstimateItem::query()->firstOrNew(['contract_id' => $contractId, 'estimate_item_id' => $itemId]);
+                $link = $links->firstWhere('contract_id', $contractId)
+                    ?? new ContractEstimateItem(['contract_id' => $contractId, 'estimate_item_id' => $itemId]);
                 $link->forceFill(['estimate_id' => $estimate->id, 'finance_managed' => true, 'quantity' => $quantity,
                     'amount' => $storedAmount, 'amount_without_vat' => $net])->save();
                 EstimateFinanceAllocation::query()->whereIn('id', $group->pluck('id'))->update(['contract_estimate_item_id' => $link->id]);

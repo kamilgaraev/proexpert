@@ -13,6 +13,7 @@ use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Contractor;
 use App\Models\Estimate;
+use App\Models\EstimateFinanceAllocation;
 use App\Models\EstimateItem;
 use App\Models\EstimateItemResource;
 use App\Models\EstimateSection;
@@ -84,6 +85,28 @@ final class EstimateFinanceTest extends TestCase
         $command['mutation_id'] = (string) Str::uuid();
         $this->expectException(ConflictHttpException::class);
         $this->save($command);
+    }
+
+    public function test_edit_preserves_allocation_and_projection_identifiers(): void
+    {
+        $income = $this->line($this->customer, '100', '1000000');
+        $cost = $this->line($this->contractor, '100', '800000');
+        $this->save($this->command([$income, $cost]));
+        $allocation = EstimateFinanceAllocation::query()->where('key', $cost['key'])->firstOrFail();
+        $incomeId = EstimateFinanceAllocation::query()->where('key', $income['key'])->value('id');
+        $linkId = $allocation->contract_estimate_item_id;
+        $cost['amount'] = '750000';
+        $command = $this->command([$income, $cost]);
+        $this->save($command);
+
+        $updated = EstimateFinanceAllocation::query()->where('key', $cost['key'])->firstOrFail();
+        self::assertSame($allocation->id, $updated->id);
+        self::assertSame($linkId, $updated->contract_estimate_item_id);
+        self::assertSame($incomeId, EstimateFinanceAllocation::query()->where('key', $income['key'])->value('id'));
+        self::assertSame('750000.00', $updated->amount_with_vat);
+        self::assertSame('750000.00', ContractEstimateItem::query()->findOrFail($linkId)->amount);
+        self::assertTrue($this->save($command)['replayed']);
+        self::assertSame(2, EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->count());
     }
 
     public function test_overallocation_is_rejected_without_partial_writes(): void
@@ -408,6 +431,63 @@ final class EstimateFinanceTest extends TestCase
         self::assertNull($report['rows'][0]['margin']);
         self::assertNull($report['rows'][1]['margin']);
         self::assertSame(['USD'], array_column($report['totals'], 'currency'));
+    }
+
+    public function test_finance_permission_alone_cannot_create_contract_allocations(): void
+    {
+        $revision = (int) $this->estimate->fresh()->finance_revision;
+        $this->mock(AuthorizationService::class)->shouldReceive('can')
+            ->andReturnUsing(static fn ($actor, $permission): bool => $permission !== 'contracts.edit');
+        $finance = app(EstimateFinanceService::class);
+        try {
+            $finance->save($this->actor, $this->estimate->project_id, $this->estimate->id,
+                $this->command([$this->line($this->customer, '100', '1000000')]));
+            self::fail('Contract edit permission was not enforced');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            self::assertDatabaseCount('estimate_finance_allocations', 0);
+            self::assertSame($revision, (int) $this->estimate->fresh()->finance_revision);
+        }
+    }
+
+    public function test_empty_replacement_cannot_remove_contract_conditions_without_contract_permission(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $revision = (int) $this->estimate->fresh()->finance_revision;
+        $this->mock(AuthorizationService::class)->shouldReceive('can')
+            ->andReturnUsing(static fn ($actor, $permission): bool => $permission !== 'contracts.edit');
+        try {
+            app(EstimateFinanceService::class)->save($this->actor, $this->estimate->project_id, $this->estimate->id,
+                $this->command([]));
+            self::fail('Removing contract conditions was allowed');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            self::assertSame('1000000.00', $allocation->fresh()->amount_with_vat);
+            self::assertSame($revision, (int) $this->estimate->fresh()->finance_revision);
+        }
+    }
+
+    public function test_estimate_price_preview_requires_contract_permission(): void
+    {
+        $this->mock(AuthorizationService::class)->shouldReceive('can')
+            ->andReturnUsing(static fn ($actor, $permission): bool => $permission !== 'contracts.edit');
+        $line = $this->line($this->customer, '100', '1000000');
+        $line['adopt_estimate_price'] = true;
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(EstimateFinanceService::class)->preview($this->actor, $this->estimate->project_id, $this->estimate->id,
+            $this->command([$line]) + ['preview_operation' => 'estimate_prices']);
+    }
+
+    public function test_own_cost_without_contract_does_not_require_contract_permission(): void
+    {
+        $this->mock(AuthorizationService::class)->shouldReceive('can')
+            ->andReturnUsing(static fn ($actor, $permission): bool => $permission !== 'contracts.edit');
+        $line = $this->line($this->contractor, '100', '800000');
+        $line['source'] = 'own';
+        $line['contract_id'] = null;
+        $result = app(EstimateFinanceService::class)->save($this->actor, $this->estimate->project_id, $this->estimate->id,
+            $this->command([$line]));
+        self::assertFalse($result['replayed']);
+        self::assertDatabaseCount('estimate_finance_allocations', 1);
     }
 
     public function test_unknown_amount_remains_unknown_on_subsequent_saves(): void
