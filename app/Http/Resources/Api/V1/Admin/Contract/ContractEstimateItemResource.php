@@ -42,7 +42,9 @@ class ContractEstimateItemResource extends JsonResource
             'estimate_id'       => $this->estimate_id,
             'estimate_item_id'  => $this->estimate_item_id,
             'quantity'          => (float) $this->quantity,
-            'amount'            => (float) $this->amount,
+            'amount'            => $this->amount === null ? null : (float) $this->amount,
+            'contract_unit_price' => $this->amount === null || (float) $this->quantity <= 0 ? null
+                : (float) \App\BusinessModules\Features\BudgetEstimates\Services\Finance\FinanceDecimal::divide((string) $this->amount, (string) $this->quantity),
             'notes'             => $this->notes,
             'item' => $item ? [
                 'id'              => $item->id,

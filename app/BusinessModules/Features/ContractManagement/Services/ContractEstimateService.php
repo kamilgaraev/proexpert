@@ -118,7 +118,7 @@ class ContractEstimateService
         return $item->contracts()->get();
     }
 
-    public function calculateContractEstimateTotal(Contract $contract, ?int $estimateId = null): float
+    public function calculateContractEstimateTotal(Contract $contract, ?int $estimateId = null): ?float
     {
         $query = ContractEstimateItem::query()->countedInCoverage()->withFinancialAmounts()->where('contract_id', $contract->id);
 
@@ -126,7 +126,11 @@ class ContractEstimateService
             $query->where('estimate_id', $estimateId);
         }
 
-        return round((float) DB::query()->fromSub($query, 'financial_links')->sum('amount'), 2);
+        $total = DB::query()->fromSub($query, 'financial_links')
+            ->selectRaw('CASE WHEN COUNT(amount) = COUNT(*) THEN COALESCE(SUM(amount), 0) ELSE NULL END AS total')
+            ->value('total');
+
+        return $total === null ? null : round((float) $total, 2);
     }
 
     public function calculateItemsTotal(Estimate $estimate, array $itemIds, bool $includeVat = false, ?string $rate = null): float
@@ -152,14 +156,14 @@ class ContractEstimateService
             $estimates[] = [
                 'estimate_id' => $estimateId,
                 'items_count' => $group->count(),
-                'total_amount' => round($group->sum('amount'), 2),
+                'total_amount' => \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts::sum($group, 'amount'),
             ];
         }
 
         return [
             'contract_id' => $contract->id,
             'total_linked_items' => $links->count(),
-            'total_amount' => round($links->sum('amount'), 2),
+            'total_amount' => \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts::sum($links, 'amount'),
             'by_estimate' => $estimates,
         ];
     }

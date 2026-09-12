@@ -115,6 +115,9 @@ final class EstimateFinanceTest extends TestCase
         $visible = $contracts->getItemsForContract($this->contractor, $this->estimate->id)->sole();
         self::assertSame($projection->id, $visible->id);
         self::assertSame('1000000.00', $visible->amount);
+        $visible->setRelation('estimateItem', null);
+        $serialized = (new \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource($visible))->toArray(request());
+        self::assertSame(10000.0, $serialized['contract_unit_price']);
         self::assertSame(1000000.0, $coverage->getCoverageForEstimate($this->estimate)['primary_contract']['linked_amount']);
         self::assertSame(1000000.0, $coverage->getContractCoverageSummary($this->contractor)['summary']['linked_amount']);
         self::assertSame('180000000.00', $projection->fresh()->amount);
@@ -143,6 +146,15 @@ final class EstimateFinanceTest extends TestCase
         }
         self::assertSame(1000000.0, $validation['contract_amount']);
         self::assertStringContainsString('укажите договорные цены', $validation['message']);
+        $contracts = app(ContractEstimateService::class);
+        self::assertNull($contracts->calculateContractEstimateTotal($this->contractor));
+        self::assertNull($contracts->getSummary($this->contractor)['total_amount']);
+        self::assertNull($contracts->getSummary($this->contractor)['by_estimate'][0]['total_amount']);
+        $visible = $contracts->getItemsForContract($this->contractor, $this->estimate->id)->sole();
+        $visible->setRelation('estimateItem', null);
+        $serialized = (new \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource($visible))->toArray(request());
+        self::assertNull($serialized['amount']);
+        self::assertNull($serialized['contract_unit_price']);
         self::assertNull(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts::sum([
             ['amount' => '1000000'], ['amount' => null],
         ], 'amount'));
