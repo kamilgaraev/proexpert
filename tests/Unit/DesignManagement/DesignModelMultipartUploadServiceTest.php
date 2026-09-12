@@ -15,6 +15,9 @@ use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\DTO\MultipartPart;
 use App\Services\Storage\DTO\MultipartUpload;
 use App\Services\Storage\FileService;
+use Aws\Result;
+use Aws\S3\S3Client;
+use GuzzleHttp\Promise\FulfilledPromise;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -25,6 +28,61 @@ use Tests\TestCase;
 
 final class DesignModelMultipartUploadServiceTest extends TestCase
 {
+    public function test_start_signs_metadata_with_proxy_safe_header_names(): void
+    {
+        $package = $this->persistedPackage();
+        $requests = 0;
+        $metadata = [];
+        $client = new S3Client([
+            'version' => 'latest',
+            'region' => 'ru-1',
+            'endpoint' => 'https://storage.example.test',
+            'use_path_style_endpoint' => true,
+            'credentials' => ['key' => 'offline-example-key', 'secret' => 'offline-example-secret'],
+            'handler' => static function ($command, $request) use (&$requests, &$metadata): FulfilledPromise {
+                $requests++;
+                self::assertSame('CreateMultipartUpload', $command->getName());
+                $metadata = $command['Metadata'];
+                self::assertSame(['organization-id', 'project-id', 'package-id', 'user-id', 'upload-id'], array_keys($metadata));
+                self::assertSame('7', $metadata['organization-id']);
+                self::assertSame('11', $metadata['project-id']);
+                self::assertSame('21', $metadata['package-id']);
+                self::assertSame('15', $metadata['user-id']);
+                preg_match('/SignedHeaders=([^,]+)/', $request->getHeaderLine('Authorization'), $signed);
+                self::assertArrayHasKey(1, $signed);
+                foreach ($metadata as $key => $value) {
+                    $header = 'x-amz-meta-'.$key;
+                    self::assertSame($value, $request->getHeaderLine($header));
+                    self::assertContains($header, explode(';', $signed[1]));
+                }
+                foreach (array_keys($request->getHeaders()) as $header) {
+                    self::assertStringNotContainsString('_', $header);
+                }
+
+                return new FulfilledPromise(new Result(['UploadId' => 'offline-provider-upload']));
+            },
+        ]);
+        $files = Mockery::mock(FileService::class)->makePartial()->shouldAllowMockingProtectedMethods();
+        $files->shouldReceive('reportS3Client')->once()->andReturn($client);
+        $files->shouldReceive('reportBucket')->once()->andReturn('offline-example-bucket');
+        $registrar = Mockery::mock(DesignModelRegistrationService::class);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
+        $result = (new DesignModelMultipartUploadService($files, new DesignStoragePathService, $registrar))->start($package, 15, [
+            'file_size_bytes' => 6_000_000,
+            'original_name' => 'building.ifc',
+            'content_type' => 'application/octet-stream',
+            'title' => 'IFC',
+            'version_number' => '1',
+        ]);
+
+        self::assertSame(1, $requests);
+        self::assertSame($result['upload_id'], $metadata['upload-id']);
+        $session = DesignIfcUploadSession::query()->findOrFail($result['upload_id']);
+        self::assertSame(7, (int) $session->organization_id);
+        self::assertSame(11, (int) $session->project_id);
+        self::assertSame(21, (int) $session->package_id);
+        self::assertSame(15, (int) $session->user_id);
+    }
 
     public function test_uploads_api_chunk_to_s3_multipart_upload(): void
     {
@@ -133,7 +191,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
                 && str_ends_with($path, '/source/building.ifc')
                 && $mime === 'application/x-step'
                 && $partSize === 5_242_880
-                && ($metadata['user_id'] ?? null) === '15')
+                && ($metadata['user-id'] ?? null) === '15')
             ->andReturnUsing(static fn (
                 string $path,
                 string $mime,
