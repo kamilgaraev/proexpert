@@ -135,6 +135,14 @@ final class EstimateFinanceTest extends TestCase
             self::assertNull($coverage['linked_estimates'][0]['linked_items_summary'][$field]);
         }
         self::assertSame(1, $coverage['summary']['linked_items_count']);
+        $coverageService = app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class);
+        self::assertNull($coverageService->getCoverageForEstimate($this->estimate)['primary_contract']['linked_amount']);
+        $validation = $coverageService->validateContractAmount($this->estimate, $this->contractor);
+        foreach (['valid', 'covered_amount', 'difference', 'percentage_difference'] as $field) {
+            self::assertNull($validation[$field]);
+        }
+        self::assertSame(1000000.0, $validation['contract_amount']);
+        self::assertStringContainsString('укажите договорные цены', $validation['message']);
         self::assertNull(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts::sum([
             ['amount' => '1000000'], ['amount' => null],
         ], 'amount'));

@@ -127,7 +127,7 @@ class EstimateCoverageService
                 'coverage_status' => $coverageStatus,
                 'linked_items_count' => $linkedItemsCount,
                 'available_items_count' => max(0, $totalItems - $linkedItemsCount),
-                'linked_amount' => round((float) $group->sum('amount'), 2),
+                'linked_amount' => EstimateFinanceAmounts::sum($group, 'amount'),
                 'is_full' => $coverageStatus === 'full_link',
             ];
         })->values();
@@ -287,7 +287,7 @@ class EstimateCoverageService
 
         $primaryCoverage = $contracts->first();
         $contractAmount = (float) ($primaryCoverage['contract']['total_amount'] ?? 0);
-        $coveredAmount = (float) ($primaryCoverage['linked_amount'] ?? 0);
+        $coveredAmount = $primaryCoverage['linked_amount'];
 
         return $this->amountValidationResult(
             $estimate,
@@ -299,10 +299,22 @@ class EstimateCoverageService
 
     private function amountValidationResult(
         Estimate $estimate,
-        float $coveredAmount,
+        ?float $coveredAmount,
         float $contractAmount,
         string $coverageStatus
     ): array {
+        if ($coveredAmount === null) {
+            return [
+                'valid' => null,
+                'estimate_amount' => (float) $estimate->total_amount,
+                'covered_amount' => null,
+                'contract_amount' => $contractAmount,
+                'difference' => null,
+                'percentage_difference' => null,
+                'message' => trans_message('contract.estimate_amount_unknown'),
+                'coverage_status' => $coverageStatus,
+            ];
+        }
         $difference = round($coveredAmount - $contractAmount, 2);
         $percentageDifference = $contractAmount > 0
             ? round(($difference / $contractAmount) * 100, 2)
