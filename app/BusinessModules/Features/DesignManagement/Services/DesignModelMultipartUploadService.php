@@ -492,6 +492,19 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
 
     private function storageFailure(Throwable $exception): DomainException
     {
+        $causes = [];
+        $cause = $exception;
+        do {
+            $causes[] = [
+                'class' => get_class($cause),
+                'code' => (string) $cause->getCode(),
+                'reason' => preg_match('/^[a-z][a-z0-9_]{0,79}$/D', $cause->getMessage()) === 1 ? $cause->getMessage() : null,
+                'storage_code' => $cause instanceof \Aws\Exception\AwsException ? $cause->getAwsErrorCode() : null,
+            ];
+            $cause = $cause->getPrevious();
+        } while ($cause !== null && count($causes) < 5);
+        Log::error('design_management.multipart_storage_failed', ['causes' => $causes]);
+
         return new DomainException(
             trans_message('design_management.errors.multipart_upload_failed'),
             0,
