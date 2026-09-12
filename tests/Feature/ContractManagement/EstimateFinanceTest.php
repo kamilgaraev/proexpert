@@ -270,6 +270,38 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_accepted_allocation_cannot_be_replaced_by_another_key_of_same_contract(): void
+    {
+        $first = $this->line($this->contractor, '60', '480000');
+        $second = $this->line($this->contractor, '40', '320000');
+        $this->save($this->command([$first, $second]));
+        $basis = app(\App\Services\Acting\PerformanceActContractBasisService::class)->resolve($this->item, $this->contractor, $first['key']);
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'ALLOCATION-FACT', 'act_date' => '2026-09-12',
+            'amount' => '120000', 'currency' => 'RUB', 'status' => 'draft', 'is_approved' => false, 'created_by_user_id' => $this->actor->id]);
+        \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Бетон', 'quantity' => '15', 'unit_price' => '8000', 'amount' => '120000',
+            'currency' => 'RUB', 'manual_reason' => 'Принятые работы', 'basis_snapshot' => $basis['snapshot'], 'created_by' => $this->actor->id]);
+        $act->update(['status' => 'approved', 'is_approved' => true]);
+        $replacement = $second;
+        $replacement['quantity'] = '100';
+        $replacement['amount'] = '800000';
+        $reduced = $first;
+        $reduced['quantity'] = '14';
+        foreach ([[$replacement], [$reduced, $second]] as $lines) {
+            try {
+                $this->save($this->command($lines));
+                self::fail('Accepted allocation was reassigned');
+            } catch (ValidationException) {
+                self::assertSame('60.00000000', EstimateFinanceAllocation::query()->where('key', $first['key'])->firstOrFail()->quantity);
+                self::assertDatabaseCount('estimate_finance_condition_versions', 2);
+            }
+        }
+        $act->update(['status' => 'annulled', 'annulled_at' => now()]);
+        $this->save($this->command([$replacement]));
+        self::assertDatabaseCount('estimate_finance_allocations', 1);
+    }
+
     public function test_condition_history_preserves_snapshots_after_edit_and_delete(): void
     {
         $line = $this->line($this->customer, '100', '1000000');

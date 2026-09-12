@@ -34,6 +34,27 @@ final class EstimateFinanceAcceptedVolume
                 throw ValidationException::withMessages(['lines' => trans_message('estimate_finance.accepted_volume')]);
             }
         }
+        $byKey = array_column($rows, null, 'key');
+        foreach ($this->allocationQuantities($estimate, $itemIds) as $accepted) {
+            $row = $byKey[$accepted->allocation_key] ?? null;
+            if ($row === null || (int) $row['contract_id'] !== (int) $accepted->contract_id
+                || (int) $row['estimate_item_id'] !== (int) $accepted->estimate_item_id || $row['resource_id'] !== null
+                || FinanceDecimal::compare($row['quantity'], (string) $accepted->quantity) < 0) {
+                throw ValidationException::withMessages(['lines' => trans_message('estimate_finance.accepted_volume')]);
+            }
+        }
+    }
+
+    private function allocationQuantities(Estimate $estimate, array $itemIds): iterable
+    {
+        return DB::table('performance_act_lines as lines')
+            ->join('contract_performance_acts as acts', 'acts.id', '=', 'lines.performance_act_id')
+            ->join('contracts', 'contracts.id', '=', 'acts.contract_id')
+            ->where('contracts.organization_id', $estimate->organization_id)->where('contracts.project_id', $estimate->project_id)
+            ->where('acts.project_id', $estimate->project_id)->whereNull('acts.annulled_at')->whereIn('acts.status', ['approved', 'signed'])
+            ->whereIn('lines.estimate_item_id', $itemIds)->where('lines.basis_snapshot->basis_type', 'contract_conditions')
+            ->selectRaw("acts.contract_id, lines.estimate_item_id, lines.basis_snapshot->>'allocation_key' AS allocation_key, SUM(lines.quantity) AS quantity")
+            ->groupByRaw("acts.contract_id, lines.estimate_item_id, lines.basis_snapshot->>'allocation_key'")->get();
     }
 
     public function quantities(Estimate $estimate, array $contractIds, array $itemIds): array
