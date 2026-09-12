@@ -27,6 +27,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceAcceptedVolume $acceptedVolume,
         private readonly EstimateFinanceRemainder $remainder,
         private readonly EstimateFinanceExecution $execution,
+        private readonly EstimateFinanceExecutionSummary $executionSummary,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat', string $view = 'plan'): array
@@ -169,6 +170,15 @@ final class EstimateFinanceService
         }
         unset($contract);
 
+        $execution = null;
+        if ($view === 'execution') {
+            $execution = $canViewExecution ? $this->execution->report($estimate, $contracts)
+                : ['available' => false, 'rows' => null, 'documents' => null];
+            if ($canViewExecution) {
+                $execution['summary'] = $this->executionSummary->calculate($execution['rows'], $allocations, $targets, $sections, $basis);
+            }
+        }
+
         return $calculation + [
             'estimate_id' => (int) $estimate->id, 'name' => $estimate->name, 'number' => $estimate->number,
             'revision' => (int) $estimate->finance_revision, 'basis' => $basis,
@@ -177,8 +187,7 @@ final class EstimateFinanceService
             'contracts' => $contracts, 'can_edit' => $this->access->can($actor, (int) $estimate->project_id, true),
             'can_view_execution' => $canViewExecution,
             'view' => $view,
-            'execution' => $view !== 'execution' ? null : ($canViewExecution ? $this->execution->report($estimate, $contracts)
-                : ['available' => false, 'rows' => null, 'documents' => null]),
+            'execution' => $execution,
         ];
     }
 

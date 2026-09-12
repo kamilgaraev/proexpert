@@ -92,6 +92,9 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('30.00', $result['documents'][0]['unallocated_amount_with_vat']);
         self::assertNull($result['documents'][0]['amount_without_vat']);
         self::assertSame($line['key'], $result['rows'][0]['allocation_key']);
+        self::assertSame('100.00', $result['summary']['totals']['RUB']['cost']);
+        self::assertSame('99.00000000', $result['summary']['contract_quantities'][0]['remaining_quantity']);
+        self::assertSame('i:'.$this->item->id, $result['summary']['positions'][0]['target_key']);
     }
 
     public function test_execution_report_does_not_query_acts_without_permission(): void

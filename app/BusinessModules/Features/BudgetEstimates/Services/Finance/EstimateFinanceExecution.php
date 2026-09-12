@@ -41,12 +41,12 @@ final class EstimateFinanceExecution
                     && (int) ($snapshot['estimate_id'] ?? 0) === (int) $line->estimateItem?->estimate_id
                     && ($snapshot['currency'] ?? null) === ($line->currency ?: $currency)
                     ? ($snapshot['base_unit_price'] ?? null) : null;
-                if (! is_string($base) || ! preg_match('/^-?\d+(\.\d+)?$/', $base)) {
+                if ($line->quantity === null || ! is_string($base) || ! preg_match('/^-?\d+(\.\d+)?$/', $base)) {
                     $base = null;
                 }
                 $lines[] = ['source_type' => 'act_line', 'source_id' => (int) $line->id,
                     'item_id' => $line->estimate_item_id, 'estimate_id' => $line->estimateItem?->estimate_id,
-                    'title' => $line->title, 'quantity' => (string) $line->quantity,
+                    'title' => $line->title, 'quantity' => $line->quantity,
                     'amount_with_vat' => $line->amount, 'currency' => $line->currency ?: $currency,
                     'amount_without_vat' => $base === null ? null : FinanceDecimal::multiply((string) $line->quantity, $base, 8),
                     'allocation_key' => $snapshot['allocation_key'] ?? null, 'condition_version' => $snapshot['condition_version'] ?? null];
@@ -55,7 +55,7 @@ final class EstimateFinanceExecution
                 foreach ($act->completedWorks as $work) {
                     $lines[] = ['source_type' => 'act_work', 'source_id' => (int) $work->id,
                         'item_id' => $work->estimate_item_id, 'estimate_id' => $work->estimateItem?->estimate_id,
-                        'title' => $work->description, 'quantity' => (string) $work->pivot->included_quantity,
+                        'title' => $work->description, 'quantity' => $work->pivot->included_quantity,
                         'amount_with_vat' => $work->pivot->included_amount, 'currency' => $work->pivot->currency ?: $currency,
                         'amount_without_vat' => null, 'allocation_key' => null, 'condition_version' => null];
                 }
