@@ -101,6 +101,75 @@ final class EstimateFinanceTest extends TestCase
         FinanceDecimal::allocate('1.00', ['a' => '0']);
     }
 
+    public function test_contract_progress_does_not_query_forbidden_execution_sources(): void
+    {
+        $this->save($this->command([$this->line($this->contractor, '100', '1000000')]));
+        $links = app(ContractEstimateService::class)->getItemsForContract($this->contractor);
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturn(false);
+        $progress = app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class);
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        \Illuminate\Support\Facades\DB::flushQueryLog();
+        $progress->prepare($this->contractor, $links, $this->actor);
+        $data = \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource::collection($links)->resolve(request());
+        $queries = \Illuminate\Support\Facades\DB::getQueryLog();
+        \Illuminate\Support\Facades\DB::disableQueryLog();
+
+        foreach ($queries as $query) {
+            self::assertDoesNotMatchRegularExpression('/completed_works|performance_act|journal_work/i', $query['query']);
+        }
+        foreach (['actual_quantity', 'available_quantity', 'acted_quantity', 'reserved_quantity', 'completion_percentage'] as $field) {
+            self::assertNull($data[0]['item'][$field]);
+        }
+        self::assertFalse($data[0]['item']['can_view_works']);
+        self::assertFalse($data[0]['item']['can_view_acts']);
+        self::assertSame([], $data[0]['item']['available_actions']);
+    }
+
+    public function test_contract_progress_batches_queries_for_multiple_items(): void
+    {
+        for ($index = 0; $index < 30; $index++) {
+            $item = $this->item->replicate();
+            $item->position_number = (string) ($index + 2);
+            $item->save();
+            ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id,
+                'estimate_id' => $this->estimate->id, 'estimate_item_id' => $item->id,
+                'quantity' => 100, 'amount' => 1000000, 'amount_without_vat' => 1000000]);
+        }
+        $links = app(ContractEstimateService::class)->getItemsForContract($this->contractor);
+        $progress = app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class);
+        $itemId = $links->first()->estimate_item_id;
+        \App\Models\CompletedWork::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'estimate_item_id' => $itemId, 'contract_id' => $this->contractor->id,
+            'user_id' => $this->actor->id, 'quantity' => 20, 'completed_quantity' => 20, 'price' => 100,
+            'total_amount' => 2000, 'completion_date' => '2026-09-09', 'status' => 'confirmed', 'description' => 'Выполнение']);
+        foreach (['draft' => 3, 'approved' => 5, 'annulled' => 7] as $status => $quantity) {
+            $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+                'project_id' => $this->estimate->project_id, 'act_document_number' => 'BATCH-'.$status,
+                'act_date' => '2026-09-12', 'amount' => 100, 'currency' => 'RUB', 'status' => 'draft',
+                'created_by_user_id' => $this->actor->id]);
+            \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $itemId,
+                'line_type' => 'manual', 'title' => 'Работа', 'quantity' => $quantity, 'unit_price' => 100,
+                'amount' => $quantity * 100, 'currency' => 'RUB', 'manual_reason' => 'Проверка', 'created_by' => $this->actor->id]);
+            $act->update(['status' => $status, 'is_approved' => $status !== 'draft']);
+        }
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        \Illuminate\Support\Facades\DB::flushQueryLog();
+        $progress->prepare($this->contractor, $links, $this->actor);
+        $queryCount = count(\Illuminate\Support\Facades\DB::getQueryLog());
+        $data = \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource::collection($links)->resolve(request());
+        $serializedQueryCount = count(\Illuminate\Support\Facades\DB::getQueryLog());
+        \Illuminate\Support\Facades\DB::disableQueryLog();
+
+        self::assertCount(30, $data);
+        self::assertLessThanOrEqual(5, $queryCount);
+        self::assertSame($queryCount, $serializedQueryCount);
+        self::assertSame(20.0, $data[0]['item']['actual_quantity']);
+        self::assertSame(5.0, $data[0]['item']['acted_quantity']);
+        self::assertSame(3.0, $data[0]['item']['reserved_quantity']);
+        self::assertSame(12.0, $data[0]['item']['available_quantity']);
+        self::assertTrue($data[0]['item']['can_view_works']);
+    }
+
     public function test_contract_reads_financial_conditions_instead_of_stale_projection_amounts(): void
     {
         $this->save($this->command([$this->line($this->contractor, '100', '1000000')]));

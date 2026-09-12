@@ -88,7 +88,7 @@ class ContractEstimateService
     public function getItemsForContract(Contract $contract, ?int $estimateId = null): Collection
     {
         $query = ContractEstimateItem::with([
-            'estimateItem',
+            'estimateItem' => fn ($items) => $items->withCount(['contractLinks' => fn ($links) => $links->countedInCoverage()]),
             'estimateItem.section',
             'estimateItem.section.parent',
             'estimateItem.measurementUnit',

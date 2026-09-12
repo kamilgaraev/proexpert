@@ -33,8 +33,12 @@ class ContractEstimateItemController extends Controller
         try {
             $estimateId = $request->query('estimate_id') ? (int) $request->query('estimate_id') : null;
             $items = $this->service->getItemsForContract($contract, $estimateId);
+            app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class)
+                ->prepare($contract, $items, $request->user());
 
             return AdminResponse::success(ContractEstimateItemResource::collection($items));
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('contract_estimate_items.index_failed', [
                 'contract_id' => $contract->id,
@@ -65,6 +69,12 @@ class ContractEstimateItemController extends Controller
                 $request->user(),
                 $request->input('vat_rate') === null ? null : (string) $request->input('vat_rate')
             );
+
+            $attached->load(['estimateItem' => fn ($items) => $items
+                ->with(['section', 'measurementUnit', 'childItems'])
+                ->withCount(['contractLinks' => fn ($links) => $links->countedInCoverage()])]);
+            app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class)
+                ->prepare($contract, $attached, $request->user());
 
             return AdminResponse::success(
                 ContractEstimateItemResource::collection($attached),
