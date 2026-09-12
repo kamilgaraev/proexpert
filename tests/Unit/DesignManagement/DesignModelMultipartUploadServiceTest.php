@@ -275,6 +275,10 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
             ): MultipartUpload => new MultipartUpload($path, 'provider-upload', $mime, $partSize, $metadata));
         $files->shouldReceive('abortMultipart')->once();
         Cache::shouldReceive('put')->once()->andThrow(new \RuntimeException('cache_unavailable'));
+        \Illuminate\Support\Facades\Log::shouldReceive('error')->once()->with(
+            'design_management.multipart_storage_failed',
+            ['causes' => [['class' => \RuntimeException::class, 'code' => '0', 'reason' => 'cache_unavailable', 'storage_code' => null]]],
+        );
         $service = new DesignModelMultipartUploadService(
             $files,
             new DesignStoragePathService,
@@ -577,7 +581,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
             }
         });
         Cache::shouldReceive('put')->once()->andReturn(false);
-        Cache::shouldNotReceive('forget');
+        Cache::shouldReceive('forget')->never();
         $service = new DesignModelMultipartUploadService(
             $files,
             new DesignStoragePathService,
