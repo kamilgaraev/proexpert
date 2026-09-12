@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Versioning;
 
 use App\Jobs\CreateEstimateRevision;
 use App\Models\Estimate;
+use App\Models\EstimateVersion;
 use App\Models\EstimateRevisionOperation;
 use App\Models\User;
 use DomainException;
@@ -20,29 +21,34 @@ final class EstimateRevisionQueueService
 {
     public function __construct(private readonly EstimateRevisionService $revisions) {}
 
-    public function enqueue(int $estimateId, int $organizationId, User $actor, string $reason, string $key): EstimateRevisionOperation
+    public function enqueue(int $estimateId, int $organizationId, User $actor, string $reason, string $key, ?int $targetVersionId = null): EstimateRevisionOperation
     {
         $estimate = Estimate::query()->whereKey($estimateId)->where('organization_id', $organizationId)->firstOrFail();
         Gate::forUser($actor)->authorize('view', $estimate);
+        if ($targetVersionId !== null) {
+            EstimateVersion::query()->where('estimate_id', $estimateId)->where('organization_id', $organizationId)->findOrFail($targetVersionId, ['id']);
+        }
         $existing = EstimateRevisionOperation::query()->where('estimate_id', $estimateId)
             ->where('idempotency_key', $key)->first();
         if ($existing !== null) {
+            $this->assertSameTarget($existing, $targetVersionId);
             return $existing;
         }
-        $this->authorize($estimateId, $organizationId, $actor);
+        $this->authorize($estimateId, $organizationId, $actor, $targetVersionId !== null);
 
-        $operation = DB::transaction(function () use ($estimate, $organizationId, $actor, $reason, $key): EstimateRevisionOperation {
+        $operation = DB::transaction(function () use ($estimate, $organizationId, $actor, $reason, $key, $targetVersionId): EstimateRevisionOperation {
             $locked = Estimate::query()->whereKey($estimate->id)->lock('FOR UPDATE NOWAIT')->firstOrFail();
             $existing = EstimateRevisionOperation::query()->where('estimate_id', $locked->id)
                 ->where('idempotency_key', $key)->first();
             if ($existing !== null) {
+                $this->assertSameTarget($existing, $targetVersionId);
                 return $existing;
             }
             if (EstimateRevisionOperation::query()->where('estimate_id', $locked->id)
                 ->whereIn('status', ['queued', 'processing'])->exists()) {
                 throw new DomainException(trans_message('estimate.revision_already_pending'));
             }
-            if ($locked->status !== 'approved' || $locked->current_version_id === null) {
+            if ($targetVersionId === null && ($locked->status !== 'approved' || $locked->current_version_id === null)) {
                 throw new DomainException(trans_message('estimate.revision_requires_approved_estimate'));
             }
 
@@ -52,6 +58,8 @@ final class EstimateRevisionQueueService
                 'organization_id' => $organizationId,
                 'actor_id' => $actor->id,
                 'source_version_id' => $locked->current_version_id,
+                'operation_type' => $targetVersionId !== null ? 'restore' : 'revision',
+                'target_version_id' => $targetVersionId,
                 'idempotency_key' => $key,
                 'reason' => $reason,
                 'status' => 'queued',
@@ -92,12 +100,18 @@ final class EstimateRevisionQueueService
                 Log::channel('estimate_revisions')->info('revision.processing', $this->context($operation));
                 $actor = User::query()->findOrFail($operation->actor_id);
                 $actor->current_organization_id = $operation->organization_id;
-                $estimate = $this->authorize($operation->estimate_id, $operation->organization_id, $actor);
+                $estimate = $this->authorize($operation->estimate_id, $operation->organization_id, $actor, $operation->operation_type === 'restore');
                 $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
-                if ((int) $estimate->current_version_id !== $operation->source_version_id) {
+                if ((int) $estimate->current_version_id !== (int) $operation->source_version_id) {
                     throw new DomainException('revision_source_changed');
                 }
-                $this->revisions->start($estimate, $actor->id, $operation->reason, $operation->idempotency_key);
+                if ($operation->operation_type === 'restore') {
+                    $version = EstimateVersion::query()->where('estimate_id', $estimate->id)
+                        ->where('organization_id', $operation->organization_id)->findOrFail($operation->target_version_id);
+                    app(EstimateVersionRestoreService::class)->restore($estimate, $version, $actor->id);
+                } else {
+                    $this->revisions->start($estimate, $actor->id, $operation->reason, $operation->idempotency_key);
+                }
                 $operation->update(['status' => 'completed', 'finished_at' => now()]);
                 Log::channel('estimate_revisions')->info('revision.completed', $this->context($operation));
             });
@@ -156,11 +170,20 @@ final class EstimateRevisionQueueService
         ]);
     }
 
-    private function authorize(int $estimateId, int $organizationId, User $actor): Estimate
+    private function assertSameTarget(EstimateRevisionOperation $operation, ?int $targetVersionId): void
+    {
+        if ($operation->target_version_id !== $targetVersionId) {
+            throw new DomainException('operation_key_reused');
+        }
+    }
+
+    private function authorize(int $estimateId, int $organizationId, User $actor, bool $restore = false): Estimate
     {
         $estimate = Estimate::query()->whereKey($estimateId)->where('organization_id', $organizationId)->firstOrFail();
-        Gate::forUser($actor)->authorize('createVersion', $estimate);
-        Gate::forUser($actor)->authorize('update', $estimate);
+        Gate::forUser($actor)->authorize($restore ? 'rollbackVersion' : 'createVersion', $estimate);
+        if (! $restore) {
+            Gate::forUser($actor)->authorize('update', $estimate);
+        }
 
         return $estimate;
     }
@@ -175,6 +198,7 @@ final class EstimateRevisionQueueService
     private function context(EstimateRevisionOperation $operation): array
     {
         return ['operation_id' => $operation->id, 'estimate_id' => $operation->estimate_id,
+            'operation_type' => $operation->operation_type, 'target_version_id' => $operation->target_version_id,
             'organization_id' => $operation->organization_id, 'actor_id' => $operation->actor_id];
     }
 }

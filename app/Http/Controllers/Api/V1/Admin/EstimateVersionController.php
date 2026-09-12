@@ -163,25 +163,35 @@ class EstimateVersionController extends Controller
 
     public function rollback(Request $request, int $estimateId, int $versionId): JsonResponse
     {
+        $request->merge(['idempotency_key' => $request->header('Idempotency-Key')]);
+        $validated = $request->validate(['idempotency_key' => ['required', 'string', 'min:16', 'max:128']]);
         try {
             $estimate = $this->findEstimateOrFail($estimateId);
-            $version = $this->findVersionForEstimate($estimate, $versionId);
-            $this->authorize('rollbackVersion', $version->estimate);
-            $restoredEstimate = $this->versionRestoreService->restore(
-                estimate: $version->estimate,
-                version: $version,
-                actorId: (int) $request->user()->id
+            $this->authorize('rollbackVersion', $estimate);
+            $operation = $this->revisionService->enqueue(
+                $estimate->id, $estimate->organization_id, $request->user(), '', $validated['idempotency_key'], $versionId
             );
         } catch (\InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('estimate.version_not_found'), Response::HTTP_NOT_FOUND);
+        } catch (\DomainException $e) {
+            return AdminResponse::error(trans_message('estimate.restore_conflict'), Response::HTTP_CONFLICT);
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            if ($e instanceof \Illuminate\Database\QueryException && $e->getCode() === '55P03') {
+                return AdminResponse::error(trans_message('estimate.restore_conflict'), Response::HTTP_CONFLICT);
+            }
+            $this->revisionService->logError($e, ['estimate_id' => $estimateId, 'target_version_id' => $versionId, 'stage' => 'enqueue_restore']);
+
+            return AdminResponse::error(trans_message('estimate.restore_queue_unavailable'), Response::HTTP_SERVICE_UNAVAILABLE);
         }
 
         return AdminResponse::success(
-            new EstimateResource($restoredEstimate),
-            trans_message('estimate.version_rollback'),
-            Response::HTTP_CREATED
+            $operation->payload(),
+            $operation->payload()['message'],
+            in_array($operation->status, ['queued', 'processing'], true) ? Response::HTTP_ACCEPTED : Response::HTTP_OK
         );
     }
 

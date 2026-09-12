@@ -209,7 +209,17 @@ class EstimateConstructorController extends Controller
                 trans_message($isConflict ? 'estimate_constructor.conflict' : 'estimate_constructor.invalid_changes'),
                 $isConflict ? Response::HTTP_CONFLICT : Response::HTTP_UNPROCESSABLE_ENTITY,
             );
-        } catch (ModelNotFoundException) {
+        } catch (ModelNotFoundException $exception) {
+            Log::warning('estimate.constructor_record_not_found', [
+                'operation' => $operation,
+                'estimate_id' => $estimateId,
+                'organization_id' => $organizationId,
+                'user_id' => $request->user()?->id,
+                'model' => $exception->getModel(),
+            ]);
+            if ($operation === 'bulkUpdate' && $exception->getModel() === \App\Models\EstimateItem::class) {
+                return AdminResponse::error(trans_message('estimate_constructor.positions_changed'), Response::HTTP_CONFLICT);
+            }
             return AdminResponse::error(
                 trans_message('estimate_constructor.not_found'),
                 Response::HTTP_NOT_FOUND,
