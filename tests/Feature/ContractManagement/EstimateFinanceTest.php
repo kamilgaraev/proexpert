@@ -258,6 +258,67 @@ final class EstimateFinanceTest extends TestCase
             'lines' => [['allocation_key' => $allocation->key, 'condition_version' => (int) $allocation->condition_version, 'version' => $version, 'amount' => $amount]]];
     }
 
+    public function test_own_cost_storage_preserves_sources_history_and_unknown_tax(): void
+    {
+        $db = \Illuminate\Support\Facades\DB::class;
+        $line = array_replace($this->line($this->contractor, '100', '1000'), ['source' => 'own', 'contract_id' => null]);
+        $this->save($this->command([$line]));
+        $allocation = EstimateFinanceAllocation::query()->where('key', $line['key'])->firstOrFail();
+        $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,
+            'name' => 'Собственные расходы', 'code' => 'OWN-FIN', 'is_active' => true]);
+        $row = ['key' => (string) Str::uuid(), 'organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'source_type' => 'manual', 'advance_transaction_id' => null,
+            'cost_category_id' => $category->id, 'expense_date' => '2026-09-13', 'basis' => 'Подтверждённый расход',
+            'currency' => 'RUB', 'amount' => '120.00', 'amount_without_vat' => null, 'vat_mode' => 'unknown', 'vat_rate' => null,
+            'status' => 'confirmed', 'version' => 1, 'source_hash' => hash('sha256', 'manual-confirmation'),
+            'source_snapshot' => json_encode(['basis' => 'Подтверждённый расход']), 'confirmed_by' => $this->actor->id,
+            'confirmed_at' => now(), 'updated_by' => $this->actor->id, 'created_at' => now(), 'updated_at' => now()];
+        $id = $db::table('estimate_finance_own_costs')->insertGetId($row);
+        $db::table('estimate_finance_own_cost_versions')->insert(['own_cost_id' => $id, 'version' => 1,
+            'mutation_id' => (string) Str::uuid(), 'before' => null, 'after' => json_encode($row),
+            'actor_id' => $this->actor->id, 'created_at' => now()]);
+        $distribution = ['key' => (string) Str::uuid(), 'own_cost_id' => $id, 'estimate_id' => $this->estimate->id,
+            'allocation_id' => $allocation->id, 'amount' => '60.00', 'amount_without_vat' => null,
+            'version' => 1, 'source_version' => 1, 'condition_version' => 1, 'updated_by' => $this->actor->id,
+            'created_at' => now(), 'updated_at' => now()];
+        $distributionId = $db::table('estimate_finance_own_cost_allocations')->insertGetId($distribution);
+        $db::table('estimate_finance_own_cost_allocation_versions')->insert(['own_cost_allocation_id' => $distributionId,
+            'version' => 1, 'mutation_id' => (string) Str::uuid(), 'finance_revision' => 1,
+            'before' => null, 'after' => json_encode($distribution), 'actor_id' => $this->actor->id, 'created_at' => now()]);
+        self::assertNull($db::table('estimate_finance_own_costs')->where('id', $id)->value('amount_without_vat'));
+        self::assertSame('60.00', $db::table('estimate_finance_own_cost_allocations')->where('id', $distributionId)->value('amount'));
+        foreach ([
+            fn () => $db::table('estimate_finance_own_costs')->where('id', $id)->update(['currency' => 'rub']),
+            fn () => $db::table('estimate_finance_own_costs')->where('id', $id)->update(['amount' => '-1']),
+            fn () => $db::table('estimate_finance_own_costs')->where('id', $id)->update(['vat_mode' => 'none']),
+            fn () => $db::table('estimate_finance_own_costs')->where('id', $id)->update(['source_type' => 'advance_expense']),
+            fn () => $db::table('estimate_finance_own_costs')->where('id', $id)->delete(),
+            fn () => $db::table('estimate_finance_allocations')->where('id', $allocation->id)->delete(),
+            fn () => $db::table('estimate_finance_own_cost_allocations')->where('id', $distributionId)->delete(),
+            fn () => $db::table('estimate_finance_own_cost_allocations')->insert(array_replace($distribution, ['key' => (string) Str::uuid()])),
+        ] as $invalidWrite) {
+            try {
+                $db::transaction($invalidWrite);
+                self::fail('Own cost source, tax or history constraint was not enforced');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                self::assertContains($exception->getCode(), ['23514', '23503', '23505']);
+            }
+        }
+        $source = \App\Models\AdvanceAccountTransaction::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'user_id' => $this->actor->id, 'type' => 'expense',
+            'amount' => '120', 'balance_after' => '0', 'reporting_status' => 'approved', 'approved_at' => now(),
+            'created_by_user_id' => $this->actor->id, 'approved_by_user_id' => $this->actor->id]);
+        $linked = array_replace($row, ['key' => (string) Str::uuid(), 'source_type' => 'advance_expense', 'advance_transaction_id' => $source->id]);
+        $db::table('estimate_finance_own_costs')->insert($linked);
+        try {
+            $db::transaction(fn () => $db::table('estimate_finance_own_costs')->insert(array_replace($linked, ['key' => (string) Str::uuid()])));
+            self::fail('Duplicate expense document was allowed');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertSame('23505', $exception->getCode());
+        }
+        self::assertSame($row['key'], $db::table('estimate_finance_own_costs')->where('id', $id)->value('key'));
+    }
+
     public function test_cash_allocation_storage_preserves_signed_amount_and_prevents_duplicate_transaction_target(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
