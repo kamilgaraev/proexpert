@@ -121,6 +121,52 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_condition_history_preserves_snapshots_after_edit_and_delete(): void
+    {
+        $line = $this->line($this->customer, '100', '1000000');
+        $this->save($this->command([$line]));
+        $line['amount'] = '1200000';
+        $line['condition_version'] = 1;
+        $edit = $this->command([$line]);
+        $this->save($edit);
+        $this->save($edit);
+        $this->save($this->command([]));
+        $history = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id);
+        self::assertFalse($history['has_more']);
+        self::assertCount(3, $history['data']);
+        self::assertSame(['created', 'updated', 'deleted'], array_column($history['data'], 'action'));
+        self::assertSame([1, 2, 3], array_column($history['data'], 'condition_version'));
+        self::assertSame('1000000.00', $history['data'][1]['before']['amount_with_vat']);
+        self::assertSame('1200000.00', $history['data'][1]['after']['amount_with_vat']);
+        self::assertSame('1200000.00', $history['data'][2]['before']['amount_with_vat']);
+        self::assertNull($history['data'][2]['after']);
+        self::assertSame($this->actor->id, $history['data'][1]['actor_id']);
+        self::assertDatabaseCount('estimate_finance_allocations', 0);
+        $this->expectException(ConflictHttpException::class);
+        $this->save($this->command([$line]));
+    }
+
+    public function test_stale_condition_version_is_rejected_even_with_current_estimate_revision(): void
+    {
+        $line = $this->line($this->customer, '100', '1000000');
+        $this->save($this->command([$line]));
+        $line['condition_version'] = 0;
+        try {
+            $this->save($this->command([$line]));
+            self::fail('Stale condition version was accepted');
+        } catch (ConflictHttpException) {
+            self::assertDatabaseCount('estimate_finance_condition_versions', 1);
+        }
+    }
+
+    public function test_condition_history_respects_view_permissions(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturn(false);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(EstimateFinanceService::class)->history($this->actor, $this->estimate->project_id, $this->estimate->id);
+    }
+
     public function test_explicit_vat_modes_are_independent_of_estimate_and_repeated_save(): void
     {
         $this->estimate->update(['vat_rate' => '0']);

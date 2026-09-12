@@ -36,6 +36,7 @@ class SaveEstimateFinanceRequest extends FormRequest
             'target_keys.*' => ['required', 'string', 'distinct', 'regex:/^[ir]:[1-9]\d*$/'],
             'lines' => ['present', 'array', 'max:5000'],
             'lines.*.key' => ['required', 'uuid', 'distinct'],
+            'lines.*.condition_version' => ['sometimes', 'integer', 'min:0'],
             'lines.*.target_key' => ['required', 'string'],
             'lines.*.source' => ['required', 'in:contract,own,included'],
             'lines.*.contract_id' => ['nullable', 'integer', 'min:1'],

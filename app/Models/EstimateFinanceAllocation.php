@@ -16,6 +16,7 @@ class EstimateFinanceAllocation extends Model
     protected $guarded = ['id'];
 
     protected $casts = [
+        'condition_version' => 'integer',
         'quantity' => 'decimal:8',
         'unit_price' => 'decimal:8',
         'amount_without_vat' => 'decimal:2',

@@ -23,6 +23,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceQuery $query,
         private readonly EstimateFinanceCalculator $calculator,
         private readonly EstimateCacheService $cache,
+        private readonly EstimateFinanceHistory $history,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat'): array
@@ -162,6 +163,13 @@ final class EstimateFinanceService
         ];
     }
 
+    public function history(User $actor, int $projectId, int $estimateId, int $afterId = 0): array
+    {
+        $estimate = $this->access->estimate($actor, $projectId, $estimateId);
+
+        return $this->history->forEstimate($estimate, max(0, $afterId));
+    }
+
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId, true);
@@ -269,11 +277,14 @@ final class EstimateFinanceService
             }
             foreach ($normalized as $row) {
                 $allocation = $existingByKey->get($row['key']) ?? new EstimateFinanceAllocation;
-                $allocation->fill($row)->save();
+                $allocation->fill($row);
+                $allocation->condition_version = $allocation->exists ? (int) $allocation->condition_version + 1 : 1;
+                $allocation->save();
             }
             $this->projectLinks($estimate, $data['target_keys']);
             $revision = (int) $estimate->fresh()->finance_revision + 1;
             DB::table('estimates')->where('id', $estimate->id)->update(['finance_revision' => $revision]);
+            $this->history->record($actor, $estimate, $data['mutation_id'], $revision, $before, array_column($normalized, 'key'));
             DB::table('estimate_finance_mutations')->insert([
                 'estimate_id' => $estimate->id, 'mutation_id' => $data['mutation_id'], 'request_hash' => $hash,
                 'actor_id' => $actor->id, 'revision' => $revision,
@@ -300,6 +311,8 @@ final class EstimateFinanceService
         $rows = [];
         $quantities = [];
         $knownKeys = EstimateFinanceAllocation::query()->whereIn('key', array_column($data['lines'], 'key'))->get()->keyBy('key');
+        $retiredKeys = DB::table('estimate_finance_condition_versions')->whereIn('allocation_key', array_column($data['lines'], 'key'))
+            ->where('action', 'deleted')->pluck('allocation_key')->flip();
         $legacyLinks = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('finance_managed', false)
             ->whereIn('id', array_column($data['lines'], 'legacy_link_id'))->get()->keyBy('id');
         $total = '0.00';
@@ -347,6 +360,10 @@ final class EstimateFinanceService
             $net = $tax['amount_without_vat'];
             $gross = $tax['amount_with_vat'];
             $foreignKey = $knownKeys->get($line['key']);
+            if (isset($retiredKeys[$line['key']]) || (isset($line['condition_version'])
+                && (int) $line['condition_version'] !== (int) ($foreignKey?->condition_version ?? 0))) {
+                throw new ConflictHttpException(trans_message('estimate_finance.conflict'));
+            }
             $legacyLink = $legacyLinks->get($line['legacy_link_id'] ?? 0);
             if (isset($line['legacy_link_id']) && (! $legacyLink || (int) $legacyLink->estimate_item_id !== $target['item_id']
                 || (int) $legacyLink->contract_id !== $contract?->id || $target['resource_id'] !== null)) {
