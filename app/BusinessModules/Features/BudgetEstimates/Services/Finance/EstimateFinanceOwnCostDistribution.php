@@ -62,7 +62,7 @@ final class EstimateFinanceOwnCostDistribution
                 $snapshot = json_decode($cost->source_snapshot, true, 512, JSON_THROW_ON_ERROR);
                 $document = $source?->only(['id', 'organization_id', 'project_id', 'type', 'amount', 'reporting_status',
                     'approved_at', 'approved_by_user_id', 'document_number', 'document_date', 'description', 'cost_category_id']);
-                if ($document === null || json_encode($document, JSON_THROW_ON_ERROR) !== json_encode($snapshot['document'] ?? null, JSON_THROW_ON_ERROR)) {
+                if ($document === null || json_decode(json_encode($document, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR) != ($snapshot['document'] ?? null)) {
                     $this->conflict();
                 }
             }

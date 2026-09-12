@@ -33,6 +33,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceProjectCash $projectCash,
         private readonly EstimateFinanceOwnCost $ownCost,
         private readonly EstimateFinanceOwnCostDistribution $ownCostDistribution,
+        private readonly EstimateFinanceOwnCostReport $ownCostReport,
         private readonly EstimateFinanceCashDistribution $cashDistribution,
     ) {}
 
@@ -93,7 +94,7 @@ final class EstimateFinanceService
             }
 
             return ['basis' => $basis, 'view' => $view, 'estimates' => $reports, 'totals' => array_values($totals)]
-                + ($view === 'execution' ? ['execution' => $execution] : [])
+                + ($view === 'execution' ? ['execution' => $execution, 'own_costs' => $this->ownCostReport->report($actor, $projectId, null, $basis)] : [])
                 + ($view === 'cash' ? ['cash' => $cash] : []);
         }, 3);
     }
@@ -208,6 +209,7 @@ final class EstimateFinanceService
             'can_view_execution' => $canViewExecution,
             'view' => $view,
             'execution' => $execution,
+            'own_costs' => $view === 'execution' ? $this->ownCostReport->report($actor, (int) $estimate->project_id, (int) $estimate->id, $basis) : null,
             'cash' => $view !== 'cash' ? null : ($this->access->canViewCash($actor, (int) $estimate->project_id)
                 ? $this->cashSources->report($estimate, $contracts)
                 : ['available' => false, 'scope' => 'linked_contracts', 'sources' => null, 'documents' => null]),

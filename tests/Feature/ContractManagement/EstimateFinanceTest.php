@@ -309,6 +309,16 @@ final class EstimateFinanceTest extends TestCase
         }
         self::assertSame('0.03', $gross);
         self::assertSame('0.02', $net);
+        $costReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertSame('0.02', $costReport['source_totals']['RUB']['amount']);
+        self::assertSame('0.01', $costReport['allocated_totals']['RUB']['amount']);
+        self::assertCount(2, $costReport['rows']);
+        self::assertSame('0.00', $costReport['sources'][0]['remaining_amount']);
+        $projectCostReport = $this->finance->projectReport($this->actor, $this->estimate->project_id, 'without_vat', false, 'execution')['own_costs'];
+        self::assertSame('0.02', $projectCostReport['source_totals']['RUB']['amount']);
+        self::assertSame('0.02', $projectCostReport['allocated_totals']['RUB']['amount']);
+        self::assertCount(1, $projectCostReport['sources']);
+        self::assertCount(3, $projectCostReport['rows']);
         self::assertSame(3, $db::table('estimate_finance_own_cost_allocation_versions')->count());
         self::assertEquals($firstRow, $db::table('estimate_finance_own_cost_allocations')->where('id', $firstRow->id)->first());
         try {
@@ -333,6 +343,9 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($firstRow->key, $db::table('estimate_finance_own_cost_allocations')->where('id', $firstRow->id)->value('key'));
         self::assertSame(2, $db::table('estimate_finance_own_cost_allocations')->where('id', $firstRow->id)->value('version'));
         self::assertSame(4, $db::table('estimate_finance_own_cost_allocation_versions')->count());
+        $remainingReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertSame('0.01', $remainingReport['sources'][0]['remaining_amount']);
+        self::assertSame('0.01', $remainingReport['sources'][0]['remaining_without_vat']);
     }
 
     public function test_own_cost_registration_previews_tax_and_replays_without_duplicate_expense(): void
@@ -429,6 +442,20 @@ final class EstimateFinanceTest extends TestCase
         }
         self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_own_costs')->count());
         self::assertSame('120.00', $source->fresh()->amount);
+        $ownLine = array_replace($this->line($this->contractor, '100', '120'), ['source' => 'own', 'contract_id' => null]);
+        $this->save($this->command([$ownLine]));
+        $savedCost = \Illuminate\Support\Facades\DB::table('estimate_finance_own_costs')->where('key', $command['cost_key'])->first();
+        $this->save(['operation' => 'own_cost_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'cost_key' => $savedCost->key, 'source_version' => 1, 'source_hash' => $savedCost->source_hash,
+            'lines' => [['allocation_key' => $ownLine['key'], 'condition_version' => 1, 'version' => 0, 'amount' => '100']]]);
+        $costReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertSame('120.00', $costReport['source_totals']['RUB']['amount']);
+        self::assertSame('100.00', $costReport['allocated_totals']['RUB']['amount']);
+        $source->update(['description' => 'Новое описание после регистрации']);
+        $changedReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertTrue($changedReport['sources'][0]['requires_review']);
+        self::assertNull($changedReport['source_totals']['RUB']['amount']);
+        self::assertNull($changedReport['allocated_totals']['RUB']['amount']);
         $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(
             fn ($actor, $permission, $context) => $permission !== 'advance_transactions.view',
         );
@@ -439,6 +466,11 @@ final class EstimateFinanceTest extends TestCase
         } catch (\Illuminate\Auth\Access\AuthorizationException) {
             self::assertTrue(true);
         }
+        $deniedReport = app(EstimateFinanceService::class)->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertFalse($deniedReport['sources'][0]['available']);
+        self::assertArrayNotHasKey('basis', $deniedReport['sources'][0]);
+        self::assertNull($deniedReport['source_totals']['']['amount']);
+        self::assertNull($deniedReport['allocated_totals']['']['amount']);
         $queries = \Illuminate\Support\Facades\DB::getQueryLog();
         \Illuminate\Support\Facades\DB::disableQueryLog();
         self::assertSame([], array_values(array_filter($queries, fn ($query) => str_contains($query['query'], 'advance_account_transactions'))));
