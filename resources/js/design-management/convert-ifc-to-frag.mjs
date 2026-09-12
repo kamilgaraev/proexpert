@@ -4,9 +4,10 @@ import path from "node:path";
 import { ByteBuffer } from "flatbuffers";
 import pako from "pako";
 import * as FRAGS from "@thatopen/fragments";
+import { IfcAPI } from "web-ifc";
 
-const [, , inputPath, outputPath] = process.argv;
-const VIEWER_GEOMETRY_PROFILE = "geometry_first_stage_one";
+const [, , inputPath, outputPath, indexPath] = process.argv;
+const VIEWER_GEOMETRY_PROFILE = "ifc_properties_geometry_v2";
 
 const emit = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -70,8 +71,8 @@ const hasValidBounds = (bounds) => {
 };
 
 const configureViewerImporter = (importer) => {
-  importer.includeUniqueAttributes = false;
-  importer.includeRelationNames = false;
+  importer.includeUniqueAttributes = true;
+  importer.includeRelationNames = true;
   importer.replaceStoreyElevation = true;
   importer.distanceThreshold = null;
   importer.classes.abstract.clear();
@@ -121,8 +122,113 @@ const inspectFragments = (bytes, raw = false) => {
   return metrics;
 };
 
+const value = (input) => {
+  if (input === null || input === undefined) return null;
+  if (typeof input !== "object") return input;
+  if (Object.prototype.hasOwnProperty.call(input, "value")) return value(input.value);
+  return null;
+};
+
+const namedProperties = (sets) => {
+  const result = {};
+  for (const set of sets ?? []) {
+    const setName = String(value(set.Name) ?? "Unnamed");
+    const properties = {};
+    for (const property of [...(set.HasProperties ?? []), ...(set.Quantities ?? [])]) {
+      const name = value(property.Name);
+      if (name !== null) properties[String(name)] = value(property.NominalValue ?? property.LengthValue ?? property.AreaValue ?? property.VolumeValue ?? property.CountValue ?? property.WeightValue);
+    }
+    result[setName] = properties;
+  }
+  return result;
+};
+
+const materialNames = (materials) => (materials ?? [])
+  .map((material) => value(material.Name) ?? value(material.Material?.Name))
+  .filter((name) => name !== null)
+  .map(String);
+
+const relationIds = (references) => (references ?? [])
+  .map((reference) => Number(value(reference)))
+  .filter((id) => Number.isInteger(id) && id > 0);
+
+const classificationMap = (api, modelID) => {
+  const map = new Map();
+  const relations = api.GetLineIDsWithType(modelID, api.GetTypeCodeFromName("IFCRELASSOCIATESCLASSIFICATION"));
+  for (let index = 0; index < relations.size(); index += 1) {
+    const relation = api.GetLine(modelID, relations.get(index), false);
+    const classificationID = Number(value(relation.RelatingClassification));
+    const classification = Number.isInteger(classificationID) ? api.GetLine(modelID, classificationID, false) : null;
+    const name = value(classification?.Name) ?? value(classification?.Identification);
+    if (name === null) continue;
+    for (const relatedID of relationIds(relation.RelatedObjects)) {
+      const entries = map.get(relatedID) ?? [];
+      entries.push(String(name));
+      map.set(relatedID, entries);
+    }
+  }
+  return map;
+};
+
+const extractIfcIndex = async (sourcePath, destination) => {
+  const api = new IfcAPI();
+  await api.Init();
+  const source = await fs.open(sourcePath, "r");
+  const modelID = api.OpenModelFromCallback((offset, size) => {
+    const buffer = new Uint8Array(size);
+    const bytesRead = readSync(source.fd, buffer, 0, size, offset);
+    return buffer.slice(0, bytesRead);
+  });
+  const output = await fs.open(destination, "w");
+  let elements = 0;
+  try {
+    const classifications = classificationMap(api, modelID);
+    const ids = api.GetAllLines(modelID);
+    for (let index = 0; index < ids.size(); index += 1) {
+      const expressID = ids.get(index);
+      const item = api.GetLine(modelID, expressID, false);
+      if (!item || !api.IsIfcElement(item.type)) continue;
+      const [propertySets, materials] = await Promise.all([
+        api.properties.getPropertySets(modelID, expressID, true, true),
+        api.properties.getMaterialsProperties(modelID, expressID, true, true),
+      ]);
+      await output.write(`${JSON.stringify({
+        express_id: expressID,
+        global_id: value(item.GlobalId),
+        category: api.GetNameFromTypeCode(item.type).toUpperCase(),
+        name: value(item.Name),
+        properties: namedProperties(propertySets),
+        quantities: namedProperties(propertySets.filter((set) => api.GetNameFromTypeCode(set.type).toUpperCase() === "IFCELEMENTQUANTITY")),
+        materials: materialNames(materials),
+        classifications: classifications.get(expressID) ?? [],
+      })}\n`);
+      elements += 1;
+    }
+    const unitTypes = ["IFCSIUNIT", "IFCCONVERSIONBASEDUNIT", "IFCDERIVEDUNIT"];
+    const units = unitTypes.flatMap((type) => {
+      const ids = api.GetLineIDsWithType(modelID, api.GetTypeCodeFromName(type));
+      return Array.from({ length: ids.size() }, (_, index) => api.GetLine(modelID, ids.get(index), false)).map((unit) => ({
+        type,
+        unit_type: value(unit.UnitType),
+        name: value(unit.Name),
+        prefix: value(unit.Prefix),
+      }));
+    });
+    const transformationTypes = ["IFCMAPCONVERSION", "IFCLOCALPLACEMENT", "IFCGEOMETRICREPRESENTATIONCONTEXT"];
+    const transformations = transformationTypes.flatMap((type) => {
+      const ids = api.GetLineIDsWithType(modelID, api.GetTypeCodeFromName(type));
+      return Array.from({ length: ids.size() }, (_, index) => ({ type, express_id: ids.get(index) }));
+    });
+    return { indexed_element_count: elements, units, transformations, coordination_matrix: api.GetCoordinationMatrix(modelID) };
+  } finally {
+    await output.close();
+    await source.close();
+    api.CloseModel(modelID);
+  }
+};
+
 try {
-  if (!inputPath || !outputPath) {
+  if (!inputPath || !outputPath || !indexPath) {
     throw new Error("Input and output paths are required.");
   }
 
@@ -131,9 +237,7 @@ try {
     path: `${path.join(process.cwd(), "node_modules", "web-ifc")}${path.sep}`,
     absolute: true,
   };
-  importer.webIfcSettings = {
-    COORDINATE_TO_ORIGIN: true,
-  };
+  importer.webIfcSettings = { COORDINATE_TO_ORIGIN: false };
   configureViewerImporter(importer);
 
   emit({ event: "progress", progress: 0, stage: "reading" });
@@ -162,8 +266,11 @@ try {
   }
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.mkdir(path.dirname(indexPath), { recursive: true });
+  const ifcMetadata = await extractIfcIndex(inputPath, indexPath);
   const metrics = {
     profile: VIEWER_GEOMETRY_PROFILE,
+    ifc_metadata: ifcMetadata,
     ...inspectFragments(fragmentsData, false),
   };
   await fs.writeFile(outputPath, Buffer.from(fragmentsData));

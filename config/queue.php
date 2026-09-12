@@ -84,6 +84,15 @@ return [
             'after_commit' => false,
         ],
 
+        'redis_ifc' => [
+            'driver' => 'redis',
+            'connection' => env('IFC_REDIS_QUEUE_CONNECTION', env('REDIS_QUEUE_CONNECTION', 'default')),
+            'queue' => env('IFC_REDIS_QUEUE', 'ifc-processing'),
+            'retry_after' => (int) env('IFC_REDIS_QUEUE_RETRY_AFTER', 7200),
+            'block_for' => null,
+            'after_commit' => true,
+        ],
+
         'redis_estimate_generation' => [
             'driver' => 'redis',
             'connection' => env('REDIS_ESTIMATE_GENERATION_QUEUE_CONNECTION', env('REDIS_QUEUE_CONNECTION', 'default')),

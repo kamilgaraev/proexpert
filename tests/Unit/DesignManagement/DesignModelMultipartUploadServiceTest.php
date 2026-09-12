@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\DesignManagement;
 
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
+use App\BusinessModules\Features\DesignManagement\Models\DesignIfcUploadSession;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelRegistrationService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelMultipartUploadService;
@@ -14,6 +15,9 @@ use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\DTO\MultipartPart;
 use App\Services\Storage\DTO\MultipartUpload;
 use App\Services\Storage\FileService;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Mockery;
@@ -21,17 +25,16 @@ use Tests\TestCase;
 
 final class DesignModelMultipartUploadServiceTest extends TestCase
 {
-    public function refreshDatabase(): void {}
 
     public function test_uploads_api_chunk_to_s3_multipart_upload(): void
     {
         Cache::flush();
 
-        $uploadId = 'upload-123';
+        $uploadId = '00000000-0000-4000-8000-000000000123';
         Cache::put('design_management:model_upload:'.$uploadId, [
             'upload_id' => $uploadId,
             's3_upload_id' => 's3-upload-123',
-            'source_path' => 'org-7/pir/model-uploads/user-15/upload-123/building.ifc',
+            'source_path' => 'org-7/pir/model-uploads/user-15/00000000-0000-4000-8000-000000000123/building.ifc',
             'organization_id' => 7,
             'project_id' => 11,
             'package_id' => 21,
@@ -44,6 +47,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
                 'size_bytes' => 6_000_000,
             ],
             'uploaded_parts' => [],
+            'expires_at' => now()->addDay()->toISOString(),
             'payload' => [
                 'title' => 'IFC',
                 'version_number' => '1',
@@ -57,7 +61,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
             ->once()
             ->with(
                 Mockery::on(static fn (MultipartUpload $upload): bool => $upload->organizationPath
-                    === 'org-7/pir/model-uploads/user-15/upload-123/building.ifc'
+                    === 'org-7/pir/model-uploads/user-15/00000000-0000-4000-8000-000000000123/building.ifc'
                     && $upload->uploadId === 's3-upload-123'
                     && $upload->partSizeBytes === 5_242_880),
                 1,
@@ -75,7 +79,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
                 Cache::put('design_management:model_upload:'.$uploadId, $session, now()->addDay());
 
                 return new MultipartPart(
-                    'org-7/pir/model-uploads/user-15/upload-123/building.ifc',
+                    'org-7/pir/model-uploads/user-15/00000000-0000-4000-8000-000000000123/building.ifc',
                     's3-upload-123',
                     1,
                     '"etag-1"',
@@ -116,8 +120,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
     public function test_start_uses_org_user_path_and_unified_storage_session(): void
     {
         Cache::flush();
-        $package = new DesignPackage;
-        $package->forceFill(['id' => 21, 'organization_id' => 7, 'project_id' => 11]);
+        $package = $this->persistedPackage();
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
         $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
         $files = Mockery::mock(FileService::class);
@@ -157,10 +160,74 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
         $this->assertSame('provider-upload', $session['s3_upload_id']);
     }
 
+    public function test_start_resumes_durable_session_for_same_file_identity(): void
+    {
+        Cache::flush();
+        $package = $this->persistedPackage();
+        $registrar = Mockery::mock(DesignModelRegistrationService::class);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->twice()->with($package);
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('startMultipart')->once()->andReturnUsing(
+            static fn (string $path, string $mime, int $partSize, array $metadata): MultipartUpload => new MultipartUpload($path, 'provider-resume', $mime, $partSize, $metadata)
+        );
+        $service = new DesignModelMultipartUploadService($files, new DesignStoragePathService, $registrar);
+        $payload = [
+            'file_size_bytes' => 1024,
+            'original_name' => 'building.ifc',
+            'content_type' => 'application/x-step',
+            'file_sha256' => str_repeat('a', 64),
+            'title' => 'IFC',
+            'version_number' => '1',
+        ];
+
+        $started = $service->start($package, 15, $payload);
+        Cache::forget('design_management:model_upload:'.$started['upload_id']);
+        $resumed = $service->start($package, 15, $payload);
+
+        $this->assertSame($started['upload_id'], $resumed['upload_id']);
+        $this->assertSame(false, $resumed['parts'][0]['uploaded']);
+        $this->assertDatabaseCount('design_ifc_upload_sessions', 1);
+    }
+
+    public function test_expired_uncompleted_session_is_aborted_and_marked_expired(): void
+    {
+        $uploadId = '00000000-0000-4000-8000-000000000193';
+        $path = "org-7/pir/model-uploads/user-15/{$uploadId}/building.ifc";
+        $this->multipartSession($uploadId, $path);
+        DesignIfcUploadSession::query()->whereKey($uploadId)->update(['expires_at' => now()->subMinute()]);
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('abortMultipart')->once()->with(Mockery::on(
+            static fn (MultipartUpload $upload): bool => $upload->uploadId === 'provider-00000000-0000-4000-8000-000000000193'
+        ));
+        $registrar = Mockery::mock(DesignModelRegistrationService::class);
+
+        (new DesignModelMultipartUploadService($files, new DesignStoragePathService, $registrar))
+            ->cleanupExpiredSessions(7, 15);
+
+        $this->assertSame('expired', DesignIfcUploadSession::query()->findOrFail($uploadId)->status);
+    }
+
+    public function test_repeat_complete_returns_durably_registered_version_without_storage_calls(): void
+    {
+        $version = $this->persistedVersion();
+        $uploadId = '00000000-0000-4000-8000-000000000212';
+        $this->multipartSession($uploadId, "org-7/pir/model-uploads/user-15/{$uploadId}/building.ifc");
+        DesignIfcUploadSession::query()->whereKey($uploadId)->update([
+            'status' => 'completed',
+            'completed_version_id' => $version->id,
+        ]);
+        $files = Mockery::mock(FileService::class);
+        $registrar = Mockery::mock(DesignModelRegistrationService::class);
+
+        $result = (new DesignModelMultipartUploadService($files, new DesignStoragePathService, $registrar))
+            ->complete(7, 15, $uploadId);
+
+        $this->assertSame($version->id, $result->id);
+    }
+
     public function test_start_aborts_provider_upload_when_cache_rejects_session(): void
     {
-        $package = new DesignPackage;
-        $package->forceFill(['id' => 21, 'organization_id' => 7, 'project_id' => 11]);
+        $package = $this->persistedPackage();
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
         $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
         $files = Mockery::mock(FileService::class);
@@ -194,8 +261,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
 
     public function test_start_aborts_provider_upload_when_cache_throws(): void
     {
-        $package = new DesignPackage;
-        $package->forceFill(['id' => 21, 'organization_id' => 7, 'project_id' => 11]);
+        $package = $this->persistedPackage();
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
         $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
         $files = Mockery::mock(FileService::class);
@@ -227,7 +293,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
 
     public function test_upload_part_fails_when_atomic_receipt_cannot_be_persisted(): void
     {
-        $uploadId = 'upload-cache-failure';
+        $uploadId = '00000000-0000-4000-8000-000000000295';
         $path = 'org-7/pir/model-uploads/user-15/upload-cache-failure/building.ifc';
         $session = $this->multipartSession($uploadId, $path);
         $contents = str_repeat('A', 1024);
@@ -267,7 +333,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
     public function test_complete_retries_only_verification_after_transient_read_failure(): void
     {
         Cache::flush();
-        $uploadId = 'upload-retry';
+        $uploadId = '00000000-0000-4000-8000-000000000335';
         $path = 'org-7/pir/model-uploads/user-15/upload-retry/building.ifc';
         Cache::put('design_management:model_upload:'.$uploadId, [
             'upload_id' => $uploadId,
@@ -358,7 +424,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
     public function test_abort_uses_file_service_and_removes_owned_session(): void
     {
         Cache::flush();
-        $uploadId = 'upload-abort';
+        $uploadId = '00000000-0000-4000-8000-000000000426';
         $path = 'org-7/pir/model-uploads/user-15/upload-abort/building.ifc';
         Cache::put(
             'design_management:model_upload:'.$uploadId,
@@ -385,7 +451,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
     public function test_abort_deletes_completed_object_after_frontend_handles_complete_error(): void
     {
         Cache::flush();
-        $uploadId = 'upload-completed-abort';
+        $uploadId = '00000000-0000-4000-8000-000000000453';
         $path = 'org-7/pir/model-uploads/user-15/upload-completed-abort/building.ifc';
         $session = $this->multipartSession($uploadId, $path);
         $session['completion'] = [
@@ -413,7 +479,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
     public function test_abort_rejects_foreign_organization_or_user_without_storage_access(): void
     {
         Cache::flush();
-        $uploadId = 'upload-foreign-abort';
+        $uploadId = '00000000-0000-4000-8000-000000000481';
         $path = 'org-7/pir/model-uploads/user-15/upload-foreign-abort/building.ifc';
         Cache::put(
             'design_management:model_upload:'.$uploadId,
@@ -437,7 +503,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
     public function test_complete_deletes_object_when_database_registration_fails(): void
     {
         Cache::flush();
-        $uploadId = 'upload-registration-failure';
+        $uploadId = '00000000-0000-4000-8000-000000000505';
         $path = 'org-7/pir/model-uploads/user-15/upload-registration-failure/building.ifc';
         Cache::put(
             'design_management:model_upload:'.$uploadId,
@@ -482,7 +548,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
 
     public function test_completion_cleanup_failure_keeps_cache_session_for_retry(): void
     {
-        $uploadId = 'upload-cleanup-retry';
+        $uploadId = '00000000-0000-4000-8000-000000000550';
         $path = 'org-7/pir/model-uploads/user-15/upload-cleanup-retry/building.ifc';
         $session = $this->multipartSession($uploadId, $path);
         $package = new DesignPackage;
@@ -524,7 +590,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
 
     private function multipartSession(string $uploadId, string $path): array
     {
-        return [
+        $session = [
             'upload_id' => $uploadId,
             's3_upload_id' => 'provider-'.$uploadId,
             'source_path' => $path,
@@ -551,5 +617,90 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
             'expires_at' => now()->addHours(2)->toISOString(),
             'payload' => ['title' => 'IFC', 'version_number' => '1'],
         ];
+        $this->persistedPackage();
+        DesignIfcUploadSession::query()->create([
+            'id' => $uploadId,
+            'organization_id' => 7,
+            'project_id' => 11,
+            'package_id' => 21,
+            'user_id' => 15,
+            'file_identity' => hash('sha256', $uploadId),
+            's3_upload_id' => $session['s3_upload_id'],
+            'source_path' => $path,
+            'original_name' => 'building.ifc',
+            'mime_type' => 'application/x-step',
+            'size_bytes' => 1024,
+            'part_size_bytes' => 5_242_880,
+            'parts_count' => 1,
+            'uploaded_parts' => $session['uploaded_parts'],
+            'completion' => null,
+            'payload' => $session['payload'],
+            'status' => 'active',
+            'expires_at' => now()->addHours(2),
+        ]);
+
+        return $session;
+    }
+
+    private function persistedPackage(): DesignPackage
+    {
+        $existing = DesignPackage::query()->find(21);
+        if ($existing instanceof DesignPackage) {
+            return $existing;
+        }
+        $organization = Organization::factory()->make();
+        $organization->forceFill(['id' => 7])->save();
+        $user = User::factory()->make();
+        $user->forceFill(['id' => 15])->save();
+        $project = Project::factory()->make(['organization_id' => 7]);
+        $project->forceFill(['id' => 11])->save();
+
+        $package = new DesignPackage;
+        $package->forceFill([
+            'id' => 21,
+            'organization_id' => 7,
+            'project_id' => 11,
+            'created_by' => 15,
+            'updated_by' => 15,
+            'title' => 'IFC package',
+            'status' => 'draft',
+            'metadata' => [],
+        ]);
+        $package->save();
+
+        return $package;
+    }
+
+    private function persistedVersion(): DesignArtifactVersion
+    {
+        $package = $this->persistedPackage();
+        $artifact = $package->artifacts()->create([
+            'organization_id' => 7,
+            'project_id' => 11,
+            'created_by' => 15,
+            'updated_by' => 15,
+            'artifact_type' => 'model',
+            'title' => 'IFC',
+            'status' => 'active',
+            'metadata' => [],
+        ]);
+
+        return $artifact->versions()->create([
+            'organization_id' => 7,
+            'project_id' => 11,
+            'created_by' => 15,
+            'updated_by' => 15,
+            'uploaded_by' => 15,
+            'title' => 'IFC',
+            'version_number' => '1',
+            'source_format' => 'ifc',
+            'file_format' => 'ifc',
+            'source_file_path' => 'org-7/source/building.ifc',
+            'source_original_name' => 'building.ifc',
+            'source_mime_type' => 'application/x-step',
+            'source_size_bytes' => 1024,
+            'status' => 'uploaded',
+            'metadata' => [],
+        ]);
     }
 }

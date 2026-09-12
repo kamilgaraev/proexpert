@@ -4,14 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\DesignManagement\Services;
 
-use App\BusinessModules\Features\DesignManagement\Enums\DesignReviewCommentStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignDocumentSheet;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
-use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
 use App\BusinessModules\Features\DesignManagement\Models\DesignReviewRound;
+use App\BusinessModules\Features\DesignManagement\Models\DesignReviewCommentIssueMapping;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\Models\User;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
@@ -19,70 +20,139 @@ final class DesignReviewService
 {
     public function commentsForPackage(DesignPackage $package, array $filters = [])
     {
-        return DesignReviewComment::forOrganization((int) $package->organization_id)
-            ->with(['section', 'artifact.currentVersion', 'version', 'sheet', 'author:id,name,email', 'assignee:id,name,email'])
-            ->where('package_id', $package->id)
-            ->when(!empty($filters['status']), static fn ($query) => $query->where('status', (string) $filters['status']))
-            ->when(!empty($filters['severity']), static fn ($query) => $query->where('severity', (string) $filters['severity']))
-            ->orderByRaw("CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END")
+        return QualityDefect::forOrganization((int) $package->organization_id)
+            ->projectIssues()
+            ->where('project_id', $package->project_id)
+            ->whereJsonContains('metadata->design_issue_context->package_id', (int) $package->id)
+            ->when(! empty($filters['status']), static fn ($query) => $query->where('status', match ((string) $filters['status']) {
+                'answered' => 'ready_for_review',
+                'accepted', 'resolved' => 'resolved',
+                default => (string) $filters['status'],
+            }))
+            ->when(! empty($filters['severity']), static function ($query) use ($filters): void {
+                if ($filters['severity'] === 'blocking') {
+                    $query->whereJsonContains('metadata->blocking->active', true);
+                } else {
+                    $query->whereIn('severity', $filters['severity'] === 'warning' ? ['major', 'critical'] : ['minor'])
+                        ->where(static fn ($scope) => $scope->whereNull('metadata->blocking->active')->orWhereJsonContains('metadata->blocking->active', false));
+                }
+            })
+            ->orderByRaw("CASE severity WHEN 'critical' THEN 0 WHEN 'major' THEN 1 ELSE 2 END")
             ->orderByDesc('id')
             ->get();
     }
 
-    public function createComment(DesignPackage $package, int $userId, array $payload): DesignReviewComment
+    public function legacyApiId(QualityDefect $issue): int
     {
-        return DB::transaction(function () use ($package, $userId, $payload): DesignReviewComment {
-            $round = $this->openRound($package, $userId, (string) ($payload['review_type'] ?? 'norm_control'));
-            $target = $this->validatedTarget($package, $payload);
+        $mapping = DesignReviewCommentIssueMapping::query()
+            ->where('quality_defect_id', $issue->id)
+            ->first();
+        if ($mapping !== null) {
+            return (int) $mapping->legacy_api_id;
+        }
 
-            return DesignReviewComment::query()->create([
-                'organization_id' => $package->organization_id,
-                'project_id' => $package->project_id,
-                'package_id' => $package->id,
-                'round_id' => $round->id,
-                'section_id' => $target['section_id'],
-                'artifact_id' => $target['artifact_id'],
-                'version_id' => $target['version_id'],
-                'sheet_id' => $target['sheet_id'],
-                'author_id' => $userId,
-                'assignee_id' => $payload['assignee_id'] ?? null,
-                'severity' => $payload['severity'] ?? 'warning',
-                'status' => DesignReviewCommentStatusEnum::OPEN,
-                'body' => $payload['body'],
-                'bim_element_id' => $payload['bim_element_id'] ?? null,
-                'due_date' => $payload['due_date'] ?? null,
-                'metadata' => $payload['metadata'] ?? [],
-            ])->fresh(['section', 'artifact.currentVersion', 'version', 'sheet', 'author:id,name,email', 'assignee:id,name,email']);
+        return DB::transaction(function () use ($issue): int {
+            DB::select('SELECT pg_advisory_xact_lock(?, ?)', [5261650, 1]);
+            $existing = DesignReviewCommentIssueMapping::query()
+                ->where('quality_defect_id', $issue->id)
+                ->lockForUpdate()
+                ->first();
+            if ($existing !== null) {
+                return (int) $existing->legacy_api_id;
+            }
+            $next = ((int) DesignReviewCommentIssueMapping::query()->max('legacy_api_id')) + 1;
+            $mapping = DesignReviewCommentIssueMapping::query()->create([
+                'organization_id' => $issue->organization_id,
+                'project_id' => $issue->project_id,
+                'legacy_api_id' => $next,
+                'quality_defect_id' => $issue->id,
+            ]);
+
+            return (int) $mapping->legacy_api_id;
         });
     }
 
-    public function updateComment(DesignReviewComment $comment, int $userId, array $payload): DesignReviewComment
+    public function createComment(DesignPackage $package, int $userId, array $payload): QualityDefect
     {
-        $status = $payload['status'] ?? $comment->status;
-        $resolvedStatuses = [
-            DesignReviewCommentStatusEnum::RESOLVED->value,
-            DesignReviewCommentStatusEnum::ACCEPTED->value,
-        ];
-        $statusValue = $status instanceof \BackedEnum ? $status->value : (string) $status;
+        return DB::transaction(function () use ($package, $userId, $payload): QualityDefect {
+            $round = $this->openRound($package, $userId, (string) ($payload['review_type'] ?? 'norm_control'));
+            $target = $this->validatedTarget($package, $payload);
 
-        $comment->update([
-            'assignee_id' => $payload['assignee_id'] ?? $comment->assignee_id,
-            'severity' => $payload['severity'] ?? $comment->severity,
-            'status' => $status,
-            'body' => $payload['body'] ?? $comment->body,
-            'response' => $payload['response'] ?? $comment->response,
-            'due_date' => $payload['due_date'] ?? $comment->due_date,
-            'resolved_by' => in_array($statusValue, $resolvedStatuses, true) ? $userId : $comment->resolved_by,
-            'resolved_at' => in_array($statusValue, $resolvedStatuses, true) ? now() : $comment->resolved_at,
-            'metadata' => $payload['metadata'] ?? $comment->metadata,
-        ]);
+            $actor = User::query()->findOrFail($userId);
+            $issues = app(DesignProjectIssueService::class);
+            $issue = $issues->create($actor, (int) $package->organization_id, (int) $package->project_id, array_merge($payload, $target, [
+                'package_id' => $package->id,
+                'round_id' => $round->id,
+                'title' => mb_strimwidth((string) $payload['body'], 0, 255, ''),
+                'description' => $payload['body'],
+                'severity' => match ($payload['severity'] ?? 'warning') {
+                    'blocking' => 'critical', 'warning' => 'major', default => 'minor'
+                },
+            ]));
 
-        return $comment->fresh(['section', 'artifact.currentVersion', 'version', 'sheet', 'author:id,name,email', 'assignee:id,name,email']);
+            return ($payload['severity'] ?? null) === 'blocking'
+                ? $issues->setBlocking($issue, $actor, true, (string) $payload['body'])
+                : $issue;
+        });
     }
 
-    public function findComment(int $organizationId, int $commentId): ?DesignReviewComment
+    public function updateComment(QualityDefect $comment, int $userId, array $payload): QualityDefect
     {
-        return DesignReviewComment::forOrganization($organizationId)->find($commentId);
+        $actor = User::query()->findOrFail($userId);
+        if (! app(DesignModelSessionAccessService::class)->canAccessProject($actor, (int) $comment->organization_id, (int) $comment->project_id, 'design-management.review')) {
+            throw new DomainException(trans_message('design_issues.errors.forbidden'));
+        }
+
+        return app(DesignProjectIssueService::class)->withRevision(
+            $comment, (int) ($payload['expected_revision'] ?? $comment->getAttribute('row_version')),
+            fn (QualityDefect $locked): QualityDefect => $this->applyCommentUpdate($locked, $userId, $payload),
+        );
+    }
+
+    private function applyCommentUpdate(QualityDefect $comment, int $userId, array $payload): QualityDefect
+    {
+        $issueService = app(DesignProjectIssueService::class);
+        if (isset($payload['assignee_id']) && (int) $payload['assignee_id'] !== (int) $comment->assigned_to) {
+            $comment = $issueService->assign($comment, User::query()->findOrFail($userId), (int) $payload['assignee_id'], $payload['response'] ?? null);
+        }
+        $metadata = $comment->metadata ?? [];
+        if (array_key_exists('response', $payload)) {
+            $metadata['legacy_response'] = $payload['response'];
+        }
+        $comment->update([
+            'title' => isset($payload['body']) ? mb_strimwidth((string) $payload['body'], 0, 255, '') : $comment->title,
+            'description' => $payload['body'] ?? $comment->description,
+            'due_date' => $payload['due_date'] ?? $comment->due_date,
+            'metadata' => $metadata,
+            'row_version' => (int) $comment->getAttribute('row_version') + 1,
+        ]);
+        $status = (string) ($payload['status'] ?? 'open');
+        if (in_array($status, ['answered', 'resolved'], true) && $comment->canBeResolved()) {
+            $comment = $issueService->resolve($comment, User::query()->findOrFail($userId), $payload['response'] ?? null);
+        } elseif ($status === 'accepted') {
+            $comment = $issueService->verify($comment, User::query()->findOrFail($userId), true, $payload['response'] ?? null);
+        } elseif ($status === 'rejected' && $comment->status->value !== 'rejected') {
+            $comment = app(\App\BusinessModules\Features\QualityControl\Services\QualityDefectService::class)->reject($comment, $userId, (string) ($payload['response'] ?? ''));
+        }
+
+        return $comment->fresh(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy']);
+    }
+
+    public function findComment(int $organizationId, int $commentId): ?QualityDefect
+    {
+        $mapping = DesignReviewCommentIssueMapping::query()
+            ->where('organization_id', $organizationId)
+            ->where('legacy_api_id', $commentId)
+            ->first();
+        if ($mapping === null) {
+            return null;
+        }
+
+        return QualityDefect::query()
+            ->forOrganization($organizationId)
+            ->projectIssues()
+            ->whereKey($mapping->quality_defect_id)
+            ->first();
     }
 
     private function openRound(DesignPackage $package, int $userId, string $reviewType): DesignReviewRound
@@ -138,7 +208,7 @@ final class DesignReviewService
                 ->whereKey($sectionId)
                 ->exists();
 
-            if (!$exists) {
+            if (! $exists) {
                 throw new DomainException(trans_message('design_management.errors.review_target_not_found'));
             }
         }
@@ -150,7 +220,7 @@ final class DesignReviewService
                 ->whereKey($artifactId)
                 ->first();
 
-            if (!$artifact instanceof DesignArtifact) {
+            if (! $artifact instanceof DesignArtifact) {
                 throw new DomainException(trans_message('design_management.errors.review_target_not_found'));
             }
 
@@ -176,7 +246,7 @@ final class DesignReviewService
                 })
                 ->first();
 
-            if (!$version instanceof DesignArtifactVersion) {
+            if (! $version instanceof DesignArtifactVersion) {
                 throw new DomainException(trans_message('design_management.errors.review_target_not_found'));
             }
 
@@ -190,7 +260,7 @@ final class DesignReviewService
                 ->whereKey($sheetId)
                 ->first();
 
-            if (!$sheet instanceof DesignDocumentSheet) {
+            if (! $sheet instanceof DesignDocumentSheet) {
                 throw new DomainException(trans_message('design_management.errors.review_target_not_found'));
             }
 

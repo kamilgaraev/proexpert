@@ -25,6 +25,8 @@ final class QualityDefectResource extends JsonResource
 
         return [
             'id' => $defect->id,
+            'kind' => $defect->kind,
+            'revision' => (int) $defect->getAttribute('row_version'),
             'organization_id' => $defect->organization_id,
             'project_id' => $defect->project_id,
             'contractor_id' => $defect->contractor_id,

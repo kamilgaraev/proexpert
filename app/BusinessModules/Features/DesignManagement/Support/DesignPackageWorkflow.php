@@ -67,7 +67,7 @@ final class DesignPackageWorkflow
             DesignPackageStatusEnum::UNDER_NORM_CONTROL->value => [self::RETURN_TO_WORK, self::SUBMIT_CUSTOMER_REVIEW],
             DesignPackageStatusEnum::UNDER_CUSTOMER_REVIEW->value => [self::RETURN_TO_WORK, self::APPROVE],
             DesignPackageStatusEnum::APPROVED->value => [self::ISSUE],
-            DesignPackageStatusEnum::ISSUED->value => [self::ARCHIVE],
+            DesignPackageStatusEnum::ISSUED->value => [self::ARCHIVE, self::RETURN_TO_WORK],
             default => [],
         };
     }

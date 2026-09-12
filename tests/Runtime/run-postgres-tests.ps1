@@ -45,11 +45,25 @@ foreach ($node in $phpunitConfiguration.phpunit.php.env) {
 if (
     $environment.DB_CONNECTION -ne 'pgsql' -or
     $environment.DB_HOST -ne '127.0.0.1' -or
-    $environment.DB_PORT -ne '45433' -or
+    $environment.DB_PORT -ne '55433' -or
     $environment.DB_DATABASE -notmatch '_testing$'
 ) {
     throw 'postgres_test_database_configuration_unsafe'
 }
+
+$pirTestsMutex = [System.Threading.Mutex]::new($false, 'Local\MostPostgresTests')
+$pirTestsLockAcquired = $false
+try {
+    while (-not $pirTestsLockAcquired) {
+        try {
+            $pirTestsLockAcquired = $pirTestsMutex.WaitOne([TimeSpan]::FromSeconds(30))
+        } catch [System.Threading.AbandonedMutexException] {
+            $pirTestsLockAcquired = $true
+        }
+        if (-not $pirTestsLockAcquired) {
+            Write-Host 'Ожидание завершения другого запуска PostgreSQL-тестов...'
+        }
+    }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'docker_command_unavailable'
@@ -102,3 +116,9 @@ try {
 }
 
 exit $testExitCode
+} finally {
+    if ($pirTestsLockAcquired) {
+        $pirTestsMutex.ReleaseMutex()
+    }
+    $pirTestsMutex.Dispose()
+}

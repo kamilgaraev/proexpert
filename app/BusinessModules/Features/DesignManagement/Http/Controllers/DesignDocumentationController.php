@@ -323,6 +323,7 @@ final class DesignDocumentationController extends Controller
     {
         try {
             $validated = $request->validate([
+                'expected_revision' => ['nullable', 'integer', 'min:1'],
                 'assignee_id' => ['nullable', 'integer'],
                 'severity' => ['nullable', 'string', Rule::in($this->reviewCommentSeverities())],
                 'status' => ['required', 'string', Rule::in($this->reviewCommentStatuses())],

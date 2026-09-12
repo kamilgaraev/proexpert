@@ -21,6 +21,7 @@ use Illuminate\Support\Carbon;
  * @property int $id
  * @property int $organization_id
  * @property int $project_id
+ * @property string $kind
  * @property int|null $contractor_id
  * @property int|null $created_by
  * @property int|null $assigned_to
@@ -48,6 +49,9 @@ class QualityDefect extends Model
     protected $fillable = [
         'organization_id',
         'project_id',
+        'kind',
+        'row_version',
+        'legacy_design_review_comment_id',
         'contractor_id',
         'created_by',
         'assigned_to',
@@ -68,6 +72,7 @@ class QualityDefect extends Model
     ];
 
     protected $casts = [
+        'row_version' => 'integer',
         'severity' => QualityDefectSeverityEnum::class,
         'status' => QualityDefectStatusEnum::class,
         'due_date' => 'date',
@@ -78,9 +83,11 @@ class QualityDefect extends Model
     ];
 
     protected $attributes = [
+        'row_version' => 1,
         'severity' => 'major',
         'status' => 'draft',
         'inspection_required' => true,
+        'kind' => 'construction',
     ];
 
     public function organization(): BelongsTo
@@ -128,6 +135,11 @@ class QualityDefect extends Model
         $value = $status instanceof QualityDefectStatusEnum ? $status->value : $status;
 
         return $query->where('status', $value);
+    }
+
+    public function scopeProjectIssues(Builder $query): Builder
+    {
+        return $query->where('kind', 'project');
     }
 
     public function canBeAssigned(): bool
