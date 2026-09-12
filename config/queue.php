@@ -30,6 +30,15 @@ return [
 
     'connections' => [
 
+        'redis_estimate_revisions' => [
+            'driver' => 'redis',
+            'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
+            'queue' => 'estimate-revisions',
+            'retry_after' => 720,
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+
         'sync' => [
             'driver' => 'sync',
         ],

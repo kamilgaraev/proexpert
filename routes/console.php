@@ -9,6 +9,9 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
+Schedule::call(fn () => app(\App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateRevisionQueueService::class)->recover())
+    ->name('estimate-revisions:recover')->everyMinute()->withoutOverlapping(5)->onOneServer();
+
 Schedule::command('assets:verify-cutover --format=json')
     ->hourly()
     ->withoutOverlapping(10)
