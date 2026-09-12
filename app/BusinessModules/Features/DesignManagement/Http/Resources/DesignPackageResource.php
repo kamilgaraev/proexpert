@@ -50,6 +50,7 @@ final class DesignPackageResource extends JsonResource
             'metadata' => $package->metadata ?? [],
             'composition_status' => $package->composition_status,
             'composition_revision_id' => $package->composition_revision_id,
+            'open_blocking_comments_count' => DesignPackageWorkflow::openBlockingCommentsCount($package),
             'project' => $this->whenLoaded('project', fn () => $package->project ? [
                 'id' => $package->project->id,
                 'name' => $package->project->name,

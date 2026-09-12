@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\DesignManagement\Models;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignObjectTypeEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignProjectStageEnum;
+use App\BusinessModules\Features\DesignManagement\Services\DesignPackageBlockingIssueQuery;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -119,6 +120,11 @@ final class DesignPackage extends Model
     public function scopeForOrganization(Builder $query, int $organizationId): Builder
     {
         return $query->where('organization_id', $organizationId);
+    }
+
+    public function scopeWithOpenBlockingCount(Builder $query): Builder
+    {
+        return DesignPackageBlockingIssueQuery::withOpenBlockingCount($query);
     }
 
     public function scopeForProject(Builder $query, int $projectId): Builder

@@ -9,6 +9,10 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelSet;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelSetRevision;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
+use App\BusinessModules\Features\DesignManagement\Models\DesignReviewCommentIssueMapping;
+use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
+use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
 use App\BusinessModules\Features\DesignManagement\Support\Rules\OpenBlockingCommentsRule;
 use App\BusinessModules\Features\DesignManagement\Services\DesignProjectIssueService;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -17,11 +21,73 @@ use DomainException;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
 use App\Models\Project;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 final class DesignCanonicalBlockingIssueTest extends TestCase
 {
+    public function test_package_summary_counts_canonical_and_unmapped_legacy_without_resource_queries(): void
+    {
+        $actor = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $foreignProject = Project::factory()->create();
+        $attributes = ['organization_id' => $project->organization_id, 'project_id' => $project->id, 'created_by' => $actor->user->id, 'updated_by' => $actor->user->id];
+        $package = DesignPackage::query()->create($attributes + ['title' => 'Сводка блокировок', 'project_stage' => 'pd']);
+        $unrelated = DesignPackage::query()->create($attributes + ['title' => 'Без замечаний', 'project_stage' => 'pd']);
+        $metadata = ['blocking' => ['active' => true], 'design_issue_context' => ['package_id' => $package->id]];
+        $issue = QualityDefect::query()->create($attributes + ['kind' => 'project', 'defect_number' => 'SUMMARY-1', 'title' => 'Общее замечание', 'severity' => 'major', 'status' => 'open', 'metadata' => $metadata]);
+        $legacyAttributes = ['organization_id' => $project->organization_id, 'project_id' => $project->id, 'package_id' => $package->id, 'author_id' => $actor->user->id, 'severity' => 'blocking', 'status' => 'open', 'body' => 'Старое замечание'];
+        $mapped = DesignReviewComment::query()->create($legacyAttributes);
+        DesignReviewCommentIssueMapping::query()->create([
+            'organization_id' => $project->organization_id, 'project_id' => $project->id,
+            'legacy_api_id' => $mapped->id, 'legacy_design_review_comment_id' => $mapped->id, 'quality_defect_id' => $issue->id,
+        ]);
+        $unmapped = DesignReviewComment::query()->create($legacyAttributes);
+        foreach ([$otherProject, $foreignProject] as $index => $outside) {
+            QualityDefect::query()->create(array_replace($attributes, ['organization_id' => $outside->organization_id, 'project_id' => $outside->id, 'kind' => 'project', 'defect_number' => 'SUMMARY-FOREIGN-'.$index, 'title' => 'Чужое замечание', 'severity' => 'critical', 'status' => 'open', 'metadata' => $metadata]));
+            DesignReviewComment::query()->create(array_replace($legacyAttributes, ['organization_id' => $outside->organization_id, 'project_id' => $outside->id]));
+        }
+
+        $this->assertSummaryCount($package, 2);
+        $this->assertSummaryCount($unrelated, 0);
+        foreach (['ready_for_review', 'rejected', 'cancelled'] as $status) {
+            $issue->update(['status' => $status]);
+            $this->assertSummaryCount($package, 2);
+        }
+        $issue->update(['status' => 'resolved']);
+        $this->assertSummaryCount($package, 1);
+        $issue->update(['status' => 'open', 'metadata' => array_replace($metadata, ['blocking' => ['active' => false]])]);
+        $this->assertSummaryCount($package, 1);
+        $unmapped->update(['status' => 'accepted']);
+        $this->assertSummaryCount($package, 0);
+
+        $packages = app(DesignManagementService::class)->listPackages((int) $project->organization_id, ['project_id' => $project->id]);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $payload = DesignPackageResource::collection($packages->getCollection())->resolve(Request::create('/'));
+            self::assertCount(2, $payload);
+            self::assertSame([0, 0], array_column($payload, 'open_blocking_comments_count'));
+            self::assertSame([], DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+        }
+    }
+
+    private function assertSummaryCount(DesignPackage $package, int $expected): void
+    {
+        $loaded = app(DesignManagementService::class)->findPackage((int) $package->organization_id, (int) $package->id);
+        self::assertNotNull($loaded);
+        $data = (new DesignPackageResource($loaded))->resolve(Request::create('/'));
+        self::assertSame($expected, $data['open_blocking_comments_count']);
+        self::assertSame($expected, $data['workflow_summary']['open_blocking_comments_count']);
+        self::assertSame($expected > 0, in_array('open_blocking_comments', $data['problem_flags'], true));
+        self::assertCount($expected, (new OpenBlockingCommentsRule())->check($loaded));
+    }
+
     public function test_common_issue_blocks_each_referenced_package_until_accepted(): void
     {
         $actor = AdminApiTestContext::create(roleSlug: 'project_manager');
@@ -41,6 +107,9 @@ final class DesignCanonicalBlockingIssueTest extends TestCase
         self::assertSame('quality_defect', $findings[0]->targetType);
         self::assertSame($issue->id, $findings[0]->targetId);
         self::assertSame([], $rule->check($unrelated));
+        $this->assertSummaryCount($first, 1);
+        $this->assertSummaryCount($second, 1);
+        $this->assertSummaryCount($unrelated, 0);
 
         $issue->update(['status' => 'ready_for_review']);
         self::assertCount(1, $rule->check($second));
@@ -83,12 +152,16 @@ final class DesignCanonicalBlockingIssueTest extends TestCase
         $issue->update(['metadata' => ['blocking' => ['active' => true], 'design_issue_context' => ['model_set_revision_id' => $revision->id, 'camera' => ['position' => [1, 2, 3]]]]]);
         self::assertCount(1, $rule->check($second));
         self::assertSame([], $rule->check($first));
+        $this->assertSummaryCount($second, 1);
+        $this->assertSummaryCount($first, 0);
         $issue->update(['metadata' => ['blocking' => ['active' => true], 'design_issue_context' => [
             'view_models' => [['version_id' => $version->id, 'transform' => ['shift' => [10, 0, 0], 'rotation' => 45]]],
             'camera' => ['position' => [1, 2, 3]],
         ]]]);
         self::assertCount(1, $rule->check($second));
         self::assertSame([], $rule->check($first));
+        $this->assertSummaryCount($second, 1);
+        $this->assertSummaryCount($first, 0);
         $issue->update(['kind' => 'construction']);
         self::assertSame([], $rule->check($second));
     }

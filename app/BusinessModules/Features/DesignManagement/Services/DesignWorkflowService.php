@@ -44,7 +44,7 @@ final class DesignWorkflowService
             }
 
             if (DesignPackageWorkflow::isCompletedAction($lockedPackage, $action)) {
-                return $lockedPackage->fresh($this->relations());
+                return DesignPackage::forOrganization((int) $lockedPackage->organization_id)->withOpenBlockingCount()->with($this->relations())->findOrFail($lockedPackage->id);
             }
 
             $this->assertWorkflowGuards($lockedPackage, $action, $userId);
@@ -109,7 +109,7 @@ final class DesignWorkflowService
                 ],
             ]);
 
-            return $lockedPackage->fresh($this->relations());
+            return DesignPackage::forOrganization((int) $lockedPackage->organization_id)->withOpenBlockingCount()->with($this->relations())->findOrFail($lockedPackage->id);
         });
     }
 
