@@ -43,9 +43,13 @@ final class PerformanceActContractBasisService
             || ! BigDecimal::of((string) $allocation->quantity)->isGreaterThan(0)) {
             throw new BusinessLogicException(trans_message('act_reports.contract_conditions_required'), 422);
         }
-        $quantity = BigDecimal::of((string) $allocation->quantity);
-        $base = BigDecimal::of((string) $allocation->amount_without_vat)->dividedBy($quantity, 8, RoundingMode::HalfUp);
-        $gross = BigDecimal::of((string) $allocation->amount_with_vat)->dividedBy($quantity, 2, RoundingMode::HalfUp);
+        $conditions = $allocation->condition_basis ?? $allocation->toArray();
+        $quantity = BigDecimal::of((string) $conditions['quantity']);
+        if (! $quantity->isGreaterThan(0)) {
+            throw new BusinessLogicException(trans_message('act_reports.work_not_available_for_acting'), 422);
+        }
+        $base = BigDecimal::of((string) $conditions['amount_without_vat'])->dividedBy($quantity, 8, RoundingMode::HalfUp);
+        $gross = BigDecimal::of((string) $conditions['amount_with_vat'])->dividedBy($quantity, 2, RoundingMode::HalfUp);
         $rate = $mode === 'none' ? '0.00' : (string) BigDecimal::of((string) $allocation->vat_rate)->toScale(2, RoundingMode::HalfUp);
 
         return [

@@ -302,6 +302,46 @@ final class EstimateFinanceTest extends TestCase
         self::assertDatabaseCount('estimate_finance_allocations', 1);
     }
 
+    public function test_new_price_applies_only_to_remaining_volume_and_total_keeps_accepted_cost(): void
+    {
+        $line = $this->line($this->contractor, '100', '600000');
+        $line['vat_mode'] = 'included';
+        $line['vat_rate'] = '20';
+        $line['price_basis'] = 'with_vat';
+        $this->save($this->command([$line]));
+        $basisService = app(\App\Services\Acting\PerformanceActContractBasisService::class);
+        $basis = $basisService->resolve($this->item, $this->contractor);
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'REMAINDER', 'act_date' => '2026-09-12',
+            'amount' => '120000', 'currency' => 'RUB', 'status' => 'draft', 'is_approved' => false, 'created_by_user_id' => $this->actor->id]);
+        $actLine = \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Бетон', 'quantity' => '20', 'unit_price' => '6000', 'amount' => '120000',
+            'currency' => 'RUB', 'manual_reason' => 'Принятые работы', 'basis_snapshot' => $basis['snapshot'], 'created_by' => $this->actor->id]);
+        $act->update(['status' => 'approved', 'is_approved' => true]);
+        $before = $actLine->fresh()->getAttributes();
+        $line['method'] = 'unit';
+        $line['unit_price'] = '12000';
+        foreach ([1, 2] as $attempt) {
+            $this->save($this->command([$line]));
+            $saved = EstimateFinanceAllocation::query()->where('key', $line['key'])->firstOrFail();
+            self::assertSame('1080000.00', $saved->amount_with_vat);
+            self::assertSame('900000.00', $saved->amount_without_vat);
+            self::assertSame('120000.00', $saved->accepted_basis['amount_with_vat']);
+            self::assertSame('960000.00', $saved->condition_basis['amount_with_vat']);
+            self::assertSame('12000.00', $basisService->resolve($this->item, $this->contractor)['unit_price']);
+        }
+        $line['method'] = 'total';
+        $line['amount'] = '1000000';
+        $line['unit_price'] = null;
+        $this->save($this->command([$line]));
+        $saved = EstimateFinanceAllocation::query()->where('key', $line['key'])->firstOrFail();
+        self::assertSame('1000000.00', $saved->amount_with_vat);
+        self::assertSame('880000.00', $saved->condition_basis['amount_with_vat']);
+        self::assertSame('11000.00', $basisService->resolve($this->item, $this->contractor)['unit_price']);
+        self::assertSame($before, $actLine->fresh()->getAttributes());
+        self::assertSame('1000000.00', ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->firstOrFail()->amount);
+    }
+
     public function test_condition_history_preserves_snapshots_after_edit_and_delete(): void
     {
         $line = $this->line($this->customer, '100', '1000000');

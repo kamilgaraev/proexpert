@@ -25,6 +25,7 @@ final class EstimateFinanceService
         private readonly EstimateCacheService $cache,
         private readonly EstimateFinanceHistory $history,
         private readonly EstimateFinanceAcceptedVolume $acceptedVolume,
+        private readonly EstimateFinanceRemainder $remainder,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat'): array
@@ -412,7 +413,7 @@ final class EstimateFinanceService
 
         $this->acceptedVolume->assertRetained($estimate, $data['target_keys'], $rows);
 
-        return $rows;
+        return $this->remainder->apply($estimate, $rows);
     }
 
     private function projectLinks(Estimate $estimate, array $keys): void

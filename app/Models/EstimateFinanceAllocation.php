@@ -25,5 +25,7 @@ class EstimateFinanceAllocation extends Model
         'vat_rate' => 'decimal:4',
         'composition_confirmed' => 'boolean',
         'estimate_snapshot' => 'array',
+        'accepted_basis' => 'array',
+        'condition_basis' => 'array',
     ];
 }
