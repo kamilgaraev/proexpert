@@ -77,18 +77,16 @@ class EstimateCoverageService
         });
     }
 
-    public function detachCoverage(Contract $contract, Estimate $estimate): void
+    public function detachCoverage(Contract $contract, Estimate $estimate, ?\App\Models\User $actor = null): void
     {
         $this->assertOwnership($contract, $estimate);
 
-        DB::transaction(function () use ($contract, $estimate): void {
-            ContractEstimateItem::query()
+        DB::transaction(function () use ($contract, $estimate, $actor): void {
+            $itemIds = ContractEstimateItem::query()
                 ->where('contract_id', $contract->id)
                 ->where('estimate_id', $estimate->id)
-                ->delete();
-
-            $this->estimateCacheService->invalidateStructure($estimate);
-            $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate);
+                ->pluck('estimate_item_id')->all();
+            $this->contractEstimateService->detachItems($contract, $itemIds, $actor);
         });
     }
 
@@ -182,6 +180,7 @@ class EstimateCoverageService
 
             return [
                 'estimate_id' => $estimateId,
+                'finance_revision' => $estimate ? (int) $estimate->finance_revision : null,
                 'estimate' => $estimate ? [
                     'id' => $estimate->id,
                     'number' => $estimate->number,

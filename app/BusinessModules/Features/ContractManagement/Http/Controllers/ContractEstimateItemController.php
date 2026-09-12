@@ -82,12 +82,10 @@ class ContractEstimateItemController extends Controller
     public function updateVat(UpdateCoverageVatRequest $request, Contract $contract)
     {
         $estimate = Estimate::query()->findOrFail($request->integer('estimate_id'));
-        if ($request->boolean('include_vat') && (float) $estimate->vat_rate <= 0) {
-            return AdminResponse::error(trans_message('contract.coverage_vat_rate_required'), 422);
-        }
-
         try {
-            $this->service->updateCoverageVat($contract, $estimate, $request->boolean('include_vat'));
+            $this->service->updateCoverageVat($contract, $estimate, $request->boolean('include_vat'), $request->user(),
+                $request->input('vat_rate') === null ? null : (string) $request->input('vat_rate'),
+                $request->input('revision') === null ? null : $request->integer('revision'), $request->input('mutation_id'));
 
             return AdminResponse::success(null, trans_message('contract.coverage_vat_updated'));
         } catch (\DomainException) {
@@ -98,9 +96,11 @@ class ContractEstimateItemController extends Controller
     public function detach(DetachEstimateItemsRequest $request, Contract $contract)
     {
         try {
-            $this->service->detachItems($contract, $request->input('item_ids'));
+            $this->service->detachItems($contract, $request->input('item_ids'), $request->user());
 
             return AdminResponse::success(null, trans_message('contract.estimate_items_detached'));
+        } catch (\Illuminate\Validation\ValidationException|\Illuminate\Auth\Access\AuthorizationException|\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('contract_estimate_items.detach_failed', [
                 'contract_id' => $contract->id,

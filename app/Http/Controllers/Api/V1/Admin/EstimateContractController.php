@@ -124,7 +124,7 @@ class EstimateContractController extends Controller
             ],
         ]);
 
-        $coverage = $this->integrationService->unlinkFromContract($estimate, (int) $validated['contract_id']);
+        $coverage = $this->integrationService->unlinkFromContract($estimate, (int) $validated['contract_id'], $request->user());
 
         return AdminResponse::success(
             new EstimateCoverageResource($coverage),

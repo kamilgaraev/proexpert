@@ -18,6 +18,7 @@ class ContractEstimateService
 {
     public function __construct(
         private readonly EstimateCacheService $estimateCacheService,
+        private readonly \App\BusinessModules\Features\BudgetEstimates\Services\Finance\ContractEstimateFinanceAdapter $financeAdapter,
     ) {}
 
     public function attachItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
@@ -74,9 +75,12 @@ class ContractEstimateService
         return $attached;
     }
 
-    public function detachItems(Contract $contract, array $itemIds): void
+    public function detachItems(Contract $contract, array $itemIds, ?\App\Models\User $actor = null): void
     {
-        DB::transaction(function () use ($contract, $itemIds): void {
+        if ($actor === null || (int) $actor->current_organization_id !== (int) $contract->organization_id) {
+            throw new \Illuminate\Auth\Access\AuthorizationException;
+        }
+        DB::transaction(function () use ($contract, $itemIds, $actor): void {
             $allIds = $this->resolveChildrenForDetach($contract->id, $itemIds);
             $estimateIds = ContractEstimateItem::where('contract_id', $contract->id)
                 ->whereIn('estimate_item_id', $allIds)
@@ -84,24 +88,14 @@ class ContractEstimateService
                 ->unique()
                 ->values();
 
-            Estimate::query()->whereIn('id', $estimateIds)->orderBy('id')->lockForUpdate()->get();
-            if (\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contract->id)->whereIn('estimate_item_id', $allIds)->exists()) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['items' => trans_message('estimate_finance.linked')]);
+            $estimates = Estimate::query()->whereIn('id', $estimateIds)->where('organization_id', $actor->current_organization_id)
+                ->where('project_id', $contract->project_id)->orderBy('id')->lockForUpdate()->get();
+            if ($estimates->count() !== $estimateIds->count()) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
             }
-
-            ContractEstimateItem::where('contract_id', $contract->id)
-                ->whereIn('estimate_item_id', $allIds)
-                ->delete();
-
-            Log::info('contract_estimate_items.detached', [
-                'contract_id' => $contract->id,
-                'item_ids' => $allIds,
-            ]);
-
-            Estimate::query()
-                ->whereIn('id', $estimateIds)
-                ->get()
-                ->each(fn (Estimate $estimate) => $this->estimateCacheService->invalidateStructure($estimate));
+            foreach ($estimates as $estimate) {
+                $this->financeAdapter->detach($actor, $contract, $estimate, $allIds);
+            }
         });
     }
 
@@ -145,28 +139,15 @@ class ContractEstimateService
         return $query->get();
     }
 
-    public function updateCoverageVat(Contract $contract, Estimate $estimate, bool $includeVat): void
+    public function updateCoverageVat(Contract $contract, Estimate $estimate, bool $includeVat, ?\App\Models\User $actor = null, ?string $rate = null, ?int $revision = null, ?string $mutationId = null): void
     {
-        DB::transaction(function () use ($contract, $estimate, $includeVat): void {
-            Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
-            if ((int) $contract->organization_id !== (int) $estimate->organization_id || (int) $contract->project_id !== (int) $estimate->project_id) {
-                throw new DomainException('contract_estimate_items_invalid');
-            }
-
-            $links = ContractEstimateItem::query()->where('contract_id', $contract->id)
-                ->where('estimate_id', $estimate->id)->with('estimateItem')->lockForUpdate()->get();
-            if ($links->isEmpty()) {
-                throw new DomainException('contract_estimate_items_invalid');
-            }
-
-            foreach ($links as $link) {
-                $baseAmount = $link->estimateItem?->is_not_accounted ? 0.0 : (float) $link->amount_without_vat;
-                $link->amount = round($baseAmount * ($includeVat ? 1 + (float) $estimate->vat_rate / 100 : 1), 2);
-                $link->save();
-            }
-
-            $this->estimateCacheService->invalidateStructure($estimate);
-        });
+        if ($actor === null) {
+            throw new \Illuminate\Auth\Access\AuthorizationException;
+        }
+        if ((int) $contract->organization_id !== (int) $estimate->organization_id || (int) $contract->project_id !== (int) $estimate->project_id) {
+            throw new DomainException('contract_estimate_items_invalid');
+        }
+        $this->financeAdapter->updateVat($actor, $contract, $estimate, $includeVat, $rate, $revision, $mutationId);
     }
 
     public function getContractsByEstimateItem(EstimateItem $item): Collection

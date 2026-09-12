@@ -113,6 +113,9 @@ class ContractEstimateServiceTest extends TestCase
 
     public function test_detach_parent_removes_children(): void
     {
+        $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)->shouldReceive('can')->andReturn(true);
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $this->service = app(ContractEstimateService::class);
         $parent = $this->createEstimateItem(['estimate_id' => $this->estimate->id]);
         $child = $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
@@ -122,8 +125,9 @@ class ContractEstimateServiceTest extends TestCase
         $this->service->attachItems($this->contract, $this->estimate, [$parent->id]);
         $this->assertDatabaseCount('contract_estimate_items', 2);
 
-        $this->service->detachItems($this->contract, [$parent->id]);
-        $this->assertDatabaseCount('contract_estimate_items', 0);
+        $this->service->detachItems($this->contract, [$parent->id], auth()->user());
+        $this->assertDatabaseCount('contract_estimate_items', 2);
+        self::assertSame(0, \App\Models\ContractEstimateItem::query()->countedInCoverage()->count());
     }
 
     public function test_calculate_contract_total_only_counts_linked_items(): void
@@ -342,17 +346,22 @@ class ContractEstimateServiceTest extends TestCase
 
     public function test_vat_edit_preserves_links_and_base_prices_without_compounding(): void
     {
+        $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)->shouldReceive('can')->andReturn(true);
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $this->service = app(ContractEstimateService::class);
+        $this->contract->update(['contract_side_type' => 'general_contractor_to_contractor', 'requires_contract_side_review' => false]);
         $this->estimate->update(['vat_rate' => 20]);
         $item = $this->createEstimateItem(['total_amount' => 1000, 'is_not_accounted' => false]);
         $other = $this->createContract(['organization_id' => $this->contract->organization_id, 'project_id' => $this->contract->project_id]);
+        $other->update(['contract_side_type' => 'customer_to_general_contractor', 'requires_contract_side_review' => false]);
         $this->service->attachItems($this->contract, $this->estimate, [$item->id]);
         $this->service->attachItems($other, $this->estimate, [$item->id]);
         $before = $this->service->getItemsForContract($this->contract)->first();
         $before->update(['notes' => 'Сохранить примечание']);
         $item->update(['total_amount' => 9000]);
 
-        $this->service->updateCoverageVat($this->contract, $this->estimate, true);
-        $this->service->updateCoverageVat($this->contract, $this->estimate, true);
+        $this->service->updateCoverageVat($this->contract, $this->estimate, true, auth()->user(), '20');
+        $this->service->updateCoverageVat($this->contract, $this->estimate, true, auth()->user(), '20');
         $after = $before->fresh();
         self::assertSame($before->id, $after->id);
         self::assertSame($before->quantity, $after->quantity);
@@ -360,7 +369,7 @@ class ContractEstimateServiceTest extends TestCase
         self::assertSame(1200.0, (float) $after->amount);
         self::assertSame(1000.0, (float) $after->amount_without_vat);
         self::assertSame(1000.0, $this->service->calculateContractEstimateTotal($other));
-        $this->service->updateCoverageVat($this->contract, $this->estimate, false);
+        $this->service->updateCoverageVat($this->contract, $this->estimate, false, auth()->user());
         self::assertSame(1000.0, $this->service->calculateContractEstimateTotal($this->contract));
     }
 
@@ -374,7 +383,7 @@ class ContractEstimateServiceTest extends TestCase
             'project_id' => $foreignProject->id,
         ]);
         try {
-            $this->service->updateCoverageVat($this->contract, $foreignEstimate, true);
+            $this->service->updateCoverageVat($this->contract, $foreignEstimate, true, auth()->user(), '20');
             self::fail('Foreign estimate must be rejected');
         } catch (\DomainException) {
             self::assertSame(1000.0, $this->service->calculateContractEstimateTotal($this->contract));

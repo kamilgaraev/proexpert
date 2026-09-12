@@ -43,7 +43,13 @@ class ContractEstimateItem extends Model
 
     public function scopeCountedInCoverage(Builder $query): Builder
     {
-        return $query->whereHas('estimateItem', static function (Builder $items): void {
+        return $query->where(static function (Builder $active): void {
+            $active->where('finance_managed', false)->orWhereNull('finance_managed')
+                ->orWhereExists(static function (\Illuminate\Database\Query\Builder $allocations): void {
+                    $allocations->selectRaw('1')->from('estimate_finance_allocations')
+                        ->whereColumn('estimate_finance_allocations.contract_estimate_item_id', 'contract_estimate_items.id');
+                });
+        })->whereHas('estimateItem', static function (Builder $items): void {
             $items->where(static function (Builder $accounted): void {
                 $accounted->where('is_not_accounted', false)->orWhereNull('is_not_accounted');
             });

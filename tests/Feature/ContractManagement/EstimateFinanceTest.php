@@ -133,6 +133,14 @@ final class EstimateFinanceTest extends TestCase
             'currency' => 'RUB', 'manual_reason' => 'Принятые работы', 'created_by' => $this->actor->id]);
         $act->update(['status' => 'signed', 'is_approved' => true]);
         $before = $act->fresh()->getAttributes();
+        $this->app->forgetInstance(ContractEstimateService::class);
+        try {
+            app(ContractEstimateService::class)->detachItems($this->contractor, [$this->item->id], $this->actor);
+            self::fail('Legacy detach must preserve accepted volume');
+        } catch (ValidationException) {
+            self::assertSame($before, $act->fresh()->getAttributes());
+            self::assertDatabaseCount('estimate_finance_allocations', 1);
+        }
         $reduced = $line;
         $reduced['quantity'] = '14';
         foreach ([[], [$reduced]] as $lines) {
@@ -363,6 +371,77 @@ final class EstimateFinanceTest extends TestCase
             self::assertArrayNotHasKey('accepted_basis', $entry['after']);
             self::assertArrayNotHasKey('condition_basis', $entry['after']);
         }
+    }
+
+    public function test_legacy_detach_preserves_other_contract_conditions(): void
+    {
+        $cost = $this->line($this->contractor, '100', '800000');
+        $income = $this->line($this->customer, '100', '1000000');
+        $this->save($this->command([$cost, $income]));
+        $incomeId = EstimateFinanceAllocation::query()->where('key', $income['key'])->firstOrFail()->id;
+        $this->app->forgetInstance(ContractEstimateService::class);
+        app(ContractEstimateService::class)->detachItems($this->contractor, [$this->item->id], $this->actor);
+        self::assertDatabaseMissing('estimate_finance_allocations', ['key' => $cost['key']]);
+        $retained = EstimateFinanceAllocation::query()->findOrFail($incomeId);
+        self::assertSame($income['key'], $retained->key);
+        self::assertSame('1000000.00', $retained->amount_with_vat);
+        self::assertSame(0.0, app(ContractEstimateService::class)->calculateContractEstimateTotal($this->contractor));
+        self::assertSame(0, ContractEstimateItem::query()->countedInCoverage()->where('contract_id', $this->contractor->id)->count());
+        app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class)
+            ->detachCoverage($this->customer, $this->estimate, $this->actor);
+        self::assertDatabaseCount('estimate_finance_allocations', 0);
+    }
+
+    public function test_legacy_vat_command_updates_financial_source_and_preserves_ids(): void
+    {
+        $cost = $this->line($this->contractor, '100', '800000');
+        $cost['price_basis'] = 'without_vat';
+        $cost['vat_mode'] = 'exclusive';
+        $cost['vat_rate'] = '5';
+        $income = $this->line($this->customer, '100', '1000000');
+        $this->save($this->command([$cost, $income]));
+        $this->estimate->update(['vat_rate' => '0']);
+        $allocationId = EstimateFinanceAllocation::query()->where('key', $cost['key'])->firstOrFail()->id;
+        $linkId = ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->firstOrFail()->id;
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $service = app(ContractEstimateService::class);
+        foreach (['20', null] as $rate) {
+            $service->updateCoverageVat($this->contractor, $this->estimate, true, $this->actor, $rate);
+            $saved = EstimateFinanceAllocation::query()->where('key', $cost['key'])->firstOrFail();
+            self::assertSame($allocationId, $saved->id);
+            self::assertSame('960000.00', $saved->amount_with_vat);
+            self::assertSame('800000.00', $saved->amount_without_vat);
+            self::assertSame('960000.00', ContractEstimateItem::query()->findOrFail($linkId)->amount);
+            self::assertSame('1000000.00', EstimateFinanceAllocation::query()->where('key', $income['key'])->firstOrFail()->amount_with_vat);
+        }
+        $service->updateCoverageVat($this->contractor, $this->estimate, false, $this->actor);
+        self::assertSame('800000.00', ContractEstimateItem::query()->findOrFail($linkId)->amount);
+        self::assertSame('none', EstimateFinanceAllocation::query()->findOrFail($allocationId)->vat_mode);
+        $revision = (int) $this->estimate->fresh()->finance_revision;
+        try {
+            $service->updateCoverageVat($this->contractor, $this->estimate, true, $this->actor, '20', $revision - 1);
+            self::fail('Stale VAT edit must be rejected');
+        } catch (\Symfony\Component\HttpKernel\Exception\ConflictHttpException) {
+            self::assertSame($revision, (int) $this->estimate->fresh()->finance_revision);
+            self::assertSame('800000.00', ContractEstimateItem::query()->findOrFail($linkId)->amount);
+            self::assertSame('none', EstimateFinanceAllocation::query()->findOrFail($allocationId)->vat_mode);
+        }
+        $mutation = (string) \Illuminate\Support\Str::uuid();
+        $service->updateCoverageVat($this->contractor, $this->estimate, true, $this->actor, '20', $revision, $mutation);
+        $savedRevision = (int) $this->estimate->fresh()->finance_revision;
+        $savedVersion = EstimateFinanceAllocation::query()->findOrFail($allocationId)->condition_version;
+        $service->updateCoverageVat($this->contractor, $this->estimate, true, $this->actor, '20', $revision, $mutation);
+        self::assertSame($savedRevision, (int) $this->estimate->fresh()->finance_revision);
+        self::assertSame($savedVersion, EstimateFinanceAllocation::query()->findOrFail($allocationId)->condition_version);
+        try {
+            $service->updateCoverageVat($this->contractor, $this->estimate, true, $this->actor, '5', $revision, $mutation);
+            self::fail('Reused mutation must reject changed conditions');
+        } catch (\Symfony\Component\HttpKernel\Exception\ConflictHttpException) {
+            self::assertSame($savedRevision, (int) $this->estimate->fresh()->finance_revision);
+        }
+        self::assertSame('960000.00', ContractEstimateItem::query()->findOrFail($linkId)->amount);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        $service->updateCoverageVat($this->contractor, $this->estimate, true);
     }
 
     public function test_condition_history_preserves_snapshots_after_edit_and_delete(): void
