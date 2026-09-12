@@ -101,6 +101,48 @@ final class EstimateFinanceTest extends TestCase
         FinanceDecimal::allocate('1.00', ['a' => '0']);
     }
 
+    public function test_contract_reads_financial_conditions_instead_of_stale_projection_amounts(): void
+    {
+        $this->save($this->command([$this->line($this->contractor, '100', '1000000')]));
+        $projection = ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->sole();
+        $projection->update(['amount' => '180000000', 'amount_without_vat' => '180000000']);
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $contracts = app(ContractEstimateService::class);
+        $coverage = app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class);
+
+        self::assertSame(1000000.0, $contracts->calculateContractEstimateTotal($this->contractor));
+        self::assertSame(1000000.0, $contracts->getSummary($this->contractor)['total_amount']);
+        $visible = $contracts->getItemsForContract($this->contractor, $this->estimate->id)->sole();
+        self::assertSame($projection->id, $visible->id);
+        self::assertSame('1000000.00', $visible->amount);
+        self::assertSame(1000000.0, $coverage->getCoverageForEstimate($this->estimate)['primary_contract']['linked_amount']);
+        self::assertSame(1000000.0, $coverage->getContractCoverageSummary($this->contractor)['summary']['linked_amount']);
+        self::assertSame('180000000.00', $projection->fresh()->amount);
+    }
+
+    public function test_contract_coverage_preserves_unknown_financial_amounts(): void
+    {
+        $this->save($this->command([$this->line($this->contractor, '100', '1000000')]));
+        EstimateFinanceAllocation::query()->where('contract_id', $this->contractor->id)
+            ->update(['amount_with_vat' => null, 'amount_without_vat' => null]);
+        $coverage = app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class)
+            ->getContractCoverageSummary($this->contractor);
+
+        foreach (['linked_amount', 'coverage_percent', 'uncovered_amount', 'overcovered_amount', 'average_linked_item_amount'] as $field) {
+            self::assertNull($coverage['summary'][$field]);
+        }
+        foreach (['amount', 'amount_without_vat', 'average_amount', 'max_amount'] as $field) {
+            self::assertNull($coverage['linked_estimates'][0]['linked_items_summary'][$field]);
+        }
+        self::assertSame(1, $coverage['summary']['linked_items_count']);
+        self::assertNull(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts::sum([
+            ['amount' => '1000000'], ['amount' => null],
+        ], 'amount'));
+        self::assertSame(0.0, \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts::sum([
+            ['amount' => '0'],
+        ], 'amount'));
+    }
+
     public function test_customer_and_split_cost_volumes_are_independent_and_replay_is_idempotent(): void
     {
         $command = $this->command([$this->line($this->customer, '100', '1000000'),

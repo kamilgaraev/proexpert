@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Integration;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts;
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Contract;
@@ -96,6 +97,7 @@ class EstimateCoverageService
         $links = ContractEstimateItem::query()
             ->where('estimate_id', $estimate->id)
             ->countedInCoverage()
+            ->withFinancialAmounts()
             ->with('contract.contractor')
             ->get()
             ->groupBy('contract_id');
@@ -146,6 +148,7 @@ class EstimateCoverageService
         $links = ContractEstimateItem::query()
             ->where('contract_id', $contract->id)
             ->countedInCoverage()
+            ->withFinancialAmounts()
             ->with(['estimate', 'estimateItem'])
             ->get()
             ->groupBy('estimate_id');
@@ -161,12 +164,12 @@ class EstimateCoverageService
                 ->unique()
                 ->intersect($coveredItemIds)
                 ->count();
-            $linkedAmount = round((float) $group->sum('amount'), 2);
+            $linkedAmount = EstimateFinanceAmounts::sum($group, 'amount');
             $linkedQuantities = $group->sum('quantity');
-            $averageAmount = $linkedItemsCount > 0
+            $averageAmount = $linkedAmount === null ? null : ($linkedItemsCount > 0
                 ? round($linkedAmount / $linkedItemsCount, 2)
-                : 0.0;
-            $maxAmount = round((float) $group->max('amount'), 2);
+                : 0.0);
+            $maxAmount = $linkedAmount === null ? null : round((float) $group->max('amount'), 2);
             $linkedSectionsCount = $group
                 ->pluck('estimateItem.estimate_section_id')
                 ->filter()
@@ -198,7 +201,7 @@ class EstimateCoverageService
                 'coverage_percent' => $coveragePercent,
                 'linked_items_summary' => [
                     'amount' => $linkedAmount,
-                    'amount_without_vat' => round((float) $group->sum('amount_without_vat'), 2),
+                    'amount_without_vat' => EstimateFinanceAmounts::sum($group, 'amount_without_vat'),
                     'average_amount' => $averageAmount,
                     'max_amount' => $maxAmount,
                     'total_quantity' => round((float) $linkedQuantities, 2),
@@ -207,16 +210,16 @@ class EstimateCoverageService
             ];
         })->values();
 
-        $linkedAmount = round((float) $linkedEstimates->sum('linked_items_summary.amount'), 2);
+        $linkedAmount = EstimateFinanceAmounts::sum($linkedEstimates, 'linked_items_summary.amount');
         $linkedItemsCount = (int) $linkedEstimates->sum('linked_items_count');
-        $coveragePercent = $contractAmount > 0
+        $coveragePercent = $linkedAmount === null ? null : ($contractAmount > 0
             ? round(($linkedAmount / $contractAmount) * 100, 2)
-            : 0.0;
-        $uncoveredAmount = max(0.0, round($contractAmount - $linkedAmount, 2));
-        $overcoveredAmount = max(0.0, round($linkedAmount - $contractAmount, 2));
-        $averageLinkedItemAmount = $linkedItemsCount > 0
+            : 0.0);
+        $uncoveredAmount = $linkedAmount === null ? null : max(0.0, round($contractAmount - $linkedAmount, 2));
+        $overcoveredAmount = $linkedAmount === null ? null : max(0.0, round($linkedAmount - $contractAmount, 2));
+        $averageLinkedItemAmount = $linkedAmount === null ? null : ($linkedItemsCount > 0
             ? round($linkedAmount / $linkedItemsCount, 2)
-            : 0.0;
+            : 0.0);
 
         return [
             'contract_id' => $contract->id,

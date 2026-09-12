@@ -93,7 +93,7 @@ class ContractEstimateService
             'estimateItem.section.parent',
             'estimateItem.measurementUnit',
             'estimateItem.childItems',
-        ])->countedInCoverage()->where('contract_id', $contract->id);
+        ])->countedInCoverage()->withFinancialAmounts()->where('contract_id', $contract->id);
 
         if ($estimateId !== null) {
             $query->where('estimate_id', $estimateId);
@@ -120,13 +120,13 @@ class ContractEstimateService
 
     public function calculateContractEstimateTotal(Contract $contract, ?int $estimateId = null): float
     {
-        $query = ContractEstimateItem::query()->countedInCoverage()->where('contract_id', $contract->id);
+        $query = ContractEstimateItem::query()->countedInCoverage()->withFinancialAmounts()->where('contract_id', $contract->id);
 
         if ($estimateId !== null) {
             $query->where('estimate_id', $estimateId);
         }
 
-        return round((float) $query->sum('amount'), 2);
+        return round((float) DB::query()->fromSub($query, 'financial_links')->sum('amount'), 2);
     }
 
     public function calculateItemsTotal(Estimate $estimate, array $itemIds, bool $includeVat = false, ?string $rate = null): float
@@ -141,7 +141,7 @@ class ContractEstimateService
 
     public function getSummary(Contract $contract): array
     {
-        $links = ContractEstimateItem::query()->countedInCoverage()->where('contract_id', $contract->id)
+        $links = ContractEstimateItem::query()->countedInCoverage()->withFinancialAmounts()->where('contract_id', $contract->id)
             ->with('estimateItem')
             ->get();
 
