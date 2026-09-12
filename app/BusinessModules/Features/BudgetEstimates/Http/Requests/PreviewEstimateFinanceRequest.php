@@ -8,6 +8,9 @@ final class PreviewEstimateFinanceRequest extends SaveEstimateFinanceRequest
 {
     public function rules(): array
     {
+        if ($this->input('operation') === 'own_cost') {
+            return self::ownCostRules(true);
+        }
         if ($this->input('operation') === 'cash_distribution') {
             return self::cashRules(true);
         }

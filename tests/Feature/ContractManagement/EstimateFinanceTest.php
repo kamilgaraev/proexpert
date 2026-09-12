@@ -258,6 +258,115 @@ final class EstimateFinanceTest extends TestCase
             'lines' => [['allocation_key' => $allocation->key, 'condition_version' => (int) $allocation->condition_version, 'version' => $version, 'amount' => $amount]]];
     }
 
+    public function test_own_cost_registration_previews_tax_and_replays_without_duplicate_expense(): void
+    {
+        $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,
+            'name' => 'Собственные расходы', 'code' => 'OWN-REGISTER', 'is_active' => true]);
+        $command = ['operation' => 'own_cost', 'revision' => (int) $this->estimate->fresh()->finance_revision, 'mutation_id' => (string) Str::uuid(), 'cost_key' => (string) Str::uuid(),
+            'confirmed' => true, 'source_type' => 'manual', 'cost_category_id' => $category->id, 'expense_date' => '2026-09-13',
+            'basis' => 'Подтверждённая покупка', 'currency' => 'RUB', 'amount' => '100',
+            'vat_mode' => 'exclusive', 'price_basis' => 'without_vat', 'vat_rate' => '20'];
+        $preview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        self::assertSame('120.00', $preview['cost']['amount']);
+        self::assertSame('100.00', $preview['cost']['amount_without_vat']);
+        self::assertSame(0, \Illuminate\Support\Facades\DB::table('estimate_finance_own_costs')->count());
+        $command['source_hash'] = $preview['source_hash'];
+        $result = $this->save($command);
+        self::assertSame($command['revision'] + 1, $result['revision']);
+        self::assertFalse($result['replayed']);
+        self::assertTrue($this->save($command)['replayed']);
+        self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_own_costs')->count());
+        self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_own_cost_versions')->count());
+        self::assertSame(0, \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->count());
+        try {
+            $this->save(array_replace($command, ['amount' => '200']));
+            self::fail('Changed replay payload was accepted');
+        } catch (ConflictHttpException) {
+            self::assertTrue(true);
+        }
+        $unknown = array_replace($command, ['revision' => $result['revision'], 'mutation_id' => (string) Str::uuid(), 'cost_key' => (string) Str::uuid(),
+            'vat_mode' => 'unknown', 'price_basis' => 'unknown', 'vat_rate' => null]);
+        unset($unknown['source_hash']);
+        $unknownPreview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $unknown);
+        self::assertNull($unknownPreview['cost']['amount_without_vat']);
+        foreach ([['confirmed' => false], ['currency' => ''], ['cost_category_id' => 0], ['amount' => '0'], ['basis' => '   ']] as $invalid) {
+            try {
+                $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, array_replace($unknown, $invalid));
+                self::fail('Invalid expense was accepted');
+            } catch (ValidationException) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    public function test_own_cost_document_registration_rejects_changed_pending_and_duplicate_source(): void
+    {
+        $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,
+            'name' => 'Собственные расходы', 'code' => 'OWN-DOC', 'is_active' => true]);
+        $source = \App\Models\AdvanceAccountTransaction::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'user_id' => $this->actor->id, 'type' => 'expense',
+            'amount' => '120', 'balance_after' => '0', 'reporting_status' => 'pending',
+            'created_by_user_id' => $this->actor->id]);
+        $command = ['operation' => 'own_cost', 'revision' => (int) $this->estimate->fresh()->finance_revision, 'mutation_id' => (string) Str::uuid(), 'cost_key' => (string) Str::uuid(),
+            'confirmed' => true, 'source_type' => 'advance_expense', 'advance_transaction_id' => $source->id,
+            'cost_category_id' => $category->id, 'expense_date' => '2026-09-13', 'basis' => 'Расход по документу',
+            'currency' => 'RUB', 'amount' => '120', 'vat_mode' => 'none', 'price_basis' => 'without_vat'];
+        try {
+            $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+            self::fail('Pending source was accepted');
+        } catch (ValidationException) {
+            self::assertTrue(true);
+        }
+        $source->update(['reporting_status' => 'approved', 'approved_at' => now(), 'approved_by_user_id' => $this->actor->id]);
+        $foreignOrg = Organization::factory()->create();
+        $otherProject = Project::factory()->create(['organization_id' => $this->estimate->organization_id]);
+        foreach ([['organization_id' => $foreignOrg->id], ['project_id' => $otherProject->id], ['type' => 'issue']] as $invalidSource) {
+            $other = $source->replicate();
+            $other->fill($invalidSource)->save();
+            try {
+                $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id,
+                    array_replace($command, ['advance_transaction_id' => $other->id]));
+                self::fail('Foreign or non-expense source was accepted');
+            } catch (ValidationException) {
+                self::assertTrue(true);
+            }
+        }
+        $preview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        $command['source_hash'] = $preview['source_hash'];
+        $source->update(['document_number' => 'Изменён после предпросмотра']);
+        try {
+            $this->save($command);
+            self::fail('Stale source snapshot was accepted');
+        } catch (ConflictHttpException) {
+            self::assertTrue(true);
+        }
+        unset($command['source_hash']);
+        $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
+        $this->save($command);
+        $second = array_replace($command, ['revision' => (int) $this->estimate->fresh()->finance_revision, 'mutation_id' => (string) Str::uuid(), 'cost_key' => (string) Str::uuid()]);
+        try {
+            $this->save($second);
+            self::fail('Source document was counted twice');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('cost', $exception->errors());
+        }
+        self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_own_costs')->count());
+        self::assertSame('120.00', $source->fresh()->amount);
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(
+            fn ($actor, $permission, $context) => $permission !== 'advance_transactions.view',
+        );
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        try {
+            app(EstimateFinanceService::class)->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $second);
+            self::fail('Source document was accessible without permission');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            self::assertTrue(true);
+        }
+        $queries = \Illuminate\Support\Facades\DB::getQueryLog();
+        \Illuminate\Support\Facades\DB::disableQueryLog();
+        self::assertSame([], array_values(array_filter($queries, fn ($query) => str_contains($query['query'], 'advance_account_transactions'))));
+    }
+
     public function test_own_cost_storage_preserves_sources_history_and_unknown_tax(): void
     {
         $db = \Illuminate\Support\Facades\DB::class;

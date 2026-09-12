@@ -15,6 +15,9 @@ class SaveEstimateFinanceRequest extends FormRequest
 
     public function rules(): array
     {
+        if ($this->input('operation') === 'own_cost') {
+            return self::ownCostRules();
+        }
         return $this->input('operation') === 'cash_distribution' ? self::cashRules() : self::inputRules();
     }
 
@@ -33,6 +36,28 @@ class SaveEstimateFinanceRequest extends FormRequest
         $input = new \Illuminate\Support\ValidatedInput($this->validated());
 
         return $keys === null ? $input : $input->only($keys);
+    }
+
+    public static function ownCostRules(bool $preview = false): array
+    {
+        return [
+            'operation' => ['required', 'in:own_cost'],
+            'revision' => ['required', 'integer', 'min:0'],
+            'mutation_id' => ['required', 'uuid'],
+            'cost_key' => ['required', 'uuid'],
+            'confirmed' => ['required', 'accepted'],
+            'source_type' => ['required', 'in:manual,advance_expense'],
+            'advance_transaction_id' => ['required_if:source_type,advance_expense', 'prohibited_unless:source_type,advance_expense', 'integer', 'min:1'],
+            'source_hash' => [$preview ? 'sometimes' : 'required', 'string', 'regex:/^[a-f0-9]{64}$/'],
+            'cost_category_id' => ['required', 'integer', 'min:1'],
+            'expense_date' => ['required', 'date_format:Y-m-d'],
+            'basis' => ['required', 'string', 'max:10000'],
+            'currency' => ['required', 'string', 'regex:/^[A-Z]{3}$/'],
+            'amount' => ['required', 'string', 'regex:/^\d{1,12}(\.\d{1,2})?$/'],
+            'vat_mode' => ['required', 'in:none,exclusive,included,unknown'],
+            'price_basis' => ['required', 'in:without_vat,with_vat,unknown'],
+            'vat_rate' => ['sometimes', 'nullable', 'string', 'regex:/^\d{1,3}(\.\d{1,4})?$/', 'numeric', 'min:0', 'max:100'],
+        ];
     }
 
     public static function cashRules(bool $preview = false): array

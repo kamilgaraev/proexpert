@@ -31,6 +31,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceProjectExecution $projectExecution,
         private readonly EstimateFinanceCashSources $cashSources,
         private readonly EstimateFinanceProjectCash $projectCash,
+        private readonly EstimateFinanceOwnCost $ownCost,
         private readonly EstimateFinanceCashDistribution $cashDistribution,
     ) {}
 
@@ -233,6 +234,9 @@ final class EstimateFinanceService
 
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'own_cost') {
+            return $this->ownCost->handle($actor, $projectId, $estimateId, $input, false);
+        }
         if (($input['operation'] ?? null) === 'cash_distribution') {
             return $this->cashDistribution->handle($actor, $projectId, $estimateId, $input, false);
         }
@@ -310,6 +314,9 @@ final class EstimateFinanceService
 
     public function save(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'own_cost') {
+            return $this->ownCost->handle($actor, $projectId, $estimateId, $input, true);
+        }
         if (($input['operation'] ?? null) === 'cash_distribution') {
             return $this->cashDistribution->handle($actor, $projectId, $estimateId, $input, true);
         }
