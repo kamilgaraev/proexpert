@@ -94,6 +94,34 @@ final class EstimateFinanceTest extends TestCase
         self::assertArrayNotHasKey('estimate_amount', $result['documents'][0]);
     }
 
+    public function test_project_cash_counts_shared_contract_payments_once(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $second = $this->estimate->replicate();
+        $second->number = 'FIN-CASH-2';
+        $second->save();
+        $secondItem = $this->item->replicate();
+        $secondItem->estimate_id = $second->id;
+        $secondItem->save();
+        $projection = \App\Models\ContractEstimateItem::query()->where('estimate_id', $this->estimate->id)->firstOrFail()->replicate();
+        $projection->estimate_id = $second->id;
+        $projection->estimate_item_id = $secondItem->id;
+        $projection->save();
+        $document = $this->cashDocument($this->customer, 'incoming');
+        $payment = $this->cashTransaction($document->id, '400');
+        $this->cashTransaction($document->id, '-100', ['reverses_transaction_id' => $payment->id]);
+        $result = $this->finance->projectReport($this->actor, $this->estimate->project_id, 'without_vat', false, 'cash');
+        self::assertCount(2, $result['estimates']);
+        self::assertCount(2, $result['cash']['sources']);
+        self::assertCount(1, $result['cash']['documents']);
+        self::assertSame('300.00', $result['cash']['summary']['totals']['RUB']['difference']);
+        self::assertSame([$this->estimate->id, $second->id], $result['cash']['documents'][0]['linked_estimate_ids']);
+        self::assertArrayNotHasKey('rows', $result['estimates'][0]);
+        foreach ($result['estimates'] as $report) {
+            self::assertSame('300.00', $report['cash']['summary']['totals']['RUB']['difference']);
+        }
+    }
+
     public function test_cash_sources_resolve_act_contract_and_flag_missing_history_and_direction(): void
     {
         $this->save($this->command([$this->line($this->contractor, '100', '1000000')]));
@@ -121,6 +149,10 @@ final class EstimateFinanceTest extends TestCase
         $result = app(EstimateFinanceService::class)->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash')['cash'];
         self::assertFalse($result['available']);
         self::assertNull($result['sources']);
+        self::assertSame([], array_values(array_filter($queries, fn ($sql) => str_contains($sql, 'payment_documents') || str_contains($sql, 'payment_transactions'))));
+        $project = app(EstimateFinanceService::class)->projectReport($this->actor, $this->estimate->project_id, 'with_vat', false, 'cash');
+        self::assertFalse($project['cash']['available']);
+        self::assertNull($project['cash']['sources']);
         self::assertSame([], array_values(array_filter($queries, fn ($sql) => str_contains($sql, 'payment_documents') || str_contains($sql, 'payment_transactions'))));
     }
 

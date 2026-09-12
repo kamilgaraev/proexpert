@@ -30,6 +30,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceExecutionSummary $executionSummary,
         private readonly EstimateFinanceProjectExecution $projectExecution,
         private readonly EstimateFinanceCashSources $cashSources,
+        private readonly EstimateFinanceProjectCash $projectCash,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat', string $view = 'plan'): array
@@ -49,7 +50,7 @@ final class EstimateFinanceService
 
     public function projectReport(User $actor, int $projectId, string $basis, bool $includeDetails = false, string $view = 'plan'): array
     {
-        if (! in_array($view, ['plan', 'execution'], true)) {
+        if (! in_array($view, ['plan', 'execution', 'cash'], true)) {
             $this->invalid();
         }
         $this->access->project($actor, $projectId);
@@ -80,6 +81,7 @@ final class EstimateFinanceService
             }
 
             $execution = $view === 'execution' ? $this->projectExecution->combine($reports, $basis, $this->access->canViewExecution($actor, $projectId)) : null;
+            $cash = $view === 'cash' ? $this->projectCash->combine($reports, $this->access->canViewCash($actor, $projectId)) : null;
             if (! $includeDetails) {
                 foreach ($reports as &$report) {
                     unset($report['rows'], $report['sections']);
@@ -88,7 +90,8 @@ final class EstimateFinanceService
             }
 
             return ['basis' => $basis, 'view' => $view, 'estimates' => $reports, 'totals' => array_values($totals)]
-                + ($view === 'execution' ? ['execution' => $execution] : []);
+                + ($view === 'execution' ? ['execution' => $execution] : [])
+                + ($view === 'cash' ? ['cash' => $cash] : []);
         }, 3);
     }
 
