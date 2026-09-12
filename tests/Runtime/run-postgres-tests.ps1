@@ -51,6 +51,20 @@ if (
     throw 'postgres_test_database_configuration_unsafe'
 }
 
+$revisionTestsMutex = [System.Threading.Mutex]::new($false, 'Local\MostPostgresTests')
+$revisionTestsLockAcquired = $false
+try {
+    while (-not $revisionTestsLockAcquired) {
+        try {
+            $revisionTestsLockAcquired = $revisionTestsMutex.WaitOne([TimeSpan]::FromSeconds(30))
+        } catch [System.Threading.AbandonedMutexException] {
+            $revisionTestsLockAcquired = $true
+        }
+        if (-not $revisionTestsLockAcquired) {
+            Write-Host 'Ожидание завершения другого запуска PostgreSQL-тестов...'
+        }
+    }
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'docker_command_unavailable'
 }
@@ -102,3 +116,9 @@ try {
 }
 
 exit $testExitCode
+} finally {
+    if ($revisionTestsLockAcquired) {
+        $revisionTestsMutex.ReleaseMutex()
+    }
+    $revisionTestsMutex.Dispose()
+}

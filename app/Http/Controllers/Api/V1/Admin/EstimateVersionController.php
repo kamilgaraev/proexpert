@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\BusinessModules\Features\BudgetEstimates\Services\AutoSchedulingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\MemoryLayerService;
-use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateRevisionService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateRevisionQueueService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionComparisonService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionRestoreService;
 use App\BusinessModules\Features\BudgetEstimates\Services\WhatIfSimulatorService;
@@ -37,7 +37,7 @@ class EstimateVersionController extends Controller
         protected WhatIfSimulatorService $whatIfService,
         protected AutoSchedulingService $schedulerService,
         protected MemoryLayerService $memoryLayer,
-        private readonly EstimateRevisionService $revisionService
+        private readonly EstimateRevisionQueueService $revisionService
     ) {}
 
     public function index(EstimateVersionIndexRequest $request, int $estimateId): JsonResponse
@@ -115,21 +115,47 @@ class EstimateVersionController extends Controller
     public function startRevision(StartEstimateRevisionRequest $request, int $estimateId): JsonResponse
     {
         $estimate = $this->findEstimateOrFail($estimateId);
-        $this->authorizeVersionCreation($estimate);
-        $this->authorize('update', $estimate);
+        $this->authorize('view', $estimate);
         $validated = $request->validated();
-        $revision = $this->revisionService->start(
-            estimate: $estimate,
-            actorId: (int) $request->user()->id,
-            reason: $validated['reason'],
-            idempotencyKey: $validated['idempotency_key']
-        );
+        try {
+            $operation = $this->revisionService->enqueue(
+                (int) $estimate->id,
+                (int) $estimate->organization_id,
+                $request->user(),
+                $validated['reason'],
+                $validated['idempotency_key']
+            );
+        } catch (\DomainException $exception) {
+            return AdminResponse::error(trans_message('estimate.revision_conflict'), Response::HTTP_CONFLICT);
+        } catch (\Illuminate\Auth\Access\AuthorizationException $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            $this->revisionService->logError($exception, [
+                'estimate_id' => $estimate->id,
+                'organization_id' => $estimate->organization_id,
+                'actor_id' => $request->user()->id,
+                'stage' => 'enqueue',
+            ]);
+
+            return AdminResponse::error(trans_message('estimate.revision_queue_unavailable'), Response::HTTP_SERVICE_UNAVAILABLE);
+        }
 
         return AdminResponse::success(
-            new EstimateResource($revision),
-            trans_message('estimate.revision_started'),
-            Response::HTTP_CREATED
+            $operation->payload(),
+            trans_message('estimate.revision_operation_'.$operation->status),
+            in_array($operation->status, ['queued', 'processing'], true) ? Response::HTTP_ACCEPTED : Response::HTTP_OK
         );
+    }
+
+    public function revisionStatus(Request $request, int $estimateId): JsonResponse
+    {
+        $operation = $this->revisionService->latest(
+            $estimateId,
+            (int) $request->attributes->get('current_organization_id'),
+            $request->user()
+        );
+
+        return AdminResponse::success($operation?->payload());
     }
 
     public function rollback(Request $request, int $estimateId, int $versionId): JsonResponse

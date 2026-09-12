@@ -56,6 +56,15 @@ return [
 
     'channels' => [
 
+        'estimate_revisions' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/estimate-revisions.log'),
+            'level' => 'info',
+            'days' => 30,
+            'replace_placeholders' => true,
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
+        ],
+
         'stack' => [
             'driver' => 'stack',
             'channels' => ['single', 'sentry'],
