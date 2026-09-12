@@ -197,6 +197,14 @@ final class EstimateFinanceService
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId, true);
+        if (($input['preview_operation'] ?? null) === 'source_amount') {
+            $data = Validator::make($input, \App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest::sourceRules())->validate();
+            $targets = $this->query->targets($estimate);
+
+            return ['revision' => (int) $estimate->finance_revision, 'currency' => 'RUB',
+                'amount_without_vat' => EstimateFinanceSelection::amount($targets, $data['item_ids']),
+                'items_count' => count(EstimateFinanceSelection::rootKeys($targets, $data['item_ids']))];
+        }
         $data = Validator::make($input, SaveEstimateFinanceRequest::inputRules())->validate();
         if ((int) $data['revision'] !== (int) $estimate->finance_revision) {
             throw new ConflictHttpException(trans_message('estimate_finance.conflict'));

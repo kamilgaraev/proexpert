@@ -61,13 +61,17 @@ class ContractEstimateItemController extends Controller
                 $contract,
                 $estimate,
                 $request->input('item_ids'),
-                $request->boolean('include_vat')
+                $request->boolean('include_vat'),
+                $request->user(),
+                $request->input('vat_rate') === null ? null : (string) $request->input('vat_rate')
             );
 
             return AdminResponse::success(
                 ContractEstimateItemResource::collection($attached),
                 trans_message('contract.estimate_items_attached')
             );
+        } catch (\Illuminate\Validation\ValidationException|\Illuminate\Auth\Access\AuthorizationException|\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('contract_estimate_items.attach_failed', [
                 'contract_id' => $contract->id,

@@ -105,6 +105,51 @@ final class ContractEstimateFinanceAdapter
         }, 3);
     }
 
+    public function attach(User $actor, Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false, ?string $rate = null): void
+    {
+        $this->access->estimate($actor, (int) $estimate->project_id, (int) $estimate->id, true);
+        DB::transaction(function () use ($actor, $contract, $estimate, $itemIds, $includeVat, $rate): void {
+            $estimate = Estimate::query()->whereKey($estimate->id)->where('organization_id', $actor->current_organization_id)
+                ->where('project_id', $contract->project_id)->lockForUpdate()->firstOrFail();
+            $targets = $this->query->targets($estimate);
+            $keys = EstimateFinanceSelection::rootKeys($targets, $itemIds);
+            $this->access->editContracts($actor, $estimate, array_keys($keys), [(int) $contract->id]);
+            $lines = [];
+            $linked = [];
+            foreach ($this->query->allocations($estimate) as $allocation) {
+                if (isset($keys[$allocation['target_key']])) {
+                    $lines[] = $this->input($allocation);
+                    if ((int) $allocation['contract_id'] === (int) $contract->id) {
+                        $linked[$allocation['target_key']] = true;
+                    }
+                }
+            }
+            $added = false;
+            foreach (array_diff_key($keys, $linked) as $key => $_) {
+                if ($includeVat && $rate === null) {
+                    throw ValidationException::withMessages(['vat_rate' => trans_message('estimate_finance.tax_conditions')]);
+                }
+                $target = $targets[$key];
+                $lines[] = ['key' => (string) Str::uuid(), 'target_key' => $key, 'source' => 'contract',
+                    'contract_id' => (int) $contract->id, 'currency' => $contract->currency ?: 'RUB',
+                    'quantity' => $target['quantity'], 'method' => 'total', 'amount' => $target['estimate_amount'],
+                    'price_basis' => 'without_vat', 'vat_mode' => $includeVat ? 'exclusive' : 'none',
+                    'vat_rate' => $includeVat ? $rate : null, 'composition_confirmed' => true];
+                $added = true;
+            }
+            if ($added) {
+                $this->finance->save($actor, (int) $estimate->project_id, (int) $estimate->id, [
+                    'mutation_id' => (string) Str::uuid(), 'revision' => (int) $estimate->finance_revision,
+                    'target_keys' => array_keys($keys), 'lines' => $lines,
+                ]);
+            }
+        }, 3);
+    }
+
+    public function initialAmount(Estimate $estimate, array $itemIds, bool $includeVat = false, ?string $rate = null): string
+    {
+        return EstimateFinanceSelection::amount($this->query->targets($estimate), $itemIds, $includeVat, $rate);
+    }
     private function input(array $allocation): array
     {
         $legacy = $allocation['legacy'] ?? false;

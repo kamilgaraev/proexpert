@@ -218,7 +218,11 @@ final class ContractDossierCreationServiceTest extends TestCase
         );
         $estimates = Mockery::mock(ContractEstimateService::class);
         $estimates->shouldNotReceive('attachItems');
-        $service = new ContractFromEstimateService($this->database->getConnection(), $dossiers, $estimates);
+        $service = new ContractFromEstimateService($this->database->getConnection(), $dossiers, $estimates,
+            new \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAccess(
+                Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class),
+                Mockery::mock(\App\Services\Project\UserProjectAccessService::class),
+            ));
         $actor = new User;
         $actor->forceFill(['id' => 3, 'current_organization_id' => 7]);
         $project = new \App\Models\Project;

@@ -22,6 +22,7 @@ final class CreateContractFromEstimateRequest extends StoreContractRequest
             'estimate_item_ids' => ['required', 'array', 'min:1'],
             'estimate_item_ids.*' => ['required', 'integer', 'distinct'],
             'include_vat' => ['nullable', 'boolean'],
+            'coverage_vat_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'idempotency_key' => ['required', 'string', 'max:128'],
         ]);
     }

@@ -22,15 +22,16 @@ class EstimateContractIntegrationService
     public function validateContractAmount(
         Estimate $estimate,
         ?Contract $contract = null,
-        bool $includeVat = false
+        bool $includeVat = false,
+        ?string $rate = null
     ): array {
-        return $this->coverageService->validateContractAmount($estimate, $contract, $includeVat);
+        return $this->coverageService->validateContractAmount($estimate, $contract, $includeVat, $rate);
     }
 
-    public function linkToContract(Estimate $estimate, int $contractId, bool $includeVat = false): array
+    public function linkToContract(Estimate $estimate, int $contractId, bool $includeVat = false, ?\App\Models\User $actor = null, ?string $rate = null): array
     {
         $contract = Contract::findOrFail($contractId);
-        $this->coverageService->attachFullCoverage($contract, $estimate, $includeVat);
+        $this->coverageService->attachFullCoverage($contract, $estimate, $includeVat, $actor, $rate);
 
         return $this->coverageService->getCoverageForEstimate($estimate);
     }

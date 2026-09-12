@@ -11,7 +11,6 @@ use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
-use App\Services\CompletedWork\CompletedWorkFactService;
 use App\Services\Contract\ContractAuditedMutationService;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
@@ -30,7 +29,6 @@ class EstimateCoverageService
 
     public function __construct(
         private readonly ContractEstimateService $contractEstimateService,
-        private readonly CompletedWorkFactService $completedWorkFactService,
         private readonly EstimateCacheService $estimateCacheService,
         private readonly ContractAuditedMutationService $contractMutations,
     ) {}
@@ -51,27 +49,25 @@ class EstimateCoverageService
         });
     }
 
-    public function attachFullCoverage(Contract $contract, Estimate $estimate, bool $includeVat = false): Collection
+    public function attachFullCoverage(Contract $contract, Estimate $estimate, bool $includeVat = false, ?\App\Models\User $actor = null, ?string $rate = null): Collection
     {
         $this->assertOwnership($contract, $estimate);
 
         $itemIds = $this->getCoveredItemIds($estimate)->all();
 
-        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat): Collection {
-            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
-            $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
+        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat, $actor, $rate): Collection {
+            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat, $actor, $rate);
 
             return $links;
         });
     }
 
-    public function syncCoverageItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
+    public function syncCoverageItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false, ?\App\Models\User $actor = null, ?string $rate = null): Collection
     {
         $this->assertOwnership($contract, $estimate);
 
-        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat): Collection {
-            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
-            $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
+        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat, $actor, $rate): Collection {
+            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat, $actor, $rate);
 
             return $links;
         });
@@ -246,7 +242,8 @@ class EstimateCoverageService
     public function validateContractAmount(
         Estimate $estimate,
         ?Contract $candidateContract = null,
-        bool $includeVat = false
+        bool $includeVat = false,
+        ?string $rate = null
     ): array {
         $coverage = $this->getCoverageForEstimate($estimate);
         $contracts = collect($coverage['contracts']);
@@ -259,7 +256,8 @@ class EstimateCoverageService
                 $coveredAmount = $this->contractEstimateService->calculateItemsTotal(
                     $estimate,
                     $this->getCoveredItemIds($estimate)->all(),
-                    $includeVat
+                    $includeVat,
+                    $rate
                 );
 
                 return $this->amountValidationResult(

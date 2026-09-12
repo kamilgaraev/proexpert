@@ -33,11 +33,9 @@ class ContractEstimateServiceTest extends TestCase
     {
         parent::setUp();
 
-        $this->service = app(ContractEstimateService::class);
-        $this->coverageService = app(EstimateCoverageService::class);
-
+        $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)->shouldReceive('can')->andReturn(true);
         $org = Organization::factory()->create();
-        $project = Project::factory()->create(['organization_id' => $org->id]);
+        $project = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
 
         $user = User::factory()->create([
             'current_organization_id' => $org->id,
@@ -45,9 +43,13 @@ class ContractEstimateServiceTest extends TestCase
         $user->organizations()->attach($org->id, [
             'is_owner' => true,
             'is_active' => true,
+            'project_access_mode' => 'all_projects',
             'settings' => null,
         ]);
         $this->actingAs($user);
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $this->service = app(ContractEstimateService::class);
+        $this->coverageService = app(EstimateCoverageService::class);
 
         $this->contract = $this->createContract([
             'organization_id' => $org->id,
@@ -61,7 +63,7 @@ class ContractEstimateServiceTest extends TestCase
         ]);
     }
 
-    public function test_attach_parent_item_also_attaches_children(): void
+    public function test_attach_parent_includes_resources_without_charging_them_twice(): void
     {
         $parent = $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
@@ -76,7 +78,7 @@ class ContractEstimateServiceTest extends TestCase
             'unit_price' => 500, // amount = 2500
         ]);
 
-        $this->service->attachItems($this->contract, $this->estimate, [$parent->id]);
+        $this->service->attachItems($this->contract, $this->estimate, [$parent->id], false, auth()->user());
 
         $this->assertDatabaseHas('contract_estimate_items', [
             'contract_id' => $this->contract->id,
@@ -84,11 +86,12 @@ class ContractEstimateServiceTest extends TestCase
             'amount' => 10000,
         ]);
 
-        $this->assertDatabaseHas('contract_estimate_items', [
+        $this->assertDatabaseMissing('contract_estimate_items', [
             'contract_id' => $this->contract->id,
             'estimate_item_id' => $child1->id,
-            'amount' => 2500,
         ]);
+        self::assertSame(10000.0, $this->service->calculateContractEstimateTotal($this->contract));
+        self::assertSame($parent->id, $child1->fresh()->parent_work_id);
     }
 
     public function test_same_item_can_belong_to_multiple_contracts(): void
@@ -102,10 +105,11 @@ class ContractEstimateServiceTest extends TestCase
         $contract2 = $this->createContract([
             'organization_id' => $this->contract->organization_id,
             'project_id' => $this->contract->project_id,
+            'contract_side_type' => 'customer_to_general_contractor',
         ]);
 
-        $this->service->attachItems($this->contract, $this->estimate, [$item->id]);
-        $this->service->attachItems($contract2, $this->estimate, [$item->id]);
+        $this->service->attachItems($this->contract, $this->estimate, [$item->id], false, auth()->user());
+        $this->service->attachItems($contract2, $this->estimate, [$item->id], false, auth()->user());
 
         $this->assertDatabaseCount('contract_estimate_items', 2);
         $this->assertEquals(2, $item->contractLinks()->count());
@@ -122,11 +126,17 @@ class ContractEstimateServiceTest extends TestCase
             'parent_work_id' => $parent->id,
         ]);
 
-        $this->service->attachItems($this->contract, $this->estimate, [$parent->id]);
-        $this->assertDatabaseCount('contract_estimate_items', 2);
-
         $grandchild = $this->createEstimateItem(['estimate_id' => $this->estimate->id, 'parent_work_id' => $child->id]);
-        $this->service->attachItems($this->contract, $this->estimate, [$grandchild->id]);
+        foreach ([$parent, $child, $grandchild] as $item) {
+            ContractEstimateItem::query()->create([
+                'contract_id' => $this->contract->id,
+                'estimate_id' => $this->estimate->id,
+                'estimate_item_id' => $item->id,
+                'quantity' => 1,
+                'amount' => 100,
+                'amount_without_vat' => 100,
+            ]);
+        }
 
         $this->service->detachItems($this->contract, [$parent->id], auth()->user());
         $this->assertDatabaseCount('contract_estimate_items', 3);
@@ -147,7 +157,7 @@ class ContractEstimateServiceTest extends TestCase
             'unit_price' => 700,
         ]);
 
-        $this->service->attachItems($this->contract, $this->estimate, [$item1->id]);
+        $this->service->attachItems($this->contract, $this->estimate, [$item1->id], false, auth()->user());
 
         $total = $this->service->calculateContractEstimateTotal($this->contract);
         $this->assertEquals(500, $total);
@@ -163,7 +173,7 @@ class ContractEstimateServiceTest extends TestCase
         ]);
 
         $link = $this->service
-            ->attachItems($this->contract, $this->estimate, [$item->id])
+            ->attachItems($this->contract, $this->estimate, [$item->id], false, auth()->user())
             ->firstOrFail();
 
         $this->assertSame(100.0, (float) $link->quantity);
@@ -208,7 +218,7 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 50000,
         ]);
 
-        $this->coverageService->attachFullCoverage($this->contract, $this->estimate);
+        $this->coverageService->attachFullCoverage($this->contract, $this->estimate, false, auth()->user());
 
         $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
         $summary = $this->coverageService->getContractCoverageSummary($this->contract);
@@ -240,7 +250,7 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 700,
         ]);
 
-        $this->service->attachItems($this->contract, $this->estimate, [$item1->id]);
+        $this->service->attachItems($this->contract, $this->estimate, [$item1->id], false, auth()->user());
 
         $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
 
@@ -250,9 +260,9 @@ class ContractEstimateServiceTest extends TestCase
         $this->assertEquals(500.0, $coverage['primary_contract']['linked_amount']);
     }
 
-    public function test_full_coverage_can_include_estimate_vat(): void
+    public function test_full_coverage_uses_explicit_vat_independently_of_estimate(): void
     {
-        $this->estimate->update(['vat_rate' => 20]);
+        $this->estimate->update(['vat_rate' => 5]);
 
         $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
@@ -270,16 +280,16 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 500,
         ]);
 
-        $this->coverageService->attachFullCoverage($this->contract, $this->estimate, true);
+        $this->coverageService->attachFullCoverage($this->contract, $this->estimate, true, auth()->user(), '20');
 
         $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
 
         $this->assertEquals(1800.0, $coverage['primary_contract']['linked_amount']);
     }
 
-    public function test_selected_items_can_include_estimate_vat(): void
+    public function test_selected_items_use_explicit_vat_independently_of_estimate(): void
     {
-        $this->estimate->update(['vat_rate' => 20]);
+        $this->estimate->update(['vat_rate' => 5]);
 
         $item = $this->createEstimateItem([
             'estimate_id' => $this->estimate->id,
@@ -289,7 +299,7 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 1000,
         ]);
 
-        $this->service->attachItems($this->contract, $this->estimate, [$item->id], true);
+        $this->service->attachItems($this->contract, $this->estimate, [$item->id], true, auth()->user(), '20');
 
         $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
 
@@ -299,7 +309,7 @@ class ContractEstimateServiceTest extends TestCase
     public function test_excluded_import_rows_do_not_inflate_new_or_existing_coverage(): void
     {
         $this->estimate->update(['vat_rate' => 20]);
-        $this->contract->update(['total_amount' => 1100]);
+        $this->contract->update(['total_amount' => 1000]);
         $parent = $this->createEstimateItem(['total_amount' => 1000, 'is_not_accounted' => false]);
         $this->createEstimateItem([
             'parent_work_id' => $parent->id,
@@ -314,32 +324,31 @@ class ContractEstimateServiceTest extends TestCase
             'is_not_accounted' => true,
         ]);
 
-        self::assertSame(1100.0, $this->service->calculateItemsTotal($this->estimate, [$parent->id]));
-        self::assertSame(1320.0, $this->service->calculateItemsTotal($this->estimate, [$parent->id], true));
-        self::assertSame(0.0, $this->service->calculateItemsTotal($this->estimate, [$excluded->id], true));
+        self::assertSame(1000.0, $this->service->calculateItemsTotal($this->estimate, [$parent->id]));
+        self::assertSame(1200.0, $this->service->calculateItemsTotal($this->estimate, [$parent->id], true, '20'));
+        self::assertSame(0.0, $this->service->calculateItemsTotal($this->estimate, [$excluded->id], true, '20'));
 
-        $this->service->attachItems($this->contract, $this->estimate, [$parent->id]);
-        $this->assertDatabaseHas('contract_estimate_items', [
+        $this->service->attachItems($this->contract, $this->estimate, [$parent->id], false, auth()->user());
+        ContractEstimateItem::query()->create([
             'contract_id' => $this->contract->id,
+            'estimate_id' => $this->estimate->id,
             'estimate_item_id' => $excluded->id,
-            'amount' => 0,
-            'amount_without_vat' => 0,
+            'quantity' => 1,
+            'amount' => 90000000,
+            'amount_without_vat' => 90000000,
         ]);
 
-        ContractEstimateItem::query()->where('estimate_item_id', $excluded->id)
-            ->update(['amount' => 90000000, 'amount_without_vat' => 90000000]);
-
         $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
-        self::assertSame(1100.0, $coverage['contracts'][0]['linked_amount']);
+        self::assertSame(1000.0, $coverage['contracts'][0]['linked_amount']);
         self::assertSame(1, $coverage['contracts'][0]['linked_items_count']);
         $summary = $this->coverageService->getContractCoverageSummary($this->contract);
-        self::assertSame(1100.0, $summary['summary']['linked_amount']);
+        self::assertSame(1000.0, $summary['summary']['linked_amount']);
         self::assertSame(1000.0, $summary['linked_estimates'][0]['linked_items_summary']['max_amount']);
-        self::assertSame(1100.0, $this->service->calculateContractEstimateTotal($this->contract));
-        self::assertSame(1100.0, $this->service->getSummary($this->contract)['total_amount']);
+        self::assertSame(1000.0, $this->service->calculateContractEstimateTotal($this->contract));
+        self::assertSame(1000.0, $this->service->getSummary($this->contract)['total_amount']);
         $visibleLinks = $this->service->getItemsForContract($this->contract, $this->estimate->id);
-        self::assertCount(2, $visibleLinks);
-        self::assertSame(1100.0, (float) $visibleLinks->sum('amount'));
+        self::assertCount(1, $visibleLinks);
+        self::assertSame(1000.0, (float) $visibleLinks->sum('amount'));
 
         $validation = $this->coverageService->validateContractAmount($this->estimate, $this->contract);
         self::assertTrue($validation['valid']);
@@ -357,8 +366,8 @@ class ContractEstimateServiceTest extends TestCase
         $item = $this->createEstimateItem(['total_amount' => 1000, 'is_not_accounted' => false]);
         $other = $this->createContract(['organization_id' => $this->contract->organization_id, 'project_id' => $this->contract->project_id]);
         $other->update(['contract_side_type' => 'customer_to_general_contractor', 'requires_contract_side_review' => false]);
-        $this->service->attachItems($this->contract, $this->estimate, [$item->id]);
-        $this->service->attachItems($other, $this->estimate, [$item->id]);
+        $this->service->attachItems($this->contract, $this->estimate, [$item->id], false, auth()->user());
+        $this->service->attachItems($other, $this->estimate, [$item->id], false, auth()->user());
         $before = $this->service->getItemsForContract($this->contract)->first();
         $before->update(['notes' => 'Сохранить примечание']);
         $item->update(['total_amount' => 9000]);
@@ -379,7 +388,7 @@ class ContractEstimateServiceTest extends TestCase
     public function test_vat_edit_rejects_another_organization(): void
     {
         $item = $this->createEstimateItem(['total_amount' => 1000]);
-        $this->service->attachItems($this->contract, $this->estimate, [$item->id]);
+        $this->service->attachItems($this->contract, $this->estimate, [$item->id], false, auth()->user());
         $foreignProject = Project::factory()->create();
         $foreignEstimate = $this->createEstimate([
             'organization_id' => $foreignProject->organization_id,
@@ -424,6 +433,9 @@ class ContractEstimateServiceTest extends TestCase
             'subject' => 'Test contract',
             'total_amount' => 100000,
             'status' => 'active',
+            'currency' => 'RUB',
+            'contract_side_type' => 'general_contractor_to_contractor',
+            'requires_contract_side_review' => false,
         ], $attributes);
 
         $attributes['contractor_id'] ??= Contractor::query()->create([

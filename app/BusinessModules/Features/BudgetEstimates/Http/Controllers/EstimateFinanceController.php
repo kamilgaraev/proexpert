@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Http\Controllers;
 
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\SaveEstimateFinanceRequest;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest;
 use App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExport;
 use App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceService;
 use App\Http\Controllers\Controller;
@@ -35,7 +36,7 @@ class EstimateFinanceController extends Controller
         return AdminResponse::success($this->finance->history($request->user(), $project, $estimate, $request->integer('after_id')));
     }
 
-    public function preview(SaveEstimateFinanceRequest $request, int $project, int $estimate): mixed
+    public function preview(PreviewEstimateFinanceRequest $request, int $project, int $estimate): mixed
     {
         return AdminResponse::success($this->finance->preview($request->user(), $project, $estimate, $request->validated()));
     }

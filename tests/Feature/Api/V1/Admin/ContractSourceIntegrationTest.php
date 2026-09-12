@@ -254,6 +254,48 @@ final class ContractSourceIntegrationTest extends TestCase
 
     public function test_estimate_adapter_creates_the_dossier_once_and_attaches_items_only_on_initial_creation(): void
     {
+        $schema = $this->database->schema();
+        $schema->table('contracts', static fn (Blueprint $table) => $table->unsignedBigInteger('project_id')->default(1));
+        $schema->create('estimates', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('finance_revision')->default(0);
+            $table->softDeletes();
+        });
+        $schema->create('estimate_finance_allocations', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('estimate_id');
+            $table->unsignedBigInteger('contract_id')->nullable();
+            $table->unsignedBigInteger('estimate_item_id');
+            $table->unsignedBigInteger('resource_id')->nullable();
+        });
+        $schema->create('contract_estimate_items', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('estimate_id');
+            $table->unsignedBigInteger('contract_id');
+            $table->unsignedBigInteger('estimate_item_id');
+        });
+        $schema->create('estimate_finance_mutations', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('estimate_id');
+            $table->uuid('mutation_id');
+            $table->string('request_hash', 64);
+            $table->unsignedBigInteger('actor_id');
+            $table->unsignedBigInteger('revision');
+            $table->jsonb('changes');
+            $table->timestamps();
+            $table->unique(['estimate_id', 'mutation_id']);
+        });
+        $this->database->table('estimates')->insert(['id' => 2, 'organization_id' => 7, 'project_id' => 1]);
+        $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturn(true);
+        $projectQuery = Mockery::mock(\Illuminate\Database\Eloquent\Builder::class);
+        $projectQuery->shouldReceive('whereKey')->andReturnSelf();
+        $projectQuery->shouldReceive('exists')->andReturn(true);
+        $projectAccess = Mockery::mock(\App\Services\Project\UserProjectAccessService::class);
+        $projectAccess->shouldReceive('queryAccessibleProjects')->andReturn($projectQuery);
+        $access = new \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAccess($authorization, $projectAccess);
         $this->insertDocument(201);
         $this->database->table('estimate_items')->insert([
             ['id' => 21, 'estimate_id' => 2],
@@ -265,21 +307,38 @@ final class ContractSourceIntegrationTest extends TestCase
             Mockery::type(Estimate::class),
             [21, 22],
             true,
+            Mockery::type(User::class),
+            '20',
         );
-        $service = new ContractFromEstimateService($this->database->getConnection(), $this->service(201, 'estimate', '2'), $estimateItems);
+        $service = new ContractFromEstimateService($this->database->getConnection(), $this->service(201, 'estimate', '2'), $estimateItems, $access);
         $project = new Project;
         $project->forceFill(['id' => 1, 'organization_id' => 7]);
         $estimate = new Estimate;
         $estimate->forceFill(['id' => 2, 'organization_id' => 7, 'project_id' => 1]);
         $input = $this->input('estimate', '2', 1);
 
-        $first = $service->create(7, $this->actor(), $project, $estimate, $input, [21, 22], true);
-        $second = $service->create(7, $this->actor(), $project, $estimate, $input, [21, 22], true);
+        $first = $service->create(7, $this->actor(), $project, $estimate, $input, [21, 22], true, '20');
+        $second = $service->create(7, $this->actor(), $project, $estimate, $input, [22, 21], true, '20.0');
 
         self::assertFalse($first->replayed);
         self::assertTrue($second->replayed);
         self::assertSame($first->contract->id, $second->contract->id);
-        self::assertSame(1, $this->sourceCount('estimate', '2'));
+        self::assertSame(1, $this->database->table('contract_dossier_sources')->where('source_type', 'estimate_contract_creation')->count());
+        foreach ([[[21], '20'], [[21, 22], '5']] as [$items, $rate]) {
+            try {
+                $service->create(7, $this->actor(), $project, $estimate, $input, $items, true, $rate);
+                self::fail('Changed creation conditions must conflict');
+            } catch (\Symfony\Component\HttpKernel\Exception\ConflictHttpException) {
+                self::assertSame(1, $this->database->table('contracts')->count());
+            }
+        }
+        $this->insertDocument(205);
+        $otherItems = Mockery::mock(ContractEstimateService::class);
+        $otherItems->shouldReceive('attachItems')->once();
+        $otherService = new ContractFromEstimateService($this->database->getConnection(), $this->service(205, 'estimate', 'second'), $otherItems, $access);
+        $third = $otherService->create(7, $this->actor(), $project, $estimate, $this->input('estimate', 'second', 1), [21], false);
+        self::assertNotSame($first->contract->id, $third->contract->id);
+        self::assertSame(2, $this->database->table('contracts')->count());
     }
 
     public function test_crm_adapter_preserves_preview_hash_and_binds_the_deal_source(): void

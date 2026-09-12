@@ -62,6 +62,37 @@ final class EstimateFinanceTest extends TestCase
         $this->finance = app(EstimateFinanceService::class);
     }
 
+    public function test_coverage_commands_do_not_resynchronize_existing_execution(): void
+    {
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $this->app->forgetInstance(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class);
+        $this->mock(\App\Services\CompletedWork\CompletedWorkFactService::class)
+            ->shouldNotReceive('syncJournalEntriesForContractEstimateCoverage');
+        $work = \App\Models\CompletedWork::query()->create([
+            'organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id,
+            'estimate_item_id' => $this->item->id,
+            'contract_id' => $this->contractor->id,
+            'user_id' => $this->actor->id,
+            'quantity' => '30',
+            'completed_quantity' => '30',
+            'price' => '8000',
+            'total_amount' => '240000',
+            'completion_date' => '2026-09-09',
+            'status' => 'confirmed',
+            'description' => 'Зафиксированное выполнение',
+        ]);
+        $before = $work->fresh()->getAttributes();
+        $coverage = app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class);
+        $coverage->attachFullCoverage($this->contractor, $this->estimate, false, $this->actor);
+        self::assertSame($before, $work->fresh()->getAttributes());
+        $projection = ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->firstOrFail();
+        $coverage->syncCoverageItems($this->contractor, $this->estimate, [$this->item->id], false, $this->actor);
+        self::assertSame($before, $work->fresh()->getAttributes());
+        self::assertSame($projection->id, ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->sole()->id);
+        self::assertSame('1000000.00', $projection->fresh()->amount);
+    }
+
     public function test_exact_distribution_has_deterministic_rounding_and_rejects_zero_base(): void
     {
         self::assertSame(['a' => '0.34', 'b' => '0.33', 'c' => '0.33'], FinanceDecimal::allocate('1.00', ['c' => '1', 'b' => '1', 'a' => '1']));
@@ -390,6 +421,92 @@ final class EstimateFinanceTest extends TestCase
         app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class)
             ->detachCoverage($this->customer, $this->estimate, $this->actor);
         self::assertDatabaseCount('estimate_finance_allocations', 0);
+    }
+
+    public function test_attach_adapter_keeps_contract_price_when_estimate_changes(): void
+    {
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $adapter = app(ContractEstimateService::class);
+        $adapter->attachItems($this->customer, $this->estimate, [$this->item->id], true, $this->actor, '20');
+        $saved = EstimateFinanceAllocation::query()->firstOrFail();
+        self::assertSame('1000000.00', $saved->amount_without_vat);
+        self::assertSame('1200000.00', $saved->amount_with_vat);
+        $version = $saved->condition_version;
+        $this->item->update(['total_amount' => '2000000']);
+        $adapter->attachItems($this->customer, $this->estimate, [$this->item->id], true, $this->actor, '5');
+        self::assertDatabaseCount('estimate_finance_allocations', 1);
+        self::assertSame('1200000.00', $saved->fresh()->amount_with_vat);
+        self::assertSame($version, $saved->fresh()->condition_version);
+    }
+
+    public function test_sync_keeps_existing_conditions_of_deeply_nested_positions(): void
+    {
+        $child = $this->item->replicate();
+        $child->forceFill(['position_number' => '1.1', 'name' => 'Вложенная работа', 'parent_work_id' => $this->item->id])->save();
+        $leaf = $this->item->replicate();
+        $leaf->forceFill(['position_number' => '1.1.1', 'name' => 'Вложенный материал', 'parent_work_id' => $child->id])->save();
+        $rootLine = $this->line($this->contractor, '100', '1000000');
+        $leafLine = $this->line($this->contractor, '100', '100000');
+        $leafLine['target_key'] = 'i:'.$leaf->id;
+        $command = $this->command([$rootLine, $leafLine]) + ['confirm_resource_changes' => true];
+        $command['target_keys'][] = 'i:'.$child->id;
+        $command['target_keys'][] = $leafLine['target_key'];
+        $this->save($command);
+        $before = EstimateFinanceAllocation::query()->where('key', $leafLine['key'])->firstOrFail()->getAttributes();
+        $revision = (int) $this->estimate->fresh()->finance_revision;
+        $this->app->forgetInstance(ContractEstimateService::class);
+        app(ContractEstimateService::class)->syncItems($this->contractor, $this->estimate, [$this->item->id], false, $this->actor);
+        self::assertSame($before, EstimateFinanceAllocation::query()->where('key', $leafLine['key'])->firstOrFail()->getAttributes());
+        self::assertSame($revision, (int) $this->estimate->fresh()->finance_revision);
+        self::assertDatabaseCount('estimate_finance_allocations', 2);
+    }
+
+    public function test_initial_amount_matches_attached_roots_and_explicit_tax(): void
+    {
+        $child = $this->item->replicate();
+        $child->forceFill(['position_number' => '1.1', 'parent_work_id' => $this->item->id, 'total_amount' => '400000'])->save();
+        $excluded = $this->item->replicate();
+        $excluded->forceFill(['position_number' => '2', 'is_not_accounted' => true, 'total_amount' => '154253129.99'])->save();
+        $this->estimate->update(['vat_rate' => '5']);
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $service = app(ContractEstimateService::class);
+        $ids = [$this->item->id, $child->id, $excluded->id];
+        $preview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id,
+            ['preview_operation' => 'source_amount', 'item_ids' => $ids]);
+        self::assertSame('1000000.00', $preview['amount_without_vat']);
+        self::assertSame(1, $preview['items_count']);
+        self::assertDatabaseCount('estimate_finance_allocations', 0);
+        self::assertSame(1000000.0, $service->calculateItemsTotal($this->estimate, $ids));
+        self::assertSame(1200000.0, $service->calculateItemsTotal($this->estimate, $ids, true, '20'));
+        $service->attachItems($this->customer, $this->estimate, $ids, true, $this->actor, '20');
+        self::assertSame(1200000.0, $service->calculateContractEstimateTotal($this->customer));
+        self::assertDatabaseCount('estimate_finance_allocations', 1);
+        $this->expectException(ValidationException::class);
+        $service->calculateItemsTotal($this->estimate, $ids, true);
+    }
+
+    public function test_sync_rolls_back_removed_conditions_when_new_tax_is_missing(): void
+    {
+        $line = $this->line($this->customer, '100', '1000000');
+        $this->save($this->command([$line]));
+        $next = $this->item->replicate();
+        $next->forceFill(['position_number' => '2', 'name' => 'Следующая работа', 'total_amount' => '200000'])->save();
+        $before = EstimateFinanceAllocation::query()->where('key', $line['key'])->firstOrFail()->getAttributes();
+        $revision = (int) $this->estimate->fresh()->finance_revision;
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $service = app(ContractEstimateService::class);
+        try {
+            $service->syncItems($this->customer, $this->estimate, [$next->id], true, $this->actor);
+            self::fail('Unknown VAT must reject the replacement');
+        } catch (ValidationException) {
+            self::assertSame($before, EstimateFinanceAllocation::query()->where('key', $line['key'])->firstOrFail()->getAttributes());
+            self::assertSame($revision, (int) $this->estimate->fresh()->finance_revision);
+        }
+        $service->syncItems($this->customer, $this->estimate, [$next->id], true, $this->actor, '20');
+        self::assertDatabaseMissing('estimate_finance_allocations', ['key' => $line['key']]);
+        $saved = EstimateFinanceAllocation::query()->where('estimate_item_id', $next->id)->firstOrFail();
+        self::assertSame('240000.00', $saved->amount_with_vat);
+        self::assertSame(240000.0, $service->calculateContractEstimateTotal($this->customer));
     }
 
     public function test_legacy_detach_removes_resource_conditions_and_preserves_parent_income(): void
