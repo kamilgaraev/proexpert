@@ -72,6 +72,7 @@ final class EstimateFinanceQuery
         $rows = [];
         foreach ($models as $model) {
             $row = $model->attributesToArray();
+            $row['vat_mode'] = EstimateFinanceTax::mode($row);
             if ($model->source === 'contract' && (! $model->contract || $this->side($model->contract) !== $model->side
                 || ($model->contract->currency ?: 'RUB') !== $model->currency
                 || (int) $model->contract->organization_id !== (int) $estimate->organization_id
@@ -96,7 +97,7 @@ final class EstimateFinanceQuery
                 'currency' => $link->contract?->currency ?? 'RUB', 'quantity' => (string) ($link->quantity ?? '0'),
                 'unit_price' => null, 'amount_without_vat' => $link->amount_without_vat,
                 'amount_with_vat' => null, 'legacy_amount' => $link->amount,
-                'vat_rate' => null, 'price_basis' => 'unknown', 'method' => 'legacy',
+                'vat_rate' => null, 'vat_mode' => 'unknown', 'price_basis' => 'unknown', 'method' => 'legacy',
                 'composition_confirmed' => false, 'estimate_snapshot' => null, 'notes' => $link->notes, 'legacy' => true,
             ];
         }

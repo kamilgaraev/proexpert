@@ -343,13 +343,9 @@ final class EstimateFinanceService
                 $total = FinanceDecimal::add($total, $amount);
                 $bases[$line['currency'].':'.$line['price_basis'].':'.$line['source'].':'.($line['contract_id'] ?? 'own')] = true;
             }
-            $net = $line['price_basis'] === 'without_vat' ? $amount : null;
-            $gross = $line['price_basis'] === 'with_vat' ? $amount : null;
-            if ($amount !== null && isset($line['vat_rate']) && $line['price_basis'] !== 'unknown') {
-                $factor = FinanceDecimal::add('1', FinanceDecimal::divide($line['vat_rate'], '100', 8));
-                $net ??= FinanceDecimal::divide($amount, $factor);
-                $gross ??= FinanceDecimal::multiply($amount, $factor);
-            }
+            $tax = EstimateFinanceTax::calculate($line, $amount);
+            $net = $tax['amount_without_vat'];
+            $gross = $tax['amount_with_vat'];
             $foreignKey = $knownKeys->get($line['key']);
             $legacyLink = $legacyLinks->get($line['legacy_link_id'] ?? 0);
             if (isset($line['legacy_link_id']) && (! $legacyLink || (int) $legacyLink->estimate_item_id !== $target['item_id']
@@ -378,6 +374,7 @@ final class EstimateFinanceService
                 'contract_id' => $contract?->id, 'side' => $side, 'source' => $line['source'], 'currency' => $line['currency'],
                 'quantity' => FinanceDecimal::value($line['quantity'], 8), 'unit_price' => $line['unit_price'] ?? null,
                 'amount_without_vat' => $net, 'amount_with_vat' => $gross, 'vat_rate' => $line['vat_rate'] ?? null,
+                'vat_mode' => $tax['vat_mode'],
                 'legacy_amount' => $line['price_basis'] === 'unknown' ? $amount : null,
                 'price_basis' => $line['price_basis'], 'method' => $line['method'],
                 'composition_confirmed' => $line['composition_confirmed'], 'notes' => $line['notes'] ?? null,

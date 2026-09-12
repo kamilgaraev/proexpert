@@ -121,6 +121,64 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_explicit_vat_modes_are_independent_of_estimate_and_repeated_save(): void
+    {
+        $this->estimate->update(['vat_rate' => '0']);
+        $income = $this->line($this->customer, '100', '1000000');
+        $income['vat_mode'] = 'exclusive';
+        $income['price_basis'] = 'without_vat';
+        $income['vat_rate'] = '20';
+        $cost = $this->line($this->contractor, '100', '840000');
+        $cost['vat_mode'] = 'included';
+        $cost['vat_rate'] = '5';
+        $this->save($this->command([$income, $cost]));
+        $this->save($this->command([$income, $cost]));
+        $rows = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->get()->keyBy('side');
+        self::assertSame('1000000.00', $rows['revenue']->amount_without_vat);
+        self::assertSame('1200000.00', $rows['revenue']->amount_with_vat);
+        self::assertSame('800000.00', $rows['cost']->amount_without_vat);
+        self::assertSame('840000.00', $rows['cost']->amount_with_vat);
+        self::assertSame('exclusive', $rows['revenue']->vat_mode);
+        self::assertSame('included', $rows['cost']->vat_mode);
+    }
+
+    public function test_without_vat_is_distinct_from_zero_rate_and_has_known_margin(): void
+    {
+        $income = $this->line($this->customer, '100', '1000000');
+        $income['vat_mode'] = 'none';
+        $income['price_basis'] = 'without_vat';
+        $income['vat_rate'] = null;
+        $cost = $this->line($this->contractor, '100', '800000');
+        $cost['vat_mode'] = 'included';
+        $cost['vat_rate'] = '0';
+        $this->save($this->command([$income, $cost]));
+        $rows = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->get()->keyBy('side');
+        self::assertSame('none', $rows['revenue']->vat_mode);
+        self::assertNull($rows['revenue']->vat_rate);
+        self::assertSame('1000000.00', $rows['revenue']->amount_with_vat);
+        self::assertSame('included', $rows['cost']->vat_mode);
+        self::assertSame('0.0000', $rows['cost']->vat_rate);
+        self::assertSame('200000.00', $this->report()['rows'][0]['margin']);
+        self::assertNotContains('unknown_price_or_tax', $this->report()['rows'][0]['warnings']);
+    }
+
+    public function test_explicit_tax_mode_rejects_missing_or_contradictory_rate(): void
+    {
+        foreach ([['none', 'without_vat', '0'], ['exclusive', 'without_vat', null],
+            ['included', 'with_vat', null], ['included', 'without_vat', '20']] as [$mode, $basis, $rate]) {
+            $line = $this->line($this->customer, '100', '1000000');
+            $line['vat_mode'] = $mode;
+            $line['price_basis'] = $basis;
+            $line['vat_rate'] = $rate;
+            try {
+                $this->save($this->command([$line]));
+                self::fail('Contradictory tax conditions were accepted');
+            } catch (ValidationException) {
+                self::assertDatabaseCount('estimate_finance_allocations', 0);
+            }
+        }
+    }
+
     public function test_resync_preserves_link_identifiers_and_agreed_prices_after_estimate_change(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000'), $this->line($this->contractor, '100', '800000')]));

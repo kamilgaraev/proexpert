@@ -44,6 +44,7 @@ class SaveEstimateFinanceRequest extends FormRequest
             'lines.*.unit_price' => array_merge(['nullable'], $decimal),
             'lines.*.amount' => ['nullable', 'string', 'regex:/^\d{1,12}(\.\d{1,2})?$/'],
             'lines.*.vat_rate' => ['nullable', 'string', 'regex:/^\d{1,2}(\.\d{1,4})?$/'],
+            'lines.*.vat_mode' => ['sometimes', 'in:none,exclusive,included,unknown'],
             'lines.*.price_basis' => ['required', 'in:with_vat,without_vat,unknown'],
             'lines.*.legacy_link_id' => ['sometimes', 'integer', 'min:1'],
             'lines.*.method' => ['required', 'in:unit,total'],
