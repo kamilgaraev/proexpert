@@ -101,7 +101,8 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame(3, \Illuminate\Support\Facades\DB::table('estimate_finance_cash_versions')->count());
         self::assertSame('400.00', $payment->fresh()->amount);
         self::assertSame('-100.00', $refund->fresh()->amount);
-        $cashReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash')['cash'];
+        $fullCashReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash');
+        $cashReport = $fullCashReport['cash'];
         self::assertSame('300.00', $cashReport['summary']['totals']['RUB']['difference']);
         self::assertSame('100.00', $cashReport['distribution']['totals']['RUB']['difference']);
         self::assertSame('100.00', $cashReport['distribution']['positions'][0]['totals']['RUB']['difference']);
@@ -109,6 +110,19 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('200.00', $states[$payment->id]['remaining_amount']);
         self::assertSame('0.00', $states[$refund->id]['remaining_amount']);
         self::assertSame($updatePreview['source_hash'], $states[$payment->id]['source_hash']);
+        $fullCashReport['rows'][0]['name'] = '=POSITION()';
+        $cashBook = app(EstimateFinanceExport::class)->workbook([$fullCashReport], 'with_vat', [], 'cash');
+        self::assertEquals(300, $cashBook->getSheet(0)->getCell('E2')->getValue());
+        self::assertEquals(100, $cashBook->getSheet(3)->getCell('E2')->getValue());
+        self::assertEquals(200, $cashBook->getSheet(2)->getCell('L2')->getValue());
+        self::assertEquals(200, $cashBook->getSheet(2)->getCell('M2')->getValue());
+        self::assertSame('=POSITION()', $cashBook->getSheet(4)->getCell('B2')->getValue());
+        self::assertSame('s', $cashBook->getSheet(4)->getCell('B2')->getDataType());
+        self::assertEquals(200, $cashBook->getSheet(4)->getCell('G2')->getValue());
+        self::assertEquals(-100, $cashBook->getSheet(4)->getCell('G3')->getValue());
+        self::assertSame($allocation->key, $cashBook->getSheet(4)->getCell('I2')->getValue());
+        self::assertEquals(2, $cashBook->getSheet(4)->getCell('J2')->getValue());
+        $cashBook->disconnectWorksheets();
         $probe = $this->cashCommand($allocation, $payment->id, '0');
         $probe['lines'] = [];
         self::assertSame('200.00', $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $probe)['remaining_amount']);
@@ -166,11 +180,19 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('400.00', $secondReport['sources'][0]['allocated_amount']);
         self::assertSame('100.00', $secondReport['sources'][0]['estimate_allocated_amount']);
         self::assertCount(1, $secondReport['allocations']);
-        $project = $this->finance->projectReport($this->actor, $other->project_id, 'with_vat', false, 'cash')['cash']['distribution'];
+        $projectReport = $this->finance->projectReport($this->actor, $other->project_id, 'with_vat', true, 'cash');
+        $project = $projectReport['cash']['distribution'];
         self::assertSame('400.00', $project['totals']['RUB']['difference']);
         self::assertCount(2, $project['allocations']);
         self::assertCount(1, $project['sources']);
         self::assertCount(2, $project['positions']);
+        $book = app(EstimateFinanceExport::class)->workbook($projectReport['estimates'], 'with_vat', [], 'cash', null, $projectReport['cash']);
+        self::assertSame(2, $book->getSheet(3)->getHighestRow());
+        self::assertEquals(400, $book->getSheet(3)->getCell('E2')->getValue());
+        self::assertSame(3, $book->getSheet(4)->getHighestRow());
+        self::assertEquals(400, $book->getSheet(2)->getCell('L2')->getValue());
+        self::assertEquals(0, $book->getSheet(2)->getCell('M2')->getValue());
+        $book->disconnectWorksheets();
     }
 
     public function test_cash_distribution_rejects_changed_source_and_requires_contract_permission(): void
@@ -208,6 +230,11 @@ final class EstimateFinanceTest extends TestCase
         self::assertNull($overallocated['distribution']['sources'][0]['remaining_amount']);
         self::assertNull($overallocated['distribution']['totals']['RUB']['difference']);
         self::assertNull($overallocated['distribution']['positions'][0]['totals']['RUB']['difference']);
+        $book = app(EstimateFinanceExport::class)->workbook([['name' => 'Cash', 'contracts' => [], 'cash' => $overallocated]], 'with_vat', [], 'cash');
+        self::assertSame('', $book->getSheet(3)->getCell('E2')->getValue());
+        self::assertSame('', $book->getSheet(4)->getCell('G2')->getValue());
+        self::assertEquals(500, $book->getSheet(4)->getCell('H2')->getValue());
+        $book->disconnectWorksheets();
         $project = $this->finance->projectReport($this->actor, $this->estimate->project_id, 'with_vat', false, 'cash')['cash'];
         self::assertNull($project['distribution']['totals']['RUB']['difference']);
         \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->where('allocation_id', $allocation->id)->update(['amount' => '300']);
@@ -326,7 +353,7 @@ final class EstimateFinanceTest extends TestCase
         $result['estimates'][0]['contracts'][0]['number'] = '=NOT_A_FORMULA()';
         $book = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExport::class)
             ->workbook($result['estimates'], 'without_vat', [], 'cash', null, $result['cash']);
-        self::assertSame(3, $book->getSheetCount());
+        self::assertSame(5, $book->getSheetCount());
         self::assertSame(2, $book->getSheet(0)->getHighestRow());
         self::assertEquals(300, $book->getSheet(0)->getCell('E2')->getValue());
         self::assertSame('Поступления минус выплаты', $book->getSheet(0)->getCell('E1')->getValue());

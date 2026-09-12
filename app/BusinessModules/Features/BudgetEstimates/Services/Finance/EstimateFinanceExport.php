@@ -112,10 +112,21 @@ final class EstimateFinanceExport
             'cash_document_amount', 'recorded_paid', 'confirmed_currency', 'confirmed_paid', 'status']);
         $sources = $book->createSheet();
         $this->header($sources, 'cash_sources', ['name', 'transaction_id', 'document_id', 'number', 'transaction_date',
-            'currency', 'cash_amount', 'direction', 'reverses_id', 'cash_operation', 'act_id']);
+            'currency', 'cash_amount', 'direction', 'reverses_id', 'cash_operation', 'act_id', 'cash_allocated', 'cash_remaining', 'status']);
+        $allocatedSummary = $book->createSheet();
+        $this->header($allocatedSummary, 'cash_allocated_summary', ['name', 'currency', 'cash_receipts', 'cash_payments', 'cash_difference', 'unknown_direction', 'cash_scope']);
+        $allocatedLines = $book->createSheet();
+        $this->header($allocatedLines, 'cash_allocated_lines', ['estimate', 'name', 'transaction_id', 'document_id', 'number', 'currency',
+            'cash_allocated', 'cash_recorded_allocation', 'allocation_key', 'cash_allocation_version', 'condition_version', 'status']);
         $contracts = [];
+        $estimateNames = [];
+        $positionNames = [];
         foreach ($reports as $report) {
             $contracts += array_column($report['contracts'], null, 'id');
+            if (isset($report['estimate_id'])) {
+                $estimateNames[$report['estimate_id']] = $report['name'];
+                $positionNames[$report['estimate_id']] = array_column($report['rows'] ?? [], 'name', 'key');
+            }
         }
         $packages = $projectCash === null ? array_map(static fn (array $report): array => [
             'name' => $report['name'], 'cash' => $report['cash'] ?? ['available' => false],
@@ -148,7 +159,9 @@ final class EstimateFinanceExport
                             : ($document['direction_requires_review'] ? 'incomplete' : 'cash_confirmed')))], [7, 8, 10]);
                 }
             }
+            $distributionStates = array_column($cash['distribution']['sources'] ?? [], null, 'transaction_id');
             foreach ($cash['sources'] as $source) {
+                $distributionState = $distributionStates[$source['transaction_id']] ?? [];
                 $refund = $source['amount'] !== null && FinanceDecimal::compare($source['amount'], '0') < 0;
                 $direction = $source['direction_requires_review'] || $source['side'] === 'unknown' ? 'incomplete'
                     : ($source['side'] === 'revenue' ? ($refund ? 'customer_refunds' : 'cash_receipts') : ($refund ? 'contractor_refunds' : 'cash_payments'));
@@ -156,7 +169,24 @@ final class EstimateFinanceExport
                     $contracts[$source['contract_id']]['number'] ?? $source['contract_id'], $source['date'], $source['currency'],
                     $source['amount'], trans_message('estimate_finance.'.$direction), $source['reverses_transaction_id'],
                     trans_message('estimate_finance.'.($source['reverses_transaction_id'] !== null ? 'cash_refund'
-                        : ($source['invoice_type'] === 'advance' ? 'cash_advance' : 'cash_payment'))), $source['act_id']], [7]);
+                        : ($source['invoice_type'] === 'advance' ? 'cash_advance' : 'cash_payment'))), $source['act_id'],
+                    $distributionState['allocated_amount'] ?? null, $distributionState['remaining_amount'] ?? null,
+                    trans_message('estimate_finance.'.(($distributionState['requires_review'] ?? true) ? 'incomplete' : 'cash_confirmed'))], [7, 12, 13]);
+            }
+            foreach ($cash['distribution']['totals'] ?? [] as $currency => $total) {
+                $this->row($allocatedSummary, [$name, $currency, $total['receipts'], $total['payments'], $total['difference'],
+                    $total['unclassified_count'], trans_message('estimate_finance.cash_position_scope')], [3, 4, 5, 6]);
+            }
+            $nativeSources = array_column($cash['sources'], null, 'transaction_id');
+            foreach ($cash['distribution']['allocations'] ?? [] as $allocation) {
+                $nativeSource = $nativeSources[$allocation['transaction_id']] ?? [];
+                $review = $allocation['source_changed'] || ($distributionStates[$allocation['transaction_id']]['requires_review'] ?? true);
+                $this->row($allocatedLines, [$estimateNames[$allocation['estimate_id']] ?? $name,
+                    $positionNames[$allocation['estimate_id']][$allocation['target_key']] ?? trans_message('estimate_finance.cash_position_unavailable'),
+                    $allocation['transaction_id'], $nativeSource['document_id'] ?? null,
+                    $contracts[$nativeSource['contract_id'] ?? 0]['number'] ?? null, $allocation['currency'],
+                    $review ? null : $allocation['amount'], $allocation['amount'], $allocation['allocation_key'],
+                    $allocation['version'], $allocation['condition_version'], trans_message('estimate_finance.'.($review ? 'incomplete' : 'cash_confirmed'))], [7, 8, 10, 11]);
             }
         }
         foreach ($book->getAllSheets() as $sheet) {
