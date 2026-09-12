@@ -15,7 +15,7 @@ class SaveEstimateFinanceRequest extends FormRequest
 
     public function rules(): array
     {
-        return self::inputRules();
+        return $this->input('operation') === 'cash_distribution' ? self::cashRules() : self::inputRules();
     }
 
     public function validator(): \Illuminate\Validation\Validator
@@ -33,6 +33,22 @@ class SaveEstimateFinanceRequest extends FormRequest
         $input = new \Illuminate\Support\ValidatedInput($this->validated());
 
         return $keys === null ? $input : $input->only($keys);
+    }
+
+    public static function cashRules(bool $preview = false): array
+    {
+        return [
+            'operation' => ['required', 'in:cash_distribution'],
+            'revision' => ['required', 'integer', 'min:0'],
+            'mutation_id' => ['required', 'uuid'],
+            'transaction_id' => ['required', 'integer', 'min:1'],
+            'source_hash' => [$preview ? 'sometimes' : 'required', 'string', 'regex:/^[a-f0-9]{64}$/'],
+            'lines' => ['required', 'array', $preview ? 'min:0' : 'min:1', 'max:20000'],
+            'lines.*.allocation_key' => ['required', 'uuid', 'distinct'],
+            'lines.*.condition_version' => ['required', 'integer', 'min:1'],
+            'lines.*.version' => ['required', 'integer', 'min:0'],
+            'lines.*.amount' => ['required', 'string', 'regex:/^-?\d{1,12}(\.\d{1,2})?$/'],
+        ];
     }
 
     public static function inputRules(): array

@@ -31,6 +31,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceProjectExecution $projectExecution,
         private readonly EstimateFinanceCashSources $cashSources,
         private readonly EstimateFinanceProjectCash $projectCash,
+        private readonly EstimateFinanceCashDistribution $cashDistribution,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat', string $view = 'plan'): array
@@ -232,6 +233,9 @@ final class EstimateFinanceService
 
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'cash_distribution') {
+            return $this->cashDistribution->handle($actor, $projectId, $estimateId, $input, false);
+        }
         $estimate = $this->access->estimate($actor, $projectId, $estimateId, true);
         if (($input['preview_operation'] ?? null) === 'source_amount') {
             $data = FinanceInputValidation::validate($input, \App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest::sourceRules());
@@ -306,6 +310,9 @@ final class EstimateFinanceService
 
     public function save(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'cash_distribution') {
+            return $this->cashDistribution->handle($actor, $projectId, $estimateId, $input, true);
+        }
         $estimate = $this->access->estimate($actor, $projectId, $estimateId, true);
         $data = FinanceInputValidation::validate($input, SaveEstimateFinanceRequest::inputRules());
         $hash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
@@ -346,6 +353,9 @@ final class EstimateFinanceService
                 }
             }
             foreach (array_chunk($deletedIds, 500) as $ids) {
+                if (DB::table('estimate_finance_cash_allocations')->whereIn('allocation_id', $ids)->exists()) {
+                    $this->invalid('cash_linked');
+                }
                 EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereIn('id', $ids)->delete();
             }
             $writes = ['created' => [], 'updated' => []];
@@ -401,6 +411,7 @@ final class EstimateFinanceService
         $rows = [];
         $quantities = [];
         $knownKeys = EstimateFinanceAllocation::query()->whereIn('key', array_column($data['lines'], 'key'))->get()->keyBy('key');
+        $cashLinked = DB::table('estimate_finance_cash_allocations')->whereIn('allocation_id', $knownKeys->pluck('id'))->pluck('allocation_id')->flip();
         $retiredKeys = DB::table('estimate_finance_condition_versions')->whereIn('allocation_key', array_column($data['lines'], 'key'))
             ->where('action', 'deleted')->pluck('allocation_key')->flip();
         $legacyLinks = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('finance_managed', false)
@@ -450,6 +461,11 @@ final class EstimateFinanceService
             $net = $tax['amount_without_vat'];
             $gross = $tax['amount_with_vat'];
             $foreignKey = $knownKeys->get($line['key']);
+            if ($foreignKey && isset($cashLinked[$foreignKey->id]) && ((int) $foreignKey->contract_id !== (int) ($line['contract_id'] ?? 0)
+                || $foreignKey->currency !== $line['currency'] || $foreignKey->source !== $line['source']
+                || ($foreignKey->resource_id ? 'r:'.$foreignKey->resource_id : 'i:'.$foreignKey->estimate_item_id) !== $line['target_key'])) {
+                $this->invalid('cash_linked');
+            }
             if (isset($retiredKeys[$line['key']]) || (isset($line['condition_version'])
                 && (int) $line['condition_version'] !== (int) ($foreignKey?->condition_version ?? 0))) {
                 throw new ConflictHttpException(trans_message('estimate_finance.conflict'));

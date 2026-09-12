@@ -62,6 +62,117 @@ final class EstimateFinanceTest extends TestCase
         $this->finance = app(EstimateFinanceService::class);
     }
 
+    public function test_cash_distribution_saves_once_and_preserves_refund_limits_and_versions(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $document = $this->cashDocument($this->customer, 'incoming');
+        $payment = $this->cashTransaction($document->id, '400');
+        $refund = $this->cashTransaction($document->id, '-100', ['reverses_transaction_id' => $payment->id]);
+        $command = $this->cashCommand($allocation, $payment->id, '300');
+        $preview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        self::assertSame('100.00', $preview['remaining_amount']);
+        $command['source_hash'] = $preview['source_hash'];
+        $saved = $this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        self::assertFalse($saved['replayed']);
+        self::assertTrue($this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['replayed']);
+        $cash = \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->where('payment_transaction_id', $payment->id)->first();
+        self::assertSame('300.00', $cash->amount);
+        self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_cash_versions')->count());
+        $refundCommand = $this->cashCommand($allocation, $refund->id, '-100');
+        $refundPreview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $refundCommand);
+        self::assertSame('0.00', $refundPreview['remaining_amount']);
+        $this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $refundCommand + ['source_hash' => $refundPreview['source_hash']]);
+        foreach (['50', '401'] as $invalidAmount) {
+            try {
+                $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $this->cashCommand($allocation, $payment->id, $invalidAmount, 1));
+                self::fail('Cash limit not enforced');
+            } catch (ValidationException $exception) {
+                self::assertArrayHasKey('lines', $exception->errors());
+            }
+        }
+        $update = $this->cashCommand($allocation, $payment->id, '200', 1);
+        $updatePreview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $update);
+        $this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $update + ['source_hash' => $updatePreview['source_hash']]);
+        $updated = \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->where('id', $cash->id)->first();
+        self::assertSame($cash->key, $updated->key);
+        self::assertSame(2, $updated->version);
+        self::assertSame('200.00', $updated->amount);
+        self::assertSame(3, \Illuminate\Support\Facades\DB::table('estimate_finance_cash_versions')->count());
+        self::assertSame('400.00', $payment->fresh()->amount);
+        self::assertSame('-100.00', $refund->fresh()->amount);
+        try {
+            $this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $this->command([]));
+            self::fail('Cash-linked conditions were deleted');
+        } catch (ValidationException $exception) {
+            self::assertStringContainsString('история распределения оплат', json_encode($exception->errors(), JSON_UNESCAPED_UNICODE));
+        }
+        self::assertNotNull($allocation->fresh());
+    }
+
+    public function test_cash_distribution_caps_shared_payment_across_estimates_and_rejects_atomic_invalid_line(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $document = $this->cashDocument($this->customer, 'incoming');
+        $payment = $this->cashTransaction($document->id, '400');
+        $command = $this->cashCommand($allocation, $payment->id, '300');
+        $preview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        $bad = $command + ['source_hash' => $preview['source_hash']];
+        $bad['lines'][] = array_replace($bad['lines'][0], ['allocation_key' => (string) Str::uuid()]);
+        try {
+            $this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $bad);
+            self::fail('Invalid line was accepted');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('lines', $exception->errors());
+        }
+        self::assertSame(0, \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->count());
+        $this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $command + ['source_hash' => $preview['source_hash']]);
+        $other = $this->estimate->replicate();
+        $other->number = 'CASH-SHARED';
+        $other->save();
+        $item = $this->item->replicate();
+        $item->estimate_id = $other->id;
+        $item->save();
+        $otherAllocation = $allocation->replicate();
+        $otherAllocation->key = (string) Str::uuid();
+        $otherAllocation->estimate_id = $other->id;
+        $otherAllocation->estimate_item_id = $item->id;
+        $otherAllocation->contract_estimate_item_id = null;
+        $otherAllocation->save();
+        $otherCommand = $this->cashCommand($otherAllocation, $payment->id, '200');
+        $this->expectException(ValidationException::class);
+        $this->finance->preview($this->actor, $other->project_id, $other->id, $otherCommand);
+    }
+
+    public function test_cash_distribution_rejects_changed_source_and_requires_contract_permission(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $payment = $this->cashTransaction($this->cashDocument($this->customer, 'incoming')->id, '400');
+        $command = $this->cashCommand($allocation, $payment->id, '300');
+        try {
+            $this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $command + ['source_hash' => str_repeat('0', 64)]);
+            self::fail('Changed source was accepted');
+        } catch (ConflictHttpException $exception) {
+            self::assertSame(409, $exception->getStatusCode());
+        }
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(fn ($actor, $permission) => $permission !== 'contracts.edit');
+        try {
+            app(EstimateFinanceService::class)->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+            self::fail('Contract edit permission was not enforced');
+        } catch (\Illuminate\Auth\Access\AuthorizationException $exception) {
+            self::assertSame(0, \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->count());
+        }
+    }
+
+    private function cashCommand(EstimateFinanceAllocation $allocation, int $transactionId, string $amount, int $version = 0): array
+    {
+        return ['operation' => 'cash_distribution', 'revision' => (int) Estimate::query()->findOrFail($allocation->estimate_id)->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'transaction_id' => $transactionId,
+            'lines' => [['allocation_key' => $allocation->key, 'condition_version' => (int) $allocation->condition_version, 'version' => $version, 'amount' => $amount]]];
+    }
+
     public function test_cash_allocation_storage_preserves_signed_amount_and_prevents_duplicate_transaction_target(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
