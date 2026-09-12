@@ -62,6 +62,40 @@ final class EstimateFinanceTest extends TestCase
         $this->finance = app(EstimateFinanceService::class);
     }
 
+    public function test_cash_allocation_storage_preserves_signed_amount_and_prevents_duplicate_transaction_target(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $document = $this->cashDocument($this->customer, 'incoming');
+        $transaction = $this->cashTransaction($document->id, '-100');
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $row = ['key' => (string) Str::uuid(), 'organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'estimate_id' => $this->estimate->id, 'allocation_id' => $allocation->id,
+            'payment_transaction_id' => $transaction->id, 'currency' => 'RUB', 'amount' => '-100.00', 'version' => 1,
+            'source_hash' => hash('sha256', 'snapshot'), 'source_snapshot' => json_encode(['amount' => '-100.00']),
+            'updated_by' => $this->actor->id, 'created_at' => now(), 'updated_at' => now()];
+        $id = \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->insertGetId($row);
+        \Illuminate\Support\Facades\DB::table('estimate_finance_cash_versions')->insert([
+            'cash_allocation_id' => $id, 'version' => 1, 'mutation_id' => (string) Str::uuid(), 'finance_revision' => 1,
+            'before' => null, 'after' => json_encode($row), 'actor_id' => $this->actor->id, 'created_at' => now(),
+        ]);
+        self::assertSame('-100.00', \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->where('id', $id)->value('amount'));
+        self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_cash_versions')->where('cash_allocation_id', $id)->count());
+        foreach ([
+            fn () => \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->insert(array_replace($row, ['key' => (string) Str::uuid()])),
+            fn () => \Illuminate\Support\Facades\DB::table('payment_transactions')->where('id', $transaction->id)->delete(),
+            fn () => \Illuminate\Support\Facades\DB::table('estimate_finance_allocations')->where('id', $allocation->id)->delete(),
+            fn () => \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->where('id', $id)->delete(),
+        ] as $invalidWrite) {
+            try {
+                \Illuminate\Support\Facades\DB::transaction($invalidWrite);
+                self::fail('Financial source or history constraint was not enforced');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                self::assertContains($exception->getCode(), ['23505', '23503']);
+            }
+        }
+        self::assertSame($row['key'], \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->where('id', $id)->value('key'));
+    }
+
     public function test_cash_sources_keep_partial_payments_refunds_and_currency_separate(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
