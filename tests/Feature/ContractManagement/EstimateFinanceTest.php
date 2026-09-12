@@ -96,6 +96,11 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('100.00', $result['summary']['totals']['RUB']['cost']);
         self::assertSame('99.00000000', $result['summary']['contract_quantities'][0]['remaining_quantity']);
         self::assertSame('i:'.$this->item->id, $result['summary']['positions'][0]['target_key']);
+        $project = $this->finance->projectReport($this->actor, $this->estimate->project_id, 'without_vat', false, 'execution');
+        self::assertSame('execution', $project['view']);
+        self::assertSame($result['summary']['totals'], $project['execution']['summary']['totals']);
+        self::assertCount(1, $project['execution']['documents']);
+        self::assertArrayNotHasKey('rows', $project['estimates'][0]);
         $book = app(EstimateFinanceExport::class)->workbook([$report], 'without_vat', [], 'execution');
         try {
             self::assertEquals($result['summary']['totals']['RUB']['cost'], $book->getSheet(0)->getCell('D2')->getValue());

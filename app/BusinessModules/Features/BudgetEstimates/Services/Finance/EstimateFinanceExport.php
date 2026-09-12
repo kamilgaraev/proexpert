@@ -20,12 +20,12 @@ final class EstimateFinanceExport
 
     public function download(User $actor, int $projectId, ?int $estimateId, string $basis, string $view = 'plan'): Response
     {
-        if (! in_array($view, ['plan', 'execution'], true) || ($estimateId === null && $view !== 'plan')) {
+        if (! in_array($view, ['plan', 'execution'], true)) {
             throw ValidationException::withMessages(['view' => trans_message('estimate_finance.invalid')]);
         }
-        $project = $estimateId === null ? $this->finance->projectReport($actor, $projectId, $basis, true) : null;
+        $project = $estimateId === null ? $this->finance->projectReport($actor, $projectId, $basis, true, $view) : null;
         $reports = $project !== null ? $project['estimates'] : [$this->finance->report($actor, $projectId, $estimateId, $basis, $view)];
-        $book = $this->workbook($reports, $basis, $project['totals'] ?? [], $view);
+        $book = $this->workbook($reports, $basis, $project['totals'] ?? [], $view, $project['execution'] ?? null);
         ob_start();
         try {
             (new Xlsx($book))->save('php://output');
@@ -41,10 +41,10 @@ final class EstimateFinanceExport
         return new Response($content, 200, ['Content-Type' => $mime, 'Content-Disposition' => 'attachment; filename="estimate-finance.xlsx"']);
     }
 
-    public function workbook(array $reports, string $basis, array $projectTotals = [], string $view = 'plan'): Spreadsheet
+    public function workbook(array $reports, string $basis, array $projectTotals = [], string $view = 'plan', ?array $projectExecution = null): Spreadsheet
     {
         if ($view === 'execution') {
-            return $this->executionWorkbook($reports, $basis);
+            return $this->executionWorkbook($reports, $basis, $projectExecution);
         }
         $book = new Spreadsheet;
         $summary = $book->getActiveSheet();
@@ -98,7 +98,7 @@ final class EstimateFinanceExport
         return $book;
     }
 
-    private function executionWorkbook(array $reports, string $basis): Spreadsheet
+    private function executionWorkbook(array $reports, string $basis, ?array $projectExecution): Spreadsheet
     {
         $book = new Spreadsheet;
         $summary = $book->getActiveSheet();
@@ -114,6 +114,7 @@ final class EstimateFinanceExport
         $this->header($documents, 'execution_documents', ['estimate', 'act_id', 'act_number', 'act_date', 'number', 'direction', 'currency', 'net', 'gross', 'estimate_gross', 'unallocated_gross', 'status']);
         $sources = $book->createSheet();
         $this->header($sources, 'execution_sources', ['estimate', 'name', 'act_id', 'source', 'source_id', 'number', 'direction', 'volume', 'currency', 'net', 'gross', 'allocation_key', 'condition_version']);
+        $projectContracts = [];
         foreach ($reports as $report) {
             $execution = $report['execution'] ?? ['available' => false];
             if (! $execution['available']) {
@@ -123,6 +124,7 @@ final class EstimateFinanceExport
             }
             $rows = array_column($report['rows'], null, 'key');
             $contracts = array_column($report['contracts'], null, 'id');
+            $projectContracts += $contracts;
             $sectionNames = array_column($report['sections'], 'name', 'id');
             foreach ($execution['summary']['totals'] as $currency => $total) {
                 $this->row($summary, [$report['name'], $currency, ...$this->executionValues($total),
@@ -149,15 +151,22 @@ final class EstimateFinanceExport
                 $this->row($quantities, [$report['name'], $row['name'] ?? $entry['target_key'], $contracts[$entry['contract_id']]['number'] ?? $entry['contract_id'],
                     $row['unit'] ?? null, $entry['currency'], $entry['planned_quantity'], $entry['accepted_quantity'], $entry['remaining_quantity'], $entry['overrun_quantity']], [6, 7, 8, 9]);
             }
-            foreach ($execution['documents'] as $document) {
-                $this->row($documents, [$report['name'], $document['id'], $document['number'], $document['date'], $contracts[$document['contract_id']]['number'] ?? $document['contract_id'],
-                    trans_message('estimate_finance.direction_'.$document['side']), $document['currency'], $document['amount_without_vat'], $document['amount_with_vat'],
-                    $document['estimate_amount_with_vat'], $document['unallocated_amount_with_vat'], trans_message('estimate_finance.'.($document['needs_review'] ? 'incomplete' : 'execution_'.$document['status']))], [2, 8, 9, 10, 11]);
+            foreach ($projectExecution === null ? $execution['documents'] : [] as $document) {
+                $this->executionDocumentRow($documents, $report['name'], $document, $contracts);
             }
             foreach ($execution['rows'] as $source) {
                 $this->row($sources, [$report['name'], $source['title'], $source['act_id'], trans_message('estimate_finance.'.$source['source_type']), $source['source_id'],
                     $contracts[$source['contract_id']]['number'] ?? $source['contract_id'], trans_message('estimate_finance.direction_'.$source['side']), $source['quantity'], $source['currency'],
                     $source['amount_without_vat'], $source['amount_with_vat'], $source['allocation_key'], $source['condition_version']], [3, 5, 8, 10, 11, 13]);
+            }
+        }
+        if ($projectExecution !== null && $projectExecution['available']) {
+            foreach ($projectExecution['summary']['totals'] as $currency => $total) {
+                $this->row($summary, [trans_message('estimate_finance.project_total'), $currency, ...$this->executionValues($total),
+                    trans_message('estimate_finance.'.$basis), trans_message('estimate_finance.execution_confirmed')], [3, 4, 5, 6, 7, 8, 9, 10]);
+            }
+            foreach ($projectExecution['documents'] as $document) {
+                $this->executionDocumentRow($documents, implode('; ', array_column($document['estimate_amounts'], 'name')), $document, $projectContracts);
             }
         }
         foreach ($book->getAllSheets() as $sheet) {
@@ -172,6 +181,13 @@ final class EstimateFinanceExport
     {
         return [$total['revenue'], $total['cost'], $total['difference'], $total['known_revenue'], $total['known_cost'],
             $total['revenue_unpriced_count'], $total['cost_unpriced_count'], $total['unknown_direction_count']];
+    }
+
+    private function executionDocumentRow(Worksheet $sheet, string $estimateName, array $document, array $contracts): void
+    {
+        $this->row($sheet, [$estimateName, $document['id'], $document['number'], $document['date'], $contracts[$document['contract_id']]['number'] ?? $document['contract_id'],
+            trans_message('estimate_finance.direction_'.$document['side']), $document['currency'], $document['amount_without_vat'], $document['amount_with_vat'],
+            $document['estimate_amount_with_vat'], $document['unallocated_amount_with_vat'], trans_message('estimate_finance.'.($document['needs_review'] ? 'incomplete' : 'execution_'.$document['status']))], [2, 8, 9, 10, 11]);
     }
 
     private function header(Worksheet $sheet, string $title, array $keys): void

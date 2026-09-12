@@ -28,6 +28,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceRemainder $remainder,
         private readonly EstimateFinanceExecution $execution,
         private readonly EstimateFinanceExecutionSummary $executionSummary,
+        private readonly EstimateFinanceProjectExecution $projectExecution,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat', string $view = 'plan'): array
@@ -45,15 +46,18 @@ final class EstimateFinanceService
         }, 3);
     }
 
-    public function projectReport(User $actor, int $projectId, string $basis, bool $includeDetails = false): array
+    public function projectReport(User $actor, int $projectId, string $basis, bool $includeDetails = false, string $view = 'plan'): array
     {
+        if (! in_array($view, ['plan', 'execution'], true)) {
+            $this->invalid();
+        }
         $this->access->project($actor, $projectId);
 
-        return DB::transaction(function () use ($actor, $projectId, $basis, $includeDetails): array {
+        return DB::transaction(function () use ($actor, $projectId, $basis, $includeDetails, $view): array {
             $reports = [];
             foreach (Estimate::query()->where('organization_id', $actor->current_organization_id)->where('project_id', $projectId)->orderBy('id')->sharedLock()->cursor() as $estimate) {
-                $report = $this->reportEstimate($actor, $estimate, $basis);
-                if (! $includeDetails) {
+                $report = $this->reportEstimate($actor, $estimate, $basis, $view);
+                if (! $includeDetails && $view === 'plan') {
                     unset($report['rows'], $report['sections']);
                 }
                 $reports[] = $report;
@@ -74,7 +78,16 @@ final class EstimateFinanceService
                 }
             }
 
-            return ['basis' => $basis, 'estimates' => $reports, 'totals' => array_values($totals)];
+            $execution = $view === 'execution' ? $this->projectExecution->combine($reports, $basis, $this->access->canViewExecution($actor, $projectId)) : null;
+            if (! $includeDetails) {
+                foreach ($reports as &$report) {
+                    unset($report['rows'], $report['sections']);
+                }
+                unset($report);
+            }
+
+            return ['basis' => $basis, 'view' => $view, 'estimates' => $reports, 'totals' => array_values($totals)]
+                + ($view === 'execution' ? ['execution' => $execution] : []);
         }, 3);
     }
 
