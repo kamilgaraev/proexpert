@@ -82,8 +82,9 @@ final class ContractEstimateFinanceAdapter
             $selected = array_fill_keys(array_map(static fn ($id): string => 'i:'.$id, $itemIds), true);
             $keys = [];
             foreach ($allocations as $allocation) {
-                if ((int) $allocation['contract_id'] === (int) $contract->id && isset($selected[$allocation['target_key']])) {
+                if ((int) $allocation['contract_id'] === (int) $contract->id && isset($selected['i:'.$allocation['estimate_item_id']])) {
                     $keys[$allocation['target_key']] = true;
+                    $keys['i:'.$allocation['estimate_item_id']] = true;
                 }
             }
             $this->access->editContracts($actor, $estimate, array_keys($keys), [(int) $contract->id]);
@@ -99,6 +100,7 @@ final class ContractEstimateFinanceAdapter
             $this->finance->save($actor, (int) $estimate->project_id, (int) $estimate->id, [
                 'mutation_id' => (string) Str::uuid(), 'revision' => (int) $estimate->finance_revision,
                 'target_keys' => array_keys($keys), 'lines' => $lines,
+                'confirm_resource_changes' => true,
             ]);
         }, 3);
     }

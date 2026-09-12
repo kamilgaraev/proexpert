@@ -392,6 +392,23 @@ final class EstimateFinanceTest extends TestCase
         self::assertDatabaseCount('estimate_finance_allocations', 0);
     }
 
+    public function test_legacy_detach_removes_resource_conditions_and_preserves_parent_income(): void
+    {
+        $resource = EstimateItemResource::query()->create(['estimate_item_id' => $this->item->id, 'resource_type' => 'material',
+            'name' => 'Материал', 'total_quantity' => '100', 'quantity_per_unit' => '1', 'total_amount' => '100000']);
+        $income = $this->line($this->customer, '100', '1000000');
+        $cost = $this->line($this->contractor, '100', '100000');
+        $cost['target_key'] = 'r:'.$resource->id;
+        $command = $this->command([$income, $cost]) + ['confirm_resource_changes' => true];
+        $command['target_keys'][] = $cost['target_key'];
+        $this->save($command);
+        $this->app->forgetInstance(ContractEstimateService::class);
+        app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class)
+            ->detachCoverage($this->contractor, $this->estimate, $this->actor);
+        self::assertDatabaseMissing('estimate_finance_allocations', ['key' => $cost['key']]);
+        self::assertSame('1000000.00', EstimateFinanceAllocation::query()->where('key', $income['key'])->firstOrFail()->amount_with_vat);
+    }
+
     public function test_legacy_vat_command_updates_financial_source_and_preserves_ids(): void
     {
         $cost = $this->line($this->contractor, '100', '800000');

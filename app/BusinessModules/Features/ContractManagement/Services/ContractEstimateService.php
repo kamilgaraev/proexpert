@@ -85,6 +85,8 @@ class ContractEstimateService
             $estimateIds = ContractEstimateItem::where('contract_id', $contract->id)
                 ->whereIn('estimate_item_id', $allIds)
                 ->pluck('estimate_id')
+                ->merge(\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contract->id)
+                    ->whereIn('estimate_item_id', $allIds)->pluck('estimate_id'))
                 ->unique()
                 ->values();
 
@@ -232,14 +234,22 @@ class ContractEstimateService
 
     private function resolveChildrenForDetach(int $contractId, array $itemIds): array
     {
-        $childIds = EstimateItem::whereIn('parent_work_id', $itemIds)
-            ->whereHas('contractLinks', function ($q) use ($contractId) {
-                $q->where('contract_id', $contractId);
-            })
-            ->pluck('id')
-            ->toArray();
+        $children = EstimateItem::query()->whereNotNull('parent_work_id')
+            ->whereIn('estimate_id', ContractEstimateItem::query()->where('contract_id', $contractId)->select('estimate_id')
+                ->union(\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contractId)->select('estimate_id')))
+            ->get(['id', 'parent_work_id'])->groupBy('parent_work_id');
+        $pending = array_values(array_unique(array_map('intval', $itemIds)));
+        $seen = array_fill_keys($pending, true);
+        for ($index = 0; $index < count($pending); $index++) {
+            foreach ($children->get($pending[$index], collect()) as $child) {
+                if (! isset($seen[$child->id])) {
+                    $seen[$child->id] = true;
+                    $pending[] = (int) $child->id;
+                }
+            }
+        }
 
-        return array_unique(array_merge($itemIds, $childIds));
+        return $pending;
     }
 
     private function calculateAmount(EstimateItem $item, Estimate $estimate, bool $includeVat): float

@@ -125,8 +125,11 @@ class ContractEstimateServiceTest extends TestCase
         $this->service->attachItems($this->contract, $this->estimate, [$parent->id]);
         $this->assertDatabaseCount('contract_estimate_items', 2);
 
+        $grandchild = $this->createEstimateItem(['estimate_id' => $this->estimate->id, 'parent_work_id' => $child->id]);
+        $this->service->attachItems($this->contract, $this->estimate, [$grandchild->id]);
+
         $this->service->detachItems($this->contract, [$parent->id], auth()->user());
-        $this->assertDatabaseCount('contract_estimate_items', 2);
+        $this->assertDatabaseCount('contract_estimate_items', 3);
         self::assertSame(0, \App\Models\ContractEstimateItem::query()->countedInCoverage()->count());
     }
 

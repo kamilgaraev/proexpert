@@ -85,7 +85,9 @@ class EstimateCoverageService
             $itemIds = ContractEstimateItem::query()
                 ->where('contract_id', $contract->id)
                 ->where('estimate_id', $estimate->id)
-                ->pluck('estimate_item_id')->all();
+                ->pluck('estimate_item_id')
+                ->merge(\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contract->id)
+                    ->where('estimate_id', $estimate->id)->pluck('estimate_item_id'))->unique()->values()->all();
             $this->contractEstimateService->detachItems($contract, $itemIds, $actor);
         });
     }
