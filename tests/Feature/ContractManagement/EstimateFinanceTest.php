@@ -218,6 +218,123 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame(1800000.0, $summary['summary']['linked_amount']);
     }
 
+    public function test_large_atomic_save_batches_writes_and_preserves_ids_on_update_and_replay(): void
+    {
+        $rows = [];
+        for ($index = 0; $index < 8000; $index++) {
+            $rows[] = ['estimate_id' => $this->estimate->id, 'position_number' => (string) ($index + 2),
+                'name' => 'Импортированная позиция '.$index, 'item_type' => 'work', 'quantity' => 1,
+                'quantity_total' => 1, 'unit_price' => 100, 'total_amount' => 100, 'is_manual' => false];
+            if (count($rows) === 500) {
+                EstimateItem::query()->insert($rows);
+                $rows = [];
+            }
+        }
+        $command = $this->command([]);
+        $command['target_keys'] = [];
+        foreach (EstimateItem::query()->where('estimate_id', $this->estimate->id)->get(['id', 'quantity']) as $item) {
+            $command['target_keys'][] = 'i:'.$item->id;
+            foreach ([$this->customer, $this->contractor] as $contract) {
+                $line = $this->line($contract, (string) $item->quantity, '100');
+                $line['target_key'] = 'i:'.$item->id;
+                $command['lines'][] = $line;
+            }
+        }
+        $counting = true;
+        $queries = 0;
+        \Illuminate\Support\Facades\DB::listen(function () use (&$queries, &$counting): void {
+            if ($counting) {
+                $queries++;
+            }
+        });
+        $saved = $this->save($command);
+        $counting = false;
+        self::assertLessThan(300, $queries);
+        self::assertSame($command['revision'] + 1, $saved['revision']);
+        self::assertSame(16002, EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->count());
+        self::assertSame(16002, ContractEstimateItem::query()->where('estimate_id', $this->estimate->id)->count());
+        self::assertSame(16002, \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->where('estimate_id', $this->estimate->id)->count());
+        self::assertSame(0, EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->whereNull('contract_estimate_item_id')->count());
+        $ids = ContractEstimateItem::query()->where('estimate_id', $this->estimate->id)->orderBy('id')->pluck('id')->all();
+        self::assertTrue($this->save($command)['replayed']);
+        self::assertSame(16002, \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->where('estimate_id', $this->estimate->id)->count());
+        $command['revision'] = $saved['revision'];
+        $command['mutation_id'] = (string) Str::uuid();
+        $command['lines'][16001]['quantity'] = '2';
+        try {
+            $this->save($command);
+            self::fail('Превышение объёма должно отменить обе стороны');
+        } catch (ValidationException) {
+            self::assertSame($saved['revision'], (int) $this->estimate->fresh()->finance_revision);
+            self::assertSame(16002, \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->where('estimate_id', $this->estimate->id)->count());
+        }
+        $command['lines'][16001]['quantity'] = '1';
+        $command['lines'][0]['amount'] = '200';
+        $this->save($command);
+        self::assertSame($ids, ContractEstimateItem::query()->where('estimate_id', $this->estimate->id)->orderBy('id')->pluck('id')->all());
+        self::assertSame(32004, \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->where('estimate_id', $this->estimate->id)->count());
+        self::assertSame('200.00', EstimateFinanceAllocation::query()->where('key', $command['lines'][0]['key'])->sole()->amount_with_vat);
+    }
+
+    public function test_legacy_projection_batches_invalidate_revision_once_per_statement(): void
+    {
+        $revision = (int) $this->estimate->fresh()->finance_revision;
+        $rows = [];
+        foreach ([$this->customer, $this->contractor] as $contract) {
+            $rows[] = ['contract_id' => $contract->id, 'estimate_id' => $this->estimate->id,
+                'estimate_item_id' => $this->item->id, 'quantity' => '100', 'amount' => '1000000'];
+        }
+        ContractEstimateItem::query()->insert($rows);
+        self::assertSame($revision + 1, (int) $this->estimate->fresh()->finance_revision);
+        ContractEstimateItem::query()->where('estimate_id', $this->estimate->id)->update(['quantity' => '50']);
+        self::assertSame($revision + 2, (int) $this->estimate->fresh()->finance_revision);
+        ContractEstimateItem::query()->where('estimate_id', $this->estimate->id)->delete();
+        self::assertSame($revision + 3, (int) $this->estimate->fresh()->finance_revision);
+    }
+
+    public function test_batch_save_rolls_back_both_sides_when_history_write_fails(): void
+    {
+        $command = $this->command([$this->line($this->customer, '100', '1000000'), $this->line($this->contractor, '100', '800000')]);
+        \Illuminate\Support\Facades\DB::listen(function ($query): void {
+            if (str_starts_with($query->sql, 'insert into "estimate_finance_condition_versions"')) {
+                throw new \RuntimeException('history_write_failed');
+            }
+        });
+        try {
+            $this->save($command);
+            self::fail('Ошибка истории должна отменить запись');
+        } catch (\RuntimeException $error) {
+            self::assertSame('history_write_failed', $error->getMessage());
+        }
+        self::assertSame(0, EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->count());
+        self::assertSame(0, ContractEstimateItem::query()->where('estimate_id', $this->estimate->id)->count());
+        self::assertSame(0, \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->where('estimate_id', $this->estimate->id)->count());
+        self::assertSame($command['revision'], (int) $this->estimate->fresh()->finance_revision);
+        self::assertSame(0, \Illuminate\Support\Facades\DB::table('estimate_finance_mutations')->where('estimate_id', $this->estimate->id)->count());
+    }
+
+    public function test_uppercase_allocation_key_cannot_replace_another_estimate_conditions(): void
+    {
+        $line = $this->line($this->contractor, '100', '1000000');
+        $this->save($this->command([$line]));
+        $original = EstimateFinanceAllocation::query()->where('key', $line['key'])->sole()->getAttributes();
+        $this->estimate = Estimate::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'number' => 'FIN-OTHER', 'name' => 'Другая смета', 'estimate_date' => '2026-09-09']);
+        $this->item = EstimateItem::query()->create(['estimate_id' => $this->estimate->id, 'position_number' => '1',
+            'name' => 'Работа', 'item_type' => 'work', 'quantity' => '100', 'quantity_total' => '100',
+            'unit_price' => '10000', 'total_amount' => '1000000', 'is_manual' => true]);
+        $line['key'] = strtoupper($line['key']);
+        $line['target_key'] = 'i:'.$this->item->id;
+        $revision = (int) $this->estimate->fresh()->finance_revision;
+        try {
+            $this->save($this->command([$line]));
+            self::fail('Ключ другой сметы недоступен');
+        } catch (ValidationException) {
+            self::assertSame($original, EstimateFinanceAllocation::query()->where('key', strtolower($line['key']))->sole()->getAttributes());
+        }
+        self::assertSame($revision, (int) $this->estimate->fresh()->finance_revision);
+    }
+
     public function test_contract_reads_financial_conditions_instead_of_stale_projection_amounts(): void
     {
         $this->save($this->command([$this->line($this->contractor, '100', '1000000')]));

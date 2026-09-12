@@ -77,7 +77,22 @@ final class FinanceInputValidation
     public static function sanitize(array $data, array $rules): array
     {
         $fields = [];
-        foreach ($rules as $path => $_) {
+        foreach ($rules as $path => $rule) {
+            if (in_array('uuid', $rule, true)) {
+                if (str_contains($path, '.*.')) {
+                    [$group, $field] = explode('.*.', $path, 2);
+                    foreach ($data[$group] ?? [] as $index => $row) {
+                        $data[$group][$index][$field] = strtolower($row[$field]);
+                    }
+                } elseif (str_ends_with($path, '.*')) {
+                    $group = substr($path, 0, -2);
+                    if (isset($data[$group])) {
+                        $data[$group] = array_map('strtolower', $data[$group]);
+                    }
+                } elseif (isset($data[$path])) {
+                    $data[$path] = strtolower($data[$path]);
+                }
+            }
             if (str_contains($path, '.*.')) {
                 [$group, $field] = explode('.*.', $path, 2);
                 $fields[$group][$field] = true;

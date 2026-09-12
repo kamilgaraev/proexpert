@@ -297,24 +297,41 @@ final class EstimateFinanceService
             $this->validateResourceChanges($data, $targets, $normalized, $existing->toArray());
             $before = [];
             $retainedKeys = array_fill_keys(array_column($normalized, 'key'), true);
+            $selectedKeys = array_fill_keys($data['target_keys'], true);
             $existingByKey = $existing->keyBy('key');
+            $deletedIds = [];
             foreach ($existing as $row) {
                 $key = $row->resource_id ? 'r:'.$row->resource_id : 'i:'.$row->estimate_item_id;
-                if (in_array($key, $data['target_keys'], true)) {
+                if (isset($selectedKeys[$key])) {
                     $before[] = $row->toArray();
                     if (! isset($retainedKeys[$row->key])) {
-                        $row->delete();
+                        $deletedIds[] = $row->id;
                     }
                 }
             }
+            foreach (array_chunk($deletedIds, 500) as $ids) {
+                EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereIn('id', $ids)->delete();
+            }
+            $writes = ['created' => [], 'updated' => []];
+            $timestamp = now()->toDateTimeString();
             foreach ($normalized as $row) {
-                $allocation = $existingByKey->get($row['key']) ?? new EstimateFinanceAllocation;
-                $allocation->fill($row);
-                $allocation->condition_version = $allocation->exists ? (int) $allocation->condition_version + 1 : 1;
-                $allocation->save();
+                $previous = $existingByKey->get($row['key']);
+                $allocation = new EstimateFinanceAllocation($row);
+                $allocation->condition_version = (int) ($previous?->condition_version ?? 0) + 1;
+                $allocation->created_at = $previous?->created_at ?? $timestamp;
+                $allocation->updated_at = $timestamp;
+                $action = $previous === null ? 'created' : 'updated';
+                $writes[$action][] = $allocation->getAttributes();
+                if (count($writes[$action]) === 500) {
+                    $this->writeAllocations($writes[$action], $action === 'created');
+                    $writes[$action] = [];
+                }
+            }
+            foreach ($writes as $action => $rows) {
+                $this->writeAllocations($rows, $action === 'created');
             }
             $this->projectLinks($estimate, $data['target_keys']);
-            $revision = (int) $estimate->fresh()->finance_revision + 1;
+            $revision = (int) $estimate->finance_revision + 1;
             DB::table('estimates')->where('id', $estimate->id)->update(['finance_revision' => $revision]);
             $this->history->record($actor, $estimate, $data['mutation_id'], $revision, $before, array_column($normalized, 'key'));
             DB::table('estimate_finance_mutations')->insert([
@@ -331,6 +348,8 @@ final class EstimateFinanceService
 
     private function normalize(User $actor, Estimate $estimate, array $data, array $targets): array
     {
+        $selectedKeys = array_fill_keys($data['target_keys'], true);
+        $totalKeys = array_fill_keys($data['total_line_keys'] ?? [], true);
         $this->access->editContracts($actor, $estimate, $data['target_keys'],
             array_values(array_filter(array_column($data['lines'], 'contract_id'))));
         foreach ($data['target_keys'] as $key) {
@@ -357,7 +376,7 @@ final class EstimateFinanceService
             if ($target && (($target['representation_needs_review'] ?? false) || ($target['represented_by_item_id'] ?? null))) {
                 $this->invalid('representation');
             }
-            if (! $target || ! in_array($line['target_key'], $data['target_keys'], true)
+            if (! $target || ! isset($selectedKeys[$line['target_key']])
                 || (FinanceDecimal::compare($line['quantity'], '0') === 0 && (FinanceDecimal::compare($target['quantity'], '0') !== 0 || $line['method'] !== 'total'))) {
                 $this->invalid();
             }
@@ -384,7 +403,7 @@ final class EstimateFinanceService
             } elseif ($line['method'] === 'total' && isset($line['amount'])) {
                 $amount = FinanceDecimal::value($line['amount']);
             }
-            if (in_array($line['key'], $data['total_line_keys'] ?? [], true)) {
+            if (isset($totalKeys[$line['key']])) {
                 if ($amount === null || $line['source'] === 'included') {
                     $this->invalid('total');
                 }
@@ -417,7 +436,7 @@ final class EstimateFinanceService
                 }
             }
             if ($foreignKey && ((int) $foreignKey->estimate_id !== (int) $estimate->id
-                || ! in_array($foreignKey->resource_id ? 'r:'.$foreignKey->resource_id : 'i:'.$foreignKey->estimate_item_id, $data['target_keys'], true))) {
+                || ! isset($selectedKeys[$foreignKey->resource_id ? 'r:'.$foreignKey->resource_id : 'i:'.$foreignKey->estimate_item_id]))) {
                 $this->invalid();
             }
             $rows[] = [
@@ -446,6 +465,18 @@ final class EstimateFinanceService
         return $this->remainder->apply($estimate, $rows);
     }
 
+    private function writeAllocations(array $rows, bool $insert): void
+    {
+        if ($rows !== []) {
+            if ($insert) {
+                EstimateFinanceAllocation::query()->insert($rows);
+            } else {
+                EstimateFinanceAllocation::query()->upsert($rows, ['key'],
+                    array_values(array_diff(array_keys($rows[0]), ['key', 'created_at'])));
+            }
+        }
+    }
+
     private function projectLinks(Estimate $estimate, array $keys): void
     {
         $itemIds = array_map(static fn (string $key): int => (int) substr($key, 2),
@@ -455,12 +486,17 @@ final class EstimateFinanceService
         $allocationsByItem = EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)
             ->whereIn('estimate_item_id', $itemIds)->whereNull('resource_id')->whereNotNull('contract_id')
             ->get()->groupBy('estimate_item_id');
+        $writes = [];
+        $timestamp = now()->toDateTimeString();
         foreach ($itemIds as $itemId) {
             $links = $linksByItem->get($itemId, collect());
             $allocations = $allocationsByItem->get($itemId, collect())->groupBy('contract_id');
             foreach ($links as $link) {
-                $link->forceFill(['finance_managed' => true] + (! $allocations->has($link->contract_id)
-                    ? ['quantity' => '0', 'amount' => '0', 'amount_without_vat' => '0'] : []))->save();
+                if (! $allocations->has($link->contract_id)) {
+                    $writes[] = ['contract_id' => $link->contract_id, 'estimate_item_id' => $itemId,
+                        'estimate_id' => $estimate->id, 'finance_managed' => true, 'quantity' => '0',
+                        'amount' => '0', 'amount_without_vat' => '0', 'created_at' => $timestamp, 'updated_at' => $timestamp];
+                }
             }
             foreach ($allocations as $contractId => $group) {
                 $quantity = '0';
@@ -474,13 +510,19 @@ final class EstimateFinanceService
                     $value = $allocation->legacy_amount ?? $allocation->amount_with_vat ?? $allocation->amount_without_vat;
                     $storedAmount = $storedAmount !== null && $value !== null ? FinanceDecimal::add($storedAmount, $value) : null;
                 }
-                $link = $links->firstWhere('contract_id', $contractId)
-                    ?? new ContractEstimateItem(['contract_id' => $contractId, 'estimate_item_id' => $itemId]);
-                $link->forceFill(['estimate_id' => $estimate->id, 'finance_managed' => true, 'quantity' => $quantity,
-                    'amount' => $storedAmount, 'amount_without_vat' => $net])->save();
-                EstimateFinanceAllocation::query()->whereIn('id', $group->pluck('id'))->update(['contract_estimate_item_id' => $link->id]);
+                $writes[] = ['contract_id' => $contractId, 'estimate_item_id' => $itemId,
+                    'estimate_id' => $estimate->id, 'finance_managed' => true, 'quantity' => $quantity,
+                    'amount' => $storedAmount, 'amount_without_vat' => $net, 'created_at' => $timestamp, 'updated_at' => $timestamp];
             }
         }
+        foreach (array_chunk($writes, 500) as $chunk) {
+            ContractEstimateItem::query()->upsert($chunk, ['contract_id', 'estimate_item_id'],
+                ['estimate_id', 'finance_managed', 'quantity', 'amount', 'amount_without_vat', 'updated_at']);
+        }
+        EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereIn('estimate_item_id', $itemIds)
+            ->whereNull('resource_id')->whereNotNull('contract_id')->update([
+                'contract_estimate_item_id' => DB::raw('(SELECT id FROM contract_estimate_items WHERE contract_estimate_items.contract_id = estimate_finance_allocations.contract_id AND contract_estimate_items.estimate_item_id = estimate_finance_allocations.estimate_item_id AND contract_estimate_items.estimate_id = estimate_finance_allocations.estimate_id)'),
+            ]);
     }
 
     private function validateResourceChanges(array $data, array $targets, array $after, array $before): void
