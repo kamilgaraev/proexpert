@@ -18,7 +18,8 @@ class EstimateFinanceController extends Controller
 
     public function show(Request $request, int $project, int $estimate): mixed
     {
-        return AdminResponse::success($this->finance->report($request->user(), $project, $estimate, $request->string('basis', 'with_vat')->toString()));
+        return AdminResponse::success($this->finance->report($request->user(), $project, $estimate,
+            $request->string('basis', 'with_vat')->toString(), $request->string('view', 'plan')->toString()));
     }
 
     public function project(Request $request, int $project): mixed

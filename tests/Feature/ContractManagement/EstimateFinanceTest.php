@@ -62,6 +62,109 @@ final class EstimateFinanceTest extends TestCase
         $this->finance = app(EstimateFinanceService::class);
     }
 
+    public function test_execution_report_uses_approved_documents_and_keeps_unallocated_amount(): void
+    {
+        $line = $this->line($this->contractor, '100', '1000000');
+        $this->save($this->command([$line]));
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'FACT-1', 'act_date' => '2026-09-12',
+            'amount' => '150', 'status' => 'signed', 'is_approved' => true, 'currency' => 'RUB']);
+        $base = ['performance_act_id' => $act->id, 'line_type' => 'manual', 'manual_reason' => 'Основание',
+            'title' => 'Работа', 'unit' => 'шт', 'quantity' => '1', 'unit_price' => '120', 'amount' => '120', 'currency' => 'RUB'];
+        $factLine = \App\Models\PerformanceActLine::query()->create($base + ['estimate_item_id' => $this->item->id,
+            'basis_snapshot' => ['basis_type' => 'contract_conditions', 'allocation_key' => $line['key'],
+                'condition_version' => 1, 'contract_id' => $this->contractor->id, 'estimate_item_id' => $this->item->id,
+                'estimate_id' => $this->estimate->id,
+                'base_unit_price' => '100', 'currency' => 'RUB']]);
+        \App\Models\PerformanceActLine::query()->create(array_replace($base, ['amount' => '30', 'unit_price' => '30']));
+        foreach (['draft', 'annulled'] as $status) {
+            \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+                'project_id' => $this->estimate->project_id, 'act_document_number' => 'FACT-'.$status, 'act_date' => '2026-09-12',
+                'amount' => '999', 'status' => $status, 'is_approved' => true, 'currency' => 'RUB']);
+        }
+        $result = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['execution'];
+        self::assertTrue($result['available']);
+        self::assertCount(1, $result['documents']);
+        self::assertCount(1, $result['rows']);
+        self::assertSame($factLine->id, $result['rows'][0]['source_id']);
+        self::assertSame('100.00000000', $result['rows'][0]['amount_without_vat']);
+        self::assertSame('120.00', $result['rows'][0]['amount_with_vat']);
+        self::assertSame('30.00', $result['documents'][0]['unallocated_amount_with_vat']);
+        self::assertNull($result['documents'][0]['amount_without_vat']);
+        self::assertSame($line['key'], $result['rows'][0]['allocation_key']);
+    }
+
+    public function test_execution_report_does_not_query_acts_without_permission(): void
+    {
+        $this->mock(AuthorizationService::class)->shouldReceive('can')
+            ->andReturnUsing(static fn ($actor, $permission): bool => ! in_array($permission, ['act_reports.view', 'contracts.performance_acts.view'], true));
+        $finance = app(EstimateFinanceService::class);
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        \Illuminate\Support\Facades\DB::flushQueryLog();
+        $report = $finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution');
+        $queries = \Illuminate\Support\Facades\DB::getQueryLog();
+        \Illuminate\Support\Facades\DB::disableQueryLog();
+        self::assertSame(['available' => false, 'rows' => null, 'documents' => null], $report['execution']);
+        foreach ($queries as $query) {
+            self::assertDoesNotMatchRegularExpression('/contract_performance_acts|performance_act_lines|performance_act_completed_works/', $query['query']);
+        }
+    }
+
+    public function test_execution_report_accepts_contract_permission_in_project_context(): void
+    {
+        $projectId = (int) $this->estimate->project_id;
+        $this->mock(AuthorizationService::class)->shouldReceive('can')
+            ->andReturnUsing(static function ($actor, string $permission, array $context) use ($projectId): bool {
+                if ($permission === 'act_reports.view') {
+                    return false;
+                }
+                if ($permission === 'contracts.performance_acts.view') {
+                    return ($context['project_id'] ?? null) === $projectId && ($context['context_type'] ?? null) === 'project';
+                }
+
+                return true;
+            });
+        $report = app(EstimateFinanceService::class)->report($this->actor, $projectId, $this->estimate->id, 'without_vat', 'execution');
+        self::assertTrue($report['can_view_execution']);
+        self::assertTrue($report['execution']['available']);
+    }
+
+    public function test_execution_report_uses_legacy_links_only_without_modern_lines_and_keeps_currencies(): void
+    {
+        $this->save($this->command([$this->line($this->contractor, '100', '1000000')]));
+        $work = \App\Models\CompletedWork::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'contract_id' => $this->contractor->id,
+            'estimate_item_id' => $this->item->id, 'user_id' => $this->actor->id, 'quantity' => '100',
+            'completed_quantity' => '100', 'price' => '100', 'total_amount' => '10000',
+            'completion_date' => '2026-09-12', 'status' => 'confirmed', 'description' => 'Выполнение']);
+        foreach ([false, true] as $modern) {
+            $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+                'project_id' => $this->estimate->project_id, 'act_document_number' => $modern ? 'MODERN' : 'LEGACY',
+                'act_date' => '2026-09-12', 'amount' => $modern ? '120' : '100', 'amount_without_vat' => $modern ? '0' : '80',
+                'status' => 'draft', 'currency' => 'RUB']);
+            $act->completedWorks()->attach($work->id, ['included_quantity' => '1', 'included_amount' => '100', 'currency' => 'RUB']);
+            if ($modern) {
+                foreach (['RUB' => '120', 'USD' => '50'] as $currency => $amount) {
+                    \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id,
+                        'estimate_item_id' => $this->item->id, 'line_type' => 'manual', 'title' => 'Работа',
+                        'quantity' => '1', 'unit_price' => $amount, 'amount' => $amount, 'currency' => $currency, 'manual_reason' => 'Основание']);
+                }
+            }
+            $act->update(['status' => 'approved', 'is_approved' => true]);
+        }
+        $result = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['execution'];
+        self::assertCount(2, $result['documents']);
+        self::assertCount(3, $result['rows']);
+        self::assertSame(['act_work', 'act_line', 'act_line'], array_column($result['rows'], 'source_type'));
+        self::assertSame(['RUB', 'RUB', 'USD'], array_column($result['rows'], 'currency'));
+        self::assertSame(['100.00', '120.00', '50.00'], array_column($result['rows'], 'amount_with_vat'));
+        self::assertSame('0.00', $result['documents'][1]['unallocated_amount_with_vat']);
+        self::assertSame('80.00', $result['documents'][0]['amount_without_vat']);
+        self::assertNull($result['rows'][0]['amount_without_vat']);
+        self::assertTrue($result['documents'][1]['needs_review']);
+        self::assertNull($result['documents'][1]['amount_without_vat']);
+    }
+
     public function test_coverage_commands_do_not_resynchronize_existing_execution(): void
     {
         $this->app->forgetInstance(ContractEstimateService::class);
@@ -677,7 +780,7 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($before, $actLine->fresh()->getAttributes());
         self::assertSame('1000000.00', ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->firstOrFail()->amount);
         $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(
-            static fn ($actor, string $permission): bool => $permission !== 'act_reports.view');
+            static fn ($actor, string $permission): bool => ! in_array($permission, ['act_reports.view', 'contracts.performance_acts.view'], true));
         $restricted = app(EstimateFinanceService::class);
         \Illuminate\Support\Facades\DB::flushQueryLog();
         \Illuminate\Support\Facades\DB::enableQueryLog();

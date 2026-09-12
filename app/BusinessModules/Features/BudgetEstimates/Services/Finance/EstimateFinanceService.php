@@ -26,17 +26,21 @@ final class EstimateFinanceService
         private readonly EstimateFinanceHistory $history,
         private readonly EstimateFinanceAcceptedVolume $acceptedVolume,
         private readonly EstimateFinanceRemainder $remainder,
+        private readonly EstimateFinanceExecution $execution,
     ) {}
 
-    public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat'): array
+    public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat', string $view = 'plan'): array
     {
+        if (! in_array($view, ['plan', 'execution'], true)) {
+            $this->invalid();
+        }
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
 
-        return DB::transaction(function () use ($actor, $estimate, $basis): array {
+        return DB::transaction(function () use ($actor, $estimate, $basis, $view): array {
             $locked = Estimate::query()->whereKey($estimate->id)->where('organization_id', $actor->current_organization_id)
                 ->where('project_id', $estimate->project_id)->sharedLock()->firstOrFail();
 
-            return $this->reportEstimate($actor, $locked, $basis);
+            return $this->reportEstimate($actor, $locked, $basis, $view);
         }, 3);
     }
 
@@ -107,14 +111,14 @@ final class EstimateFinanceService
             'revision' => $report['revision'], 'basis' => $basis, 'can_edit' => $report['can_edit']];
     }
 
-    private function reportEstimate(User $actor, Estimate $estimate, string $basis): array
+    private function reportEstimate(User $actor, Estimate $estimate, string $basis, string $view = 'plan'): array
     {
         if (! in_array($basis, ['with_vat', 'without_vat'], true)) {
             $this->invalid();
         }
         $targets = $this->query->targets($estimate);
         $allocations = $this->query->allocations($estimate);
-        $canViewExecution = $this->access->canViewExecution($actor);
+        $canViewExecution = $this->access->canViewExecution($actor, (int) $estimate->project_id);
         $accepted = $canViewExecution ? $this->remainder->acceptedFacts($estimate, array_column($allocations, 'key')) : [];
         foreach ($allocations as &$allocation) {
             $allocation['accepted_basis'] = $canViewExecution ? ($accepted[$allocation['key']] ?? null) : null;
@@ -172,6 +176,9 @@ final class EstimateFinanceService
             'sections' => $sections,
             'contracts' => $contracts, 'can_edit' => $this->access->can($actor, (int) $estimate->project_id, true),
             'can_view_execution' => $canViewExecution,
+            'view' => $view,
+            'execution' => $view !== 'execution' ? null : ($canViewExecution ? $this->execution->report($estimate, $contracts)
+                : ['available' => false, 'rows' => null, 'documents' => null]),
         ];
     }
 
@@ -180,7 +187,7 @@ final class EstimateFinanceService
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
 
         $history = $this->history->forEstimate($estimate, max(0, $afterId));
-        if (! $this->access->canViewExecution($actor)) {
+        if (! $this->access->canViewExecution($actor, (int) $estimate->project_id)) {
             foreach ($history['data'] as &$entry) {
                 foreach (['before', 'after'] as $snapshot) {
                     if (is_array($entry[$snapshot])) {

@@ -70,10 +70,14 @@ final class EstimateFinanceAccess
         }
     }
 
-    public function canViewExecution(User $actor): bool
+    public function canViewExecution(User $actor, int $projectId): bool
     {
-        return $this->authorization->can($actor, 'act_reports.view', [
+        $context = [
+            'context_type' => 'project', 'project_id' => $projectId,
             'organization_id' => (int) $actor->current_organization_id,
-        ]);
+        ];
+
+        return $this->authorization->can($actor, 'contracts.performance_acts.view', $context)
+            || $this->authorization->can($actor, 'act_reports.view', $context);
     }
 }
