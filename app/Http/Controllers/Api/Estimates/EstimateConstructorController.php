@@ -225,6 +225,9 @@ class EstimateConstructorController extends Controller
                 Response::HTTP_NOT_FOUND,
             );
         } catch (Throwable $exception) {
+            if ($exception instanceof \Illuminate\Database\QueryException && $exception->getCode() === '55P03') {
+                return AdminResponse::error(trans_message('estimate_constructor.busy'), Response::HTTP_CONFLICT);
+            }
             Log::error('Estimate constructor operation failed', [
                 'operation' => $operation,
                 'estimate_id' => $estimateId,
