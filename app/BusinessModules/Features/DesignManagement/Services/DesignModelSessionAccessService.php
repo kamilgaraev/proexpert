@@ -9,13 +9,14 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignModelSession;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use App\Modules\Core\AccessController;
-use Illuminate\Support\Facades\DB;
+use App\Services\Project\UserProjectAccessService;
 
 final readonly class DesignModelSessionAccessService
 {
     public function __construct(
         private AccessController $accessController,
         private AuthorizationService $authorization,
+        private UserProjectAccessService $projectAccess,
     ) {
     }
 
@@ -42,10 +43,8 @@ final readonly class DesignModelSessionAccessService
             return false;
         }
 
-        $projectMembership = DB::table('project_user')
-            ->where('project_id', $projectId)
-            ->where('user_id', $user->id)
-            ->where('is_active', true)
+        $projectMembership = $this->projectAccess->queryAccessibleProjects($user, $organizationId)
+            ->where('projects.id', $projectId)
             ->exists();
 
         return $projectMembership && $this->authorization->can($user, $permission, [
