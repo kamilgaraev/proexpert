@@ -82,6 +82,12 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('500.00', $result['documents'][0]['confirmed_amounts']['RUB']);
         self::assertSame('10.00', $result['documents'][0]['confirmed_amounts']['USD']);
         self::assertSame('600.00', $result['documents'][0]['recorded_paid_amount']);
+        self::assertSame('600.00', $result['summary']['totals']['RUB']['receipts']);
+        self::assertSame('100.00', $result['summary']['totals']['RUB']['payments']);
+        self::assertSame('500.00', $result['summary']['totals']['RUB']['difference']);
+        self::assertSame('100.00', $result['summary']['totals']['RUB']['customer_refunds']);
+        self::assertSame('10.00', $result['summary']['totals']['USD']['difference']);
+        self::assertSame($result['summary']['totals'], $result['summary']['contracts'][$this->customer->id]);
         self::assertSame('-100.00', array_values(array_filter($result['sources'], fn ($source) => $source['transaction_id'] === $refund->id))[0]['amount']);
         self::assertSame('revenue', $result['sources'][0]['side']);
         self::assertSame('advance', $result['sources'][0]['invoice_type']);
@@ -102,6 +108,8 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($act->id, $result['sources'][0]['act_id']);
         self::assertSame('unknown', $result['sources'][0]['side']);
         self::assertTrue($result['sources'][0]['direction_requires_review']);
+        self::assertNull($result['summary']['totals']['RUB']['difference']);
+        self::assertSame(1, $result['summary']['totals']['RUB']['unclassified_count']);
         self::assertTrue(array_values(array_filter($result['documents'], fn ($entry) => $entry['id'] === $missing->id))[0]['payment_history_missing']);
     }
 

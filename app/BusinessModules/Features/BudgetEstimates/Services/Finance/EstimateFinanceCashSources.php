@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\DB;
 
 final class EstimateFinanceCashSources
 {
+    public function __construct(private readonly EstimateFinanceCashSummary $summary) {}
+
     public function report(Estimate $estimate, array $contracts): array
     {
         $linkedIds = DB::table('contract_estimate_items')->where('estimate_id', $estimate->id)->pluck('contract_id')
@@ -60,6 +62,7 @@ final class EstimateFinanceCashSources
                 'direction_requires_review' => $conflict || $side === 'unknown'];
         }
 
-        return ['available' => true, 'scope' => 'linked_contracts', 'sources' => $sources, 'documents' => $documents];
+        return ['available' => true, 'scope' => 'linked_contracts', 'sources' => $sources, 'documents' => $documents,
+            'summary' => $this->summary->calculate($sources)];
     }
 }
