@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Monitoring;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\Exceptions\BusinessLogicException;
 use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\Support\LivewirePayloadExceptionClassifier;
@@ -36,6 +38,10 @@ class GlitchTipReportPolicy
         }
 
         if ($this->isRecoverableRagOrganizationEstimateMaxAttempts($exception)) {
+            return false;
+        }
+
+        if ($this->isExpectedReportContractFailure($exception)) {
             return false;
         }
 
@@ -159,6 +165,15 @@ class GlitchTipReportPolicy
         return str_contains($command, 's:9:"projectId";N;')
             && str_contains($command, 's:10:"sourceType";s:8:"estimate";')
             && str_contains($command, 's:5:"runId";i:');
+    }
+
+    private function isExpectedReportContractFailure(Throwable $exception): bool
+    {
+        return $exception instanceof ReportContractException
+            && ! in_array($exception->errorCode, [
+                ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+                ReportErrorCode::REPORT_INTERNAL_ERROR,
+            ], true);
     }
 
     private function queueJobPayload(MaxAttemptsExceededException $exception): array

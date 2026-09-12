@@ -9,6 +9,8 @@ use App\Exceptions\AI\AIParsingException;
 use App\Exceptions\AI\AIQuotaExceededException;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\BusinessLogicException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\Services\Monitoring\GlitchTipReportPolicy;
 use Filament\Actions\Exceptions\ActionNotResolvableException;
@@ -160,6 +162,18 @@ class GlitchTipReportPolicyTest extends TestCase
         );
 
         self::assertTrue($policy->shouldCapture($exception));
+    }
+
+    public function test_skips_expected_report_contract_failures_but_captures_internal_ones(): void
+    {
+        $policy = new GlitchTipReportPolicy($this->config());
+
+        self::assertFalse($policy->shouldCapture(
+            ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE),
+        ));
+        self::assertTrue($policy->shouldCapture(
+            ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR),
+        ));
     }
 
     public static function reportableExceptions(): array
