@@ -25,6 +25,52 @@ final class EstimateRevisionQueueTest extends TestCase
 {
     private bool $allowed = true;
 
+    public function test_restore_is_queued_and_preserves_backup_with_exactly_once_completion(): void
+    {
+        [$estimate, $actor] = $this->fixture();
+        Queue::fake();
+        $target = $estimate->current_version_id;
+        $estimate->update(['status' => 'draft', 'approved_at' => null, 'approved_by_user_id' => null]);
+        $estimate->update(['name' => 'Current edits', 'current_version_id' => null, 'structure_cache_path' => 'stale.json']);
+        $service = app(EstimateRevisionQueueService::class);
+        $this->actingAs($actor);
+        $request = \Illuminate\Http\Request::create('/restore', 'POST');
+        $request->headers->set('Idempotency-Key', 'restore-request-0001');
+        $request->setUserResolver(static fn (): User => $actor);
+        $request->attributes->set('current_organization_id', $estimate->organization_id);
+        $this->app->instance('request', $request);
+        $response = app(EstimateVersionController::class)->rollback($request, $estimate->id, $target);
+        $this->assertSame(202, $response->getStatusCode());
+        $operation = EstimateRevisionOperation::findOrFail($response->getData(true)['data']['id']);
+        $this->assertSame('restore', $operation->payload()['operation_type']);
+        $this->assertSame('Current edits', $estimate->fresh()->name);
+        $service->process($operation->id);
+        $service->process($operation->id);
+        $this->assertSame('completed', $operation->fresh()->status);
+        $this->assertSame('Test estimate', $estimate->fresh()->name);
+        $this->assertNull($estimate->fresh()->structure_cache_path);
+        $this->assertDatabaseCount('estimate_versions', 3);
+        $backup = EstimateVersion::where('snapshot_type', 'pre_restore')->firstOrFail();
+        $this->assertSame('Current edits', $backup->snapshot['estimate']['name']);
+        $this->assertSame($operation->id, $service->enqueue($estimate->id, $estimate->organization_id, $actor, '', 'restore-request-0001', $target)->id);
+    }
+
+    public function test_restore_worker_rechecks_permissions(): void
+    {
+        [$estimate, $actor] = $this->fixture();
+        Queue::fake();
+        $service = app(EstimateRevisionQueueService::class);
+        $operation = $service->enqueue($estimate->id, $estimate->organization_id, $actor, '', 'restore-request-0001', $estimate->current_version_id);
+        $this->allowed = false;
+        try {
+            $service->process($operation->id);
+            $this->fail('Expected authorization failure');
+        } catch (AuthorizationException) {
+            $this->assertSame('failed', $operation->fresh()->status);
+            $this->assertDatabaseCount('estimate_versions', 1);
+        }
+    }
+
     public function test_http_request_accepts_job_without_changing_estimate_and_repeat_is_idempotent(): void
     {
         [$estimate, $actor] = $this->fixture();
