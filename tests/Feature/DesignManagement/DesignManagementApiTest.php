@@ -295,7 +295,14 @@ final class DesignManagementApiTest extends TestCase
                 ['kind' => 'freehand', 'color' => '#0055aa', 'width' => 2, 'points' => [['x' => 0, 'y' => 0], ['x' => 0.25, 'y' => 0.5], ['x' => 1, 'y' => 1]]],
             ],
         ];
-        $payload = ['title' => 'Проверить совмещение', 'severity' => 'major', 'version_id' => $models[0]['version_id'], 'view_models' => $models, 'camera' => ['position' => [1, 2, 3], 'target' => [0, 0, 0]], 'point' => ['x' => 12.5, 'y' => -3, 'z' => 0], 'annotations' => $annotations];
+        $camera = [
+            'enabled' => true, 'minDistance' => 0, 'maxDistance' => 10000, 'minZoom' => 0.01, 'maxZoom' => 100,
+            'minPolarAngle' => 0, 'maxPolarAngle' => M_PI, 'minAzimuthAngle' => -M_PI, 'maxAzimuthAngle' => M_PI,
+            'smoothTime' => 0.25, 'draggingSmoothTime' => 0.125, 'dollySpeed' => 1, 'truckSpeed' => 2,
+            'dollyToCursor' => false, 'position' => [1, 2, 3], 'target' => [0, 0, 0], 'focalOffset' => [0, 0, 0],
+            'zoom' => 1, 'target0' => [0, 0, 0], 'position0' => [1, 2, 3], 'zoom0' => 1, 'focalOffset0' => [0, 0, 0],
+        ];
+        $payload = ['title' => 'Проверить совмещение', 'severity' => 'major', 'version_id' => $models[0]['version_id'], 'view_models' => $models, 'camera' => $camera, 'point' => ['x' => 12.5, 'y' => -3, 'z' => 0], 'annotations' => $annotations];
         $response = $this->postJson($url, $payload, $context->authHeaders())->assertCreated()
             ->assertJsonCount(2, 'data.context.view_models')
             ->assertJsonPath('data.context.view_models.1.version_id', $models[1]['version_id'])

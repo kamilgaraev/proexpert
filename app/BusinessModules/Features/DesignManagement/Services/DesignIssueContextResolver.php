@@ -226,22 +226,65 @@ final class DesignIssueContextResolver
 
     private function cameraSnapshot(mixed $camera): bool
     {
-        if (! is_array($camera) || ! $this->hasOnlyKeys($camera, ['position', 'target'])) {
+        if (! is_array($camera)) {
             return false;
         }
-
+        $serialized = json_encode($camera);
+        if (! is_string($serialized) || strlen($serialized) > 8192) {
+            return false;
+        }
+        $vectors = ['position', 'target', 'focalOffset', 'target0', 'position0', 'focalOffset0'];
+        $numbers = [
+            'minDistance', 'maxDistance', 'minZoom', 'maxZoom', 'minPolarAngle', 'maxPolarAngle',
+            'minAzimuthAngle', 'maxAzimuthAngle', 'smoothTime', 'draggingSmoothTime', 'dollySpeed',
+            'truckSpeed', 'zoom', 'zoom0',
+        ];
+        $booleans = ['enabled', 'dollyToCursor'];
+        $allowed = [...$vectors, ...$numbers, ...$booleans];
+        if (array_diff(array_keys($camera), $allowed) !== []) {
+            return false;
+        }
         foreach (['position', 'target'] as $key) {
-            if (! isset($camera[$key]) || ! is_array($camera[$key]) || array_keys($camera[$key]) !== [0, 1, 2]) {
+            if (! isset($camera[$key]) || ! $this->vector($camera[$key])) {
                 return false;
             }
-            foreach ($camera[$key] as $coordinate) {
-                if (! is_numeric($coordinate) || ! is_finite((float) $coordinate)) {
-                    return false;
-                }
+        }
+        foreach (['focalOffset', 'target0', 'position0', 'focalOffset0'] as $key) {
+            if (array_key_exists($key, $camera) && ! $this->vector($camera[$key])) {
+                return false;
+            }
+        }
+        foreach ($numbers as $key) {
+            if (array_key_exists($key, $camera) && ! $this->finiteNumber($camera[$key])) {
+                return false;
+            }
+        }
+        foreach ($booleans as $key) {
+            if (array_key_exists($key, $camera) && ! is_bool($camera[$key])) {
+                return false;
             }
         }
 
         return true;
+    }
+
+    private function vector(mixed $value): bool
+    {
+        if (! is_array($value) || array_keys($value) !== [0, 1, 2]) {
+            return false;
+        }
+        foreach ($value as $coordinate) {
+            if (! $this->finiteNumber($coordinate)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function finiteNumber(mixed $value): bool
+    {
+        return (is_int($value) || is_float($value)) && is_finite((float) $value);
     }
 
     private function hasOnlyKeys(array $value, array $keys): bool
