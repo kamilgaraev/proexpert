@@ -44,6 +44,10 @@
     "legal_archive.workflow.reassign"
   ],
   "module_permissions": {
+    "budget-estimates": [
+      "budget-estimates.finance.view",
+      "budget-estimates.finance.edit"
+    ],
     "contracts": [
       "contracts.view",
       "contracts.edit"

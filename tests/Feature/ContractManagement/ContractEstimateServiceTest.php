@@ -7,6 +7,7 @@ namespace Tests\Feature\ContractManagement;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\Models\Contract;
+use App\Models\ContractEstimateItem;
 use App\Models\Contractor;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -286,6 +287,119 @@ class ContractEstimateServiceTest extends TestCase
         $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
 
         $this->assertEquals(1200.0, $coverage['primary_contract']['linked_amount']);
+    }
+
+    public function test_excluded_import_rows_do_not_inflate_new_or_existing_coverage(): void
+    {
+        $this->estimate->update(['vat_rate' => 20]);
+        $this->contract->update(['total_amount' => 1100]);
+        $parent = $this->createEstimateItem(['total_amount' => 1000, 'is_not_accounted' => false]);
+        $this->createEstimateItem([
+            'parent_work_id' => $parent->id,
+            'total_amount' => 100,
+            'is_not_accounted' => false,
+        ]);
+        $excluded = $this->createEstimateItem([
+            'name' => 'Всего по разделу',
+            'parent_work_id' => $parent->id,
+            'item_type' => 'material',
+            'total_amount' => 90000000,
+            'is_not_accounted' => true,
+        ]);
+
+        self::assertSame(1100.0, $this->service->calculateItemsTotal($this->estimate, [$parent->id]));
+        self::assertSame(1320.0, $this->service->calculateItemsTotal($this->estimate, [$parent->id], true));
+        self::assertSame(0.0, $this->service->calculateItemsTotal($this->estimate, [$excluded->id], true));
+
+        $this->service->attachItems($this->contract, $this->estimate, [$parent->id]);
+        $this->assertDatabaseHas('contract_estimate_items', [
+            'contract_id' => $this->contract->id,
+            'estimate_item_id' => $excluded->id,
+            'amount' => 0,
+            'amount_without_vat' => 0,
+        ]);
+
+        ContractEstimateItem::query()->where('estimate_item_id', $excluded->id)
+            ->update(['amount' => 90000000, 'amount_without_vat' => 90000000]);
+
+        $coverage = $this->coverageService->getCoverageForEstimate($this->estimate);
+        self::assertSame(1100.0, $coverage['contracts'][0]['linked_amount']);
+        self::assertSame(1, $coverage['contracts'][0]['linked_items_count']);
+        $summary = $this->coverageService->getContractCoverageSummary($this->contract);
+        self::assertSame(1100.0, $summary['summary']['linked_amount']);
+        self::assertSame(1000.0, $summary['linked_estimates'][0]['linked_items_summary']['max_amount']);
+        self::assertSame(1100.0, $this->service->calculateContractEstimateTotal($this->contract));
+        self::assertSame(1100.0, $this->service->getSummary($this->contract)['total_amount']);
+        $visibleLinks = $this->service->getItemsForContract($this->contract, $this->estimate->id);
+        self::assertCount(2, $visibleLinks);
+        self::assertSame(1100.0, (float) $visibleLinks->sum('amount'));
+
+        $validation = $this->coverageService->validateContractAmount($this->estimate, $this->contract);
+        self::assertTrue($validation['valid']);
+        self::assertSame(0.0, $validation['difference']);
+        self::assertSame(90000000.0, (float) $excluded->fresh()->total_amount);
+    }
+
+    public function test_vat_edit_preserves_links_and_base_prices_without_compounding(): void
+    {
+        $this->estimate->update(['vat_rate' => 20]);
+        $item = $this->createEstimateItem(['total_amount' => 1000, 'is_not_accounted' => false]);
+        $other = $this->createContract(['organization_id' => $this->contract->organization_id, 'project_id' => $this->contract->project_id]);
+        $this->service->attachItems($this->contract, $this->estimate, [$item->id]);
+        $this->service->attachItems($other, $this->estimate, [$item->id]);
+        $before = $this->service->getItemsForContract($this->contract)->first();
+        $before->update(['notes' => 'Сохранить примечание']);
+        $item->update(['total_amount' => 9000]);
+
+        $this->service->updateCoverageVat($this->contract, $this->estimate, true);
+        $this->service->updateCoverageVat($this->contract, $this->estimate, true);
+        $after = $before->fresh();
+        self::assertSame($before->id, $after->id);
+        self::assertSame($before->quantity, $after->quantity);
+        self::assertSame('Сохранить примечание', $after->notes);
+        self::assertSame(1200.0, (float) $after->amount);
+        self::assertSame(1000.0, (float) $after->amount_without_vat);
+        self::assertSame(1000.0, $this->service->calculateContractEstimateTotal($other));
+        $this->service->updateCoverageVat($this->contract, $this->estimate, false);
+        self::assertSame(1000.0, $this->service->calculateContractEstimateTotal($this->contract));
+    }
+
+    public function test_vat_edit_rejects_another_organization(): void
+    {
+        $item = $this->createEstimateItem(['total_amount' => 1000]);
+        $this->service->attachItems($this->contract, $this->estimate, [$item->id]);
+        $foreignProject = Project::factory()->create();
+        $foreignEstimate = $this->createEstimate([
+            'organization_id' => $foreignProject->organization_id,
+            'project_id' => $foreignProject->id,
+        ]);
+        try {
+            $this->service->updateCoverageVat($this->contract, $foreignEstimate, true);
+            self::fail('Foreign estimate must be rejected');
+        } catch (\DomainException) {
+            self::assertSame(1000.0, $this->service->calculateContractEstimateTotal($this->contract));
+        }
+    }
+
+    public function test_vat_request_requires_current_organization_and_matching_estimate(): void
+    {
+        $request = \App\BusinessModules\Features\ContractManagement\Http\Requests\UpdateCoverageVatRequest::create('/contracts/'.$this->contract->id.'/estimate-items/vat', 'PATCH');
+        $route = new \Illuminate\Routing\Route('PATCH', 'contracts/{contract}/estimate-items/vat', static fn () => null);
+        $route->bind($request);
+        $route->setParameter('contract', $this->contract);
+        $request->setRouteResolver(static fn () => $route);
+        $request->attributes->set('current_organization_id', $this->contract->organization_id);
+        self::assertTrue($request->authorize());
+        $foreignProject = Project::factory()->create();
+        $foreignEstimate = $this->createEstimate([
+            'organization_id' => $foreignProject->organization_id,
+            'project_id' => $foreignProject->id,
+        ]);
+        self::assertTrue(\Illuminate\Support\Facades\Validator::make(['estimate_id' => $foreignEstimate->id, 'include_vat' => true], $request->rules())->fails());
+        $request->attributes->set('current_organization_id', $foreignEstimate->organization_id);
+        self::assertFalse($request->authorize());
+        $apiRoute = app('router')->getRoutes()->getByAction(\App\BusinessModules\Features\ContractManagement\Http\Controllers\ContractEstimateItemController::class.'@updateVat');
+        self::assertContains('authorize:contracts.edit', $apiRoute->gatherMiddleware());
     }
 
     private function createContract(array $attributes = []): Contract

@@ -99,6 +99,7 @@ class EstimateCoverageService
 
         $links = ContractEstimateItem::query()
             ->where('estimate_id', $estimate->id)
+            ->countedInCoverage()
             ->with('contract.contractor')
             ->get()
             ->groupBy('contract_id');
@@ -148,6 +149,7 @@ class EstimateCoverageService
     {
         $links = ContractEstimateItem::query()
             ->where('contract_id', $contract->id)
+            ->countedInCoverage()
             ->with(['estimate', 'estimateItem'])
             ->get()
             ->groupBy('estimate_id');
@@ -189,6 +191,7 @@ class EstimateCoverageService
                     'created_at' => $estimate->created_at?->toISOString(),
                     'total_amount' => (float) $estimate->total_amount,
                     'total_amount_with_vat' => (float) $estimate->total_amount_with_vat,
+                    'vat_rate' => (float) $estimate->vat_rate,
                 ] : null,
                 'coverage_status' => $this->resolveCoverageStatus($linkedItemsCount, $totalItems),
                 'linked_items_count' => $linkedItemsCount,
@@ -198,6 +201,7 @@ class EstimateCoverageService
                 'coverage_percent' => $coveragePercent,
                 'linked_items_summary' => [
                     'amount' => $linkedAmount,
+                    'amount_without_vat' => round((float) $group->sum('amount_without_vat'), 2),
                     'average_amount' => $averageAmount,
                     'max_amount' => $maxAmount,
                     'total_quantity' => round((float) $linkedQuantities, 2),

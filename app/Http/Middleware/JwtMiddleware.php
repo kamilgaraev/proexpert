@@ -116,6 +116,14 @@ class JwtMiddleware
                     $payload = $this->jwt->manager()
                         ->setRefreshFlow()
                         ->decode($token);
+                    if ($guard) {
+                        auth()->shouldUse($guard);
+                    }
+
+                    if (! $this->authenticateRequestUser($request, $guard)) {
+                        return $this->errorResponse($request, $guard, 'auth.not_authenticated', Response::HTTP_UNAUTHORIZED);
+                    }
+
                     $request->attributes->add(['token_payload' => $payload]);
                     $request->attributes->add(['jwt_token' => (string) $token]);
                 } catch (JWTException $exception) {

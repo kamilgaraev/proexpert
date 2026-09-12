@@ -7,7 +7,6 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\G
 use App\BusinessModules\Features\BudgetEstimates\Contracts\EstimateImportParserInterface;
 use App\BusinessModules\Features\BudgetEstimates\Contracts\StreamParserInterface;
 use Illuminate\Support\Facades\Log;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInterface
 {
@@ -49,44 +48,51 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
 
     public function getStream(string $filePath, array $options = [], ?\Closure $onProgress = null): \Generator
     {
-        $spreadsheet = IOFactory::load($filePath);
-        $sheet = $spreadsheet->getActiveSheet();
-        
-        $mapping = $options['column_mapping'] ?? [];
-        $headerRow = $options['header_row'] ?? 1;
-        $totalRows = max(1, $sheet->getHighestRow() - $headerRow);
+        $spreadsheet = GrandSmetaSpreadsheetLoader::load($filePath);
+        try {
+            $sheet = $spreadsheet->getActiveSheet();
 
-        Log::info('[GrandSmetaParser] Starting parsing', [
-            'header_row' => $headerRow,
-        ]);
+            $mapping = $options['column_mapping'] ?? [];
+            $headerRow = $options['header_row'] ?? 1;
+            $totalRows = max(1, $sheet->getHighestRow() - $headerRow);
 
-        $this->processor->reset();
+            Log::info('[GrandSmetaParser] Starting parsing', [
+                'header_row' => $headerRow,
+            ]);
 
-        $rawRowIndex = 0;
-        foreach ($sheet->getRowIterator($headerRow + 1) as $row) {
-            $rowData = [];
-            foreach ($row->getCellIterator() as $cell) {
-                $rowData[$cell->getColumn()] = $cell->getCalculatedValue();
-            }
+            $this->processor->reset();
 
-            if (empty(array_filter($rowData))) {
+            $rawRowIndex = 0;
+            foreach ($sheet->getRowIterator($headerRow + 1) as $row) {
+                $rowData = [];
+                $iterator = $row->getCellIterator();
+                $iterator->setIterateOnlyExistingCells(true);
+                foreach ($iterator as $cell) {
+                    $rowData[$cell->getColumn()] = $cell->getCalculatedValue();
+                }
+
+                if (empty(array_filter($rowData))) {
+                    $rawRowIndex++;
+
+                    continue;
+                }
+
+                $this->processor->processRow($rowData, $mapping, $row->getRowIndex());
                 $rawRowIndex++;
-                continue;
+
+                // Уведомляем о прогрессе каждые 500 строк
+                if ($onProgress && $rawRowIndex % 500 === 0) {
+                    $onProgress($rawRowIndex, $totalRows);
+                }
             }
 
-            $this->processor->processRow($rowData, $mapping, $row->getRowIndex());
-            $rawRowIndex++;
+            $result = $this->processor->getResult();
 
-            // Уведомляем о прогрессе каждые 500 строк
-            if ($onProgress && $rawRowIndex % 500 === 0) {
-                $onProgress($rawRowIndex, $totalRows);
-            }
+            $allRows = array_merge($result['items'], $result['sections']);
+            usort($allRows, fn ($a, $b) => $a->rowNumber <=> $b->rowNumber);
+        } finally {
+            $spreadsheet->disconnectWorksheets();
         }
-
-        $result = $this->processor->getResult();
-        
-        $allRows = array_merge($result['items'], $result['sections']);
-        usort($allRows, fn($a, $b) => $a->rowNumber <=> $b->rowNumber);
 
         foreach ($allRows as $row) {
             yield $row;
@@ -102,7 +108,9 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
         foreach ($generator as $item) {
             $result[] = $item;
             $count++;
-            if ($count >= $limit) break;
+            if ($count >= $limit) {
+                break;
+            }
         }
 
         return $result;
@@ -110,43 +118,48 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
 
     public function getRawSampleRows(string $filePath, array $options = [], int $limit = 5): array
     {
+        $spreadsheet = null;
         try {
-            $spreadsheet = IOFactory::load($filePath);
+            $spreadsheet = GrandSmetaSpreadsheetLoader::load($filePath);
             $sheet = $spreadsheet->getActiveSheet();
-            
+
             $headerRow = $options['header_row'] ?? 0;
             $samples = [];
             $currentRow = $headerRow + 1; // Show numbering row and actual data
-            $maxRow = min($headerRow + 20, $sheet->getHighestRow()); 
-            
+            $maxRow = min($headerRow + 20, $sheet->getHighestRow());
+
             $highestColumn = $sheet->getHighestColumn();
             $highestColumnIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
 
             while (count($samples) < $limit && $currentRow <= $maxRow) {
                 $rowData = [];
                 $hasData = false;
-                
+
                 for ($colIdx = 1; $colIdx <= $highestColumnIndex; $colIdx++) {
                     $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIdx);
-                    $cell = $sheet->getCell($colLetter . $currentRow);
-                    $value = $cell->getCalculatedValue();
-                    
-                    if ($value !== null && trim((string)$value) !== '') {
+                    $value = $sheet->cellExists($colLetter.$currentRow)
+                        ? $sheet->getCell($colLetter.$currentRow)->getCalculatedValue()
+                        : null;
+
+                    if ($value !== null && trim((string) $value) !== '') {
                         $hasData = true;
                     }
-                    $rowData[] = $value; 
+                    $rowData[] = $value;
                 }
-                
+
                 if ($hasData) {
                     $samples[] = $rowData;
                 }
                 $currentRow++;
             }
-            
+
             return $samples;
         } catch (\Exception $e) {
             Log::error('[GrandSmetaParser] Failed to get sample rows', ['error' => $e->getMessage()]);
+
             return [];
+        } finally {
+            $spreadsheet?->disconnectWorksheets();
         }
     }
 
@@ -157,13 +170,17 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
 
     public function getTotalRows(string $filePath, array $options = []): int
     {
+        $spreadsheet = null;
         try {
-            $spreadsheet = IOFactory::load($filePath);
+            $spreadsheet = GrandSmetaSpreadsheetLoader::load($filePath);
             $sheet = $spreadsheet->getActiveSheet();
             $headerRow = (int) ($options['header_row'] ?? 1);
+
             return max(0, $sheet->getHighestRow() - $headerRow);
         } catch (\Throwable) {
             return 0;
+        } finally {
+            $spreadsheet?->disconnectWorksheets();
         }
     }
 
@@ -174,7 +191,7 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
 
     public function readContent(string $filePath, int $maxRows = 100)
     {
-        return IOFactory::load($filePath);
+        return GrandSmetaSpreadsheetLoader::load($filePath);
     }
 
     public function getFooterData(): array

@@ -369,8 +369,10 @@ class EstimateImportService
         return [
             'status' => $this->mapSessionStatusToOldStatus($session->status),
             'progress' => (int) $progress,
-            'message' => $this->translateStoredMessage($session->stats['message'] ?? null),
-            'error' => $this->translateStoredMessage($session->error_message),
+            'message' => $session->isFailed()
+                ? ImportErrorMessage::fromStored($session->stats['message'] ?? null)
+                : $this->translateStoredMessage($session->stats['message'] ?? null),
+            'error' => ImportErrorMessage::fromStored($session->error_message),
             'result' => $session->stats['result'] ?? null,
             'estimate_id' => $session->stats['estimate_id'] ?? null,
             'validation' => $session->stats['validation'] ?? ($session->options['validation'] ?? null),
@@ -382,7 +384,16 @@ class EstimateImportService
         return ImportSession::where('organization_id', $organizationId)
             ->orderBy('created_at', 'desc')
             ->limit($limit)
-            ->get();
+            ->get()
+            ->each(function (ImportSession $session): void {
+                $session->error_message = ImportErrorMessage::fromStored($session->error_message);
+                $stats = $session->stats ?? [];
+                unset($stats['technical_error_message'], $stats['error_trace']);
+                if ($session->isFailed()) {
+                    $stats['message'] = ImportErrorMessage::fromStored($stats['message'] ?? null);
+                }
+                $session->stats = $stats;
+            });
     }
 
     public function downloadTemplate(): StreamedResponse

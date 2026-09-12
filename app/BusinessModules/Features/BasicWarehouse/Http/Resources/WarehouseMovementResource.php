@@ -10,6 +10,8 @@ class WarehouseMovementResource extends JsonResource
     public function toArray($request): array
     {
         $movement = $this->resource;
+        $description = data_get($movement->metadata, 'description')
+            ?? data_get($movement->metadata, 'metadata.description');
 
         return [
             'id' => $this->id,
@@ -57,6 +59,7 @@ class WarehouseMovementResource extends JsonResource
             ] : null,
             'document_number' => $this->document_number,
             'reason' => $this->reason,
+            'description' => is_string($description) ? $description : null,
             'movement_date' => $this->movement_date->toDateTimeString(),
             'metadata' => $this->metadata,
             'photo_gallery' => $this->photo_gallery,

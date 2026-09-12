@@ -21,6 +21,10 @@ class EstimateItemResource extends Model
         'total_quantity',
         'unit_price',
         'total_amount',
+        'finance_representation',
+        'finance_unit_label',
+        'finance_source_hash',
+        'represented_by_item_id',
     ];
 
     protected $casts = [
@@ -80,4 +84,3 @@ class EstimateItemResource extends Model
         return $this->resource_type === 'equipment';
     }
 }
-

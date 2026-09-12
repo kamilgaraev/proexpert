@@ -75,6 +75,7 @@ class ContractManagementServiceProvider extends ServiceProvider
                 Route::get('/summary', [ContractEstimateItemController::class, 'summary']);
                 Route::get('/project-estimates', [ContractEstimateItemController::class, 'projectEstimates']);
                 Route::post('/attach', [ContractEstimateItemController::class, 'attach']);
+                Route::patch('/vat', [ContractEstimateItemController::class, 'updateVat'])->middleware('authorize:contracts.edit');
                 Route::delete('/detach', [ContractEstimateItemController::class, 'detach']);
             });
     }

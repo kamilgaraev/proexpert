@@ -107,6 +107,8 @@ return [
         'design-management.composition.edit' => 'Редактирование состава проектных комплектов',
         'design-management.composition.approve' => 'Утверждение состава проектных комплектов',
         'design-management.issues.manage_blocking' => 'Установка и снятие блокировки выпуска замечанием',
+        'budget-estimates.finance.view' => 'Просмотр договорных цен и плановой маржи сметы',
+        'budget-estimates.finance.edit' => 'Изменение финансовых распределений сметы',
         '*' => 'Все права',
         'admin.access' => 'Доступ к административной панели',
         'admin.view' => 'Просмотр административной панели',

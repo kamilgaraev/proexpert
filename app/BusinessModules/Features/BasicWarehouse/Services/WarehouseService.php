@@ -1669,6 +1669,9 @@ class WarehouseService implements WarehouseReportDataProvider
         ?string $actorName,
         ?array $relatedUserIdentity,
     ): array {
+        $description = data_get($movement->metadata, 'description')
+            ?? data_get($movement->metadata, 'metadata.description');
+
         return [
             'movement_id' => $movement->id,
             'movement_type' => $movement->movement_type,
@@ -1718,6 +1721,7 @@ class WarehouseService implements WarehouseReportDataProvider
             'project_material_delivery_id' => $movement->project_material_delivery_id,
             'document_number' => $movement->document_number,
             'reason' => $movement->reason,
+            'description' => is_string($description) ? $description : null,
             'movement_date' => $movement->movement_date->toDateTimeString(),
             'photo_gallery' => $movement->photo_gallery,
         ];

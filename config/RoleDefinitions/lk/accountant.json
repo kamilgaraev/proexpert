@@ -182,6 +182,7 @@
       "budget-estimates.view",
       "budget-estimates.view_all",
       "budget-estimates.export",
+      "budget-estimates.finance.view",
       "budget-estimates.versions.compare"
     ],
     "payments": [
