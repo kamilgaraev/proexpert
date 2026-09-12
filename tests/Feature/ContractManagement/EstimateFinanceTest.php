@@ -1259,6 +1259,32 @@ final class EstimateFinanceTest extends TestCase
         self::assertContains('estimate_changed', $this->report()['rows'][1]['warnings']);
     }
 
+    public function test_resource_source_comparison_is_independent_for_each_work_and_resource(): void
+    {
+        $query = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceQuery::class);
+        $this->item->update(['resource_calculation' => [['name' => 'Арматура', 'quantity' => '100']]]);
+        $other = EstimateItem::query()->create(['estimate_id' => $this->estimate->id, 'position_number' => '2',
+            'name' => 'Другая работа', 'item_type' => 'work', 'quantity' => '1', 'quantity_total' => '1',
+            'total_amount' => '100', 'resource_calculation' => [['name' => 'Кирпич', 'quantity' => '20']]]);
+        $firstHash = hash('sha256', json_encode($query->pendingResources($this->item), JSON_THROW_ON_ERROR));
+        $otherHash = hash('sha256', json_encode($query->pendingResources($other), JSON_THROW_ON_ERROR));
+        $cases = [[$this->item, $firstHash, false], [$this->item, $otherHash, true], [$this->item, null, false],
+            [$other, $otherHash, false], [$other, $firstHash, true]];
+        $expected = [];
+        foreach ($cases as [$item, $hash, $changed]) {
+            $resource = EstimateItemResource::query()->create(['estimate_item_id' => $item->id, 'resource_type' => 'material',
+                'name' => 'Материал', 'total_quantity' => '1', 'quantity_per_unit' => '1', 'total_amount' => '100',
+                'finance_source_hash' => $hash]);
+            $expected['r:'.$resource->id] = $changed;
+        }
+        $targets = $query->targets($this->estimate);
+        foreach ($expected as $key => $changed) {
+            self::assertSame($changed, $targets[$key]['source_changed']);
+        }
+        self::assertSame([], $targets['i:'.$this->item->id]['pending_resources']);
+        self::assertSame([], $targets['i:'.$other->id]['pending_resources']);
+    }
+
     public function test_view_permission_does_not_allow_financial_changes(): void
     {
         $this->mock(AuthorizationService::class)->shouldReceive('can')

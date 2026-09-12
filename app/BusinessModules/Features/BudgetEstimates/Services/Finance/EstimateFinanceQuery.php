@@ -18,8 +18,11 @@ final class EstimateFinanceQuery
         $items = EstimateItem::query()->where('estimate_id', $estimate->id)
             ->with(['resources.measurementUnit', 'measurementUnit'])->orderBy('id')->get();
         $childParents = $items->whereNotNull('parent_work_id')->pluck('parent_work_id')->flip();
+        $itemIds = array_fill_keys($items->modelKeys(), true);
         foreach ($items as $item) {
             $key = 'i:'.$item->id;
+            $pendingResources = null;
+            $sourceHash = null;
             $targets[$key] = [
                 'key' => $key, 'item_id' => (int) $item->id, 'resource_id' => null,
                 'parent_key' => $item->parent_work_id ? 'i:'.$item->parent_work_id : null,
@@ -30,10 +33,14 @@ final class EstimateFinanceQuery
                 'estimate_amount' => (string) ($item->total_amount ?? '0'),
                 'estimate_amount_with_vat' => $estimate->vat_rate === null ? null : FinanceDecimal::multiply((string) ($item->total_amount ?? '0'), FinanceDecimal::add('1', FinanceDecimal::divide((string) $estimate->vat_rate, '100', 8))),
                 'excluded' => (bool) $item->is_not_accounted,
-                'pending_resources' => $item->resources->isEmpty() ? $this->pendingResources($item) : [],
+                'pending_resources' => $item->resources->isEmpty() ? ($pendingResources = $this->pendingResources($item)) : [],
             ];
             foreach ($item->resources as $resource) {
                 $resourceKey = 'r:'.$resource->id;
+                if ($resource->finance_source_hash !== null && $sourceHash === null) {
+                    $pendingResources ??= $this->pendingResources($item);
+                    $sourceHash = hash('sha256', json_encode($pendingResources, JSON_THROW_ON_ERROR));
+                }
                 $targets[$resourceKey] = [
                     'key' => $resourceKey, 'item_id' => (int) $item->id, 'resource_id' => (int) $resource->id,
                     'parent_key' => $key, 'section_id' => $item->estimate_section_id,
@@ -42,8 +49,8 @@ final class EstimateFinanceQuery
                     'represented_by_item_id' => $resource->represented_by_item_id,
                     'representation' => $resource->finance_representation,
                     'representation_needs_review' => ($childParents->has($item->id) && $resource->finance_representation === 'unreviewed')
-                        || ($resource->represented_by_item_id && ! $items->contains('id', $resource->represented_by_item_id)),
-                    'source_changed' => $resource->finance_source_hash !== null && $resource->finance_source_hash !== hash('sha256', json_encode($this->pendingResources($item), JSON_THROW_ON_ERROR)),
+                        || ($resource->represented_by_item_id && ! isset($itemIds[$resource->represented_by_item_id])),
+                    'source_changed' => $resource->finance_source_hash !== null && $resource->finance_source_hash !== $sourceHash,
                     'quantity' => (string) ($resource->total_quantity ?? '0'),
                     'estimate_amount' => (string) ($resource->total_amount ?? '0'), 'excluded' => (bool) $item->is_not_accounted,
                     'estimate_amount_with_vat' => $estimate->vat_rate === null ? null : FinanceDecimal::multiply((string) ($resource->total_amount ?? '0'), FinanceDecimal::add('1', FinanceDecimal::divide((string) $estimate->vat_rate, '100', 8))),
