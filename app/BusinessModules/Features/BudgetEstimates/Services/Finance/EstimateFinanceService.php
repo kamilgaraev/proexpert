@@ -307,8 +307,11 @@ final class EstimateFinanceService
                 $this->invalid();
             }
         }
+        $contractIds = array_filter(array_column($data['lines'], 'contract_id'));
+        $contractIds = array_merge($contractIds, ContractEstimateItem::query()->where('estimate_id', $estimate->id)->pluck('contract_id')->all(),
+            EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereNotNull('contract_id')->pluck('contract_id')->all());
         $contracts = Contract::query()->where('organization_id', $estimate->organization_id)->where('project_id', $estimate->project_id)
-            ->whereIn('id', array_filter(array_column($data['lines'], 'contract_id')))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            ->whereIn('id', array_unique($contractIds))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         $rows = [];
         $quantities = [];
         $knownKeys = EstimateFinanceAllocation::query()->whereIn('key', array_column($data['lines'], 'key'))->get()->keyBy('key');

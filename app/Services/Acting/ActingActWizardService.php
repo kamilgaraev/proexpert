@@ -149,7 +149,11 @@ class ActingActWizardService
 
             $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
             $availableQuantity = $availableQuantities[$workId] ?? 0;
-            $basis = $this->financialBasis->forCompletedWork($work, $contract, $effectiveQuantity);
+            $allocationKeys = $selectedWorks->map(static fn (array $selection): ?string => $selection['allocation_key'] ?? null)->unique()->values();
+            if ($allocationKeys->count() > 1) {
+                throw new BusinessLogicException(trans_message('act_reports.contract_conditions_selection_required'), 422);
+            }
+            $basis = $this->financialBasis->forCompletedWork($work, $contract, $effectiveQuantity, $allocationKeys->first());
             $quantity = $this->sumRequestedQuantity($selectedWorks, $availableQuantity);
             $this->quantityReservations->assertScaledAvailable([$workId => $quantity], $availableQuantities);
             $quantityDecimal = AcceptedProductionQuantity::decimal($quantity);
@@ -204,6 +208,7 @@ class ActingActWizardService
                 'journalEntry',
             )
             ->where('organization_id', $organizationId)
+            ->with(['estimateItem.financeAllocations' => static fn ($query) => $query->where('contract_id', $contract->id)->whereNull('resource_id')])
             ->whereIn('id', $workIds)
             ->where(function ($query) use ($contract): void {
                 $query

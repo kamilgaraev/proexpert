@@ -20,6 +20,7 @@ use App\Services\Acting\ActingPolicyResolver;
 use App\Services\Acting\FixedContractActAmountGuard;
 use App\Services\Acting\KS3SummaryService;
 use App\Services\Acting\PerformanceActFinancialTotalsService;
+use App\Services\Acting\PerformanceActConditionGuard;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
 use App\Services\Workflow\WorkflowGuardService;
 use Brick\Math\BigDecimal;
@@ -44,6 +45,7 @@ class ActReportWorkflowService
         private readonly PaymentDocumentService $paymentDocumentService,
         private readonly FixedContractActAmountGuard $contractAmountGuard,
         private readonly FinancialBalanceQuery $financialBalances,
+        private readonly PerformanceActConditionGuard $conditionGuard,
     ) {}
 
     public function preview(int $organizationId, array $data, ?User $user): array
@@ -303,15 +305,16 @@ class ActReportWorkflowService
             if ($lockedAct->status !== ContractPerformanceAct::STATUS_PENDING_APPROVAL) {
                 throw new BusinessLogicException(trans_message('act_reports.act_must_be_submitted_before_approval'), 422);
             }
+            $lockedContract = Contract::query()
+                ->whereKey($lockedAct->contract_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $this->conditionGuard->assertCurrent($lockedAct, $lockedContract);
             $lockedAct = $this->recalculatePricedLines($lockedAct);
             $previousStatus = $this->acceptanceStatus($lockedAct);
             if ((float) $lockedAct->amount <= 0) {
                 throw new BusinessLogicException(trans_message('act_reports.empty_act'), 422);
             }
-            $lockedContract = Contract::query()
-                ->whereKey($lockedAct->contract_id)
-                ->lockForUpdate()
-                ->firstOrFail();
             $this->contractAmountGuard->assertActFits(
                 $lockedContract,
                 (string) $lockedAct->amount,

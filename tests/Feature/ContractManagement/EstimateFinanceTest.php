@@ -194,6 +194,82 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame([], $accepted->quantities($otherOrganization, [$this->contractor->id], [$this->item->id]));
     }
 
+    public function test_act_basis_uses_contract_conditions_and_keeps_previous_snapshot(): void
+    {
+        $line = $this->line($this->contractor, '100', '800000');
+        $line['vat_mode'] = 'exclusive';
+        $line['price_basis'] = 'without_vat';
+        $line['vat_rate'] = '5';
+        $this->save($this->command([$line]));
+        $work = new \App\Models\CompletedWork;
+        $work->setRelation('estimateItem', $this->item);
+        $basisService = app(\App\Services\Acting\PerformanceActFinancialBasisService::class);
+        $first = $basisService->forCompletedWork($work, $this->contractor, 15);
+        self::assertSame('8400.00', $first['unit_price']);
+        self::assertSame('5.00', $first['vat_rate']);
+        self::assertSame('contract_conditions', $first['snapshot']['basis_type']);
+        self::assertSame($line['key'], $first['snapshot']['allocation_key']);
+        self::assertSame(1, $first['snapshot']['condition_version']);
+        $line['amount'] = '900000';
+        $this->save($this->command([$line]));
+        $second = $basisService->forCompletedWork($work, $this->contractor, 15);
+        self::assertSame('9450.00', $second['unit_price']);
+        self::assertSame(2, $second['snapshot']['condition_version']);
+        self::assertSame('8400.00', $first['snapshot']['unit_price_with_vat']);
+    }
+
+    public function test_act_basis_requires_selection_between_contract_allocations(): void
+    {
+        $first = $this->line($this->contractor, '60', '480000');
+        $second = $this->line($this->contractor, '40', '360000');
+        $this->save($this->command([$first, $second]));
+        $basis = app(\App\Services\Acting\PerformanceActContractBasisService::class);
+        self::assertSame($second['key'], $basis->resolve($this->item, $this->contractor, $second['key'])['snapshot']['allocation_key']);
+        $this->expectException(\App\Exceptions\BusinessLogicException::class);
+        $basis->resolve($this->item, $this->contractor);
+    }
+
+    public function test_act_basis_does_not_fall_back_to_estimate_for_unknown_contract_tax(): void
+    {
+        $line = $this->line($this->contractor, '100', '800000');
+        $line['vat_mode'] = 'unknown';
+        $line['price_basis'] = 'unknown';
+        $line['vat_rate'] = null;
+        $line['composition_confirmed'] = false;
+        $this->save($this->command([$line]));
+        $this->expectException(\App\Exceptions\BusinessLogicException::class);
+        app(\App\Services\Acting\PerformanceActContractBasisService::class)->resolve($this->item, $this->contractor);
+    }
+
+    public function test_approval_rejects_changed_or_deleted_contract_conditions_without_changing_act(): void
+    {
+        $line = $this->line($this->contractor, '100', '800000');
+        $this->save($this->command([$line]));
+        $basis = app(\App\Services\Acting\PerformanceActContractBasisService::class)->resolve($this->item, $this->contractor);
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'VERSION-GUARD', 'act_date' => '2026-09-12',
+            'amount' => '8000', 'currency' => 'RUB', 'status' => 'draft', 'is_approved' => false, 'created_by_user_id' => $this->actor->id]);
+        $actLine = \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Бетон', 'quantity' => '1', 'unit_price' => '8000', 'amount' => '8000',
+            'currency' => 'RUB', 'manual_reason' => 'Принятые работы', 'basis_snapshot' => $basis['snapshot'], 'created_by' => $this->actor->id]);
+        $act->update(['status' => 'pending_approval']);
+        app(\App\Services\Acting\PerformanceActConditionGuard::class)->assertCurrent($act, $this->contractor);
+        $before = $act->fresh()->getAttributes();
+        $beforeLine = $actLine->fresh()->getAttributes();
+        $line['amount'] = '900000';
+        foreach ([[$line], []] as $replacement) {
+            $this->save($this->command($replacement));
+            try {
+                app(\App\Services\ActReport\ActReportWorkflowService::class)->approve($act, $this->actor->id);
+                self::fail('Obsolete contract conditions were approved');
+            } catch (\App\Exceptions\BusinessLogicException $exception) {
+                self::assertSame(409, $exception->getCode());
+                self::assertSame($before, $act->fresh()->getAttributes());
+                self::assertSame($beforeLine, $actLine->fresh()->getAttributes());
+            }
+        }
+    }
+
     public function test_condition_history_preserves_snapshots_after_edit_and_delete(): void
     {
         $line = $this->line($this->customer, '100', '1000000');

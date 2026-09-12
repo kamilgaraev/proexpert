@@ -194,6 +194,11 @@ class EstimateItem extends Model
         return $this->hasMany(ContractEstimateItem::class);
     }
 
+    public function financeAllocations(): HasMany
+    {
+        return $this->hasMany(EstimateFinanceAllocation::class);
+    }
+
     public function contracts(): BelongsToMany
     {
         return $this->belongsToMany(Contract::class, 'contract_estimate_items')
