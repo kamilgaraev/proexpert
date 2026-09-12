@@ -249,9 +249,21 @@ final class DesignProjectIssueService
             'transforms' => $transforms,
             'model_set_revision_id' => $revisionId,
             'camera' => $context['camera'] ?? null,
+            'annotations' => $context['annotations'] ?? null,
+            'snapshot_url' => $this->snapshotUrl($issue, $context),
             'point' => $context['point'] ?? null,
             'elements' => $context['elements'] ?? (isset($context['bim_element_id']) && isset($context['version_id']) ? [['version_id' => (int) $context['version_id'], 'element_id' => (int) $context['bim_element_id']]] : []),
         ];
+    }
+
+    private function snapshotUrl(QualityDefect $issue, array $context): ?string
+    {
+        $path = $context['snapshot']['path'] ?? null;
+        if (! is_string($path) || $path === '') {
+            return null;
+        }
+
+        return $this->files->temporaryUrl($path, 60, Organization::query()->find($issue->organization_id));
     }
 
     private function project(int $organizationId, int $projectId): void

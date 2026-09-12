@@ -152,8 +152,153 @@ final class DesignIssueContextResolver
                 $context[$key] = $payload[$key];
             }
         }
+        if (($payload['annotations'] ?? null) !== null) {
+            $annotations = $this->annotations($payload['annotations']);
+            if ($annotations['strokes'] !== []) {
+                if (! $this->cameraSnapshot($payload['camera'] ?? null)) {
+                    throw $this->invalidTarget();
+                }
+                if (! $hasRevision && ! $hasView && (! isset($context['version_id'])
+                    || ! $this->sessionAccess->canAccessProject($actor, $organizationId, $projectId)
+                    || ! DesignArtifactVersion::query()->where('organization_id', $organizationId)->where('project_id', $projectId)
+                        ->whereKey($context['version_id'])->where('file_format', 'ifc')->exists())) {
+                    throw $this->invalidTarget();
+                }
+            }
+            $context['annotations'] = $annotations;
+        }
 
         return $context;
+    }
+
+    private function annotations(mixed $annotations): array
+    {
+        if (! is_array($annotations) || ! $this->hasOnlyKeys($annotations, ['schema_version', 'width', 'height', 'strokes'])
+            || ($annotations['schema_version'] ?? null) !== 1
+            || ! $this->boundedNumber($annotations['width'] ?? null, 0, 16384) || (float) $annotations['width'] <= 0
+            || ! $this->boundedNumber($annotations['height'] ?? null, 0, 16384) || (float) $annotations['height'] <= 0
+            || (float) $annotations['width'] * (float) $annotations['height'] > 8_000_000
+            || ! isset($annotations['strokes']) || ! is_array($annotations['strokes']) || ! array_is_list($annotations['strokes'])
+            || count($annotations['strokes']) > 100) {
+            throw $this->invalidTarget();
+        }
+
+        $strokes = [];
+        $totalPoints = 0;
+        foreach ($annotations['strokes'] as $stroke) {
+            if (! is_array($stroke) || ! $this->hasOnlyKeys($stroke, ['kind', 'color', 'width', 'points'])
+                || ! is_string($stroke['kind'] ?? null) || ! in_array($stroke['kind'], ['line', 'arrow', 'freehand'], true)
+                || ! is_string($stroke['color'] ?? null) || preg_match('/^#[0-9a-fA-F]{6}$/', $stroke['color']) !== 1
+                || ! $this->boundedNumber($stroke['width'] ?? null, 1, 20)
+                || ! isset($stroke['points']) || ! is_array($stroke['points']) || ! array_is_list($stroke['points'])
+                || count($stroke['points']) < 2 || count($stroke['points']) > 1000
+                || (in_array($stroke['kind'], ['line', 'arrow'], true) && count($stroke['points']) !== 2)) {
+                throw $this->invalidTarget();
+            }
+            $points = [];
+            foreach ($stroke['points'] as $point) {
+                if (! is_array($point) || ! $this->hasOnlyKeys($point, ['x', 'y'])
+                    || ! $this->boundedNumber($point['x'] ?? null, 0, 1)
+                    || ! $this->boundedNumber($point['y'] ?? null, 0, 1)) {
+                    throw $this->invalidTarget();
+                }
+                $points[] = ['x' => (float) $point['x'], 'y' => (float) $point['y']];
+            }
+            $totalPoints += count($points);
+            if ($totalPoints > 10000) {
+                throw $this->invalidTarget();
+            }
+            $strokes[] = [
+                'kind' => $stroke['kind'],
+                'color' => strtolower($stroke['color']),
+                'width' => (float) $stroke['width'],
+                'points' => $points,
+            ];
+        }
+
+        return [
+            'schema_version' => 1,
+            'width' => (float) $annotations['width'],
+            'height' => (float) $annotations['height'],
+            'strokes' => $strokes,
+        ];
+    }
+
+    private function cameraSnapshot(mixed $camera): bool
+    {
+        if (! is_array($camera)) {
+            return false;
+        }
+        $serialized = json_encode($camera);
+        if (! is_string($serialized) || strlen($serialized) > 8192) {
+            return false;
+        }
+        $vectors = ['position', 'target', 'focalOffset', 'target0', 'position0', 'focalOffset0'];
+        $numbers = [
+            'minDistance', 'maxDistance', 'minZoom', 'maxZoom', 'minPolarAngle', 'maxPolarAngle',
+            'minAzimuthAngle', 'maxAzimuthAngle', 'smoothTime', 'draggingSmoothTime', 'dollySpeed',
+            'truckSpeed', 'zoom', 'zoom0',
+        ];
+        $booleans = ['enabled', 'dollyToCursor'];
+        $allowed = [...$vectors, ...$numbers, ...$booleans];
+        if (array_diff(array_keys($camera), $allowed) !== []) {
+            return false;
+        }
+        foreach (['position', 'target'] as $key) {
+            if (! isset($camera[$key]) || ! $this->vector($camera[$key])) {
+                return false;
+            }
+        }
+        foreach (['focalOffset', 'target0', 'position0', 'focalOffset0'] as $key) {
+            if (array_key_exists($key, $camera) && ! $this->vector($camera[$key])) {
+                return false;
+            }
+        }
+        foreach ($numbers as $key) {
+            if (array_key_exists($key, $camera) && ! $this->finiteNumber($camera[$key])) {
+                return false;
+            }
+        }
+        foreach ($booleans as $key) {
+            if (array_key_exists($key, $camera) && ! is_bool($camera[$key])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function vector(mixed $value): bool
+    {
+        if (! is_array($value) || array_keys($value) !== [0, 1, 2]) {
+            return false;
+        }
+        foreach ($value as $coordinate) {
+            if (! $this->finiteNumber($coordinate)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function finiteNumber(mixed $value): bool
+    {
+        return (is_int($value) || is_float($value)) && is_finite((float) $value);
+    }
+
+    private function hasOnlyKeys(array $value, array $keys): bool
+    {
+        sort($keys);
+        $actual = array_keys($value);
+        sort($actual);
+
+        return $actual === $keys;
+    }
+
+    private function boundedNumber(mixed $value, float $minimum, float $maximum): bool
+    {
+        return is_numeric($value) && is_finite((float) $value) && (float) $value >= $minimum && (float) $value <= $maximum;
     }
 
     private function viewModels(User $actor, int $organizationId, int $projectId, mixed $models): array
