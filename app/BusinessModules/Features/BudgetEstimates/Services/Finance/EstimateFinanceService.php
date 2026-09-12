@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Finance;
 
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\FinanceInputValidation;
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\SaveEstimateFinanceRequest;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
 use App\Models\Contract;
@@ -12,7 +13,6 @@ use App\Models\Estimate;
 use App\Models\EstimateFinanceAllocation;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
@@ -198,14 +198,14 @@ final class EstimateFinanceService
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId, true);
         if (($input['preview_operation'] ?? null) === 'source_amount') {
-            $data = Validator::make($input, \App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest::sourceRules())->validate();
+            $data = FinanceInputValidation::validate($input, \App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest::sourceRules());
             $targets = $this->query->targets($estimate);
 
             return ['revision' => (int) $estimate->finance_revision, 'currency' => 'RUB',
                 'amount_without_vat' => EstimateFinanceSelection::amount($targets, $data['item_ids']),
                 'items_count' => count(EstimateFinanceSelection::rootKeys($targets, $data['item_ids']))];
         }
-        $data = Validator::make($input, SaveEstimateFinanceRequest::inputRules())->validate();
+        $data = FinanceInputValidation::validate($input, SaveEstimateFinanceRequest::inputRules());
         if ((int) $data['revision'] !== (int) $estimate->finance_revision) {
             throw new ConflictHttpException(trans_message('estimate_finance.conflict'));
         }
@@ -271,7 +271,7 @@ final class EstimateFinanceService
     public function save(User $actor, int $projectId, int $estimateId, array $input): array
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId, true);
-        $data = Validator::make($input, SaveEstimateFinanceRequest::inputRules())->validate();
+        $data = FinanceInputValidation::validate($input, SaveEstimateFinanceRequest::inputRules());
         $hash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
 
         return DB::transaction(function () use ($actor, $estimate, $data, $hash): array {

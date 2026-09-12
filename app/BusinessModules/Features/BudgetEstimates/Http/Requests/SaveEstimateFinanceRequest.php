@@ -18,6 +18,23 @@ class SaveEstimateFinanceRequest extends FormRequest
         return self::inputRules();
     }
 
+    public function validator(): \Illuminate\Validation\Validator
+    {
+        return FinanceInputValidation::make($this->validationData(), $this->rules());
+    }
+
+    public function validated($key = null, $default = null)
+    {
+        return data_get(FinanceInputValidation::sanitize(parent::validated(), $this->rules()), $key, $default);
+    }
+
+    public function safe(?array $keys = null)
+    {
+        $input = new \Illuminate\Support\ValidatedInput($this->validated());
+
+        return $keys === null ? $input : $input->only($keys);
+    }
+
     public static function inputRules(): array
     {
         $decimal = ['string', 'regex:/^\d{1,12}(\.\d{1,8})?$/'];
@@ -32,9 +49,9 @@ class SaveEstimateFinanceRequest extends FormRequest
             'resource_mappings.*.item_id' => ['present', 'nullable', 'integer', 'min:1'],
             'preview_operation' => ['sometimes', 'in:total,estimate_prices'],
             'mutation_id' => ['required', 'uuid'],
-            'target_keys' => ['required', 'array', 'min:1', 'max:1000'],
+            'target_keys' => ['required', 'array', 'min:1', 'max:20000'],
             'target_keys.*' => ['required', 'string', 'distinct', 'regex:/^[ir]:[1-9]\d*$/'],
-            'lines' => ['present', 'array', 'max:5000'],
+            'lines' => ['present', 'array', 'max:40000'],
             'lines.*.key' => ['required', 'uuid', 'distinct'],
             'lines.*.condition_version' => ['sometimes', 'integer', 'min:0'],
             'lines.*.target_key' => ['required', 'string'],
@@ -52,7 +69,7 @@ class SaveEstimateFinanceRequest extends FormRequest
             'lines.*.composition_confirmed' => ['required', 'boolean'],
             'lines.*.notes' => ['nullable', 'string', 'max:2000'],
             'lines.*.adopt_estimate_price' => ['sometimes', 'boolean'],
-            'total_line_keys' => ['required_with:expected_total', 'array', 'min:1'],
+            'total_line_keys' => ['required_with:expected_total', 'array', 'min:1', 'max:40000'],
             'total_line_keys.*' => ['required', 'uuid', 'distinct'],
             'expected_total' => ['nullable', 'string', 'regex:/^\d{1,12}(\.\d{1,2})?$/'],
         ];
