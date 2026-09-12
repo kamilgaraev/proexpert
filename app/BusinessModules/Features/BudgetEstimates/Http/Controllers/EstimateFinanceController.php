@@ -49,6 +49,6 @@ class EstimateFinanceController extends Controller
 
     public function export(Request $request, int $project, ?int $estimate = null): mixed
     {
-        return $this->export->download($request->user(), $project, $estimate, $request->string('basis', 'with_vat')->toString());
+        return $this->export->download($request->user(), $project, $estimate, $request->string('basis', 'with_vat')->toString(), $request->string('view', 'plan')->toString());
     }
 }

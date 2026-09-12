@@ -82,7 +82,8 @@ final class EstimateFinanceTest extends TestCase
                 'project_id' => $this->estimate->project_id, 'act_document_number' => 'FACT-'.$status, 'act_date' => '2026-09-12',
                 'amount' => '999', 'status' => $status, 'is_approved' => true, 'currency' => 'RUB']);
         }
-        $result = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['execution'];
+        $report = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution');
+        $result = $report['execution'];
         self::assertTrue($result['available']);
         self::assertCount(1, $result['documents']);
         self::assertCount(1, $result['rows']);
@@ -95,6 +96,15 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('100.00', $result['summary']['totals']['RUB']['cost']);
         self::assertSame('99.00000000', $result['summary']['contract_quantities'][0]['remaining_quantity']);
         self::assertSame('i:'.$this->item->id, $result['summary']['positions'][0]['target_key']);
+        $book = app(EstimateFinanceExport::class)->workbook([$report], 'without_vat', [], 'execution');
+        try {
+            self::assertEquals($result['summary']['totals']['RUB']['cost'], $book->getSheet(0)->getCell('D2')->getValue());
+            self::assertEquals($result['summary']['positions'][0]['currencies']['RUB']['cost'], $book->getSheet(1)->getCell('E2')->getValue());
+            self::assertEquals($result['summary']['contract_quantities'][0]['remaining_quantity'], $book->getSheet(3)->getCell('H2')->getValue());
+            self::assertEquals($factLine->id, $book->getSheet(5)->getCell('E2')->getValue());
+        } finally {
+            $book->disconnectWorksheets();
+        }
     }
 
     public function test_execution_report_does_not_query_acts_without_permission(): void
