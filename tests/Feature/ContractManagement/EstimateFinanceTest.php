@@ -62,6 +62,76 @@ final class EstimateFinanceTest extends TestCase
         $this->finance = app(EstimateFinanceService::class);
     }
 
+    public function test_cash_sources_keep_partial_payments_refunds_and_currency_separate(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $document = $this->cashDocument($this->customer, 'incoming');
+        $payment = $this->cashTransaction($document->id, '400');
+        $this->cashTransaction($document->id, '200');
+        $refund = $this->cashTransaction($document->id, '-100', ['reverses_transaction_id' => $payment->id]);
+        $this->cashTransaction($document->id, '999', ['status' => 'pending']);
+        $this->cashTransaction($document->id, '10', ['currency' => 'USD']);
+        $foreignOrg = Organization::factory()->create();
+        $this->cashTransaction($document->id, '999', ['organization_id' => $foreignOrg->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $this->estimate->organization_id]);
+        $this->cashTransaction($document->id, '999', ['project_id' => $otherProject->id]);
+        $result = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash')['cash'];
+        self::assertSame('linked_contracts', $result['scope']);
+        self::assertCount(4, $result['sources']);
+        self::assertCount(1, $result['documents']);
+        self::assertSame('500.00', $result['documents'][0]['confirmed_amounts']['RUB']);
+        self::assertSame('10.00', $result['documents'][0]['confirmed_amounts']['USD']);
+        self::assertSame('600.00', $result['documents'][0]['recorded_paid_amount']);
+        self::assertSame('-100.00', array_values(array_filter($result['sources'], fn ($source) => $source['transaction_id'] === $refund->id))[0]['amount']);
+        self::assertSame('revenue', $result['sources'][0]['side']);
+        self::assertSame('advance', $result['sources'][0]['invoice_type']);
+        self::assertArrayNotHasKey('estimate_amount', $result['documents'][0]);
+    }
+
+    public function test_cash_sources_resolve_act_contract_and_flag_missing_history_and_direction(): void
+    {
+        $this->save($this->command([$this->line($this->contractor, '100', '1000000')]));
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id, 'project_id' => $this->estimate->project_id,
+            'act_document_number' => 'CASH-ACT', 'act_date' => '2026-09-12', 'amount' => '1000', 'currency' => 'RUB', 'status' => 'approved']);
+        $document = $this->cashDocument($this->contractor, 'incoming');
+        $document->update(['invoiceable_type' => \App\Models\ContractPerformanceAct::class, 'invoiceable_id' => $act->id]);
+        $this->cashTransaction($document->id, '100');
+        $missing = $this->cashDocument($this->contractor, 'outgoing');
+        $result = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash')['cash'];
+        self::assertCount(2, $result['documents']);
+        self::assertSame($act->id, $result['sources'][0]['act_id']);
+        self::assertSame('unknown', $result['sources'][0]['side']);
+        self::assertTrue($result['sources'][0]['direction_requires_review']);
+        self::assertTrue(array_values(array_filter($result['documents'], fn ($entry) => $entry['id'] === $missing->id))[0]['payment_history_missing']);
+    }
+
+    public function test_cash_report_does_not_query_payments_without_both_permissions(): void
+    {
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(fn ($actor, $permission) => $permission !== 'payments.transaction.view');
+        $queries = [];
+        \Illuminate\Support\Facades\DB::listen(function ($query) use (&$queries): void { $queries[] = $query->sql; });
+        $result = app(EstimateFinanceService::class)->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash')['cash'];
+        self::assertFalse($result['available']);
+        self::assertNull($result['sources']);
+        self::assertSame([], array_values(array_filter($queries, fn ($sql) => str_contains($sql, 'payment_documents') || str_contains($sql, 'payment_transactions'))));
+    }
+
+    private function cashDocument(Contract $contract, string $direction): \App\BusinessModules\Core\Payments\Models\PaymentDocument
+    {
+        return \App\BusinessModules\Core\Payments\Models\PaymentDocument::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'document_type' => 'invoice', 'document_number' => 'CASH-'.Str::uuid(),
+            'document_date' => '2026-09-12', 'due_date' => '2026-09-12', 'direction' => $direction, 'invoice_type' => 'advance',
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id, 'amount' => '1000', 'paid_amount' => '600', 'remaining_amount' => '400',
+            'currency' => 'RUB', 'status' => 'partially_paid', 'created_by_user_id' => $this->actor->id]);
+    }
+
+    private function cashTransaction(int $documentId, string $amount, array $extra = []): \App\BusinessModules\Core\Payments\Models\PaymentTransaction
+    {
+        return \App\BusinessModules\Core\Payments\Models\PaymentTransaction::query()->create($extra + ['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'payment_document_id' => $documentId, 'amount' => $amount, 'currency' => 'RUB',
+            'status' => 'completed', 'payment_method' => 'bank_transfer', 'transaction_date' => '2026-09-12', 'created_by_user_id' => $this->actor->id]);
+    }
+
     public function test_execution_report_uses_approved_documents_and_keeps_unallocated_amount(): void
     {
         $line = $this->line($this->contractor, '100', '1000000');

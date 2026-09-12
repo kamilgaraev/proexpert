@@ -29,11 +29,12 @@ final class EstimateFinanceService
         private readonly EstimateFinanceExecution $execution,
         private readonly EstimateFinanceExecutionSummary $executionSummary,
         private readonly EstimateFinanceProjectExecution $projectExecution,
+        private readonly EstimateFinanceCashSources $cashSources,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat', string $view = 'plan'): array
     {
-        if (! in_array($view, ['plan', 'execution'], true)) {
+        if (! in_array($view, ['plan', 'execution', 'cash'], true)) {
             $this->invalid();
         }
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
@@ -201,6 +202,9 @@ final class EstimateFinanceService
             'can_view_execution' => $canViewExecution,
             'view' => $view,
             'execution' => $execution,
+            'cash' => $view !== 'cash' ? null : ($this->access->canViewCash($actor, (int) $estimate->project_id)
+                ? $this->cashSources->report($estimate, $contracts)
+                : ['available' => false, 'scope' => 'linked_contracts', 'sources' => null, 'documents' => null]),
         ];
     }
 

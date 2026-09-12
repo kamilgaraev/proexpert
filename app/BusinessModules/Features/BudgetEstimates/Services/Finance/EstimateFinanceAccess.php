@@ -80,4 +80,12 @@ final class EstimateFinanceAccess
         return $this->authorization->can($actor, 'contracts.performance_acts.view', $context)
             || $this->authorization->can($actor, 'act_reports.view', $context);
     }
+
+    public function canViewCash(User $actor, int $projectId): bool
+    {
+        $context = ['context_type' => 'project', 'project_id' => $projectId, 'organization_id' => (int) $actor->current_organization_id];
+
+        return $this->authorization->can($actor, 'payments.invoice.view', $context)
+            && $this->authorization->can($actor, 'payments.transaction.view', $context);
+    }
 }
