@@ -11,9 +11,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 final class DesignCompositionRevision extends Model
 {
-    protected $fillable = ['organization_id', 'project_id', 'package_id', 'revision_number', 'status', 'composition', 'fingerprint', 'created_by', 'approved_by', 'approved_at', 'needs_review_reason'];
+    protected $fillable = ['organization_id', 'project_id', 'package_id', 'revision_number', 'state_version', 'status', 'composition', 'fingerprint', 'created_by', 'approved_by', 'approved_at', 'needs_review_reason'];
 
-    protected $casts = ['composition' => 'array', 'approved_at' => 'datetime'];
+    protected $casts = ['state_version' => 'integer', 'composition' => 'array', 'approved_at' => 'datetime'];
 
     public function package(): BelongsTo
     {

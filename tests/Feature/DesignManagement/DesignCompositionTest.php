@@ -45,7 +45,7 @@ final class DesignCompositionTest extends TestCase
             $this->assertEquals($documents, $revision->composition[$key][0]['documents']);
             $this->assertSame($section->id, $revision->composition[$key][0]['legacy_section_id']);
             $next = app(DesignCompositionService::class)->createRevision($package->fresh(), $context->user, [
-                'expected_revision' => 1, 'composition' => $revision->composition,
+                'expected_revision' => 1, 'expected_state_version' => 1, 'composition' => $revision->composition,
             ]);
             $this->assertEquals($documents, $next->composition[$key][0]['documents']);
             $this->assertEquals($documents, $section->fresh()->metadata['documents']);
@@ -93,7 +93,7 @@ final class DesignCompositionTest extends TestCase
         $this->assertSame(['approve', 'create_revision', 'needs_review', 'exclusions'], $actions($revision));
         $approved = $service->approve($revision, $context->user);
         $this->assertSame(['create_revision', 'needs_review'], $actions($approved));
-        $next = $service->createRevision($package, $context->user, [...$this->pdPayload($project->id), 'expected_revision' => 1]);
+        $next = $service->createRevision($package, $context->user, [...$this->pdPayload($project->id), 'expected_revision' => 1, 'expected_state_version' => 2]);
         $this->assertSame([], $actions($approved));
         foreach (['issued', 'archived'] as $status) {
             $package->update(['status' => $status]);
@@ -121,7 +121,7 @@ final class DesignCompositionTest extends TestCase
             $service->exclude($draft, $context->user, ['item_key' => 'AR', 'reason' => 'Изменение задания']);
             self::fail('An approved revision must reject exclusion from a stale draft instance.');
         } catch (DomainException $exception) {
-            self::assertSame(trans_message('design_composition.errors.approved_revision_locked'), $exception->getMessage());
+            self::assertSame(trans_message('design_composition.errors.revision_conflict'), $exception->getMessage());
         }
         self::assertSame(0, $draft->exclusions()->count());
         self::assertSame('approved', $draft->fresh()->status);
@@ -195,7 +195,7 @@ final class DesignCompositionTest extends TestCase
         $first = $service->createRevision($package, $context->user, ['composition' => ['sections' => [['code' => 'AR']]]]);
         $service->approve($first, $context->user);
         $check = app(DesignCompletenessService::class)->run($package->fresh(), $context->user->id);
-        $second = $service->createRevision($package->fresh(), $context->user, ['composition' => ['sections' => [['code' => 'AR']]], 'expected_revision' => 1]);
+        $second = $service->createRevision($package->fresh(), $context->user, ['composition' => ['sections' => [['code' => 'AR']]], 'expected_revision' => 1, 'expected_state_version' => 2]);
 
         $this->assertSame('draft', $second->status);
         $this->assertFalse(app(DesignCompletenessService::class)->isFreshForPackage($package->fresh(), $check));
@@ -219,7 +219,7 @@ final class DesignCompositionTest extends TestCase
             }
             $this->assertSame($first->id, $package->fresh()->composition_revision_id);
         }
-        $second = $service->createRevision($package->fresh(), $context->user, ['composition' => $composition, 'expected_revision' => 1]);
+        $second = $service->createRevision($package->fresh(), $context->user, ['composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 1]);
         $this->assertSame(2, $second->revision_number);
     }
 

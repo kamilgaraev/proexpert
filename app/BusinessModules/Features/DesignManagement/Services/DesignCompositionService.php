@@ -36,9 +36,13 @@ final class DesignCompositionService
             if (in_array($locked->status->value, ['issued', 'archived'], true)) {
                 throw new DomainException(trans_message('design_composition.errors.issued_package_locked'));
             }
-            $latest = (int) DesignCompositionRevision::query()->where('package_id', $locked->id)->max('revision_number');
+            $current = DesignCompositionRevision::query()->where('package_id', $locked->id)->orderByDesc('revision_number')->lockForUpdate()->first();
+            $latest = (int) ($current?->revision_number ?? 0);
             if ((int) ($payload['expected_revision'] ?? 0) !== $latest) {
                 throw new DomainException(trans_message('design_composition.errors.revision_conflict'));
+            }
+            if ($current !== null) {
+                $this->assertStateVersion($current, (int) ($payload['expected_state_version'] ?? 0));
             }
             $number = $latest + 1;
             $revision = DesignCompositionRevision::query()->create(['organization_id' => $locked->organization_id, 'project_id' => $locked->project_id, 'package_id' => $locked->id, 'revision_number' => $number, 'status' => 'draft', 'composition' => $composition, 'fingerprint' => hash('sha256', json_encode($composition, JSON_THROW_ON_ERROR)), 'created_by' => $actor->id]);
@@ -51,33 +55,38 @@ final class DesignCompositionService
         });
     }
 
-    public function approve(DesignCompositionRevision $revision, User $actor): DesignCompositionRevision
+    public function approve(DesignCompositionRevision $revision, User $actor, ?int $expectedStateVersion = null): DesignCompositionRevision
     {
         $this->authorize($actor, 'design-management.composition.approve', (int) $revision->organization_id, (int) $revision->project_id);
 
-        return DB::transaction(function () use ($revision, $actor): DesignCompositionRevision {
+        return DB::transaction(function () use ($revision, $actor, $expectedStateVersion): DesignCompositionRevision {
             $package = DesignPackage::query()->whereKey($revision->package_id)->lockForUpdate()->firstOrFail();
             $locked = DesignCompositionRevision::query()->whereKey($revision->id)->lockForUpdate()->firstOrFail();
+            $this->assertStateVersion($locked, $expectedStateVersion ?? (int) $revision->state_version);
             if (in_array($package->status->value, ['issued', 'archived'], true) || (int) $package->composition_revision_id !== (int) $locked->id) {
                 throw new DomainException(trans_message('design_composition.errors.issued_package_locked'));
             }
-            $locked->update(['status' => 'approved', 'approved_by' => $actor->id, 'approved_at' => now(), 'needs_review_reason' => null]);
+            if ($locked->status === 'approved') {
+                throw new DomainException(trans_message('design_composition.errors.revision_conflict'));
+            }
+            $locked->update(['state_version' => $locked->state_version + 1, 'status' => 'approved', 'approved_by' => $actor->id, 'approved_at' => now(), 'needs_review_reason' => null]);
             DesignPackage::query()->whereKey($locked->package_id)->update(['composition_status' => 'approved', 'composition_revision_id' => $locked->id, 'updated_by' => $actor->id]);
 
             return $locked->fresh(['author', 'approvedBy', 'exclusions.author']);
         });
     }
 
-    public function needsReview(DesignCompositionRevision $revision, User $actor, string $reason): DesignCompositionRevision
+    public function needsReview(DesignCompositionRevision $revision, User $actor, string $reason, ?int $expectedStateVersion = null): DesignCompositionRevision
     {
         $this->authorize($actor, 'design-management.composition.edit', (int) $revision->organization_id, (int) $revision->project_id);
-        return DB::transaction(function () use ($revision, $actor, $reason): DesignCompositionRevision {
+        return DB::transaction(function () use ($revision, $actor, $reason, $expectedStateVersion): DesignCompositionRevision {
             $package = DesignPackage::query()->whereKey($revision->package_id)->lockForUpdate()->firstOrFail();
             $locked = DesignCompositionRevision::query()->whereKey($revision->id)->lockForUpdate()->firstOrFail();
+            $this->assertStateVersion($locked, $expectedStateVersion ?? (int) $revision->state_version);
             if (in_array($package->status->value, ['issued', 'archived'], true) || (int) $package->composition_revision_id !== (int) $locked->id) {
                 throw new DomainException(trans_message('design_composition.errors.issued_package_locked'));
             }
-            $locked->update(['status' => 'needs_review', 'needs_review_reason' => $reason]);
+            $locked->update(['state_version' => $locked->state_version + 1, 'status' => 'needs_review', 'needs_review_reason' => $reason]);
             $package->update(['composition_status' => 'needs_review', 'updated_by' => $actor->id]);
 
             return $locked->fresh(['author', 'approvedBy', 'exclusions.author']);
@@ -90,6 +99,7 @@ final class DesignCompositionService
         return DB::transaction(function () use ($revision, $actor, $payload): DesignCompositionExclusion {
             $package = DesignPackage::query()->whereKey($revision->package_id)->lockForUpdate()->firstOrFail();
             $locked = DesignCompositionRevision::query()->whereKey($revision->id)->lockForUpdate()->firstOrFail();
+            $this->assertStateVersion($locked, (int) ($payload['expected_state_version'] ?? $revision->state_version));
             if ($locked->status === 'approved') {
                 throw new DomainException(trans_message('design_composition.errors.approved_revision_locked'));
             }
@@ -100,6 +110,8 @@ final class DesignCompositionService
                 throw new DomainException(trans_message('design_composition.errors.exclusion_item_not_found'));
             }
 
+            $locked->increment('state_version');
+
             return DesignCompositionExclusion::query()->create(['organization_id' => $locked->organization_id, 'project_id' => $locked->project_id, 'package_id' => $locked->package_id, 'revision_id' => $locked->id, 'item_key' => $payload['item_key'], 'reason' => $payload['reason'], 'created_by' => $actor->id])->fresh('author');
         });
     }
@@ -109,6 +121,13 @@ final class DesignCompositionService
         $this->authorize($actor, 'design-management.view', (int) $package->organization_id, (int) $package->project_id);
 
         return DesignCompositionRevision::query()->where('package_id', $package->id)->whereKey($package->composition_revision_id)->with(['author', 'approvedBy', 'exclusions.author'])->first();
+    }
+
+    private function assertStateVersion(DesignCompositionRevision $revision, int $expected): void
+    {
+        if ($expected < 1 || $expected !== (int) $revision->state_version) {
+            throw new DomainException(trans_message('design_composition.errors.revision_conflict'));
+        }
     }
 
     private function authorize(User $actor, string $permission, int $organizationId, int $projectId): void

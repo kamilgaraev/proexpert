@@ -1706,10 +1706,10 @@ final class DesignManagementApiTest extends TestCase
 
         $composition = $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/design-management/composition/packages/{$package->id}/revisions", [
             'composition' => ['brand' => 'AR', 'document_groups' => [['code' => 'AR', 'title' => 'Архитектурные решения']]],
-            'expected_revision' => 1,
+            'expected_revision' => 1, 'expected_state_version' => 2,
         ])->assertCreated();
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/design-management/composition/revisions/'.$composition->json('data.id').'/approve')
+            ->postJson('/api/v1/admin/design-management/composition/revisions/'.$composition->json('data.id').'/approve', ['expected_state_version' => 1])
             ->assertOk();
 
         foreach (['submit_norm_control', 'submit_customer_review', 'approve', 'issue'] as $action) {
@@ -1747,7 +1747,7 @@ final class DesignManagementApiTest extends TestCase
             ])->assertOk()->json('data.effective_composition');
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/design-management/composition/packages/{$packageId}/revisions", [
-                'composition' => $composition, 'expected_revision' => 1,
+                'composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 1,
             ])->assertCreated();
         $this->assertEquals($preview, $response->json('data.composition'));
         $this->assertSame(['AR'], DesignPackageSection::query()->where('package_id', $packageId)->pluck('code')->all());
@@ -1768,15 +1768,60 @@ final class DesignManagementApiTest extends TestCase
         $group = ['code' => 'AR', 'documents' => [$document]];
         $url = "/api/v1/admin/design-management/composition/packages/{$packageId}/revisions";
         $this->withHeaders($context->authHeaders())->postJson($url, [
-            'composition' => ['brand' => 'AR', 'document_groups' => [$group]], 'expected_revision' => 1,
+            'composition' => ['brand' => 'AR', 'document_groups' => [$group]], 'expected_revision' => 1, 'expected_state_version' => 1,
         ])->assertCreated();
         $artifact = DesignArtifact::query()->where('package_id', $packageId)->where('document_code', 'AR-01')->sole();
         $group['documents'][] = ['document_code' => 'AR-02', 'document_title' => 'Фасады'];
         $this->withHeaders($context->authHeaders())->postJson($url, [
-            'composition' => ['brand' => 'AR', 'document_groups' => [$group]], 'expected_revision' => 2,
+            'composition' => ['brand' => 'AR', 'document_groups' => [$group]], 'expected_revision' => 2, 'expected_state_version' => 1,
         ])->assertCreated();
         $this->assertSame($artifact->id, DesignArtifact::query()->where('package_id', $packageId)->where('document_code', 'AR-01')->sole()->id);
         $this->assertSame(['AR-01', 'AR-02'], DesignArtifact::query()->where('package_id', $packageId)->where('section_id', $artifact->section_id)->orderBy('document_code')->pluck('document_code')->all());
+    }
+
+    public function test_composition_state_version_rejects_stale_mutations_without_writing(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+        $revision = \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()
+            ->where('package_id', $packageId)->sole();
+        $base = '/api/v1/admin/design-management/composition';
+        $url = $base.'/revisions/'.$revision->id;
+        $headers = $context->authHeaders();
+        $composition = $revision->composition;
+        $this->getJson($base.'/packages/'.$packageId.'/composition', $headers)->assertOk()->assertJsonPath('data.revision.state_version', 1);
+        foreach (['approve' => [], 'needs-review' => ['reason' => 'Проверка'], 'exclusions' => ['item_key' => 'AR', 'reason' => 'Уточнение']] as $action => $payload) {
+            foreach ([[], ['expected_state_version' => 0], ['expected_state_version' => 'invalid']] as $token) {
+                $this->postJson($url.'/'.$action, $payload + $token, $headers)->assertUnprocessable();
+            }
+        }
+        $this->postJson($base.'/packages/'.$packageId.'/revisions', ['composition' => $composition, 'expected_revision' => 1], $headers)->assertUnprocessable();
+        $this->postJson($url.'/exclusions', ['item_key' => 'AR', 'reason' => 'Уточнение', 'expected_state_version' => 1], $headers)->assertOk();
+        $this->assertSame(2, $revision->fresh()->state_version);
+        $conflict = trans_message('design_composition.errors.revision_conflict');
+        foreach (['approve' => [], 'exclusions' => ['item_key' => 'AR', 'reason' => 'Устаревшее исключение']] as $action => $payload) {
+            $this->postJson($url.'/'.$action, $payload + ['expected_state_version' => 1], $headers)->assertUnprocessable()->assertJsonPath('message', $conflict);
+        }
+        $this->postJson($base.'/packages/'.$packageId.'/revisions', ['composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 1], $headers)->assertUnprocessable()->assertJsonPath('message', $conflict);
+        $this->assertSame(1, $revision->exclusions()->count());
+        $this->assertSame(1, $revision->newQuery()->where('package_id', $packageId)->count());
+        $this->postJson($url.'/approve', ['expected_state_version' => 2], $headers)->assertOk()->assertJsonPath('data.state_version', 3);
+        $approved = $revision->fresh()->getRawOriginal();
+        foreach (['approve' => [], 'needs-review' => ['reason' => 'Устаревший пересмотр']] as $action => $payload) {
+            $this->postJson($url.'/'.$action, $payload + ['expected_state_version' => 2], $headers)->assertUnprocessable()->assertJsonPath('message', $conflict);
+        }
+        $this->postJson($url.'/approve', ['expected_state_version' => 3], $headers)->assertUnprocessable();
+        $this->assertSame($approved, $revision->fresh()->getRawOriginal());
+        $this->postJson($url.'/needs-review', ['reason' => 'Актуальный пересмотр', 'expected_state_version' => 3], $headers)->assertOk()->assertJsonPath('data.state_version', 4);
+        $this->postJson($url.'/exclusions', ['item_key' => 'AR', 'reason' => 'Устаревшее исключение', 'expected_state_version' => 3], $headers)->assertUnprocessable()->assertJsonPath('message', $conflict);
+        $this->postJson($base.'/packages/'.$packageId.'/revisions', ['composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 4], $headers)
+            ->assertCreated()->assertJsonPath('data.revision_number', 2)->assertJsonPath('data.state_version', 1);
+        $this->assertSame($approved['approved_by'], $revision->fresh()->getRawOriginal('approved_by'));
+        $this->assertSame($approved['approved_at'], $revision->fresh()->getRawOriginal('approved_at'));
+        $this->assertSame(1, $revision->exclusions()->count());
     }
 
     public function test_composition_revision_http_requires_and_checks_the_displayed_revision(): void
@@ -1791,9 +1836,9 @@ final class DesignManagementApiTest extends TestCase
         foreach ([[], ['expected_revision' => null], ['expected_revision' => 0]] as $token) {
             $this->withHeaders($context->authHeaders())->postJson($url, ['composition' => $composition] + $token)->assertUnprocessable();
         }
-        $this->withHeaders($context->authHeaders())->postJson($url, ['composition' => $composition, 'expected_revision' => 1])
+        $this->withHeaders($context->authHeaders())->postJson($url, ['composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 1])
             ->assertCreated()->assertJsonPath('data.revision_number', 2);
-        $this->withHeaders($context->authHeaders())->postJson($url, ['composition' => $composition, 'expected_revision' => 1])->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())->postJson($url, ['composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 1])->assertUnprocessable();
         $this->assertSame(2, (int) \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->where('package_id', $packageId)->max('revision_number'));
     }
 
@@ -1809,11 +1854,11 @@ final class DesignManagementApiTest extends TestCase
         ]];
         $url = "/api/v1/admin/design-management/composition/packages/{$packageId}/revisions";
         $this->withHeaders($context->authHeaders())->postJson($url, [
-            'composition' => $composition, 'expected_revision' => 1,
+            'composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 1,
         ])->assertCreated();
         $artifact = DesignArtifact::query()->where('package_id', $packageId)->where('document_code', 'AR-EXTRA')->sole();
         $this->withHeaders($context->authHeaders())->postJson($url, [
-            'composition' => $composition, 'expected_revision' => 2,
+            'composition' => $composition, 'expected_revision' => 2, 'expected_state_version' => 1,
         ])->assertCreated();
         $this->assertSame($artifact->id, DesignArtifact::query()->where('package_id', $packageId)->where('document_code', 'AR-EXTRA')->sole()->id);
         $this->assertSame(['AR'], DesignPackageSection::query()->where('package_id', $packageId)->pluck('code')->all());
@@ -1829,7 +1874,7 @@ final class DesignManagementApiTest extends TestCase
         $revisionId = DesignPackage::query()->findOrFail($packageId)->composition_revision_id;
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/design-management/composition/packages/{$packageId}/revisions", [
-                'expected_revision' => 1,
+                'expected_revision' => 1, 'expected_state_version' => 1,
                 'composition' => ['brand' => 'AR', 'document_groups' => [
                     ['code' => 'AR', 'documents' => [['document_code' => 'AR-01'], ['document_code' => ' ar-01 ']]],
                 ]],
@@ -2693,7 +2738,7 @@ final class DesignManagementApiTest extends TestCase
     {
         $revisionId = (int) DesignPackage::query()->findOrFail($packageId)->composition_revision_id;
         $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/design-management/composition/revisions/{$revisionId}/approve")
+            ->postJson("/api/v1/admin/design-management/composition/revisions/{$revisionId}/approve", ['expected_state_version' => \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->findOrFail($revisionId)->state_version])
             ->assertOk();
     }
 
