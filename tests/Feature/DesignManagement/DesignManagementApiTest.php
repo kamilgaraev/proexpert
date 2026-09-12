@@ -41,6 +41,29 @@ use Tests\TestCase;
 
 final class DesignManagementApiTest extends TestCase
 {
+    public function test_bim_and_issues_respect_the_common_project_access_mode(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id, 'is_archived' => false]);
+        $foreign = Project::factory()->create(['is_archived' => false]);
+        $this->allowAdminAccess();
+        $this->mock(AccessController::class)->shouldReceive('hasModuleAccess')->andReturn(true);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/model-sets?project_id={$project->id}")->assertOk();
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/projects/{$project->id}/issues")->assertOk();
+        $access = app(\App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionAccessService::class);
+        $this->assertFalse($access->canAccessProject($context->user, $context->organization->id, $foreign->id));
+        $project->update(['is_archived' => true]);
+        $this->assertFalse($access->canAccessProject($context->user, $context->organization->id, $project->id));
+        $project->update(['is_archived' => false]);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/model-sets?project_id={$project->id}")->assertForbidden();
+        $this->attachProjectUser($project, $context->user);
+        $this->assertTrue($access->canAccessProject($context->user, $context->organization->id, $project->id));
+        $this->allowAdminAccess(['design-management.models.view']);
+        $this->assertFalse(app(\App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionAccessService::class)->canAccessProject($context->user, $context->organization->id, $project->id));
+    }
+
     public static function issueInterfaceSubscriptions(): array
     {
         return [
