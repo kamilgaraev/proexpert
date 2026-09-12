@@ -170,6 +170,54 @@ final class EstimateFinanceTest extends TestCase
         self::assertTrue($data[0]['item']['can_view_works']);
     }
 
+    public function test_large_estimate_reads_without_queries_per_position(): void
+    {
+        $rows = [];
+        for ($index = 0; $index < 8000; $index++) {
+            $rows[] = ['estimate_id' => $this->estimate->id, 'position_number' => (string) ($index + 2),
+                'name' => 'Импортированная позиция '.$index, 'item_type' => 'work', 'quantity' => 1,
+                'quantity_total' => 1, 'unit_price' => 100, 'total_amount' => 100, 'is_manual' => false];
+            if (count($rows) === 500) {
+                EstimateItem::query()->insert($rows);
+                $rows = [];
+            }
+        }
+        $rows = [];
+        foreach (EstimateItem::query()->where('estimate_id', $this->estimate->id)->get(['id', 'quantity', 'total_amount']) as $item) {
+            $rows[] = ['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
+                'estimate_item_id' => $item->id, 'quantity' => $item->quantity,
+                'amount' => $item->total_amount, 'amount_without_vat' => $item->total_amount, 'finance_managed' => false];
+            if (count($rows) === 500) {
+                ContractEstimateItem::query()->insert($rows);
+                $rows = [];
+            }
+        }
+        if ($rows !== []) {
+            ContractEstimateItem::query()->insert($rows);
+        }
+        $contracts = app(ContractEstimateService::class);
+        $progress = app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class);
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        \Illuminate\Support\Facades\DB::flushQueryLog();
+        $links = $contracts->getItemsForContract($this->contractor, $this->estimate->id);
+        $progress->prepare($this->contractor, $links, $this->actor);
+        $loadedQueries = count(\Illuminate\Support\Facades\DB::getQueryLog());
+        $serialized = \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource::collection($links)->resolve(request());
+        $serializedQueries = count(\Illuminate\Support\Facades\DB::getQueryLog());
+        $summary = app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class)
+            ->getContractCoverageSummary($this->contractor);
+        $report = $this->report();
+        $totalQueries = count(\Illuminate\Support\Facades\DB::getQueryLog());
+        \Illuminate\Support\Facades\DB::disableQueryLog();
+
+        self::assertCount(8001, $serialized);
+        self::assertCount(8001, $report['rows']);
+        self::assertSame($loadedQueries, $serializedQueries);
+        self::assertLessThanOrEqual(40, $totalQueries);
+        self::assertSame(8001, $summary['summary']['linked_items_count']);
+        self::assertSame(1800000.0, $summary['summary']['linked_amount']);
+    }
+
     public function test_contract_reads_financial_conditions_instead_of_stale_projection_amounts(): void
     {
         $this->save($this->command([$this->line($this->contractor, '100', '1000000')]));
