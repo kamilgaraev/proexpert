@@ -16,6 +16,7 @@ return new class extends Migration
         $calculator = new EstimateLaborHoursService;
 
         EstimateItem::query()
+            ->whereHas('estimate', fn ($query) => $query->whereIn('status', ['draft', 'in_review']))
             ->where('item_type', 'work')
             ->where('is_manual', true)
             ->whereNull('parent_work_id')
