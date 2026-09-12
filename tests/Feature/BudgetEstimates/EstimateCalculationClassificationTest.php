@@ -240,15 +240,51 @@ class EstimateCalculationClassificationTest extends TestCase
             ]);
             $works[] = $work;
         }
-        $estimate->update(['status' => 'approved', 'structure_cache_path' => 'old-snapshot.json']);
+        $estimate->update(['structure_cache_path' => 'old-snapshot.json']);
         $migration = require database_path('migrations/2026_09_12_180000_restore_imported_work_labor_hours.php');
         $migration->up();
         $migration->up();
         $this->assertEqualsWithDelta(4.235, $works[0]->fresh()->labor_hours, 0.000001);
         $this->assertEquals(7.5, $works[1]->fresh()->labor_hours);
         $this->assertEquals(900, $works[0]->fresh()->total_amount);
-        $this->assertSame('approved', $estimate->fresh()->status);
+        $this->assertSame('draft', $estimate->fresh()->status);
         $this->assertNull($estimate->fresh()->structure_cache_path);
+    }
+
+    public function test_backfill_skips_sealed_approved_estimates(): void
+    {
+        $estimate = $this->createEstimate();
+        $work = $this->createItem($estimate, [
+            'is_manual' => true,
+            'labor_hours' => 0,
+            'metadata' => ['raw_data' => []],
+        ]);
+        $this->createItem($estimate, [
+            'parent_work_id' => $work->id,
+            'item_type' => 'labor',
+            'labor_hours' => 4.235,
+            'is_manual' => true,
+            'is_not_accounted' => true,
+            'metadata' => ['raw_data' => []],
+        ]);
+        $version = \App\Models\EstimateVersion::query()->create([
+            'estimate_id' => $estimate->id,
+            'organization_id' => $estimate->organization_id,
+            'version_number' => 1,
+            'snapshot_type' => 'approval',
+            'estimate_status' => 'approved',
+            'status' => 'approved',
+            'snapshot' => [],
+        ]);
+        $estimate->update([
+            'status' => 'approved',
+            'current_version_id' => $version->id,
+            'structure_cache_path' => 'sealed-snapshot.json',
+        ]);
+        $migration = require database_path('migrations/2026_09_12_180000_restore_imported_work_labor_hours.php');
+        $migration->up();
+        $this->assertEquals(0, $work->fresh()->labor_hours);
+        $this->assertSame('sealed-snapshot.json', $estimate->fresh()->structure_cache_path);
     }
 
     private function createEstimate(): Estimate
