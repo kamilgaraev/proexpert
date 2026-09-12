@@ -43,7 +43,7 @@ class SaveEstimateFinanceRequest extends FormRequest
             'mutation_id' => ['required', 'uuid'],
             'transaction_id' => ['required', 'integer', 'min:1'],
             'source_hash' => [$preview ? 'sometimes' : 'required', 'string', 'regex:/^[a-f0-9]{64}$/'],
-            'lines' => ['required', 'array', $preview ? 'min:0' : 'min:1', 'max:20000'],
+            'lines' => ['present', 'array', $preview ? 'min:0' : 'min:1', 'max:20000'],
             'lines.*.allocation_key' => ['required', 'uuid', 'distinct'],
             'lines.*.condition_version' => ['required', 'integer', 'min:1'],
             'lines.*.version' => ['required', 'integer', 'min:0'],

@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
 
 final class EstimateFinanceCashSources
 {
-    public function __construct(private readonly EstimateFinanceCashSummary $summary) {}
+    public function __construct(private readonly EstimateFinanceCashSummary $summary, private readonly EstimateFinanceCashLedger $ledger) {}
 
     public function report(Estimate $estimate, array $contracts): array
     {
@@ -63,6 +63,6 @@ final class EstimateFinanceCashSources
         }
 
         return ['available' => true, 'scope' => 'linked_contracts', 'sources' => $sources, 'documents' => $documents,
-            'summary' => $this->summary->calculate($sources)];
+            'summary' => $this->summary->calculate($sources), 'distribution' => $this->ledger->report($estimate, $sources)];
     }
 }

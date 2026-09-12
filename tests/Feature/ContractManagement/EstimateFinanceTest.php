@@ -101,6 +101,17 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame(3, \Illuminate\Support\Facades\DB::table('estimate_finance_cash_versions')->count());
         self::assertSame('400.00', $payment->fresh()->amount);
         self::assertSame('-100.00', $refund->fresh()->amount);
+        $cashReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash')['cash'];
+        self::assertSame('300.00', $cashReport['summary']['totals']['RUB']['difference']);
+        self::assertSame('100.00', $cashReport['distribution']['totals']['RUB']['difference']);
+        self::assertSame('100.00', $cashReport['distribution']['positions'][0]['totals']['RUB']['difference']);
+        $states = array_column($cashReport['distribution']['sources'], null, 'transaction_id');
+        self::assertSame('200.00', $states[$payment->id]['remaining_amount']);
+        self::assertSame('0.00', $states[$refund->id]['remaining_amount']);
+        self::assertSame($updatePreview['source_hash'], $states[$payment->id]['source_hash']);
+        $probe = $this->cashCommand($allocation, $payment->id, '0');
+        $probe['lines'] = [];
+        self::assertSame('200.00', $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $probe)['remaining_amount']);
         try {
             $this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $this->command([]));
             self::fail('Cash-linked conditions were deleted');
@@ -141,8 +152,25 @@ final class EstimateFinanceTest extends TestCase
         $otherAllocation->contract_estimate_item_id = null;
         $otherAllocation->save();
         $otherCommand = $this->cashCommand($otherAllocation, $payment->id, '200');
-        $this->expectException(ValidationException::class);
-        $this->finance->preview($this->actor, $other->project_id, $other->id, $otherCommand);
+        try {
+            $this->finance->preview($this->actor, $other->project_id, $other->id, $otherCommand);
+            self::fail('Shared payment was overallocated');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('lines', $exception->errors());
+        }
+        $otherCommand['lines'][0]['amount'] = '100';
+        $otherPreview = $this->finance->preview($this->actor, $other->project_id, $other->id, $otherCommand);
+        $this->finance->save($this->actor, $other->project_id, $other->id, $otherCommand + ['source_hash' => $otherPreview['source_hash']]);
+        $secondReport = $this->finance->report($this->actor, $other->project_id, $other->id, 'with_vat', 'cash')['cash']['distribution'];
+        self::assertSame('0.00', $secondReport['sources'][0]['remaining_amount']);
+        self::assertSame('400.00', $secondReport['sources'][0]['allocated_amount']);
+        self::assertSame('100.00', $secondReport['sources'][0]['estimate_allocated_amount']);
+        self::assertCount(1, $secondReport['allocations']);
+        $project = $this->finance->projectReport($this->actor, $other->project_id, 'with_vat', false, 'cash')['cash']['distribution'];
+        self::assertSame('400.00', $project['totals']['RUB']['difference']);
+        self::assertCount(2, $project['allocations']);
+        self::assertCount(1, $project['sources']);
+        self::assertCount(2, $project['positions']);
     }
 
     public function test_cash_distribution_rejects_changed_source_and_requires_contract_permission(): void
@@ -164,6 +192,36 @@ final class EstimateFinanceTest extends TestCase
         } catch (\Illuminate\Auth\Access\AuthorizationException $exception) {
             self::assertSame(0, \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->count());
         }
+    }
+
+    public function test_cash_ledger_marks_changed_sources_and_hides_inconsistent_organization_links(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $payment = $this->cashTransaction($this->cashDocument($this->customer, 'incoming')->id, '400');
+        $command = $this->cashCommand($allocation, $payment->id, '300');
+        $preview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        $this->finance->save($this->actor, $this->estimate->project_id, $this->estimate->id, $command + ['source_hash' => $preview['source_hash']]);
+        \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->where('allocation_id', $allocation->id)->update(['amount' => '500']);
+        $overallocated = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash')['cash'];
+        self::assertSame('400.00', $overallocated['summary']['totals']['RUB']['difference']);
+        self::assertNull($overallocated['distribution']['sources'][0]['remaining_amount']);
+        self::assertNull($overallocated['distribution']['totals']['RUB']['difference']);
+        self::assertNull($overallocated['distribution']['positions'][0]['totals']['RUB']['difference']);
+        $project = $this->finance->projectReport($this->actor, $this->estimate->project_id, 'with_vat', false, 'cash')['cash'];
+        self::assertNull($project['distribution']['totals']['RUB']['difference']);
+        \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->where('allocation_id', $allocation->id)->update(['amount' => '300']);
+        \App\BusinessModules\Core\Payments\Models\PaymentDocument::query()->findOrFail($payment->payment_document_id)->update(['direction' => 'outgoing']);
+        $cash = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash')['cash']['distribution'];
+        self::assertTrue($cash['allocations'][0]['source_changed']);
+        self::assertNull($cash['sources'][0]['remaining_amount']);
+        self::assertNull($cash['totals']['RUB']['difference']);
+        $foreign = Organization::factory()->create();
+        \Illuminate\Support\Facades\DB::table('estimate_finance_cash_allocations')->where('allocation_id', $allocation->id)->update(['organization_id' => $foreign->id]);
+        $cash = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'cash')['cash']['distribution'];
+        self::assertSame([], $cash['allocations']);
+        self::assertTrue($cash['sources'][0]['requires_review']);
+        self::assertNull($cash['sources'][0]['allocated_amount']);
     }
 
     private function cashCommand(EstimateFinanceAllocation $allocation, int $transactionId, string $amount, int $version = 0): array
