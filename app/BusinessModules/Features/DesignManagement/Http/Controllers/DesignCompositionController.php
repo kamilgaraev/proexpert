@@ -98,11 +98,11 @@ final class DesignCompositionController extends Controller
         }
 
         try {
+            $data = $request->validate(['expected_state_version' => ['required', 'integer', 'min:1']] + ($action === 'approve' ? [] : ['reason' => ['required', 'string', 'max:2000']]));
             if ($action === 'approve') {
-                $result = $this->composition->approve($revision, $request->user());
+                $result = $this->composition->approve($revision, $request->user(), (int) $data['expected_state_version']);
             } else {
-                $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
-                $result = $this->composition->needsReview($revision, $request->user(), $data['reason']);
+                $result = $this->composition->needsReview($revision, $request->user(), $data['reason'], (int) $data['expected_state_version']);
             }
 
             return AdminResponse::success(new DesignCompositionRevisionResource($result));
