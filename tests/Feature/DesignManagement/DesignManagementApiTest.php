@@ -41,6 +41,37 @@ use Tests\TestCase;
 
 final class DesignManagementApiTest extends TestCase
 {
+    public function test_quality_keeps_the_project_snapshot_when_pir_is_disabled(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->attachProjectUser($project, $context->user);
+        $this->allowAdminAccess();
+        $this->mock(AccessController::class)->shouldReceive('hasModuleAccess')->andReturnUsing(
+            static fn (int $organizationId, string $module): bool => $module !== 'design-management',
+        );
+        $issue = \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'kind' => 'project', 'created_by' => $context->user->id, 'defect_number' => 'SNAPSHOT-1',
+            'title' => 'Project snapshot', 'severity' => 'major', 'status' => 'open', 'metadata' => [],
+        ]);
+        $path = "org-{$context->organization->id}/design-management/issues/{$issue->id}/snapshot.png";
+        $issue->update(['metadata' => ['design_issue_context' => ['snapshot' => ['path' => $path]]]]);
+        $this->mock(FileService::class)->shouldReceive('temporaryUrl')->once()
+            ->with($path, 60, Mockery::on(fn ($organization): bool => $organization instanceof \App\Models\Organization && $organization->id === $context->organization->id))
+            ->andReturn('https://storage.example/snapshot.png?signature=test');
+        $endpoint = "/api/v1/admin/quality-control/defects/{$issue->id}";
+        $this->withHeaders($context->authHeaders())->getJson($endpoint)->assertOk()
+            ->assertJsonPath('data.snapshot_url', 'https://storage.example/snapshot.png?signature=test');
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/projects/{$project->id}/issues")->assertForbidden();
+        foreach (["org-999999/design-management/issues/{$issue->id}/snapshot.png", "org-{$context->organization->id}/design-management/issues/999999/snapshot.png", dirname($path).'/../other.png'] as $invalidPath) {
+            $issue->update(['metadata' => ['design_issue_context' => ['snapshot' => ['path' => $invalidPath]]]]);
+            $this->withHeaders($context->authHeaders())->getJson($endpoint)->assertOk()->assertJsonPath('data.snapshot_url', null);
+        }
+        $issue->update(['kind' => 'construction', 'metadata' => ['design_issue_context' => ['snapshot' => ['path' => $path]]]]);
+        $this->withHeaders($context->authHeaders())->getJson($endpoint)->assertOk()->assertJsonPath('data.snapshot_url', null);
+    }
+
     public function test_bim_and_issues_respect_the_common_project_access_mode(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');

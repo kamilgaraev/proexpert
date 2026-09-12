@@ -50,6 +50,7 @@ final class QualityDefectResource extends JsonResource
             'resolved_at' => $defect->resolved_at?->toIso8601String(),
             'verified_at' => $defect->verified_at?->toIso8601String(),
             'metadata' => $defect->metadata,
+            'snapshot_url' => $this->projectSnapshotUrl($defect),
             'can_be_assigned' => $defect->canBeAssigned(),
             'can_be_started' => $defect->canBeStarted(),
             'can_be_resolved' => $defect->canBeResolved(),
@@ -92,6 +93,24 @@ final class QualityDefectResource extends JsonResource
             'created_at' => $defect->created_at->toIso8601String(),
             'updated_at' => $defect->updated_at->toIso8601String(),
         ];
+    }
+
+    private function projectSnapshotUrl(QualityDefect $defect): ?string
+    {
+        $path = data_get($defect->metadata, 'design_issue_context.snapshot.path');
+        $prefix = "org-{$defect->organization_id}/design-management/issues/{$defect->id}/";
+        if ($defect->kind !== 'project' || ! is_string($path) || ! str_starts_with($path, $prefix)
+            || preg_match('/[\\\\\x00-\x1F\x7F]/', $path) === 1
+            || preg_match('#(?:^|/)\.\.(?:/|$)#', $path) === 1) {
+            return null;
+        }
+        $organization = $defect->relationLoaded('organization')
+            ? $defect->organization
+            : Organization::query()->find($defect->organization_id);
+
+        return $organization instanceof Organization
+            ? app(FileService::class)->temporaryUrl($path, 60, $organization)
+            : null;
     }
 
     private function actionPayload(string $action): array
