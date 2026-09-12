@@ -10,6 +10,9 @@ Route::prefix('api/v1/admin/design-management')
     ->name('admin.design_management.')
     ->middleware(AdminRouteStack::middleware(['design-management.active']))
     ->group(function (): void {
+        Route::get('/projects/{projectId}/issues/assignees', [DesignProjectIssueController::class, 'assignees'])
+            ->middleware('authorize:design-management.review')
+            ->name('issues.assignees');
         Route::get('/projects/{projectId}/issues', [DesignProjectIssueController::class, 'index'])
             ->middleware('authorize:design-management.view')
             ->name('issues.index');

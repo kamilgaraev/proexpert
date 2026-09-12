@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\DesignManagement\Http\Controllers;
 
 use App\BusinessModules\Features\DesignManagement\Http\Requests\StoreDesignProjectIssueRequest;
+use App\BusinessModules\Features\DesignManagement\Http\Requests\ListDesignProjectIssueAssigneesRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Requests\DesignProjectIssueActionRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignProjectIssueResource;
 use App\BusinessModules\Features\DesignManagement\Services\DesignProjectIssueService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -33,6 +35,20 @@ final class DesignProjectIssueController extends Controller
     {
         try {
             return AdminResponse::success(new DesignProjectIssueResource($this->issues->create($request->user(), $this->organizationId($request), $projectId, $request->validated())), trans_message('design_issues.messages.created'), 201);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        }
+    }
+
+    public function assignees(ListDesignProjectIssueAssigneesRequest $request, int $projectId): JsonResponse
+    {
+        try {
+            $page = $this->issues->assignees($request->user(), $this->organizationId($request), $projectId, $request->validated());
+
+            return AdminResponse::paginated(
+                $page->getCollection()->map(static fn (User $user): array => ['id' => (int) $user->id, 'name' => $user->name]),
+                ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'per_page' => $page->perPage(), 'total' => $page->total(), 'from' => $page->firstItem(), 'to' => $page->lastItem()],
+            );
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         }
