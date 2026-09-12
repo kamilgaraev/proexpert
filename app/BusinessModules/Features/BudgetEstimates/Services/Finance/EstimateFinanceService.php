@@ -114,6 +114,15 @@ final class EstimateFinanceService
         }
         $targets = $this->query->targets($estimate);
         $allocations = $this->query->allocations($estimate);
+        $canViewExecution = $this->access->canViewExecution($actor);
+        $accepted = $canViewExecution ? $this->remainder->acceptedFacts($estimate, array_column($allocations, 'key')) : [];
+        foreach ($allocations as &$allocation) {
+            $allocation['accepted_basis'] = $canViewExecution ? ($accepted[$allocation['key']] ?? null) : null;
+            if (! $canViewExecution) {
+                $allocation['condition_basis'] = null;
+            }
+        }
+        unset($allocation);
         $calculation = $this->calculator->calculate($targets, $allocations, $basis);
         $sections = $estimate->sections()->get(['id', 'parent_section_id', 'name'])->toArray();
         $sectionRows = [];
@@ -162,6 +171,7 @@ final class EstimateFinanceService
             'limit' => $basis === 'with_vat' ? $estimate->total_amount_with_vat : $estimate->total_amount,
             'sections' => $sections,
             'contracts' => $contracts, 'can_edit' => $this->access->can($actor, (int) $estimate->project_id, true),
+            'can_view_execution' => $canViewExecution,
         ];
     }
 
@@ -169,7 +179,19 @@ final class EstimateFinanceService
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
 
-        return $this->history->forEstimate($estimate, max(0, $afterId));
+        $history = $this->history->forEstimate($estimate, max(0, $afterId));
+        if (! $this->access->canViewExecution($actor)) {
+            foreach ($history['data'] as &$entry) {
+                foreach (['before', 'after'] as $snapshot) {
+                    if (is_array($entry[$snapshot])) {
+                        unset($entry[$snapshot]['accepted_basis'], $entry[$snapshot]['condition_basis']);
+                    }
+                }
+            }
+            unset($entry);
+        }
+
+        return $history;
     }
 
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array

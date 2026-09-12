@@ -69,4 +69,11 @@ final class EstimateFinanceAccess
             throw new AuthorizationException;
         }
     }
+
+    public function canViewExecution(User $actor): bool
+    {
+        return $this->authorization->can($actor, 'act_reports.view', [
+            'organization_id' => (int) $actor->current_organization_id,
+        ]);
+    }
 }

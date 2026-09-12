@@ -12,7 +12,7 @@ final class EstimateFinanceRemainder
 {
     public function apply(Estimate $estimate, array $rows): array
     {
-        $facts = $this->facts($estimate, array_column($rows, 'key'));
+        $facts = $this->acceptedFacts($estimate, array_column($rows, 'key'));
         foreach ($rows as &$row) {
             $accepted = $facts[$row['key']] ?? null;
             $row['accepted_basis'] = $accepted;
@@ -48,7 +48,7 @@ final class EstimateFinanceRemainder
         return $rows;
     }
 
-    private function facts(Estimate $estimate, array $keys): array
+    public function acceptedFacts(Estimate $estimate, array $keys): array
     {
         if ($keys === []) {
             return [];

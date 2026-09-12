@@ -319,6 +319,7 @@ final class EstimateFinanceTest extends TestCase
             'currency' => 'RUB', 'manual_reason' => 'Принятые работы', 'basis_snapshot' => $basis['snapshot'], 'created_by' => $this->actor->id]);
         $act->update(['status' => 'approved', 'is_approved' => true]);
         $before = $actLine->fresh()->getAttributes();
+        self::assertSame('120000.00', $this->report()['rows'][0]['allocations'][0]['accepted_basis']['amount_with_vat']);
         $line['method'] = 'unit';
         $line['unit_price'] = '12000';
         foreach ([1, 2] as $attempt) {
@@ -340,6 +341,28 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('11000.00', $basisService->resolve($this->item, $this->contractor)['unit_price']);
         self::assertSame($before, $actLine->fresh()->getAttributes());
         self::assertSame('1000000.00', ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->firstOrFail()->amount);
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(
+            static fn ($actor, string $permission): bool => $permission !== 'act_reports.view');
+        $restricted = app(EstimateFinanceService::class);
+        \Illuminate\Support\Facades\DB::flushQueryLog();
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        try {
+            $report = $restricted->report($this->actor, $this->estimate->project_id, $this->estimate->id);
+            self::assertFalse($report['can_view_execution']);
+            self::assertNull($report['rows'][0]['allocations'][0]['accepted_basis']);
+            self::assertNull($report['rows'][0]['allocations'][0]['condition_basis']);
+            foreach (\Illuminate\Support\Facades\DB::getQueryLog() as $query) {
+                self::assertStringNotContainsString('performance_act', $query['query']);
+            }
+        } finally {
+            \Illuminate\Support\Facades\DB::disableQueryLog();
+            \Illuminate\Support\Facades\DB::flushQueryLog();
+        }
+        $history = $restricted->history($this->actor, $this->estimate->project_id, $this->estimate->id);
+        foreach ($history['data'] as $entry) {
+            self::assertArrayNotHasKey('accepted_basis', $entry['after']);
+            self::assertArrayNotHasKey('condition_basis', $entry['after']);
+        }
     }
 
     public function test_condition_history_preserves_snapshots_after_edit_and_delete(): void
