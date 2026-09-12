@@ -1059,6 +1059,147 @@ final class DesignManagementApiTest extends TestCase
         $this->assertDatabaseHas('design_source_links', ['id' => $link['id'], 'row_version' => 1]);
     }
 
+    public function test_other_target_cards_retain_safe_history_over_http_when_pir_is_disabled(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreign = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $deniedPermission = null;
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use (&$deniedPermission): void {
+            $mock->shouldReceive('canAccessInterface')->andReturnTrue();
+            $mock->shouldReceive('can')->andReturnUsing(
+                static function (User $user, string $permission, ?array $scope = null) use (&$deniedPermission): bool {
+                    return $permission !== $deniedPermission;
+                }
+            );
+            $mock->shouldReceive('hasRole')->andReturnTrue();
+            $mock->shouldReceive('getUserRoleSlugs')->andReturn(['project_manager']);
+            $mock->shouldReceive('getUserRoles')->andReturnUsing(
+                static fn (User $user) => $user->roleAssignments()->where('is_active', true)->get()
+            );
+        });
+        $active = true;
+        $missingModule = null;
+        $this->mock(AccessController::class, function (MockInterface $mock) use (&$active, &$missingModule): void {
+            $mock->shouldReceive('hasModuleAccess')->andReturnUsing(
+                static function (int $organizationId, string $slug) use (&$active, &$missingModule): bool {
+                    return ($slug !== 'design-management' || $active) && $slug !== $missingModule;
+                }
+            );
+        });
+        $package = DesignPackage::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'created_by' => $context->user->id, 'updated_by' => $context->user->id,
+            'title' => 'История после отключения ПИР', 'status' => 'draft', 'metadata' => [],
+        ]);
+        $source = $this->storedVersion($package, $context->user);
+        $estimate = \App\Models\Estimate::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'number' => 'PIR-EST', 'name' => 'Смета', 'type' => 'local', 'status' => 'draft',
+            'estimate_date' => '2026-09-12', 'total_amount' => 3000, 'total_amount_with_vat' => 3000,
+        ]);
+        $unit = \App\Models\MeasurementUnit::query()->create([
+            'organization_id' => $context->organization->id, 'name' => 'Тестовая единица ПИР', 'short_name' => 'pir-unit',
+            'type' => 'work', 'is_default' => false, 'is_system' => false,
+        ]);
+        $set = \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'created_by' => $context->user->id, 'set_number' => 'PIR-ID', 'title' => 'Исполнительная документация', 'status' => 'draft',
+        ]);
+        $schedule = \App\Models\ProjectSchedule::query()->create([
+            'project_id' => $project->id, 'organization_id' => $context->organization->id,
+            'created_by_user_id' => $context->user->id, 'name' => 'График проекта',
+            'planned_start_date' => '2026-09-01', 'planned_end_date' => '2026-09-30', 'status' => 'draft',
+        ]);
+        $task = \App\Models\ScheduleTask::query()->create([
+            'schedule_id' => $schedule->id, 'organization_id' => $context->organization->id,
+            'created_by_user_id' => $context->user->id, 'name' => 'Монтаж', 'task_type' => 'task',
+            'planned_start_date' => '2026-09-01', 'planned_end_date' => '2026-09-02',
+            'planned_duration_days' => 2, 'status' => 'not_started', 'priority' => 'normal',
+            'constraint_type' => 'none', 'level' => 0, 'sort_order' => 1,
+        ]);
+        $journal = \App\Models\ConstructionJournal::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'name' => 'Журнал проекта', 'journal_number' => '1', 'start_date' => '2026-09-01', 'status' => 'active',
+            'created_by_user_id' => $context->user->id,
+        ]);
+        $site = \App\BusinessModules\Features\SiteRequests\Models\SiteRequest::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'user_id' => $context->user->id, 'title' => 'Цемент на площадку',
+            'status' => \App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum::APPROVED,
+            'request_type' => \App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum::MATERIAL_REQUEST,
+            'priority' => 'medium', 'material_name' => 'Цемент', 'material_quantity' => 100, 'material_unit' => 'кг',
+        ]);
+        $purchase = \App\BusinessModules\Features\Procurement\Models\PurchaseRequest::query()->create([
+            'organization_id' => $context->organization->id, 'site_request_id' => $site->id,
+            'request_number' => 'PIR-OFF',
+            'status' => \App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum::PENDING,
+            'budget_currency' => 'RUB',
+        ]);
+        $entry = \App\Models\ConstructionJournalEntry::query()->create([
+            'journal_id' => $journal->id, 'entry_date' => '2026-09-12', 'entry_number' => 101,
+            'created_by_user_id' => $context->user->id, 'work_description' => 'Бетонирование',
+        ]);
+        $index = 0;
+        $decision = 'Отключение ПИР';
+        $targets = [
+            'estimate_item' => \App\Models\EstimateItem::query()->create([
+                'estimate_id' => $estimate->id, 'position_number' => (string) ($index + 1), 'item_type' => 'work',
+                'name' => 'Работа '.$decision, 'measurement_unit_id' => $unit->id, 'quantity' => 1,
+                'unit_price' => 1000, 'direct_costs' => 1000, 'total_amount' => 1000, 'is_manual' => true,
+            ]),
+            'executive_document' => \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument::query()->create([
+                'organization_id' => $context->organization->id, 'project_id' => $project->id,
+                'document_set_id' => $set->id, 'created_by' => $context->user->id,
+                'document_type' => 'incoming_control_document', 'title' => 'Паспорт '.$decision,
+                'status' => 'draft', 'document_date' => '2026-09-12', 'profile_data' => ['document_number' => 'ПС-'.$index],
+            ]),
+        ];
+        $targets += ['schedule_task' => $task, 'construction_journal_entry' => $entry, 'purchase_request' => $purchase];
+        $permissions = [
+            'estimate_item' => 'budget-estimates.view', 'schedule_task' => 'schedule.view',
+            'construction_journal_entry' => 'construction-journal.view',
+            'purchase_request' => 'procurement.purchase_requests.view', 'executive_document' => 'executive-documentation.view',
+        ];
+        $modules = [
+            'estimate_item' => 'budget-estimates', 'schedule_task' => 'schedule-management',
+            'construction_journal_entry' => 'budget-estimates', 'purchase_request' => 'procurement',
+            'executive_document' => 'executive-documentation',
+        ];
+        foreach ($targets as $type => $target) {
+            $active = true;
+            $deniedPermission = null;
+            $service = app(DesignSourceLinkService::class);
+            $link = $service->create($context->user, $context->organization->id, [
+                'source_version_id' => $source->id, 'target_type' => $type, 'target_id' => $target->id,
+            ]);
+            $service->delete($context->user, $context->organization->id, $link['id'], 'Историческая связь', 1);
+            $before = $target->fresh()->getRawOriginal();
+            $active = false;
+            $url = '/api/v1/admin/design-management/source-links/targets/'.$type.'/'.$target->id;
+            $response = $this->getJson($url, $context->authHeaders())->assertOk()
+                ->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $link['id'])
+                ->assertJsonPath('data.0.status', 'ended')->assertJsonPath('data.0.revision', 2)
+                ->assertJsonPath('data.0.ended_reason', 'Историческая связь')
+                ->assertJsonPath('data.0.source.available', false)
+                ->assertJsonPath('data.0.source.title', $link['source']['title'])
+                ->assertJsonPath('data.0.source_version_id', null)
+                ->assertJsonPath('data.0.source_sheet_id', null)
+                ->assertJsonPath('data.0.source_element_id', null);
+            $this->assertArrayNotHasKey('download_url', $response->json('data.0.source'));
+            $this->getJson('/api/v1/admin/design-management/source-links/'.$link['id'].'/context', $context->authHeaders())->assertForbidden();
+            $this->deleteJson('/api/v1/admin/design-management/source-links/'.$link['id'], ['expected_revision' => 2, 'reason' => 'Повтор'], $context->authHeaders())->assertForbidden();
+            $this->getJson($url, $foreign->authHeaders())->assertUnprocessable();
+            $missingModule = $modules[$type];
+            $this->getJson($url, $context->authHeaders())->assertUnprocessable();
+            $missingModule = null;
+            $deniedPermission = $permissions[$type];
+            $this->getJson($url, $context->authHeaders())->assertUnprocessable();
+            $this->assertSame($before, $target->fresh()->getRawOriginal());
+            $this->assertDatabaseHas('design_source_links', ['id' => $link['id'], 'status' => 'ended', 'row_version' => 2]);
+        }
+    }
+
     public function test_ifc_elements_paginate_and_search_beyond_the_first_page(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
