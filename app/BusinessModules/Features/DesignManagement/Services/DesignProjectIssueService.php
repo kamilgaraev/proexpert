@@ -16,6 +16,7 @@ use App\Models\User;
 use App\Services\Storage\FileService;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
@@ -52,6 +53,27 @@ final class DesignProjectIssueService
         }
 
         return $issue;
+    }
+
+    public function assignees(User $actor, int $organizationId, int $projectId, array $filters = []): LengthAwarePaginator
+    {
+        $this->project($organizationId, $projectId);
+        $this->authorize($actor, 'design-management.review', $organizationId, $projectId);
+        $search = trim((string) ($filters['search'] ?? ''));
+
+        return User::query()->select(['users.id', 'users.name'])
+            ->whereHas('organizations', static function ($query) use ($organizationId): void {
+                $query->where('organizations.id', $organizationId)->where('organization_user.is_active', true);
+            })
+            ->whereExists(static function ($query) use ($projectId): void {
+                $query->selectRaw('1')->from('project_user')
+                    ->whereColumn('project_user.user_id', 'users.id')
+                    ->where('project_user.project_id', $projectId)
+                    ->where('project_user.is_active', true);
+            })
+            ->when($search !== '', static fn ($query) => $query->where('users.name', 'ilike', '%'.$search.'%'))
+            ->orderBy('users.name')->orderBy('users.id')
+            ->paginate(max(1, min(100, (int) ($filters['per_page'] ?? 25))), ['users.id', 'users.name'], 'page', max(1, (int) ($filters['page'] ?? 1)));
     }
 
     public function create(User $actor, int $organizationId, int $projectId, array $payload): QualityDefect
