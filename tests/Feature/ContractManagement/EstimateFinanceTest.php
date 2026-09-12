@@ -258,6 +258,83 @@ final class EstimateFinanceTest extends TestCase
             'lines' => [['allocation_key' => $allocation->key, 'condition_version' => (int) $allocation->condition_version, 'version' => $version, 'amount' => $amount]]];
     }
 
+    public function test_own_cost_distribution_caps_all_estimates_and_keeps_exact_net_and_history(): void
+    {
+        $db = \Illuminate\Support\Facades\DB::class;
+        $a = array_replace($this->line($this->contractor, '50', '100'), ['source' => 'own', 'contract_id' => null]);
+        $b = array_replace($a, ['key' => (string) Str::uuid()]);
+        $this->save($this->command([$a, $b]));
+        $second = $this->estimate->replicate();
+        $second->number = 'OWN-2';
+        $second->save();
+        $secondItem = $this->item->replicate();
+        $secondItem->estimate_id = $second->id;
+        $secondItem->save();
+        $c = array_replace($a, ['key' => (string) Str::uuid(), 'quantity' => '100', 'target_key' => 'i:'.$secondItem->id]);
+        $this->finance->save($this->actor, $second->project_id, $second->id, ['mutation_id' => (string) Str::uuid(),
+            'revision' => (int) $second->fresh()->finance_revision, 'target_keys' => [$c['target_key']], 'lines' => [$c]]);
+        $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,
+            'name' => 'Собственные расходы', 'code' => 'OWN-SPLIT', 'is_active' => true]);
+        $registration = ['operation' => 'own_cost', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'cost_key' => (string) Str::uuid(), 'confirmed' => true,
+            'source_type' => 'manual', 'cost_category_id' => $category->id, 'expense_date' => '2026-09-13',
+            'basis' => 'Проверка округления', 'currency' => 'RUB', 'amount' => '0.02',
+            'vat_mode' => 'exclusive', 'price_basis' => 'without_vat', 'vat_rate' => '50'];
+        $registration['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $registration)['source_hash'];
+        $this->save($registration);
+        $cost = $db::table('estimate_finance_own_costs')->where('key', $registration['cost_key'])->first();
+        $command = fn (Estimate $estimate, array $line, string $amount, int $version = 0): array => [
+            'operation' => 'own_cost_distribution', 'revision' => (int) $estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'cost_key' => $cost->key, 'source_version' => 1, 'source_hash' => $cost->source_hash,
+            'lines' => [['allocation_key' => $line['key'], 'condition_version' => 1, 'version' => $version, 'amount' => $amount]],
+        ];
+        $firstCommand = $command($this->estimate, $a, '0.01');
+        $preview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $firstCommand);
+        self::assertSame('0.02', $preview['remaining_amount']);
+        self::assertSame('0.01', $preview['lines'][0]['amount_without_vat']);
+        $this->save($firstCommand);
+        self::assertTrue($this->save($firstCommand)['replayed']);
+        $firstRow = $db::table('estimate_finance_own_cost_allocations')->where('own_cost_id', $cost->id)->first();
+        $this->finance->save($this->actor, $second->project_id, $second->id, $command($second, $c, '0.01'));
+        $last = $command($this->estimate, $b, '0.01');
+        $lastPreview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $last);
+        self::assertSame('0.00', $lastPreview['remaining_amount']);
+        self::assertSame('0.00', $lastPreview['lines'][0]['amount_without_vat']);
+        $this->save($last);
+        $rows = $db::table('estimate_finance_own_cost_allocations')->where('own_cost_id', $cost->id)->get();
+        $gross = $net = '0.00';
+        foreach ($rows as $row) {
+            $gross = FinanceDecimal::add($gross, $row->amount);
+            $net = FinanceDecimal::add($net, $row->amount_without_vat);
+        }
+        self::assertSame('0.03', $gross);
+        self::assertSame('0.02', $net);
+        self::assertSame(3, $db::table('estimate_finance_own_cost_allocation_versions')->count());
+        self::assertEquals($firstRow, $db::table('estimate_finance_own_cost_allocations')->where('id', $firstRow->id)->first());
+        try {
+            $this->save($command($this->estimate, $a, '0.02', 1));
+            self::fail('Shared expense was overallocated');
+        } catch (ValidationException) {
+            self::assertTrue(true);
+        }
+        try {
+            $this->save($command($this->estimate, $a, '0.01', 0));
+            self::fail('Stale allocation version was accepted');
+        } catch (ConflictHttpException) {
+            self::assertTrue(true);
+        }
+        try {
+            $this->save($this->command([]));
+            self::fail('Own cost history was disconnected');
+        } catch (ValidationException) {
+            self::assertTrue(true);
+        }
+        $this->save($command($this->estimate, $a, '0.00', 1));
+        self::assertSame($firstRow->key, $db::table('estimate_finance_own_cost_allocations')->where('id', $firstRow->id)->value('key'));
+        self::assertSame(2, $db::table('estimate_finance_own_cost_allocations')->where('id', $firstRow->id)->value('version'));
+        self::assertSame(4, $db::table('estimate_finance_own_cost_allocation_versions')->count());
+    }
+
     public function test_own_cost_registration_previews_tax_and_replays_without_duplicate_expense(): void
     {
         $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,

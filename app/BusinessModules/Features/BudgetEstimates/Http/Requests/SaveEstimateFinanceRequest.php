@@ -15,6 +15,9 @@ class SaveEstimateFinanceRequest extends FormRequest
 
     public function rules(): array
     {
+        if ($this->input('operation') === 'own_cost_distribution') {
+            return self::ownCostDistributionRules();
+        }
         if ($this->input('operation') === 'own_cost') {
             return self::ownCostRules();
         }
@@ -36,6 +39,23 @@ class SaveEstimateFinanceRequest extends FormRequest
         $input = new \Illuminate\Support\ValidatedInput($this->validated());
 
         return $keys === null ? $input : $input->only($keys);
+    }
+
+    public static function ownCostDistributionRules(bool $preview = false): array
+    {
+        return [
+            'operation' => ['required', 'in:own_cost_distribution'],
+            'revision' => ['required', 'integer', 'min:0'],
+            'mutation_id' => ['required', 'uuid'],
+            'cost_key' => ['required', 'uuid'],
+            'source_version' => ['required', 'integer', 'min:1'],
+            'source_hash' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/'],
+            'lines' => ['present', 'array', $preview ? 'min:0' : 'min:1', 'max:20000'],
+            'lines.*.allocation_key' => ['required', 'uuid', 'distinct'],
+            'lines.*.condition_version' => ['required', 'integer', 'min:1'],
+            'lines.*.version' => ['required', 'integer', 'min:0'],
+            'lines.*.amount' => ['required', 'string', 'regex:/^\d{1,12}(\.\d{1,2})?$/'],
+        ];
     }
 
     public static function ownCostRules(bool $preview = false): array

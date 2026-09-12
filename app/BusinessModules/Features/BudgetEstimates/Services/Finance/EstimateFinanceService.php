@@ -32,6 +32,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceCashSources $cashSources,
         private readonly EstimateFinanceProjectCash $projectCash,
         private readonly EstimateFinanceOwnCost $ownCost,
+        private readonly EstimateFinanceOwnCostDistribution $ownCostDistribution,
         private readonly EstimateFinanceCashDistribution $cashDistribution,
     ) {}
 
@@ -234,6 +235,9 @@ final class EstimateFinanceService
 
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'own_cost_distribution') {
+            return $this->ownCostDistribution->handle($actor, $projectId, $estimateId, $input, false);
+        }
         if (($input['operation'] ?? null) === 'own_cost') {
             return $this->ownCost->handle($actor, $projectId, $estimateId, $input, false);
         }
@@ -314,6 +318,9 @@ final class EstimateFinanceService
 
     public function save(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'own_cost_distribution') {
+            return $this->ownCostDistribution->handle($actor, $projectId, $estimateId, $input, true);
+        }
         if (($input['operation'] ?? null) === 'own_cost') {
             return $this->ownCost->handle($actor, $projectId, $estimateId, $input, true);
         }
@@ -362,6 +369,9 @@ final class EstimateFinanceService
             foreach (array_chunk($deletedIds, 500) as $ids) {
                 if (DB::table('estimate_finance_cash_allocations')->whereIn('allocation_id', $ids)->exists()) {
                     $this->invalid('cash_linked');
+                }
+                if (DB::table('estimate_finance_own_cost_allocations')->whereIn('allocation_id', $ids)->exists()) {
+                    $this->invalid('own_cost_linked');
                 }
                 EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereIn('id', $ids)->delete();
             }
@@ -419,6 +429,7 @@ final class EstimateFinanceService
         $quantities = [];
         $knownKeys = EstimateFinanceAllocation::query()->whereIn('key', array_column($data['lines'], 'key'))->get()->keyBy('key');
         $cashLinked = DB::table('estimate_finance_cash_allocations')->whereIn('allocation_id', $knownKeys->pluck('id'))->pluck('allocation_id')->flip();
+        $costLinked = DB::table('estimate_finance_own_cost_allocations')->whereIn('allocation_id', $knownKeys->pluck('id'))->pluck('allocation_id')->flip();
         $retiredKeys = DB::table('estimate_finance_condition_versions')->whereIn('allocation_key', array_column($data['lines'], 'key'))
             ->where('action', 'deleted')->pluck('allocation_key')->flip();
         $legacyLinks = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('finance_managed', false)
@@ -468,6 +479,11 @@ final class EstimateFinanceService
             $net = $tax['amount_without_vat'];
             $gross = $tax['amount_with_vat'];
             $foreignKey = $knownKeys->get($line['key']);
+            if ($foreignKey && isset($costLinked[$foreignKey->id]) && ((int) $foreignKey->contract_id !== (int) ($line['contract_id'] ?? 0)
+                || $foreignKey->currency !== $line['currency'] || $foreignKey->source !== $line['source']
+                || ($foreignKey->resource_id ? 'r:'.$foreignKey->resource_id : 'i:'.$foreignKey->estimate_item_id) !== $line['target_key'])) {
+                $this->invalid('own_cost_linked');
+            }
             if ($foreignKey && isset($cashLinked[$foreignKey->id]) && ((int) $foreignKey->contract_id !== (int) ($line['contract_id'] ?? 0)
                 || $foreignKey->currency !== $line['currency'] || $foreignKey->source !== $line['source']
                 || ($foreignKey->resource_id ? 'r:'.$foreignKey->resource_id : 'i:'.$foreignKey->estimate_item_id) !== $line['target_key'])) {
