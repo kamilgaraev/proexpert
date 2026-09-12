@@ -6,13 +6,10 @@ namespace App\BusinessModules\Features\DesignManagement\Support;
 
 use App\BusinessModules\Features\DesignManagement\Enums\DesignDerivativeStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
-use App\BusinessModules\Features\DesignManagement\Enums\DesignReviewCommentSeverityEnum;
-use App\BusinessModules\Features\DesignManagement\Enums\DesignReviewCommentStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
-use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
 use BackedEnum;
 
 final class DesignPackageWorkflow
@@ -227,7 +224,7 @@ final class DesignPackageWorkflow
             }
         }
 
-        if ($package->relationLoaded('reviewComments') && self::hasOpenBlockingComments($package)) {
+        if (self::openBlockingCommentsCount($package) > 0) {
             $flags[] = 'open_blocking_comments';
         }
 
@@ -265,6 +262,7 @@ final class DesignPackageWorkflow
             'sections_count' => $sectionsCount,
             'documents_count' => $documentsCount,
             'current_documents_count' => $currentDocumentsCount,
+            'open_blocking_comments_count' => self::openBlockingCommentsCount($package),
             'current_version_id' => $currentVersion?->id,
             'derivative_status' => $derivativeStatus,
             'has_ready_viewer' => $derivative instanceof DesignModelDerivative
@@ -362,17 +360,11 @@ final class DesignPackageWorkflow
             : $status;
     }
 
-    private static function hasOpenBlockingComments(DesignPackage $package): bool
+    public static function openBlockingCommentsCount(DesignPackage $package): ?int
     {
-        $closedStatuses = [
-            DesignReviewCommentStatusEnum::RESOLVED->value,
-            DesignReviewCommentStatusEnum::ACCEPTED->value,
-        ];
+        $count = $package->getAttribute('open_blocking_comments_count');
 
-        return $package->reviewComments->contains(static function (DesignReviewComment $comment) use ($closedStatuses): bool {
-            return self::statusValue($comment->severity) === DesignReviewCommentSeverityEnum::BLOCKING->value
-                && !in_array(self::statusValue($comment->status), $closedStatuses, true);
-        });
+        return $count !== null ? (int) $count : null;
     }
 
     private static function statusValue(mixed $value): string

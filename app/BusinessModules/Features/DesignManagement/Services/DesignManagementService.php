@@ -62,6 +62,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
         $perPage = max(1, min((int) ($filters['per_page'] ?? 15), 100));
 
         return DesignPackage::forOrganization($organizationId)
+            ->withOpenBlockingCount()
             ->with(self::PACKAGE_RELATIONS)
             ->when(! empty($filters['project_id']), static fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(! empty($filters['status']), static fn ($query) => $query->where('status', (string) $filters['status']))
@@ -108,12 +109,13 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             return $package;
         });
 
-        return $package->fresh(self::PACKAGE_RELATIONS);
+        return DesignPackage::forOrganization($organizationId)->withOpenBlockingCount()->with(self::PACKAGE_RELATIONS)->findOrFail($package->id);
     }
 
     public function findPackage(int $organizationId, int $packageId): ?DesignPackage
     {
         return DesignPackage::forOrganization($organizationId)
+            ->withOpenBlockingCount()
             ->with(self::PACKAGE_RELATIONS)
             ->find($packageId);
     }

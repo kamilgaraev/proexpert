@@ -44,6 +44,8 @@ final class OpenBlockingCommentsRule implements DesignCompletenessRule
             ->pluck('legacy_design_review_comment_id');
 
         return $canonical->concat(($package->reviewComments ?? collect())
+            ->where('organization_id', $package->organization_id)
+            ->where('project_id', $package->project_id)
             ->whereNotIn('id', $mappedIds)
             ->filter(static function (DesignReviewComment $comment) use ($closedStatuses): bool {
                 $severity = $comment->severity instanceof BackedEnum ? $comment->severity->value : (string) $comment->severity;
