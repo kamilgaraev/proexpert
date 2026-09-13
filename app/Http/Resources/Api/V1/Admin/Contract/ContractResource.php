@@ -25,6 +25,7 @@ class ContractResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $contractSide = $this->resolveContractSide();
         $workTypeCategory = $this->resolveWorkTypeCategory();
         $workTypeCategoryValue = $this->resolveWorkTypeCategoryValue();
 
@@ -170,6 +171,10 @@ class ContractResource extends JsonResource
                 'name' => $this->supplier->name,
             ]),
             'contract_side_type' => $this->contract_side_type?->value,
+            'direction' => $contractSide['direction'] ?? 'expense',
+            'direction_label' => $contractSide['direction_label'] ?? 'Расходный',
+            'is_income' => (bool) ($contractSide['is_income'] ?? false),
+            'is_expense' => (bool) ($contractSide['is_expense'] ?? true),
             'number' => $this->number,
             'date' => $this->date,
             'subject' => $this->subject,
@@ -560,7 +565,7 @@ class ContractResource extends JsonResource
             // === АГРЕГИРОВАННЫЕ ДАННЫЕ ===
             // Заказчик (организация-владелец проекта)
             'customer' => $this->resolveCustomer(),
-            'contract_side' => $this->resolveContractSide(),
+            'contract_side' => $contractSide,
             'requires_contract_side_review' => (bool) $this->requires_contract_side_review,
             'contract_side_review_reason' => $this->contract_side_review_reason,
 

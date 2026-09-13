@@ -612,6 +612,7 @@ class ContractController extends Controller
             'contractor_search',
             'project_search',
             'contract_side_type',
+            'direction',
         ]);
 
         if ($request->has('requires_contract_side_review')) {

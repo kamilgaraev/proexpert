@@ -10,10 +10,17 @@ class ContractMiniResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $side = app(\App\Services\Contract\ContractSideResolverService::class)->resolve($this->resource);
+
         return [
             'id' => $this->id,
             'number' => $this->number,
             'date' => $this->date,
+            'contract_side_type' => $this->contract_side_type?->value,
+            'direction' => $side['direction'] ?? 'expense',
+            'direction_label' => $side['direction_label'] ?? 'Расходный',
+            'is_income' => (bool) ($side['is_income'] ?? false),
+            'is_expense' => (bool) ($side['is_expense'] ?? true),
             'total_amount' => (float) ($this->total_amount ?? 0),
             'currency' => (string) ($this->currency ?? 'RUB'),
             'status' => $this->status->value,
