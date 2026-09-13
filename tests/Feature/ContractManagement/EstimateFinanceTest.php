@@ -719,7 +719,11 @@ final class EstimateFinanceTest extends TestCase
         self::assertArrayNotHasKey('own_cost_id', $allocationAudit['data'][1]['after']);
         self::assertSame([], $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id,
             $allocationAudit['data'][1]['id'], 'own_cost_distribution', $original->key)['data']);
+        $category->update(['name' => 'Переименованная категория']);
         $audit = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'own_cost', $original->key);
+        self::assertSame('Собственные расходы', $audit['data'][1]['before']['category_name']);
+        self::assertSame('Собственные расходы', $audit['data'][1]['after']['category_name']);
+        self::assertArrayNotHasKey('source_snapshot', $audit['data'][1]['after']);
         self::assertCount(2, $audit['data']);
         self::assertNull($audit['data'][0]['before']);
         self::assertSame('100.00', $audit['data'][1]['before']['amount']);

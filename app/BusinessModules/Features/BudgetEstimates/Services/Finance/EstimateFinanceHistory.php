@@ -61,8 +61,14 @@ final class EstimateFinanceHistory
         $page = $rows->take(100)->map(function (object $row): array {
             $entry = ['id' => (int) $row->id, 'version' => (int) $row->version, 'created_at' => $row->created_at, 'actor_name' => $row->actor_name];
             foreach (['before', 'after'] as $field) {
-                $entry[$field] = $row->$field === null ? null : array_intersect_key(json_decode($row->$field, true, 512, JSON_THROW_ON_ERROR),
+                $snapshot = $row->$field === null ? null : json_decode($row->$field, true, 512, JSON_THROW_ON_ERROR);
+                $entry[$field] = $snapshot === null ? null : array_intersect_key($snapshot,
                     array_flip(['expense_date', 'basis', 'currency', 'amount', 'amount_without_vat', 'vat_mode', 'vat_rate', 'status', 'cost_category_id']));
+                if ($snapshot !== null) {
+                    $source = $snapshot['source_snapshot'] ?? null;
+                    $source = is_string($source) ? json_decode($source, true, 512, JSON_THROW_ON_ERROR) : $source;
+                    $entry[$field]['category_name'] = is_array($source) && is_string($source['category_name'] ?? null) ? $source['category_name'] : null;
+                }
             }
 
             return $entry;

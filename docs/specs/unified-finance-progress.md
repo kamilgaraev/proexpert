@@ -887,3 +887,10 @@
 - Existingdocumenthistorydenyтеперьпроверяетобаkind own_cost/own_cost_distribution. Приadvance.view=falseAuthorizationException возникаетдоSELECTобоихversiontables (querylogassert); отсутствиезапросовподтверждено. Productionкоднеизменялся.
 - PG16PASS2/95 finance-own-cost-history-scope-tests.log01:26.616/176MB session2289terminal0;php-ltest/diffcheckPASS,profilesrestored. Своихживыхпроцессовнет. CBMэтоготестафайлаpreviousmetadatachanged; boundedreadрасширяемыхсценариев. Orgnegative/cursor100+/browserдополнительныесценарииещёнеисчерпаны.
 - Полнаяцельактивна: owncostcategoryhistory/projectactions, migrationallorgactual275436/reconcile/apply, callbacks/reverse/otherconcurrency,modern8k/browser/allconsumers,docs/workflow/latestmainCI/deployclient остаются. No push/PR/deploy.
+
+## Сохранённые категории в истории расходов — 2026-09-13
+
+- OwnCostуже сохранялcategory_nameвsource_snapshotверсий. HistoryforOwnCostтеперьизвлекаеттолькоэтополеизвложенногоснимка(строкаJSONилиarray),нечитаетактуальныйсправочник/неотдаётrawsource. Приотсутствииполянулевоеcategory_name, UI«название не сохранено». Передачаtypeoptionalсовместима.
+- Regressionmanualcorrectionпереименовываетcategoryпослесохраненияверсий: beforeиafterисториисохраняют«Собственные расходы»; rawsource_snapshotнетвответе. PG16PASS1/50finance-own-cost-category-history-tests.log01:32.349/166MB13155terminal0. PHPStanHistoryPASS95487;php-l/diffcheckPASS;profilesrestored.
+- UI4PASSfinance-own-cost-category-history-ui-tests.log68729, fixturesavedcategory+assert. tsc+ESLintPASSfinance-own-cost-category-history-types.log/lint64682terminal0;prettier3. Своихживыхпроцессовнет. Дальнейшееизменениекатегориивновойверсиииспользуетсуществующийformsourceworkflow; отдельнуюmatrixdelete/nullcategoryневыдаватьзаисчерпывающую.
+- Полнаяцельактивна: projectowncostactions, migrationallorgactual275436/previewreport/reconciliation/apply; legacydelete/paymentcallbacks/reverseиotherconcurrency; modern8k/browser/allconsumers; docs/workflow/latestmainCI/штатныйдеплой/client. ProductionSSHпоследниепопыткиbanner timeout, новыхпопытоквэтомходенет. No push/PR/deploy.
