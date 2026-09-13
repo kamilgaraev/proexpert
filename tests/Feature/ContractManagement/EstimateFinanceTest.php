@@ -431,7 +431,7 @@ final class EstimateFinanceTest extends TestCase
         } catch (ValidationException) {
             self::assertTrue(true);
         }
-        $source->update(['reporting_status' => 'approved', 'approved_at' => now(), 'approved_by_user_id' => $this->actor->id]);
+        $source->update(['reporting_status' => 'approved', 'approved_at' => now(), 'approved_by_user_id' => $this->actor->id, 'cost_category_id' => $category->id]);
         $foreignOrg = Organization::factory()->create();
         $otherProject = Project::factory()->create(['organization_id' => $this->estimate->organization_id]);
         foreach ([['organization_id' => $foreignOrg->id], ['project_id' => $otherProject->id], ['type' => 'issue']] as $invalidSource) {
@@ -457,9 +457,12 @@ final class EstimateFinanceTest extends TestCase
         unset($command['source_hash']);
         $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
         $optionsCommand = ['preview_operation' => 'own_cost_options', 'kind' => 'documents'];
+        $category->update(['is_active' => false]);
         $options = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $optionsCommand);
         self::assertSame([$source->id], array_column($options['data'], 'id'));
         self::assertNull($options['data'][0]['currency']);
+        self::assertSame($category->name, $options['data'][0]['category_name']);
+        self::assertFalse($options['data'][0]['category_active']);
         $this->save($command);
         self::assertSame([], $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $optionsCommand)['data']);
         $second = array_replace($command, ['revision' => (int) $this->estimate->fresh()->finance_revision, 'mutation_id' => (string) Str::uuid(), 'cost_key' => (string) Str::uuid()]);

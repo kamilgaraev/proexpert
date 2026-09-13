@@ -46,14 +46,18 @@ final class EstimateFinanceOwnCostOptions
         $columns = $kind === 'categories' ? ['id', 'name', 'code']
             : ['id', 'document_number', 'document_date', 'description', 'amount', 'cost_category_id'];
         $rows = $query->where('id', '>', $data['after'] ?? 0)->orderBy('id')->limit(51)->get($columns);
-        $page = $rows->take(50)->map(static function ($row) use ($kind): array {
+        $categories = $kind === 'documents' ? CostCategory::query()->where('organization_id', $actor->current_organization_id)
+            ->whereIn('id', $rows->pluck('cost_category_id')->filter())->get(['id', 'name', 'is_active'])->keyBy('id') : collect();
+        $page = $rows->take(50)->map(static function ($row) use ($kind, $categories): array {
             if ($kind === 'categories') {
                 return ['id' => (int) $row->id, 'name' => $row->name, 'code' => $row->code];
             }
 
             return ['id' => (int) $row->id, 'number' => $row->document_number, 'date' => $row->document_date?->format('Y-m-d'),
                 'description' => $row->description, 'amount' => (string) $row->amount, 'currency' => null,
-                'cost_category_id' => $row->cost_category_id === null ? null : (int) $row->cost_category_id];
+                'cost_category_id' => $row->cost_category_id === null ? null : (int) $row->cost_category_id,
+                'category_name' => $categories->get($row->cost_category_id)?->name,
+                'category_active' => $categories->get($row->cost_category_id)?->is_active];
         })->values()->all();
 
         return ['kind' => $kind, 'available' => true, 'data' => $page,

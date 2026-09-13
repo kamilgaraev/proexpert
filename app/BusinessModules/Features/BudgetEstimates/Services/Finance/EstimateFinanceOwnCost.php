@@ -45,9 +45,10 @@ final class EstimateFinanceOwnCost
             if ((int) $estimate->finance_revision !== (int) $data['revision']) {
                 $this->conflict();
             }
-            $category = CostCategory::query()->where('organization_id', $actor->current_organization_id)->where('is_active', true)
+            $category = CostCategory::query()->where('organization_id', $actor->current_organization_id)
                 ->whereKey($data['cost_category_id'])->lockForUpdate()->first();
-            if (! $category || trim($data['basis']) === '' || FinanceDecimal::compare($data['amount'], '0') <= 0) {
+            if (! $category || ($data['source_type'] === 'manual' && ! $category->is_active)
+                || trim($data['basis']) === '' || FinanceDecimal::compare($data['amount'], '0') <= 0) {
                 $this->invalid();
             }
             $tax = EstimateFinanceTax::calculate($data, FinanceDecimal::value($data['amount']));
@@ -62,6 +63,7 @@ final class EstimateFinanceOwnCost
                 if (! $source || $source->type !== AdvanceAccountTransaction::TYPE_EXPENSE
                     || $source->reporting_status !== AdvanceAccountTransaction::STATUS_APPROVED || ! $source->approved_at
                     || FinanceDecimal::compare((string) $source->amount, $amount) !== 0
+                    || (! $category->is_active && (int) $source->cost_category_id !== (int) $category->id)
                     || ($source->cost_category_id !== null && (int) $source->cost_category_id !== (int) $category->id)) {
                     $this->invalid();
                 }
