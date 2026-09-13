@@ -48,6 +48,7 @@ class BlogDocumentRenderer
             'callout' => $this->renderCallout($data),
             'embed' => $this->renderEmbed($data),
             'cta' => $this->renderCta($data),
+            'materials' => $this->renderMaterials($data),
             default => $this->renderParagraph($data),
         };
     }
@@ -242,6 +243,40 @@ class BlogDocumentRenderer
         $descriptionHtml = $description !== '' ? '<p>' . e($description) . '</p>' : '';
 
         return '<div class="blog-cta">' . $descriptionHtml . '<a href="' . e($url) . '" class="blog-cta-link">' . e($label) . '</a></div>';
+    }
+
+    private function renderMaterials(array $data): string
+    {
+        $cards = [];
+
+        foreach ($data['items'] ?? [] as $item) {
+            $url = (string) ($item['url'] ?? '');
+            $format = (string) ($item['format'] ?? '');
+
+            if (! filter_var($url, FILTER_VALIDATE_URL)
+                || ! in_array(parse_url($url, PHP_URL_SCHEME), ['https', 'http'], true)
+                || ! in_array($format, ['PDF', 'DOCX', 'XLSX'], true)) {
+                continue;
+            }
+
+            $bytes = max(0, (int) ($item['file_size'] ?? 0));
+            $size = $bytes >= 1048576
+                ? number_format($bytes / 1048576, 1, ',', ' ') . ' ' . trans_message('blog_cms.materials_mb')
+                : max(1, (int) ceil($bytes / 1024)) . ' ' . trans_message('blog_cms.materials_kb');
+            $label = (string) ($item['label'] ?? $item['filename'] ?? '');
+            $description = trim((string) ($item['description'] ?? ''));
+            $cards[] = '<li class="blog-material">'
+                . '<span class="blog-material__format" aria-hidden="true">' . e($format) . '</span>'
+                . '<div class="blog-material__body"><strong>' . e($label) . '</strong>'
+                . ($description !== '' ? '<p>' . e($description) . '</p>' : '')
+                . '<span class="blog-material__meta">' . e($format . ' · ' . $size) . '</span></div>'
+                . '<a class="blog-material__download" href="' . e($url) . '" download="' . e((string) ($item['filename'] ?? ''))
+                . '" target="_blank" rel="noopener noreferrer" aria-label="' . e(trans_message('blog_cms.materials_download') . ': ' . $label) . '">'
+                . e(trans_message('blog_cms.materials_download')) . ' <span aria-hidden="true">↓</span></a></li>';
+        }
+
+        return $cards === [] ? '' : '<section class="blog-materials"><h2>'
+            . e(trans_message('blog_cms.materials_title')) . '</h2><ul>' . implode('', $cards) . '</ul></section>';
     }
 
     private function sanitizeUrl(string $url): ?string

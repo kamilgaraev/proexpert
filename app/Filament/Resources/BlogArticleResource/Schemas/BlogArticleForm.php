@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\BlogArticleResource\Schemas;
 
+use App\Enums\Blog\BlogContextEnum;
+
 use App\Enums\Blog\BlogArticleStatusEnum;
 use App\Filament\Forms\Components\BlogInlineBlockEditor;
 use App\Filament\Resources\BlogMediaAssetResource;
@@ -132,6 +134,10 @@ final class BlogArticleForm
                             ->label(trans_message('blog_cms.field_editor_document'))
                             ->blockDefinitions(fn (): array => BlogEditorBlockCatalog::forEditor())
                             ->mediaOptions(fn (): array => self::getMarketingMediaOptions())
+                            ->documentOptions(fn (): array => BlogMediaAsset::query()
+                                ->where('blog_context', BlogContextEnum::MARKETING->value)
+                                ->whereIn('mime_type', BlogMediaService::allowedDocumentMimeTypes())
+                                ->latest()->pluck('filename', 'public_url')->all())
                             ->acceptedImageTypes(BlogMediaService::allowedImageMimeTypes())
                             ->helperText(trans_message('blog_cms.helper_editor_document'))
                             ->hiddenOn(Operation::Create)

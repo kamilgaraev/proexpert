@@ -26,6 +26,20 @@ class BlogInlineBlockEditor extends Field
      */
     protected array|Closure $acceptedImageTypes = [];
 
+    protected array|Closure $documentOptions = [];
+
+    public function documentOptions(array|Closure $documentOptions): static
+    {
+        $this->documentOptions = $documentOptions;
+
+        return $this;
+    }
+
+    public function getDocumentOptions(): array
+    {
+        return $this->evaluate($this->documentOptions);
+    }
+
     /**
      * @param array<int, array<string, mixed>>|Closure $blockDefinitions
      */

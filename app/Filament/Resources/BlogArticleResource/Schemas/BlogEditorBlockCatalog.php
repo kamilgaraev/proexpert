@@ -77,6 +77,11 @@ final class BlogEditorBlockCatalog
                 'icon' => 'cursor-arrow-rays',
                 'defaultData' => ['label' => '', 'url' => '', 'description' => ''],
             ],
+            'materials' => [
+                'label' => trans_message('blog_cms.materials_title'),
+                'icon' => 'document-arrow-down',
+                'defaultData' => ['items' => [['url' => '', 'label' => '', 'description' => '']]],
+            ],
         ];
     }
 

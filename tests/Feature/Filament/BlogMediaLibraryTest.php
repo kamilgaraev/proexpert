@@ -14,6 +14,11 @@ use App\Models\Blog\BlogMediaAsset;
 use App\Models\LandingAdmin;
 use App\Models\SystemAdmin;
 use App\Services\Blog\BlogMediaService;
+use App\Services\Blog\BlogArticleMaterialsService;
+use App\Services\Blog\BlogDocumentRenderer;
+use App\Services\Storage\FileService;
+use App\Models\Organization;
+use Illuminate\Http\UploadedFile;
 use App\Services\Security\SystemAdminRoleService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -199,6 +204,131 @@ class BlogMediaLibraryTest extends TestCase
         }
 
         $this->assertSame($oldAsset->public_url, $published->fresh()->featured_image);
+    }
+
+    public function test_article_materials_use_trusted_metadata_and_cannot_be_deleted_while_attached(): void
+    {
+        $admin = SystemAdmin::factory()->role('content_manager')->create();
+        $asset = $this->mediaFixture('schedule.xlsx');
+        $asset->update(['mime_type' => BlogMediaService::allowedDocumentMimeTypes()[2], 'file_size' => 2048]);
+        $item = ['url' => $asset->public_url, 'label' => '<script>Образец</script>', 'file_size' => 1, 'format' => 'EXE'];
+        $document = app(BlogArticleMaterialsService::class)->normalize([
+            ['type' => 'materials', 'data' => ['items' => [$item, $item]]],
+        ]);
+
+        $this->assertCount(1, $document[0]['data']['items']);
+        $this->assertSame(2048, $document[0]['data']['items'][0]['file_size']);
+        $this->assertSame('XLSX', $document[0]['data']['items'][0]['format']);
+        $html = app(BlogDocumentRenderer::class)->render($document);
+        $this->assertStringContainsString('Материалы по статье', $html);
+        $this->assertStringContainsString('XLSX · 2 КБ', $html);
+        $this->assertStringContainsString('download="schedule.xlsx"', $html);
+        $this->assertStringNotContainsString('<script>', $html);
+        $this->articleFixture($admin, BlogArticleStatusEnum::DRAFT, ['editor_document' => $document]);
+
+        $this->expectException(ValidationException::class);
+        app(BlogMediaService::class)->deleteAsset($asset);
+    }
+
+    public function test_article_materials_reject_external_urls_images_and_holding_documents(): void
+    {
+        $image = $this->mediaFixture('image.jpg');
+        $holding = $this->mediaFixture('holding.pdf');
+        $holding->update(['mime_type' => 'application/pdf', 'blog_context' => BlogContextEnum::HOLDING]);
+
+        foreach (['https://untrusted.example.test/file.pdf', $image->public_url, $holding->public_url] as $url) {
+            try {
+                app(BlogArticleMaterialsService::class)->normalize([
+                    ['type' => 'materials', 'data' => ['items' => [['url' => $url]]]],
+                ]);
+                $this->fail('An unavailable material was accepted.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('editor_document.0', $exception->errors());
+            }
+        }
+    }
+
+    public function test_document_upload_stores_file_through_s3_service_and_records_metadata(): void
+    {
+        $admin = SystemAdmin::factory()->role('content_manager')->create();
+        $organization = Organization::factory()->create();
+        config(['blog.platform_content_organization_id' => $organization->id]);
+        $file = UploadedFile::fake()->createWithContent('sample.pdf', "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF");
+        $storagePath = 'org-' . $organization->id . '/cms/blog/media/sample.pdf';
+        $url = 'https://storage.example.test/' . $storagePath;
+        $this->mock(FileService::class, function ($mock) use ($file, $organization, $storagePath, $url): void {
+            $mock->shouldReceive('upload')->once()->with($file, 'cms/blog/media', null, 'public', \Mockery::on(fn ($org) => $org->id === $organization->id), true)->andReturn($storagePath);
+            $mock->shouldReceive('publicUrl')->once()->andReturn($url);
+        });
+
+        $asset = app(BlogMediaService::class)->uploadMarketingDocumentAsset($file, $admin);
+
+        $this->assertSame($storagePath, $asset->storage_path);
+        $this->assertSame($url, $asset->public_url);
+        $this->assertSame('application/pdf', $asset->mime_type);
+        $this->assertSame($file->getSize(), $asset->file_size);
+    }
+
+    public function test_document_upload_rejects_disguised_files_and_missing_permission_before_storage(): void
+    {
+        $admin = SystemAdmin::factory()->role('content_manager')->create();
+        $this->mock(FileService::class, fn ($mock) => $mock->shouldNotReceive('upload'));
+        $file = UploadedFile::fake()->createWithContent('fake.docx', '<html>not a document</html>');
+
+        try {
+            app(BlogMediaService::class)->uploadMarketingDocumentAsset($file, $admin);
+            $this->fail('A disguised document was accepted.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('upload_file', $exception->errors());
+        }
+
+        $denied = \Mockery::mock(SystemAdmin::class)->makePartial();
+        $denied->shouldReceive('hasSystemPermission')->with('system_admin.blog.media.upload')->andReturnFalse();
+        $this->expectException(ValidationException::class);
+        app(BlogMediaService::class)->uploadMarketingDocumentAsset($file, $denied);
+    }
+
+    public function test_material_renderer_does_not_render_empty_or_unsafe_downloads(): void
+    {
+        $renderer = app(BlogDocumentRenderer::class);
+        $this->assertSame('', $renderer->render([['type' => 'materials', 'data' => ['items' => []]]]));
+        $this->assertSame('', $renderer->render([['type' => 'materials', 'data' => ['items' => [
+            ['url' => 'javascript:alert(1)', 'format' => 'PDF', 'label' => 'bad'],
+        ]]]]));
+    }
+
+    public function test_office_documents_are_recognized_but_macros_are_rejected(): void
+    {
+        $admin = SystemAdmin::factory()->role('content_manager')->create();
+        $organization = Organization::factory()->create();
+        config(['blog.platform_content_organization_id' => $organization->id]);
+        $this->mock(FileService::class, function ($mock): void {
+            $mock->shouldReceive('upload')->twice()->andReturn('org-1/cms/blog/media/template');
+            $mock->shouldReceive('publicUrl')->twice()->andReturn('https://storage.example.test/template');
+        });
+
+        foreach (['docx' => 'word/document.xml', 'xlsx' => 'xl/workbook.xml', 'macro.xlsx' => 'xl/workbook.xml'] as $extension => $entry) {
+            $path = tempnam(sys_get_temp_dir(), 'blog-document-');
+            try {
+                $zip = new \ZipArchive();
+                $zip->open($path, \ZipArchive::OVERWRITE);
+                $zip->addFromString('[Content_Types].xml', '<Types/>');
+                $zip->addFromString($entry, '<document/>');
+                if ($extension === 'macro.xlsx') {
+                    $zip->addFromString('xl/vbaProject.bin', 'macro');
+                }
+                $zip->close();
+                $file = new UploadedFile($path, 'template.' . $extension, null, null, true);
+
+                if ($extension === 'macro.xlsx') {
+                    $this->expectException(ValidationException::class);
+                }
+                $asset = app(BlogMediaService::class)->uploadMarketingDocumentAsset($file, $admin);
+                $this->assertSame(BlogMediaService::allowedDocumentMimeTypes()[$extension === 'docx' ? 1 : 2], $asset->mime_type);
+            } finally {
+                unlink($path);
+            }
+        }
     }
 
     private function mediaFixture(string $filename): BlogMediaAsset

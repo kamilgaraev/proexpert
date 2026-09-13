@@ -24,6 +24,7 @@ class BlogInlineBlockEditorCatalogTest extends TestCase
             'callout',
             'embed',
             'cta',
+            'materials',
         ], array_keys(BlogEditorBlockCatalog::definitions()));
     }
 
@@ -50,7 +51,7 @@ class BlogInlineBlockEditorCatalogTest extends TestCase
 
         self::assertSame(range(0, count($payload) - 1), array_keys($payload));
         self::assertSame('paragraph', $payload[0]['type']);
-        self::assertSame('cta', $payload[array_key_last($payload)]['type']);
+        self::assertSame('materials', $payload[array_key_last($payload)]['type']);
 
         foreach ($payload as $definition) {
             self::assertArrayHasKey('type', $definition);

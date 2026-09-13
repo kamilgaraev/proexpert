@@ -8,6 +8,7 @@
             wire: $wire,
             blockDefinitions: @js($getBlockDefinitions()),
             mediaOptions: @js($getMediaOptions()),
+            documentOptions: @js($getDocumentOptions()),
             acceptedImageTypes: @js($getAcceptedImageTypes()),
             labels: {
                 restoreTitle: @js(trans_message('blog_cms.inline_editor_restore_title')),
@@ -55,7 +56,7 @@
             </div>
         </div>
 
-        <div class="ph-blog-inline-editor__canvas">
+        <fieldset class="ph-blog-inline-editor__canvas" :disabled="uploadingDocument">
             <template x-for="(block, index) in state" :key="`${index}-${block.type}`">
                 <section class="ph-blog-inline-editor__block" :class="{ 'is-active': activeIndex === index }">
                     <div class="ph-blog-inline-editor__toolbar">
@@ -172,6 +173,42 @@
                         </div>
                     </template>
 
+                    <template x-if="block.type === 'materials'">
+                        <div class="ph-blog-inline-editor__materials ph-blog-inline-editor__stack">
+                            <strong>{{ trans_message('blog_cms.materials_title') }}</strong>
+                            <p>{{ trans_message('blog_cms.materials_helper') }}</p>
+                            <template x-for="(item, itemIndex) in block.data.items" :key="itemIndex">
+                                <div class="ph-blog-inline-editor__nested">
+                                    <label>
+                                        <span>{{ trans_message('blog_cms.materials_file') }}</span>
+                                        <select x-model="item.url" x-on:change="selectMaterial(item)">
+                                            <option value="">{{ trans_message('blog_cms.materials_select') }}</option>
+                                            <template x-for="document in Object.entries(documentOptions)" :key="document[0]">
+                                                <option :value="document[0]" x-text="document[1]"></option>
+                                            </template>
+                                        </select>
+                                    </label>
+                                    <label class="ph-blog-inline-editor__upload-button" :class="{ 'is-disabled': uploadingDocument }">
+                                        <span x-show="!uploadingDocument">{{ trans_message('blog_cms.materials_upload') }}</span>
+                                        <span x-show="uploadingDocument" x-text="labels.uploadingImage" x-cloak></span>
+                                        <input class="ph-blog-inline-editor__file-input" type="file" accept=".pdf,.docx,.xlsx" :disabled="uploadingDocument" x-on:change="uploadDocument($event, item)">
+                                    </label>
+                                    <label>
+                                        <span>{{ trans_message('blog_cms.materials_label') }}</span>
+                                        <input x-model="item.label" maxlength="160" x-on:input="touchState()">
+                                    </label>
+                                    <label>
+                                        <span>{{ trans_message('blog_cms.materials_description') }}</span>
+                                        <input x-model="item.description" maxlength="500" x-on:input="touchState()">
+                                    </label>
+                                    <button type="button" :disabled="uploadingDocument" x-on:click="block.data.items.splice(itemIndex, 1); touchState()">{{ trans_message('blog_cms.materials_remove') }}</button>
+                                </div>
+                            </template>
+                            <div role="alert" class="ph-blog-inline-editor__upload-error" x-show="documentUploadError" x-text="documentUploadError" x-cloak></div>
+                            <button type="button" class="ph-blog-inline-editor__secondary-action" :disabled="block.data.items.length >= 10 || uploadingDocument" x-on:click="addMaterial(index)">{{ trans_message('blog_cms.materials_add') }}</button>
+                        </div>
+                    </template>
+
                     <template x-if="block.type === 'table'">
                         <div class="ph-blog-inline-editor__stack">
                             <div class="ph-blog-inline-editor__table-scroll">
@@ -250,6 +287,6 @@
                     </div>
                 </section>
             </template>
-        </div>
+        </fieldset>
     </div>
 </x-dynamic-component>
