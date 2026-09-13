@@ -195,10 +195,7 @@ class ActReportWorkflowService
     {
         try {
             $updatedAct = DB::transaction(function () use ($act, $data): ContractPerformanceAct {
-                $lockedAct = ContractPerformanceAct::query()
-                    ->whereKey($act->getKey())
-                    ->lockForUpdate()
-                    ->firstOrFail();
+                $lockedAct = $this->lockAct($act);
                 if ($lockedAct->is_approved) {
                     throw new BusinessLogicException(trans_message('act_reports.act_already_approved'), 400);
                 }
@@ -237,15 +234,8 @@ class ActReportWorkflowService
     public function submit(ContractPerformanceAct $act, int $userId): ContractPerformanceAct
     {
         [$updatedAct, $changed] = DB::transaction(function () use ($act, $userId): array {
-            $lockedContract = Contract::query()
-                ->where('id', ContractPerformanceAct::query()->whereKey($act->getKey())->select('contract_id'))
-                ->lockForUpdate()
-                ->firstOrFail();
-            $lockedAct = ContractPerformanceAct::query()
-                ->whereKey($act->getKey())
-                ->where('contract_id', $lockedContract->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+            $lockedAct = $this->lockAct($act);
+            $lockedContract = $lockedAct->contract;
             if ($lockedAct->status === ContractPerformanceAct::STATUS_PENDING_APPROVAL) {
                 return [
                     $lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']),
@@ -291,15 +281,8 @@ class ActReportWorkflowService
     public function approve(ContractPerformanceAct $act, int $userId): ContractPerformanceAct
     {
         [$updatedAct, $changed] = DB::transaction(function () use ($act, $userId): array {
-            $lockedContract = Contract::query()
-                ->where('id', ContractPerformanceAct::query()->whereKey($act->getKey())->select('contract_id'))
-                ->lockForUpdate()
-                ->firstOrFail();
-            $lockedAct = ContractPerformanceAct::query()
-                ->whereKey($act->getKey())
-                ->where('contract_id', $lockedContract->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+            $lockedAct = $this->lockAct($act);
+            $lockedContract = $lockedAct->contract;
 
             if ($lockedAct->status === ContractPerformanceAct::STATUS_REJECTED) {
                 throw new BusinessLogicException(trans_message('act_reports.act_rejected_cannot_approve'), 422);
@@ -358,17 +341,14 @@ class ActReportWorkflowService
     public function recalculatePricedLines(ContractPerformanceAct $act): ContractPerformanceAct
     {
         return DB::transaction(
-            fn (): ContractPerformanceAct => $this->financialTotals->recalculateFromStoredBasis($act)
+            fn (): ContractPerformanceAct => $this->financialTotals->recalculateFromStoredBasis($this->lockAct($act))
         );
     }
 
     public function reject(ContractPerformanceAct $act, int $userId, string $reason): ContractPerformanceAct
     {
         [$updatedAct, $changed] = DB::transaction(function () use ($act, $reason, $userId): array {
-            $lockedAct = ContractPerformanceAct::query()
-                ->whereKey($act->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+            $lockedAct = $this->lockAct($act);
             if ($lockedAct->status === ContractPerformanceAct::STATUS_REJECTED) {
                 if ($lockedAct->rejection_reason !== $reason) {
                     throw new BusinessLogicException(
@@ -424,11 +404,7 @@ class ActReportWorkflowService
         string $idempotencyKey,
     ): ContractPerformanceAct {
         return DB::transaction(function () use ($act, $userId, $reason, $idempotencyKey): ContractPerformanceAct {
-            $lockedAct = ContractPerformanceAct::query()
-                ->whereKey($act->getKey())
-                ->with('contract')
-                ->lockForUpdate()
-                ->firstOrFail();
+            $lockedAct = $this->lockAct($act);
             $organizationId = (int) $lockedAct->contract?->organization_id;
             $existing = PerformanceActReversal::query()
                 ->where('organization_id', $organizationId)
@@ -520,10 +496,7 @@ class ActReportWorkflowService
     public function markSigned(ContractPerformanceAct $act, int $fileId, int $userId): ContractPerformanceAct
     {
         [$updatedAct, $changed] = DB::transaction(function () use ($act, $fileId, $userId): array {
-            $lockedAct = ContractPerformanceAct::query()
-                ->whereKey($act->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+            $lockedAct = $this->lockAct($act);
             $signedFile = File::query()
                 ->whereKey($fileId)
                 ->where('organization_id', (int) $lockedAct->contract()->value('organization_id'))
@@ -607,6 +580,21 @@ class ActReportWorkflowService
         if ($act->isLocked()) {
             throw new BusinessLogicException(trans_message('act_reports.act_period_locked'), 423);
         }
+    }
+
+    private function lockAct(ContractPerformanceAct $act): ContractPerformanceAct
+    {
+        $contract = Contract::query()
+            ->where('id', ContractPerformanceAct::query()->whereKey($act->getKey())->select('contract_id'))
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        return ContractPerformanceAct::query()
+            ->whereKey($act->getKey())
+            ->where('contract_id', $contract->id)
+            ->lockForUpdate()
+            ->firstOrFail()
+            ->setRelation('contract', $contract);
     }
 
     private function acceptanceStatus(ContractPerformanceAct $act): string

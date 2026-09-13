@@ -1101,7 +1101,9 @@ final class EstimateFinanceTest extends TestCase
         $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
             'project_id' => $this->estimate->project_id, 'act_document_number' => 'SIGN-DISTRIBUTION',
             'act_date' => '2026-09-13', 'amount' => '120', 'amount_without_vat' => '100',
-            'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+            'status' => 'draft', 'is_approved' => false, 'currency' => 'RUB']);
+        $staleDraft = clone $act;
+        $act->update(['status' => 'approved', 'is_approved' => true]);
         $command = ['operation' => 'execution_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
             'mutation_id' => (string) Str::uuid(), 'act_id' => $act->id,
             'lines' => [['allocation_key' => $line['key'], 'condition_version' => 1, 'version' => 0, 'amount' => '60', 'quantity' => '10']]];
@@ -1118,6 +1120,10 @@ final class EstimateFinanceTest extends TestCase
         $workflow = app(\App\Services\ActReport\ActReportWorkflowService::class);
         $signed = $workflow->markSigned($act, $file->id, $this->actor->id);
         $workflow->markSigned($signed, $file->id, $this->actor->id);
+        $unchanged = $workflow->recalculatePricedLines($staleDraft);
+        self::assertSame('signed', $unchanged->status);
+        self::assertSame('120.00', $unchanged->amount);
+        self::assertSame('100.00', $unchanged->amount_without_vat);
         $source = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExecutionSource::class)->read($this->estimate, $signed->fresh());
         self::assertSame($command['source_hash'], $source['source_hash']);
         self::assertSame('signed', $source['snapshot']['act']['status']);
