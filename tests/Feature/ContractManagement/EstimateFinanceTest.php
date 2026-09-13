@@ -816,6 +816,49 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($row['key'], $db::table('estimate_finance_own_costs')->where('id', $id)->value('key'));
     }
 
+    public function test_execution_distribution_saves_exact_net_replays_and_limits_native_remainder(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'DISTRIBUTE-EXECUTION',
+            'act_date' => '2026-09-13', 'amount' => '120', 'amount_without_vat' => '100',
+            'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+        $before = $act->fresh()->getAttributes();
+        $command = ['operation' => 'execution_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'act_id' => $act->id,
+            'lines' => [['allocation_key' => $allocation->key, 'condition_version' => 1, 'version' => 0, 'amount' => '60']]];
+        $preview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        self::assertSame('60.00', $preview['remaining_amount']);
+        self::assertSame('50.00', $preview['lines'][0]['amount_without_vat']);
+        $command['source_hash'] = $preview['source_hash'];
+        $saved = $this->save($command);
+        self::assertTrue($this->save($command)['replayed']);
+        $db = \Illuminate\Support\Facades\DB::class;
+        $stored = $db::table('estimate_finance_execution_allocations')->first();
+        self::assertSame('60.00', $stored->amount_with_vat);
+        self::assertSame('50.00', $stored->amount_without_vat);
+        self::assertNull($stored->quantity);
+        self::assertSame(1, $db::table('estimate_finance_execution_versions')->count());
+        self::assertSame($before, $act->fresh()->getAttributes());
+        $command['mutation_id'] = (string) Str::uuid();
+        $command['revision'] = $saved['revision'];
+        $command['lines'][0]['version'] = 1;
+        $command['lines'][0]['amount'] = '120.01';
+        try {
+            $this->save($command);
+            self::fail('Execution amount exceeded the act');
+        } catch (ValidationException) {
+            self::assertSame(1, $db::table('estimate_finance_execution_versions')->count());
+            self::assertSame('60.00', $db::table('estimate_finance_execution_allocations')->value('amount_with_vat'));
+        }
+        $command['lines'][0]['amount'] = '120';
+        $this->save($command);
+        self::assertSame($stored->key, $db::table('estimate_finance_execution_allocations')->value('key'));
+        self::assertSame('100.00', $db::table('estimate_finance_execution_allocations')->value('amount_without_vat'));
+        self::assertSame(2, $db::table('estimate_finance_execution_versions')->count());
+    }
+
     public function test_execution_distribution_source_tracks_native_remainder_and_rejects_unapproved_act(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));

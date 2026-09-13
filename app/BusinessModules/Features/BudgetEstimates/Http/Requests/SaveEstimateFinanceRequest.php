@@ -15,6 +15,9 @@ class SaveEstimateFinanceRequest extends FormRequest
 
     public function rules(): array
     {
+        if ($this->input('operation') === 'execution_distribution') {
+            return self::executionRules();
+        }
         if ($this->input('operation') === 'migration_apply') {
             return self::migrationRules();
         }
@@ -93,6 +96,17 @@ class SaveEstimateFinanceRequest extends FormRequest
             'price_basis' => ['required', 'in:without_vat,with_vat,unknown'],
             'vat_rate' => ['sometimes', 'nullable', 'string', 'regex:/^\d{1,3}(\.\d{1,4})?$/', 'numeric', 'min:0', 'max:100'],
         ];
+    }
+
+    public static function executionRules(bool $preview = false): array
+    {
+        $rules = self::cashRules($preview);
+        unset($rules['transaction_id']);
+        $rules['operation'] = ['required', 'in:execution_distribution'];
+        $rules['act_id'] = ['required', 'integer', 'min:1'];
+        $rules['lines.*.amount'] = ['required', 'string', 'regex:/^\d{1,12}(\.\d{1,2})?$/'];
+
+        return $rules;
     }
 
     public static function cashRules(bool $preview = false): array

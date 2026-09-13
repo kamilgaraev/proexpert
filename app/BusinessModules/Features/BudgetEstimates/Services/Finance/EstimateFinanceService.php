@@ -36,6 +36,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceOwnCostReport $ownCostReport,
         private readonly EstimateFinanceOwnCostOptions $ownCostOptions,
         private readonly EstimateFinanceCashDistribution $cashDistribution,
+        private readonly EstimateFinanceExecutionDistribution $executionDistribution,
         private readonly EstimateFinanceMigrationPlan $migrationPlan,
         private readonly EstimateFinanceMigrationApply $migrationApply,
     ) {}
@@ -240,6 +241,9 @@ final class EstimateFinanceService
 
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'execution_distribution') {
+            return $this->executionDistribution->handle($actor, $projectId, $estimateId, $input, false);
+        }
         if (($input['preview_operation'] ?? null) === 'migration_plan') {
             $data = FinanceInputValidation::validate($input, \App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest::migrationPlanRules());
 
@@ -331,6 +335,9 @@ final class EstimateFinanceService
 
     public function save(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'execution_distribution') {
+            return $this->executionDistribution->handle($actor, $projectId, $estimateId, $input, true);
+        }
         if (($input['operation'] ?? null) === 'migration_apply') {
             return $this->migrationApply->apply($actor, $projectId, $estimateId, $input);
         }

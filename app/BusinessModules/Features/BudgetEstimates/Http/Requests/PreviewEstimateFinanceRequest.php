@@ -8,6 +8,9 @@ final class PreviewEstimateFinanceRequest extends SaveEstimateFinanceRequest
 {
     public function rules(): array
     {
+        if ($this->input('operation') === 'execution_distribution') {
+            return self::executionRules(true);
+        }
         if ($this->input('preview_operation') === 'migration_plan') {
             return self::migrationPlanRules();
         }
