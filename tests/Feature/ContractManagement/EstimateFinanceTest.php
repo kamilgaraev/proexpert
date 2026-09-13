@@ -2157,6 +2157,16 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame(1000.0, (float) $exportVolumes['Отдельный материал'][6]);
         self::assertSame(100.0, (float) $exportVolumes['Бетон'][6]);
         $book->disconnectWorksheets();
+        $links = app(ContractEstimateService::class)->getItemsForContract($this->contractor);
+        app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class)
+            ->prepare($this->contractor, $links, $this->actor);
+        $contractRows = \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource::collection($links)->resolve(request());
+        self::assertCount(1, $contractRows);
+        self::assertSame(100.0, $contractRows[0]['item']['acted_quantity']);
+        $project = $this->finance->projectReport($this->actor, $this->estimate->project_id, 'without_vat', true, 'execution');
+        self::assertSame('1100.00', $project['execution']['summary']['totals']['RUB']['cost']);
+        self::assertCount(1, $project['execution']['documents']);
+        self::assertCount(2, $project['execution']['rows']);
         $rows = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->get()->map(fn ($row) => $row->getAttributes())->all();
         $accepted->assertRetained($this->estimate, $command['target_keys'], $rows);
         foreach ($rows as &$row) {
