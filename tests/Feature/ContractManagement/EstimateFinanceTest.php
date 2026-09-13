@@ -816,6 +816,95 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($row['key'], $db::table('estimate_finance_own_costs')->where('id', $id)->value('key'));
     }
 
+    public function test_manual_execution_protects_conditions_until_fact_is_annulled(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'PROTECTED-CONDITIONS',
+            'act_date' => '2026-09-13', 'amount' => '120', 'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+        $command = ['operation' => 'execution_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'act_id' => $act->id,
+            'lines' => [['allocation_key' => $allocation->key, 'condition_version' => 1, 'version' => 0, 'amount' => '60']]];
+        $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
+        $this->save($command);
+        $guard = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAcceptedVolume::class);
+        $row = $allocation->attributesToArray();
+        $target = ['i:'.$this->item->id];
+        foreach ([[], [array_replace($row, ['quantity' => '99'])], [array_replace($row, ['currency' => 'USD'])]] as $invalid) {
+            try {
+                $guard->assertRetained($this->estimate, $target, $invalid);
+                self::fail('Manually allocated fact lost its conditions');
+            } catch (ValidationException) {
+                self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_execution_allocations')->count());
+            }
+        }
+        $guard->assertRetained($this->estimate, $target, [$row]);
+        \Illuminate\Support\Facades\DB::table('estimate_finance_execution_allocations')->update(['quantity' => '10']);
+        $guard->assertRetained($this->estimate, $target, [array_replace($row, ['quantity' => '10'])]);
+        try {
+            $guard->assertRetained($this->estimate, $target, [array_replace($row, ['quantity' => '9'])]);
+            self::fail('Accepted manual quantity was reduced');
+        } catch (ValidationException) {
+            self::assertSame('10.00000000', \Illuminate\Support\Facades\DB::table('estimate_finance_execution_allocations')->value('quantity'));
+        }
+        $act->update(['annulled_at' => now()]);
+        $guard->assertRetained($this->estimate, $target, [array_replace($row, ['quantity' => '0'])]);
+        self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_execution_versions')->count());
+        $this->expectException(ValidationException::class);
+        $guard->assertRetained($this->estimate, $target, []);
+    }
+
+    public function test_execution_distribution_shares_act_capacity_between_estimates_and_checks_access(): void
+    {
+        $firstLine = $this->line($this->customer, '100', '1000000');
+        $this->save($this->command([$firstLine]));
+        $second = $this->estimate->replicate();
+        $second->number = 'EXECUTION-2';
+        $second->save();
+        $item = $this->item->replicate();
+        $item->estimate_id = $second->id;
+        $item->estimate_section_id = null;
+        $item->save();
+        $secondLine = array_replace($firstLine, ['key' => (string) Str::uuid(), 'target_key' => 'i:'.$item->id]);
+        $this->finance->save($this->actor, $second->project_id, $second->id, ['mutation_id' => (string) Str::uuid(),
+            'revision' => (int) $second->fresh()->finance_revision, 'target_keys' => [$secondLine['target_key']], 'lines' => [$secondLine]]);
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'SHARED-CAPACITY',
+            'act_date' => '2026-09-13', 'amount' => '0.03', 'amount_without_vat' => '0.02',
+            'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+        $command = fn (Estimate $estimate, array $line, string $amount): array => ['operation' => 'execution_distribution',
+            'revision' => (int) $estimate->fresh()->finance_revision, 'mutation_id' => (string) Str::uuid(), 'act_id' => $act->id,
+            'lines' => [['allocation_key' => $line['key'], 'version' => 0, 'condition_version' => 1, 'amount' => $amount]]];
+        $first = $command($this->estimate, $firstLine, '0.02');
+        $first['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $first)['source_hash'];
+        $this->save($first);
+        $next = $command($second, $secondLine, '0.02');
+        try {
+            $this->finance->preview($this->actor, $second->project_id, $second->id, $next);
+            self::fail('The same act remainder was used twice');
+        } catch (ValidationException) {
+            self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_execution_allocations')->count());
+        }
+        $next['lines'][0]['amount'] = '0.01';
+        $preview = $this->finance->preview($this->actor, $second->project_id, $second->id, $next);
+        self::assertSame('0.00', $preview['remaining_amount']);
+        $next['source_hash'] = $preview['source_hash'];
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(fn ($actor, $permission) => $permission !== 'contracts.edit');
+        try {
+            app(EstimateFinanceService::class)->save($this->actor, $second->project_id, $second->id, $next);
+            self::fail('Contract edit permission was bypassed');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_execution_allocations')->count());
+        }
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnTrue();
+        app(EstimateFinanceService::class)->save($this->actor, $second->project_id, $second->id, $next);
+        $rows = \Illuminate\Support\Facades\DB::table('estimate_finance_execution_allocations')->orderBy('id')->get();
+        self::assertSame('0.03', FinanceDecimal::add($rows[0]->amount_with_vat, $rows[1]->amount_with_vat));
+        self::assertSame('0.02', FinanceDecimal::add($rows[0]->amount_without_vat, $rows[1]->amount_without_vat));
+        self::assertSame(2, \Illuminate\Support\Facades\DB::table('estimate_finance_execution_versions')->count());
+    }
+
     public function test_execution_distribution_saves_exact_net_replays_and_limits_native_remainder(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));

@@ -47,6 +47,10 @@ final class EstimateFinanceExecutionDistribution
             $act = ContractPerformanceAct::query()->whereKey($data['act_id'])->where('project_id', $projectId)
                 ->whereHas('contract', fn ($builder) => $builder->where('organization_id', $actor->current_organization_id)->where('project_id', $projectId))
                 ->lockForUpdate()->firstOrFail();
+            $nativeLines = $act->lines()->orderBy('id')->lockForUpdate()->get();
+            if ($nativeLines->isEmpty()) {
+                $act->completedWorks()->orderBy('completed_works.id')->lockForUpdate()->get();
+            }
             $source = $this->sources->read($estimate, $act);
             if (isset($data['source_hash']) && ! hash_equals($source['source_hash'], $data['source_hash'])) {
                 $this->conflict();

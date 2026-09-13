@@ -13,6 +13,7 @@ final class EstimateFinanceAcceptedVolume
 {
     public function assertRetained(Estimate $estimate, array $targetKeys, array $rows): void
     {
+        $this->assertManualRetained($estimate, $targetKeys, $rows);
         $itemIds = array_map(static fn (string $key): int => (int) substr($key, 2),
             array_values(array_filter($targetKeys, static fn (string $key): bool => str_starts_with($key, 'i:'))));
         if ($itemIds === []) {
@@ -40,6 +41,38 @@ final class EstimateFinanceAcceptedVolume
             if ($row === null || (int) $row['contract_id'] !== (int) $accepted->contract_id
                 || (int) $row['estimate_item_id'] !== (int) $accepted->estimate_item_id || $row['resource_id'] !== null
                 || FinanceDecimal::compare($row['quantity'], (string) $accepted->quantity) < 0) {
+                throw ValidationException::withMessages(['lines' => trans_message('estimate_finance.accepted_volume')]);
+            }
+        }
+    }
+
+    private function assertManualRetained(Estimate $estimate, array $targetKeys, array $rows): void
+    {
+        $items = [];
+        $resources = [];
+        foreach ($targetKeys as $key) {
+            if (str_starts_with($key, 'r:')) {
+                $resources[] = (int) substr($key, 2);
+            } else {
+                $items[] = (int) substr($key, 2);
+            }
+        }
+        $records = DB::table('estimate_finance_execution_allocations as fact')
+            ->join('estimate_finance_allocations as conditions', 'conditions.id', '=', 'fact.allocation_id')
+            ->join('contract_performance_acts as acts', 'acts.id', '=', 'fact.performance_act_id')
+            ->where('fact.organization_id', $estimate->organization_id)->where('fact.project_id', $estimate->project_id)->where('fact.estimate_id', $estimate->id)
+            ->where('acts.project_id', $estimate->project_id)
+            ->where(fn ($q) => $q->whereIn('conditions.resource_id', $resources)
+                ->orWhere(fn ($itemsQuery) => $itemsQuery->whereNull('conditions.resource_id')->whereIn('conditions.estimate_item_id', $items)))
+            ->selectRaw("conditions.key, conditions.contract_id, conditions.estimate_item_id, conditions.resource_id, conditions.currency, conditions.quantity AS planned_quantity, SUM(CASE WHEN acts.status IN ('approved', 'signed') AND acts.annulled_at IS NULL THEN COALESCE(fact.quantity, 0) ELSE 0 END) AS quantity, MAX(CASE WHEN acts.status IN ('approved', 'signed') AND acts.annulled_at IS NULL AND fact.quantity IS NULL AND fact.amount_with_vat > 0 THEN 1 ELSE 0 END) AS unknown_quantity")
+            ->groupBy('conditions.key', 'conditions.contract_id', 'conditions.estimate_item_id', 'conditions.resource_id', 'conditions.currency', 'conditions.quantity')->get();
+        $byKey = array_column($rows, null, 'key');
+        foreach ($records as $fact) {
+            $row = $byKey[$fact->key] ?? null;
+            $minimum = (int) $fact->unknown_quantity === 1 ? (string) $fact->planned_quantity : (string) $fact->quantity;
+            if ($row === null || (int) $row['contract_id'] !== (int) $fact->contract_id
+                || (int) $row['estimate_item_id'] !== (int) $fact->estimate_item_id || (int) $row['resource_id'] !== (int) $fact->resource_id
+                || $row['currency'] !== $fact->currency || FinanceDecimal::compare($row['quantity'], $minimum) < 0) {
                 throw ValidationException::withMessages(['lines' => trans_message('estimate_finance.accepted_volume')]);
             }
         }
