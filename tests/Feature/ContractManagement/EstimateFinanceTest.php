@@ -3245,6 +3245,70 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_own_cost_edits_from_different_estimates_wait_and_reject_stale_source_version(): void
+    {
+        $db = \Illuminate\Support\Facades\DB::class;
+        $second = $this->estimate->replicate();
+        $second->number = 'OWN-COST-RACE';
+        $second->save();
+        $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,
+            'name' => 'Параллельный расход', 'code' => 'OWN-RACE', 'is_active' => true]);
+        $command = ['operation' => 'own_cost', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'cost_key' => (string) Str::uuid(), 'confirmed' => true,
+            'source_type' => 'manual', 'cost_category_id' => $category->id, 'expense_date' => '2026-09-13',
+            'basis' => 'Исходная запись', 'currency' => 'RUB', 'amount' => '100', 'vat_mode' => 'none', 'price_basis' => 'without_vat'];
+        $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
+        $this->save($command);
+        $edit = array_replace($command, ['revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'source_version' => 1, 'amount' => '80']);
+        unset($edit['source_hash']);
+        $edit['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $edit)['source_hash'];
+        $concurrent = array_replace($edit, ['revision' => (int) $second->finance_revision, 'mutation_id' => (string) Str::uuid(), 'amount' => '90']);
+        unset($concurrent['source_hash']);
+        $concurrent['source_hash'] = $this->finance->preview($this->actor, $second->project_id, $second->id, $concurrent)['source_hash'];
+        $db::commit();
+        $worker = new \Symfony\Component\Process\Process([PHP_BINARY, base_path('tests/Support/EstimateFinanceSaveWorker.php')], base_path());
+        $worker->setTimeout(40);
+        $worker->setInput(json_encode(['actor' => $this->actor->id, 'project' => $second->project_id,
+            'estimate' => $second->id, 'command' => $concurrent], JSON_THROW_ON_ERROR));
+        try {
+            $db::transaction(function () use ($db, $worker, $edit): void {
+                $db::table('estimate_finance_own_costs')->where('key', $edit['cost_key'])->lockForUpdate()->first();
+                $worker->start();
+                self::assertTrue($worker->waitUntil(static fn (string $type, string $output): bool => str_contains($output, 'READY')));
+                self::assertSame(1, preg_match('/READY (\d+)/', $worker->getOutput(), $match));
+                $blocked = false;
+                for ($attempt = 0; $attempt < 200 && $worker->isRunning(); $attempt++) {
+                    $blocked = (int) $db::selectOne('select cardinality(pg_blocking_pids(?)) as count', [(int) $match[1]])->count > 0;
+                    if ($blocked) {
+                        break;
+                    }
+                    usleep(10000);
+                }
+                self::assertTrue($blocked, 'Concurrent estimate must wait for the shared own cost');
+                $this->save($edit);
+            });
+            $worker->wait();
+            self::assertTrue($worker->isSuccessful(), $worker->getErrorOutput());
+            self::assertStringContainsString('"status":409', $worker->getOutput());
+            $cost = $db::table('estimate_finance_own_costs')->where('key', $command['cost_key'])->first();
+            self::assertSame('80.00', $cost->amount);
+            self::assertSame(2, $cost->version);
+            self::assertSame(2, $db::table('estimate_finance_own_cost_versions')->where('own_cost_id', $cost->id)->count());
+            self::assertSame((int) $second->finance_revision, (int) $second->fresh()->finance_revision);
+            self::assertFalse($db::table('estimate_finance_mutations')->where('mutation_id', $concurrent['mutation_id'])->exists());
+        } finally {
+            if ($worker->isRunning()) {
+                $worker->stop();
+            }
+            $db::table('estimate_finance_own_cost_versions')->whereIn('own_cost_id',
+                $db::table('estimate_finance_own_costs')->where('key', $command['cost_key'])->select('id'))->delete();
+            $db::table('estimate_finance_own_costs')->where('key', $command['cost_key'])->delete();
+            $db::table('estimate_finance_mutations')->whereIn('estimate_id', [$this->estimate->id, $second->id])->delete();
+            $db::beginTransaction();
+        }
+    }
+
     public function test_mirrored_resource_must_be_resolved_before_procurement(): void
     {
         $child = EstimateItem::query()->create(['estimate_id' => $this->estimate->id, 'parent_work_id' => $this->item->id,
