@@ -695,6 +695,7 @@ final class EstimateFinanceTest extends TestCase
         $coverageAfter = $coverageService->getCoverageForEstimate($this->estimate);
         self::assertSame($coverageBefore['contracts'][0]['linked_items_count'], $coverageAfter['contracts'][0]['linked_items_count']);
         self::assertNull($coverageAfter['contracts'][0]['linked_amount']);
+        self::assertSame(120.0, $coverageAfter['contracts'][0]['saved_linked_amount']);
         $preserved = EstimateFinanceAllocation::query()->where('contract_estimate_item_id', $link->id)->firstOrFail();
         self::assertEquals($coverageBefore['contracts'][0]['linked_amount'], $preserved->legacy_amount);
         self::assertSame('120.00', $link->fresh()->amount);
