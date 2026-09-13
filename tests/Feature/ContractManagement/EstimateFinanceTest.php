@@ -284,6 +284,9 @@ final class EstimateFinanceTest extends TestCase
 
     public function test_own_cost_distribution_caps_all_estimates_and_keeps_exact_net_and_history(): void
     {
+        $parent = EstimateSection::query()->create(['estimate_id' => $this->estimate->id, 'name' => 'Общий раздел', 'section_number' => '1']);
+        $child = EstimateSection::query()->create(['estimate_id' => $this->estimate->id, 'name' => 'Вложенный раздел', 'section_number' => '1', 'parent_section_id' => $parent->id]);
+        $this->item->update(['estimate_section_id' => $child->id]);
         $db = \Illuminate\Support\Facades\DB::class;
         $a = array_replace($this->line($this->contractor, '50', '100'), ['source' => 'own', 'contract_id' => null]);
         $b = array_replace($a, ['key' => (string) Str::uuid()]);
@@ -293,6 +296,7 @@ final class EstimateFinanceTest extends TestCase
         $second->save();
         $secondItem = $this->item->replicate();
         $secondItem->estimate_id = $second->id;
+        $secondItem->estimate_section_id = null;
         $secondItem->save();
         $c = array_replace($a, ['key' => (string) Str::uuid(), 'quantity' => '100', 'target_key' => 'i:'.$secondItem->id]);
         $this->finance->save($this->actor, $second->project_id, $second->id, ['mutation_id' => (string) Str::uuid(),
@@ -337,6 +341,11 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('0.02', $costReport['source_totals']['RUB']['amount']);
         self::assertSame('0.01', $costReport['allocated_totals']['RUB']['amount']);
         self::assertCount(2, $costReport['rows']);
+        $sections = array_column($costReport['sections'], null, 'section_id');
+        self::assertCount(2, $sections);
+        self::assertSame('0.01', $sections[$child->id]['totals']['RUB']['amount']);
+        self::assertSame('0.01', $sections[$parent->id]['totals']['RUB']['amount']);
+        self::assertFalse($sections[$child->id]['hierarchy_requires_review']);
         self::assertSame('0.00', $costReport['sources'][0]['remaining_amount']);
         $projectCostReport = $this->finance->projectReport($this->actor, $this->estimate->project_id, 'without_vat', false, 'execution')['own_costs'];
         self::assertSame('0.02', $projectCostReport['source_totals']['RUB']['amount']);

@@ -136,7 +136,50 @@ final class EstimateFinanceOwnCostReport
 
         return ['basis' => $basis, 'source_scope' => 'project', 'allocation_scope' => $estimateId === null ? 'project' : 'estimate',
             'sources' => array_values($sources), 'rows' => $rows, 'source_totals' => $sourceTotals,
-            'allocated_totals' => $allocatedTotals, 'positions' => array_values($positions)];
+            'allocated_totals' => $allocatedTotals, 'positions' => array_values($positions),
+            'sections' => $this->sections($rows, (int) $actor->current_organization_id, $projectId)];
+    }
+
+    private function sections(array $rows, int $organizationId, int $projectId): array
+    {
+        $tree = DB::table('estimate_sections as section')->join('estimates as estimate', 'estimate.id', '=', 'section.estimate_id')
+            ->where('estimate.organization_id', $organizationId)->where('estimate.project_id', $projectId)
+            ->whereIn('section.estimate_id', array_unique(array_column($rows, 'estimate_id')))
+            ->orderBy('section.sort_order')->orderBy('section.id')
+            ->get(['section.id', 'section.estimate_id', 'section.parent_section_id', 'section.name'])->keyBy('id');
+        $paths = $totals = [];
+        foreach ($rows as $row) {
+            if ($row['status'] === 'voided') {
+                continue;
+            }
+            $key = $row['estimate_id'].':'.($row['section_id'] ?? 'none');
+            if (! isset($paths[$key])) {
+                $path = [];
+                $current = $row['section_id'];
+                $invalid = false;
+                while ($current !== null) {
+                    $section = $tree->get($current);
+                    if (isset($path[$current]) || $section === null || (int) $section->estimate_id !== $row['estimate_id']) {
+                        $invalid = true;
+                        break;
+                    }
+                    $path[$current] = $section;
+                    $current = $section->parent_section_id;
+                }
+                $paths[$key] = ['path' => $path, 'invalid' => $invalid];
+            }
+            $path = $paths[$key];
+            foreach ($path['path'] ?: [null] as $section) {
+                $sectionKey = $row['estimate_id'].':'.($section?->id ?? 'none');
+                $totals[$sectionKey] ??= ['estimate_id' => $row['estimate_id'], 'section_id' => $section === null ? null : (int) $section->id,
+                    'name' => $section?->name, 'parent_section_id' => $section?->parent_section_id,
+                    'hierarchy_requires_review' => false, 'totals' => []];
+                $totals[$sectionKey]['hierarchy_requires_review'] = $totals[$sectionKey]['hierarchy_requires_review'] || $path['invalid'];
+                $this->add($totals[$sectionKey]['totals'], $row['currency'], $row['amount']);
+            }
+        }
+
+        return array_values($totals);
     }
 
     private function add(array &$totals, string $currency, ?string $amount): void
