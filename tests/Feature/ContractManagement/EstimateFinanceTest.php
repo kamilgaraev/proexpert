@@ -496,6 +496,34 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('0.01', $remainingReport['sources'][0]['remaining_without_vat']);
     }
 
+    public function test_migration_preserves_signed_act_lines_and_payment_history(): void
+    {
+        $link = ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
+            'estimate_item_id' => $this->item->id, 'quantity' => '1', 'amount' => '120', 'amount_without_vat' => '100']);
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'MIGRATED-FACT', 'act_date' => '2026-09-12',
+            'amount' => '150', 'status' => 'signed', 'is_approved' => true, 'currency' => 'RUB']);
+        $line = \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id,
+            'line_type' => 'manual', 'manual_reason' => 'Старая привязка', 'title' => 'Работа', 'unit' => 'шт',
+            'quantity' => '1', 'unit_price' => '120', 'amount' => '120', 'currency' => 'RUB',
+            'estimate_item_id' => $this->item->id, 'basis_snapshot' => ['legacy_link_id' => $link->id]]);
+        $document = $this->cashDocument($this->contractor, 'outgoing');
+        $transaction = $this->cashTransaction($document->id, '50');
+        $before = [$act->fresh()->getAttributes(), $line->fresh()->getAttributes(), $document->fresh()->getAttributes(), $transaction->fresh()->getAttributes()];
+        $execution = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution'];
+        $plan = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, ['preview_operation' => 'migration_plan']);
+        $command = ['operation' => 'migration_apply', 'mutation_id' => (string) Str::uuid(), 'revision' => $plan['revision'],
+            'links' => [['legacy_link_id' => $link->id, 'source_hash' => $plan['rows'][0]['source_hash']]]];
+        $this->save($command);
+        self::assertSame($before, [$act->fresh()->getAttributes(), $line->fresh()->getAttributes(), $document->fresh()->getAttributes(), $transaction->fresh()->getAttributes()]);
+        $after = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution'];
+        self::assertSame($execution['rows'], $after['rows']);
+        self::assertSame($execution['documents'], $after['documents']);
+        self::assertSame($execution['summary']['totals'], $after['summary']['totals']);
+        self::assertTrue($this->save($command)['replayed']);
+        self::assertSame(1, EstimateFinanceAllocation::query()->where('contract_estimate_item_id', $link->id)->count());
+    }
+
     public function test_own_cost_registration_previews_tax_and_replays_without_duplicate_expense(): void
     {
         $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,

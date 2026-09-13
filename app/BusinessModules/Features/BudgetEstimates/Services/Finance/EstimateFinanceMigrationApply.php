@@ -28,7 +28,8 @@ final class EstimateFinanceMigrationApply
         $hash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
 
         return DB::transaction(function () use ($actor, $projectId, $estimateId, $data, $estimate, $hash): array {
-            $locked = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            $locked = Estimate::query()->whereKey($estimate->id)->where('organization_id', $actor->current_organization_id)
+                ->where('project_id', $projectId)->lockForUpdate()->firstOrFail();
             $receipt = DB::table('estimate_finance_mutations')->where('estimate_id', $estimateId)->where('mutation_id', $data['mutation_id'])->first();
             if ($receipt) {
                 if ($receipt->request_hash !== $hash || (int) $receipt->actor_id !== (int) $actor->id) {
@@ -43,7 +44,7 @@ final class EstimateFinanceMigrationApply
             $ids = array_column($data['links'], 'legacy_link_id');
             $links = ContractEstimateItem::query()->where('estimate_id', $estimateId)->whereIn('id', $ids)->orderBy('id')->lockForUpdate()->get();
             Contract::query()->whereIn('id', $links->pluck('contract_id'))->orderBy('id')->lockForUpdate()->get();
-            EstimateItem::query()->where('estimate_id', $estimateId)->whereIn('id', $links->pluck('estimate_item_id'))->orderBy('id')->lockForUpdate()->get();
+            $items = EstimateItem::query()->where('estimate_id', $estimateId)->whereIn('id', $links->pluck('estimate_item_id'))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
             $report = $this->plan->report($actor, $projectId, $estimateId, 0, 500, $ids);
             $rows = array_column($report['rows'], null, 'legacy_link_id');
             $this->access->editContracts($actor, $locked, [], $links->pluck('contract_id')->all());
@@ -54,6 +55,7 @@ final class EstimateFinanceMigrationApply
                     throw new ConflictHttpException(trans_message('estimate_finance.conflict'));
                 }
                 $source = $row['source'];
+                $item = $items->get($source['estimate_item_id']);
                 $key = Uuid::uuid5(Uuid::NAMESPACE_URL, 'most:estimate-finance:legacy:'.$source['link_id'])->toString();
                 $keys[] = $key;
                 $writes[] = ['key' => $key, 'organization_id' => $locked->organization_id, 'estimate_id' => $estimateId,
@@ -62,7 +64,9 @@ final class EstimateFinanceMigrationApply
                     'currency' => $source['currency'] ?? '', 'quantity' => $source['quantity'], 'unit_price' => null,
                     'amount_without_vat' => $source['amount_without_vat'], 'amount_with_vat' => null, 'legacy_amount' => $source['amount'],
                     'vat_rate' => null, 'vat_mode' => 'unknown', 'price_basis' => 'unknown', 'method' => 'total', 'composition_confirmed' => false,
-                    'condition_version' => 1, 'estimate_snapshot' => json_encode(['migration_source' => $source], JSON_THROW_ON_ERROR),
+                    'condition_version' => 1, 'estimate_snapshot' => json_encode(['migration_source' => $source,
+                        'quantity' => (string) ($item->quantity_total ?? $item->quantity ?? '0'),
+                        'estimate_amount' => (string) ($item->total_amount ?? '0'), 'unit_id' => $item->measurement_unit_id], JSON_THROW_ON_ERROR),
                     'notes' => $source['notes'], 'updated_by' => $actor->id, 'created_at' => now(), 'updated_at' => now()];
             }
             if (DB::table('estimate_finance_allocations')->whereIn('contract_estimate_item_id', $ids)->exists()
