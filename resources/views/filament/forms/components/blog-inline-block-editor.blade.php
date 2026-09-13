@@ -42,6 +42,7 @@
                 uploadImage: @js(trans_message('blog_cms.media_upload_action')),
                 uploadingImage: @js(trans_message('blog_cms.media_uploading')),
                 uploadFailed: @js(trans_message('blog_cms.media_upload_failed')),
+                documentUploadFailed: @js(trans_message('blog_cms.document_upload_failed')),
                 altRequiredBeforeUpload: @js(trans_message('blog_cms.media_alt_required_before_upload')),
             },
         })"

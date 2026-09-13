@@ -12,7 +12,7 @@ function editor(wire) {
         state: [{ type: 'materials', data: { items: [{ url: '', label: 'График работ', description: '' }] } }],
         statePath: 'data.editor_document',
         wire,
-        labels: { uploadFailed: 'Не удалось загрузить документ' },
+        labels: { uploadFailed: 'Не удалось загрузить изображение', documentUploadFailed: 'Не удалось загрузить документ' },
     });
 }
 
@@ -44,6 +44,19 @@ test('server validation failure preserves material and allows retry', async () =
     state.uploadDocument({ target: { files: [{}], value: '' } }, state.state[0].data.items[0]);
     await completed();
     assert.equal(state.documentUploadError, 'Недопустимый формат');
+    assert.equal(state.uploadingDocument, false);
+    assert.equal(state.state[0].data.items[0].url, '');
+});
+
+test('structured storage error is shown as document failure and unlocks retry', async () => {
+    let completed;
+    const state = editor({
+        upload: (_, file, callback) => { completed = callback; },
+        uploadInlineDocument: async () => ({ error: 'Хранилище медиатеки пока недоступно' }),
+    });
+    state.uploadDocument({ target: { files: [{}], value: '' } }, state.state[0].data.items[0]);
+    await completed();
+    assert.equal(state.documentUploadError, 'Хранилище медиатеки пока недоступно');
     assert.equal(state.uploadingDocument, false);
     assert.equal(state.state[0].data.items[0].url, '');
 });

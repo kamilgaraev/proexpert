@@ -59,6 +59,9 @@ class EditBlogArticle extends EditRecord
             $asset = app(BlogMediaService::class)->uploadMarketingDocumentAsset($file, $systemAdmin);
 
             return ['url' => $asset->public_url, 'label' => $asset->filename];
+        } catch (ValidationException $exception) {
+            return ['error' => collect($exception->errors())->flatten()->first()
+                ?? trans_message('blog_cms.document_upload_failed')];
         } finally {
             $file->delete();
             $this->inline_document_upload = null;

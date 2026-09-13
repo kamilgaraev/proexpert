@@ -353,24 +353,25 @@ const registerBlogInlineBlockEditor = (Alpine) => {
             this.wire.upload('inline_document_upload', file, async () => {
                 try {
                     const asset = await this.wire.uploadInlineDocument();
-                    if (!asset?.url) throw new Error(this.labels.uploadFailed);
+                    if (asset?.error) throw new Error(asset.error);
+                    if (!asset?.url) throw new Error(this.labels.documentUploadFailed);
                     this.documentOptions = { ...this.documentOptions, [asset.url]: asset.label };
                     item.url = asset.url;
                     item.label = item.label || asset.label;
                     this.touchState();
                 } catch (error) {
-                    this.documentUploadError = this.extractUploadError(error);
+                    this.documentUploadError = this.extractUploadError(error, this.labels.documentUploadFailed);
                 } finally {
                     finish();
                 }
             }, () => {
-                this.documentUploadError = this.labels.uploadFailed;
+                this.documentUploadError = this.labels.documentUploadFailed;
                 finish();
             });
         },
 
-        extractUploadError(error) {
-            const errors = error?.response?.data?.errors ?? error?.errors ?? null;
+        extractUploadError(error, fallback = this.labels.uploadFailed) {
+            const errors = error?.response?.data?.errors ?? error?.json?.errors ?? error?.errors ?? null;
 
             if (errors && typeof errors === 'object') {
                 const first = Object.values(errors).flat().find(Boolean);
@@ -380,7 +381,7 @@ const registerBlogInlineBlockEditor = (Alpine) => {
                 }
             }
 
-            return error?.message || this.labels.uploadFailed || '';
+            return error?.message || fallback || '';
         },
 
         focusBlock(index) {

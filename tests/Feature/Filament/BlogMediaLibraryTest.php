@@ -268,6 +268,51 @@ class BlogMediaLibraryTest extends TestCase
         }
     }
 
+    public function test_platform_media_organization_is_created_once_without_client_access(): void
+    {
+        $migration = require database_path('migrations/2026_09_13_150000_prepare_platform_media_organization.php');
+        $migration->up();
+        $organization = Organization::query()->where('system_key', 'platform_media_library')->sole();
+        $migration->up();
+
+        $this->assertSame($organization->id, Organization::query()->where('system_key', 'platform_media_library')->sole()->id);
+        $this->assertFalse($organization->is_active);
+        $this->assertNull($organization->tax_number);
+        $this->assertNull($organization->parent_organization_id);
+        $this->assertSame(0, $organization->users()->count());
+        $this->assertSame(0, $organization->projects()->count());
+        $this->assertFalse($organization->isFillable('system_key'));
+    }
+
+    public function test_document_upload_uses_service_organization_without_environment_id(): void
+    {
+        config(['blog.platform_content_organization_id' => null]);
+        $admin = SystemAdmin::factory()->role('content_manager')->create();
+        Organization::factory()->create();
+        $organization = Organization::query()->where('system_key', 'platform_media_library')->sole();
+        $file = UploadedFile::fake()->createWithContent('sample.pdf', "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF");
+        $path = 'org-' . $organization->id . '/cms/blog/media/sample.pdf';
+        $this->mock(FileService::class, function ($mock) use ($file, $organization, $path): void {
+            $mock->shouldReceive('upload')->once()->with($file, 'cms/blog/media', null, 'public', \Mockery::on(fn ($org) => $org->id === $organization->id), true)->andReturn($path);
+            $mock->shouldReceive('publicUrl')->once()->andReturn('https://storage.example.test/' . $path);
+        });
+
+        $asset = app(BlogMediaService::class)->uploadMarketingDocumentAsset($file, $admin);
+        $this->assertSame($path, $asset->storage_path);
+    }
+
+    public function test_missing_configured_media_organization_does_not_fall_back_to_another_owner(): void
+    {
+        config(['blog.platform_content_organization_id' => PHP_INT_MAX]);
+        $admin = SystemAdmin::factory()->role('content_manager')->create();
+        $this->mock(FileService::class, fn ($mock) => $mock->shouldNotReceive('upload'));
+        $file = UploadedFile::fake()->createWithContent('sample.pdf', "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF");
+
+        $this->expectException(ValidationException::class);
+        $this->expectExceptionMessage(trans_message('blog_cms.media_storage_not_configured'));
+        app(BlogMediaService::class)->uploadMarketingDocumentAsset($file, $admin);
+    }
+
     public function test_document_upload_stores_file_through_s3_service_and_records_metadata(): void
     {
         $admin = SystemAdmin::factory()->role('content_manager')->create();
