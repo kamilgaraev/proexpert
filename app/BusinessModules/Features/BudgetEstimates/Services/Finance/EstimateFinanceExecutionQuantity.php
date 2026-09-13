@@ -11,7 +11,7 @@ use Illuminate\Validation\ValidationException;
 
 final class EstimateFinanceExecutionQuantity
 {
-    public function assertAvailable(Estimate $estimate, int $contractId, int $actId, array $changes): void
+    public function assertAvailable(Estimate $estimate, int $contractId, int $actId, array $changes, bool $excludeNativeAct = false): void
     {
         if ($changes === []) {
             return;
@@ -30,9 +30,10 @@ final class EstimateFinanceExecutionQuantity
         }
         $acts = DB::table('contract_performance_acts as acts')->where('acts.contract_id', $contractId)->where('acts.project_id', $estimate->project_id)
             ->whereIn('acts.status', ['approved', 'signed'])->whereNull('acts.annulled_at');
-        $native = (clone $acts)->join('performance_act_lines as line', 'line.performance_act_id', '=', 'acts.id')->whereIn('line.estimate_item_id', $itemIds)
+        $nativeActs = (clone $acts)->when($excludeNativeAct, fn ($query) => $query->where('acts.id', '!=', $actId));
+        $native = (clone $nativeActs)->join('performance_act_lines as line', 'line.performance_act_id', '=', 'acts.id')->whereIn('line.estimate_item_id', $itemIds)
             ->selectRaw("line.estimate_item_id, line.quantity, line.amount, line.basis_snapshot->>'allocation_key' AS allocation_key, line.basis_snapshot->>'basis_type' AS basis_type, line.basis_snapshot->>'estimate_item_id' AS snapshot_item_id, line.basis_snapshot->>'estimate_id' AS snapshot_estimate_id, line.basis_snapshot->>'contract_id' AS snapshot_contract_id")->get();
-        $legacy = (clone $acts)->join('performance_act_completed_works as pivot', 'pivot.performance_act_id', '=', 'acts.id')
+        $legacy = (clone $nativeActs)->join('performance_act_completed_works as pivot', 'pivot.performance_act_id', '=', 'acts.id')
             ->join('completed_works as work', 'work.id', '=', 'pivot.completed_work_id')->where('work.organization_id', $estimate->organization_id)
             ->where('work.project_id', $estimate->project_id)->whereIn('work.estimate_item_id', $itemIds)
             ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('performance_act_lines')->whereColumn('performance_act_id', 'acts.id'))
@@ -56,7 +57,7 @@ final class EstimateFinanceExecutionQuantity
             ->whereIn('fact.allocation_id', $conditions->keys())->where('acts.contract_id', $contractId)->where('acts.project_id', $estimate->project_id)
             ->whereIn('acts.status', ['approved', 'signed'])->whereNull('acts.annulled_at')->select('fact.*')->get();
         foreach ($ledger as $row) {
-            if ((int) $row->performance_act_id === $actId && isset($changes[$row->allocation_id])) {
+            if (! $excludeNativeAct && (int) $row->performance_act_id === $actId && isset($changes[$row->allocation_id])) {
                 continue;
             }
             $condition = $conditions->get($row->allocation_id);

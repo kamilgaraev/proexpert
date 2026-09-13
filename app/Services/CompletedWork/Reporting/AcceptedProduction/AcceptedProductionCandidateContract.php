@@ -53,7 +53,7 @@ final readonly class AcceptedProductionCandidateContract
 
     public const FORMULA_HASH = '839ea0b2787a0d73872bf5f7a63292437abaae05abb108ae92731abe3264f06b';
 
-    public const SOURCE_HASH = '92b62f47a67e624e792b544aac4109328361781a0f5c1b4a41af8cc9cf4bcfa7';
+    public const SOURCE_HASH = 'affdfd49b246c23eef545d2a86fcdf6a33e047b546a5eba3c5ab153520d14018';
 
     public function filters(): array
     {
@@ -140,6 +140,7 @@ final readonly class AcceptedProductionCandidateContract
             ActingQuantityStatus::class,
             ContractPerformanceActService::class,
             \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard::class,
+            \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExecutionQuantity::class,
             \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAcceptedVolume::class,
             AcceptedProductionEventUniverse::class,
             AcceptedProductionUniverseStream::class,

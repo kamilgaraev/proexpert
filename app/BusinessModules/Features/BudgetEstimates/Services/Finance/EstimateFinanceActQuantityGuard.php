@@ -7,13 +7,16 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Finance;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
+use App\Models\EstimateFinanceAllocation;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use LogicException;
 
 final class EstimateFinanceActQuantityGuard
 {
-    public function __construct(private readonly EstimateFinanceAcceptedVolume $accepted) {}
+    public function __construct(private readonly EstimateFinanceAcceptedVolume $accepted, private readonly EstimateFinanceExecutionQuantity $quantities) {}
 
     public function assertFits(ContractPerformanceAct $act, Contract $contract): void
     {
@@ -23,7 +26,7 @@ final class EstimateFinanceActQuantityGuard
         if ((int) $act->contract_id !== (int) $contract->id) {
             $this->invalid();
         }
-        $lines = $act->lines()->get(['estimate_item_id', 'quantity']);
+        $lines = $act->lines()->get(['estimate_item_id', 'quantity', 'amount', 'basis_snapshot']);
         if ($lines->isEmpty()) {
             $lines = $act->completedWorks()->where('organization_id', $contract->organization_id)->where('project_id', $act->project_id)
                 ->get()->map(static fn ($work): array => ['estimate_item_id' => $work->estimate_item_id, 'quantity' => $work->pivot->included_quantity]);
@@ -64,7 +67,44 @@ final class EstimateFinanceActQuantityGuard
                     $this->invalid();
                 }
             }
+            $this->assertConditionQuantities($estimate, $contract, $act, $lines);
         }
+    }
+
+    private function assertConditionQuantities(Estimate $estimate, Contract $contract, ContractPerformanceAct $act, Collection $lines): void
+    {
+        $keys = $lines->map(fn ($line) => data_get($line, 'basis_snapshot.allocation_key'))
+            ->filter(fn ($key) => is_string($key) && Str::isUuid($key))->unique();
+        $conditions = EstimateFinanceAllocation::query()->where('organization_id', $estimate->organization_id)
+            ->where('estimate_id', $estimate->id)->where('contract_id', $contract->id)
+            ->whereIn('key', $keys)->get()->keyBy('key');
+        $changes = [];
+        foreach ($lines as $line) {
+            $snapshot = data_get($line, 'basis_snapshot', []);
+            $condition = $conditions->get($snapshot['allocation_key'] ?? '');
+            if ($condition === null) {
+                if (($snapshot['basis_type'] ?? null) === 'contract_conditions' && (int) ($snapshot['estimate_id'] ?? 0) === (int) $estimate->id) {
+                    $this->invalid();
+                }
+                continue;
+            }
+            if (($snapshot['basis_type'] ?? null) !== 'contract_conditions'
+                || (int) ($snapshot['estimate_id'] ?? 0) !== (int) $estimate->id
+                || (int) ($snapshot['contract_id'] ?? 0) !== (int) $contract->id
+                || (int) ($snapshot['estimate_item_id'] ?? 0) !== (int) $condition->estimate_item_id
+                || (int) $line['estimate_item_id'] !== (int) $condition->estimate_item_id) {
+                $this->invalid();
+            }
+            if ($condition->resource_id !== null) {
+                continue;
+            }
+            $previous = $changes[$condition->id] ?? ['allocation' => $condition, 'quantity' => '0', 'amount' => '0'];
+            $previous['quantity'] = $previous['quantity'] === null || $line['quantity'] === null ? null
+                : FinanceDecimal::add($previous['quantity'], (string) $line['quantity']);
+            $previous['amount'] = FinanceDecimal::add($previous['amount'], (string) $line['amount']);
+            $changes[$condition->id] = $previous;
+        }
+        $this->quantities->assertAvailable($estimate, (int) $contract->id, (int) $act->id, $changes, true);
     }
 
     private function invalid(): never

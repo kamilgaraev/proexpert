@@ -2067,6 +2067,51 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_native_act_respects_its_condition_volume_when_other_conditions_have_capacity(): void
+    {
+        $first = $this->line($this->contractor, '40', '40');
+        $second = $this->line($this->contractor, '60', '60');
+        $this->save($this->command([$first, $second]));
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'CONDITION-CAP', 'act_date' => '2026-09-13',
+            'amount' => '50', 'currency' => 'RUB', 'status' => 'draft', 'is_approved' => false]);
+        $line = \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Работа', 'quantity' => '50', 'unit_price' => '1', 'amount' => '50',
+            'currency' => 'RUB', 'manual_reason' => 'Проверка', 'created_by' => $this->actor->id,
+            'basis_snapshot' => ['basis_type' => 'contract_conditions', 'allocation_key' => $first['key'],
+                'estimate_id' => $this->estimate->id, 'contract_id' => $this->contractor->id, 'estimate_item_id' => $this->item->id]]);
+        $guard = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard::class);
+        $db = \Illuminate\Support\Facades\DB::class;
+        try {
+            $db::transaction(fn () => $guard->assertFits($act, $this->contractor));
+            self::fail('Another condition must not supply the missing volume');
+        } catch (ValidationException) {
+            self::assertSame('draft', $act->fresh()->status);
+        }
+        $line->update(['quantity' => '40', 'amount' => '40']);
+        $db::transaction(fn () => $guard->assertFits($act, $this->contractor));
+        $act->update(['amount' => '40', 'status' => 'approved', 'is_approved' => true]);
+        $db::transaction(fn () => $guard->assertFits($act, $this->contractor));
+        self::assertSame('approved', $act->fresh()->status);
+        $next = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'CONDITION-CAP-NEXT', 'act_date' => '2026-09-13',
+            'amount' => '1', 'currency' => 'RUB', 'status' => 'draft', 'is_approved' => false]);
+        $nextLine = $line->replicate();
+        $nextLine->fill(['performance_act_id' => $next->id, 'quantity' => '1', 'amount' => '1']);
+        $nextLine->save();
+        try {
+            $db::transaction(fn () => $guard->assertFits($next, $this->contractor));
+            self::fail('Consumed condition must not be used again');
+        } catch (ValidationException) {
+            self::assertSame('draft', $next->fresh()->status);
+        }
+        $snapshot = $nextLine->basis_snapshot;
+        $snapshot['allocation_key'] = $second['key'];
+        $nextLine->update(['basis_snapshot' => $snapshot]);
+        $db::transaction(fn () => $guard->assertFits($next, $this->contractor));
+        self::assertSame(0, FinanceDecimal::compare((string) $nextLine->fresh()->quantity, '1'));
+    }
+
     public function test_act_basis_uses_contract_conditions_and_keeps_previous_snapshot(): void
     {
         $line = $this->line($this->contractor, '100', '800000');
