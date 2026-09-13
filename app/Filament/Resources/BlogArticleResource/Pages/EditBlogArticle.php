@@ -37,6 +37,33 @@ class EditBlogArticle extends EditRecord
 
     public mixed $inline_media_upload = null;
 
+    public mixed $inline_document_upload = null;
+
+    public function uploadInlineDocument(): array
+    {
+        $file = $this->inline_document_upload;
+        $systemAdmin = Auth::guard('system_admin')->user();
+
+        if (! $systemAdmin instanceof SystemAdmin || ! BlogArticleResource::canEdit($this->getRecord())) {
+            abort(403);
+        }
+
+        if (! $file instanceof TemporaryUploadedFile) {
+            throw ValidationException::withMessages([
+                'inline_document_upload' => [trans_message('blog_cms.media_upload_required')],
+            ]);
+        }
+
+        try {
+            $asset = app(BlogMediaService::class)->uploadMarketingDocumentAsset($file, $systemAdmin);
+
+            return ['url' => $asset->public_url, 'label' => $asset->filename];
+        } finally {
+            $file->delete();
+            $this->inline_document_upload = null;
+        }
+    }
+
     public function getBreadcrumbs(): array
     {
         return [];

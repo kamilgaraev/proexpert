@@ -1,10 +1,13 @@
 const registerBlogInlineBlockEditor = (Alpine) => {
-    Alpine.data('blogInlineBlockEditor', ({ state, statePath, wire, blockDefinitions = [], mediaOptions = {}, acceptedImageTypes = [], labels = {} }) => ({
+    Alpine.data('blogInlineBlockEditor', ({ state, statePath, wire, blockDefinitions = [], mediaOptions = {}, documentOptions = {}, acceptedImageTypes = [], labels = {} }) => ({
         state,
         statePath,
         wire,
         blockDefinitions,
         mediaOptions,
+        documentOptions,
+        uploadingDocument: false,
+        documentUploadError: '',
         acceptedImageTypes,
         labels,
         activeIndex: 0,
@@ -322,6 +325,48 @@ const registerBlogInlineBlockEditor = (Alpine) => {
                     event.target.value = '';
                 },
             );
+        },
+
+        addMaterial(index) {
+            if (this.state[index].data.items.length < 10) {
+                this.state[index].data.items.push({ url: '', label: '', description: '' });
+                this.touchState();
+            }
+        },
+
+        selectMaterial(item) {
+            if (!item.label) {
+                item.label = this.documentOptions[item.url] ?? '';
+            }
+            this.touchState();
+        },
+
+        uploadDocument(event, item) {
+            const file = event.target.files?.[0];
+            if (!file || this.uploadingDocument) return;
+            this.uploadingDocument = true;
+            this.documentUploadError = '';
+            const finish = () => {
+                this.uploadingDocument = false;
+                event.target.value = '';
+            };
+            this.wire.upload('inline_document_upload', file, async () => {
+                try {
+                    const asset = await this.wire.uploadInlineDocument();
+                    if (!asset?.url) throw new Error(this.labels.uploadFailed);
+                    this.documentOptions = { ...this.documentOptions, [asset.url]: asset.label };
+                    item.url = asset.url;
+                    item.label = item.label || asset.label;
+                    this.touchState();
+                } catch (error) {
+                    this.documentUploadError = this.extractUploadError(error);
+                } finally {
+                    finish();
+                }
+            }, () => {
+                this.documentUploadError = this.labels.uploadFailed;
+                finish();
+            });
         },
 
         extractUploadError(error) {

@@ -479,6 +479,30 @@
     border-top: 1px solid rgb(15 23 42 / 0.14);
 }
 
+.ph-blog-inline-editor__materials {
+    border-top: 2px solid #252722;
+    padding-top: 1.25rem;
+}
+
+.ph-blog-inline-editor__materials > p {
+    color: #6b6d67;
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+.ph-blog-inline-editor__materials .ph-blog-inline-editor__nested {
+    background: #faf9f7;
+    border-radius: 0.25rem;
+    padding: 1rem;
+}
+
+.ph-blog-inline-editor__materials label > span {
+    display: block;
+    margin-bottom: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+}
+
 .ph-blog-inline-editor__slash-menu {
     position: absolute;
     z-index: 30;

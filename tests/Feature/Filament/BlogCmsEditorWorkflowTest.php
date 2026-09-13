@@ -80,7 +80,10 @@ class BlogCmsEditorWorkflowTest extends TestCase
 
         $this->get(BlogArticleResource::getUrl('edit', ['record' => $article]))
             ->assertSuccessful()
-            ->assertSee('data-blog-inline-editor', false);
+            ->assertSee('data-blog-inline-editor', false)
+            ->assertSee('Материалы по статье')
+            ->assertSee('Загрузить документ')
+            ->assertSee('Открепить от статьи');
     }
 
     public function test_inline_editor_clears_local_buffer_after_successful_save(): void
@@ -151,7 +154,7 @@ class BlogCmsEditorWorkflowTest extends TestCase
             'meta_description' => 'Что изменилось в МОСТ для команд.',
         ], $admin);
 
-        $this->assertSame('big-prohelper-release', $article->slug);
+        $this->assertSame('big-most-release', $article->slug);
 
         $updated = app(BlogCmsService::class)->updateArticle($article, [
             'title' => 'Новый заголовок без ручного slug',

@@ -18,6 +18,7 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
+use ZipArchive;
 
 class BlogMediaService
 {
@@ -30,6 +31,8 @@ class BlogMediaService
 
     private const DOCUMENT_MIME_TYPES = [
         'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     ];
 
     private const MAX_UPLOAD_SIZE_KILOBYTES = 10240;
@@ -48,6 +51,22 @@ class BlogMediaService
     public static function allowedImageMimeTypes(): array
     {
         return self::IMAGE_MIME_TYPES;
+    }
+
+    public static function allowedDocumentMimeTypes(): array
+    {
+        return self::DOCUMENT_MIME_TYPES;
+    }
+
+    public function uploadMarketingDocumentAsset(UploadedFile $file, SystemAdmin $systemAdmin): BlogMediaAsset
+    {
+        if (! $systemAdmin->hasSystemPermission('system_admin.blog.media.upload')) {
+            throw ValidationException::withMessages([
+                'upload_file' => [trans_message('blog_cms.media_upload_forbidden')],
+            ]);
+        }
+
+        return $this->storeMarketingAsset($file, $systemAdmin, [], self::allowedDocumentMimeTypes(), 'blog_cms.materials_type_invalid');
     }
 
     public static function maxUploadSizeKilobytes(): int
@@ -103,7 +122,7 @@ class BlogMediaService
             'filename' => $file->getClientOriginalName(),
             'storage_path' => $storagePath,
             'public_url' => $publicUrl,
-            'mime_type' => $file->getMimeType() ?? $file->getClientMimeType() ?? 'application/octet-stream',
+            'mime_type' => $this->resolveUploadMimeType($file),
             'file_size' => $file->getSize(),
             'width' => $width,
             'height' => $height,
@@ -304,14 +323,14 @@ class BlogMediaService
 
     private function validateUpload(UploadedFile $file, array $meta, array $allowedMimeTypes, string $invalidTypeMessageKey): void
     {
-        $mimeType = $file->getMimeType() ?? $file->getClientMimeType() ?? '';
+        $mimeType = $this->resolveUploadMimeType($file);
         $errors = [];
 
         if (!in_array($mimeType, $allowedMimeTypes, true)) {
             $errors['upload_file'] = [trans_message($invalidTypeMessageKey)];
         }
 
-        if (($file->getSize() ?: 0) > self::MAX_UPLOAD_SIZE_KILOBYTES * 1024) {
+        if (! $file->isValid() || ($file->getSize() ?: 0) <= 0 || ($file->getSize() ?: 0) > self::MAX_UPLOAD_SIZE_KILOBYTES * 1024) {
             $errors['upload_file'] = [trans_message('blog_cms.media_upload_size_invalid')];
         }
 
@@ -325,6 +344,50 @@ class BlogMediaService
 
         if ($errors !== []) {
             throw ValidationException::withMessages($errors);
+        }
+    }
+
+    private function resolveUploadMimeType(UploadedFile $file): string
+    {
+        $mime = $file->getMimeType() ?? '';
+        $extension = strtolower($file->getClientOriginalExtension());
+
+        if (in_array($mime, self::IMAGE_MIME_TYPES, true)) {
+            return $mime;
+        }
+
+        if ($mime === 'application/pdf') {
+            return $extension === 'pdf' ? $mime : '';
+        }
+
+        if (! in_array($extension, ['docx', 'xlsx'], true)
+            || ! in_array($mime, [...self::DOCUMENT_MIME_TYPES, 'application/zip'], true)
+            || ($file->getSize() ?: 0) > self::MAX_UPLOAD_SIZE_KILOBYTES * 1024) {
+            return '';
+        }
+
+        $zip = new ZipArchive();
+
+        if ($zip->open($file->getRealPath()) !== true) {
+            return '';
+        }
+
+        try {
+            $entry = $extension === 'docx' ? 'word/document.xml' : 'xl/workbook.xml';
+
+            if ($zip->locateName('[Content_Types].xml') === false || $zip->locateName($entry) === false) {
+                return '';
+            }
+
+            for ($index = 0; $index < $zip->numFiles; $index++) {
+                if (str_ends_with(strtolower((string) $zip->getNameIndex($index)), 'vbaproject.bin')) {
+                    return '';
+                }
+            }
+
+            return $extension === 'docx' ? self::DOCUMENT_MIME_TYPES[1] : self::DOCUMENT_MIME_TYPES[2];
+        } finally {
+            $zip->close();
         }
     }
 
