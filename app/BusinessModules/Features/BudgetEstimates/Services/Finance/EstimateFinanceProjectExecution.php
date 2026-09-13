@@ -45,9 +45,9 @@ final class EstimateFinanceProjectExecution
         foreach ($documents as &$document) {
             $amount = '0';
             foreach ($document['estimate_amounts'] as $estimateAmount) {
-                $amount = FinanceDecimal::add($amount, $estimateAmount['amount_with_vat']);
+                $amount = $amount === null || $estimateAmount['amount_with_vat'] === null ? null : FinanceDecimal::add($amount, $estimateAmount['amount_with_vat']);
             }
-            $document['estimate_amount_with_vat'] = FinanceDecimal::value($amount);
+            $document['estimate_amount_with_vat'] = $amount === null ? null : FinanceDecimal::value($amount);
             $document['estimate_amounts'] = array_values($document['estimate_amounts']);
         }
         unset($document);

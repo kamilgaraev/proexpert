@@ -215,7 +215,7 @@ final class EstimateFinanceExport
         $documents = $book->createSheet();
         $this->header($documents, 'execution_documents', ['estimate', 'act_id', 'act_number', 'act_date', 'number', 'direction', 'currency', 'net', 'gross', 'estimate_gross', 'unallocated_gross', 'status']);
         $sources = $book->createSheet();
-        $this->header($sources, 'execution_sources', ['estimate', 'name', 'act_id', 'source', 'source_id', 'number', 'direction', 'volume', 'currency', 'net', 'gross', 'allocation_key', 'condition_version']);
+        $this->header($sources, 'execution_sources', ['estimate', 'name', 'act_id', 'source', 'source_id', 'number', 'direction', 'volume', 'currency', 'net', 'gross', 'allocation_key', 'condition_version', 'execution_distribution_key', 'execution_distribution_version', 'execution_saved_quantity', 'execution_saved_net', 'execution_saved_gross', 'status']);
         $projectContracts = [];
         foreach ($reports as $report) {
             $execution = $report['execution'] ?? ['available' => false];
@@ -259,7 +259,10 @@ final class EstimateFinanceExport
             foreach ($execution['rows'] as $source) {
                 $this->row($sources, [$report['name'], $source['title'], $source['act_id'], trans_message('estimate_finance.'.$source['source_type']), $source['source_id'],
                     $contracts[$source['contract_id']]['number'] ?? $source['contract_id'], trans_message('estimate_finance.direction_'.$source['side']), $source['quantity'], $source['currency'],
-                    $source['amount_without_vat'], $source['amount_with_vat'], $source['allocation_key'], $source['condition_version']], [3, 5, 8, 10, 11, 13]);
+                    $source['amount_without_vat'], $source['amount_with_vat'], $source['allocation_key'], $source['condition_version'],
+                    $source['distribution_key'] ?? null, $source['version'] ?? null, $source['saved_quantity'] ?? null,
+                    $source['saved_amount_without_vat'] ?? null, $source['saved_amount_with_vat'] ?? null,
+                    trans_message('estimate_finance.'.(($source['requires_review'] ?? false) ? 'incomplete' : 'execution_confirmed'))], [3, 5, 8, 10, 11, 13, 15, 16, 17, 18]);
             }
         }
         if ($projectExecution !== null && $projectExecution['available']) {

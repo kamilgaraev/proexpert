@@ -982,6 +982,38 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('0.03', FinanceDecimal::add($rows[0]->amount_with_vat, $rows[1]->amount_with_vat));
         self::assertSame('0.02', FinanceDecimal::add($rows[0]->amount_without_vat, $rows[1]->amount_without_vat));
         self::assertSame(2, \Illuminate\Support\Facades\DB::table('estimate_finance_execution_versions')->count());
+        $project = app(EstimateFinanceService::class)->projectReport($this->actor, $second->project_id, 'with_vat', true, 'execution');
+        self::assertCount(2, $project['execution']['rows']);
+        self::assertCount(1, $project['execution']['documents']);
+        self::assertSame('0.03', $project['execution']['summary']['totals']['RUB']['revenue']);
+        self::assertSame('0.03', $project['execution']['documents'][0]['estimate_amount_with_vat']);
+        self::assertSame('0.00', $project['execution']['documents'][0]['unallocated_amount_with_vat']);
+        $book = app(EstimateFinanceExport::class)->workbook($project['estimates'], 'with_vat', [], 'execution', $project['execution']);
+        try {
+            $sources = $book->getSheetByName('Строки актов');
+            self::assertSame(3, $sources->getHighestRow());
+            self::assertSame('Ручное распределение акта', $sources->getCell('D2')->getValue());
+            self::assertSame($rows[0]->key, $sources->getCell('N2')->getValue());
+            self::assertEquals(1, $sources->getCell('O2')->getValue());
+            self::assertEquals(0.02, $sources->getCell('R2')->getValue());
+            self::assertSame(2, $book->getSheetByName('Акты')->getHighestRow());
+        } finally {
+            $book->disconnectWorksheets();
+        }
+        $act->update(['status' => 'draft', 'is_approved' => false]);
+        $act->update(['amount' => '0.04', 'status' => 'approved', 'is_approved' => true]);
+        $changed = app(EstimateFinanceService::class)->projectReport($this->actor, $second->project_id, 'with_vat', true, 'execution');
+        self::assertNull($changed['execution']['documents'][0]['estimate_amount_with_vat']);
+        self::assertNull($changed['execution']['summary']['totals']['RUB']['revenue']);
+        $book = app(EstimateFinanceExport::class)->workbook($changed['estimates'], 'with_vat', [], 'execution', $changed['execution']);
+        try {
+            $sources = $book->getSheetByName('Строки актов');
+            self::assertSame('', $sources->getCell('K2')->getValue());
+            self::assertEquals(0.02, $sources->getCell('R2')->getValue());
+            self::assertSame('Требует проверки или распределения', $sources->getCell('S2')->getValue());
+        } finally {
+            $book->disconnectWorksheets();
+        }
     }
 
     public function test_execution_distribution_saves_exact_net_replays_and_limits_native_remainder(): void
