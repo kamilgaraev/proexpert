@@ -12,14 +12,14 @@ final class EstimateFinanceMigrationPlan
 {
     public function __construct(private readonly EstimateFinanceAccess $access, private readonly EstimateFinanceQuery $query) {}
 
-    public function report(User $actor, int $projectId, int $estimateId, int $after = 0, int $limit = 100, ?array $linkIds = null): array
+    public function report(User $actor, int $projectId, int $estimateId, int $after = 0, int $limit = 100, ?array $linkIds = null, bool $includeManaged = false): array
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
         if ($after < 0 || $limit < 1 || $limit > 500) {
             throw ValidationException::withMessages(['pagination' => trans_message('estimate_finance.invalid')]);
         }
         $links = ContractEstimateItem::query()->where('estimate_id', $estimateId)
-            ->where(fn ($builder) => $builder->where('finance_managed', false)->orWhereNull('finance_managed'))
+            ->when(! $includeManaged, fn ($builder) => $builder->where(fn ($legacy) => $legacy->where('finance_managed', false)->orWhereNull('finance_managed')))
             ->where('id', '>', $after)->orderBy('id')->limit($limit + 1)
             ->when($linkIds !== null, fn ($builder) => $builder->whereIn('id', $linkIds))
             ->with(['contract' => fn ($builder) => $builder->where('organization_id', $estimate->organization_id)->where('project_id', $projectId),
@@ -28,6 +28,7 @@ final class EstimateFinanceMigrationPlan
         $hasMore = $links->count() > $limit;
         $rows = [];
         foreach ($links->take($limit) as $link) {
+            $managed = (bool) $link->finance_managed;
             $reasons = ['tax_terms_not_recorded', 'price_composition_not_recorded'];
             $blocked = ! $link->contract || ! $link->estimateItem;
             if (! $link->contract) {
@@ -49,14 +50,18 @@ final class EstimateFinanceMigrationPlan
             if ($link->estimateItem?->parent_work_id) {
                 $reasons[] = 'included_position_requires_review';
             }
+            if ($managed && ! $blocked) {
+                $reasons = ['already_managed'];
+            }
             $snapshot = ['link_id' => (int) $link->id, 'estimate_id' => $estimateId, 'contract_id' => (int) $link->contract_id,
                 'estimate_item_id' => (int) $link->estimate_item_id, 'quantity' => (string) $link->quantity,
                 'amount' => $link->amount, 'amount_without_vat' => $link->amount_without_vat, 'notes' => $link->notes,
                 'updated_at' => $link->updated_at?->toISOString(), 'direction' => $side, 'currency' => $link->contract?->currency,
                 'contract_updated_at' => $link->contract?->updated_at?->toISOString(), 'position_updated_at' => $link->estimateItem?->updated_at?->toISOString(),
                 'reasons' => $reasons];
-            $rows[] = ['legacy_link_id' => (int) $link->id, 'status' => $blocked ? 'blocked' : 'requires_review',
-                'can_preserve_as_unreviewed' => ! $blocked, 'confirmed_margin_eligible' => false,
+            $rows[] = ['legacy_link_id' => (int) $link->id, 'status' => $blocked ? 'blocked' : ($managed ? 'already_managed' : 'requires_review'),
+                'can_preserve_as_unreviewed' => ! $blocked && ! $managed, 'confirmed_margin_eligible' => $managed ? null : false,
+                'reason_messages' => array_map(static fn (string $reason): string => trans_message('estimate_finance.migration_reasons.'.$reason), $reasons),
                 'source_hash' => hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR)), 'source' => $snapshot];
         }
 

@@ -243,7 +243,7 @@ final class EstimateFinanceService
         if (($input['preview_operation'] ?? null) === 'migration_plan') {
             $data = FinanceInputValidation::validate($input, \App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest::migrationPlanRules());
 
-            return $this->migrationPlan->report($actor, $projectId, $estimateId, (int) ($data['after'] ?? 0), (int) ($data['limit'] ?? 100));
+            return $this->migrationPlan->report($actor, $projectId, $estimateId, (int) ($data['after'] ?? 0), (int) ($data['limit'] ?? 100), null, (bool) ($data['include_managed'] ?? false));
         }
         if (($input['preview_operation'] ?? null) === 'own_cost_options') {
             return $this->ownCostOptions->search($actor, $projectId, $estimateId, $input);

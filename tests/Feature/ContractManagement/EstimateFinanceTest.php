@@ -374,6 +374,13 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('unknown', $allocation->price_basis);
         self::assertSame([], $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id)['rows']);
         self::assertSame(2, \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->count());
+        $audit = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id,
+            ['preview_operation' => 'migration_plan', 'include_managed' => true]);
+        self::assertCount(2, $audit['rows']);
+        self::assertSame('already_managed', $audit['rows'][0]['status']);
+        self::assertFalse($audit['rows'][0]['can_preserve_as_unreviewed']);
+        self::assertNull($audit['rows'][0]['confirmed_margin_eligible']);
+        self::assertStringContainsString('повторный перенос не требуется', $audit['rows'][0]['reason_messages'][0]);
     }
 
     public function test_own_cost_distribution_caps_all_estimates_and_keeps_exact_net_and_history(): void

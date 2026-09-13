@@ -40,6 +40,7 @@ final class PreviewEstimateFinanceRequest extends SaveEstimateFinanceRequest
     {
         return [
             'preview_operation' => ['required', 'in:migration_plan'],
+            'include_managed' => ['sometimes', 'boolean'],
             'after' => ['sometimes', 'integer', 'min:0'],
             'limit' => ['sometimes', 'integer', 'min:1', 'max:500'],
         ];
