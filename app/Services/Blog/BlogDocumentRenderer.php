@@ -37,6 +37,7 @@ class BlogDocumentRenderer
         }
 
         return match ($type) {
+            'legacy_html' => (string) ($data['html'] ?? ''),
             'heading' => $this->renderHeading($data),
             'list' => $this->renderList($data),
             'quote' => $this->renderQuote($data),

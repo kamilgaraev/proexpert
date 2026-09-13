@@ -2,6 +2,7 @@
     <div
         class="ph-blog-inline-editor"
         data-blog-inline-editor
+        wire:ignore
         x-data="blogInlineBlockEditor({
             state: $wire.$get('{{ $getStatePath() }}'),
             statePath: '{{ $getStatePath() }}',
@@ -59,13 +60,22 @@
         <fieldset class="ph-blog-inline-editor__canvas" :disabled="uploadingDocument">
             <template x-for="(block, index) in state" :key="`${index}-${block.type}`">
                 <section class="ph-blog-inline-editor__block" :class="{ 'is-active': activeIndex === index }">
-                    <div class="ph-blog-inline-editor__toolbar">
+                    <div class="ph-blog-inline-editor__toolbar" x-show="block.type !== 'legacy_html'">
                         <button type="button" x-on:click="openBlockMenu(index)" :aria-label="labels.addBlock" :title="labels.addBlock">+</button>
                         <button type="button" x-on:click="moveBlock(index, -1)" :aria-label="labels.moveUp" :title="labels.moveUp">↑</button>
                         <button type="button" x-on:click="moveBlock(index, 1)" :aria-label="labels.moveDown" :title="labels.moveDown">↓</button>
                         <button type="button" x-on:click="duplicateBlock(index)" x-text="labels.duplicate"></button>
                         <button type="button" x-on:click="removeBlock(index)" x-text="labels.remove"></button>
                     </div>
+
+                    <template x-if="block.type === 'legacy_html'">
+                        <div class="ph-blog-inline-editor__stack">
+                            <strong>{{ trans_message('blog_cms.legacy_content_title') }}</strong>
+                            <p>{{ trans_message('blog_cms.legacy_content_help') }}</p>
+                            <iframe sandbox="" :srcdoc="block.data.html" title="{{ trans_message('blog_cms.legacy_content_title') }}" style="width: 100%; height: 26rem; background: white; border: 1px solid #ddd;"></iframe>
+                            <button type="button" class="ph-blog-inline-editor__secondary-action" x-on:click="openBlockMenu(index)">{{ trans_message('blog_cms.inline_editor_add_block') }}</button>
+                        </div>
+                    </template>
 
                     <template x-if="block.type === 'paragraph'">
                         <textarea
@@ -190,7 +200,7 @@
                                     </label>
                                     <label class="ph-blog-inline-editor__upload-button" :class="{ 'is-disabled': uploadingDocument }">
                                         <span x-show="!uploadingDocument">{{ trans_message('blog_cms.materials_upload') }}</span>
-                                        <span x-show="uploadingDocument" x-text="labels.uploadingImage" x-cloak></span>
+                                        <span x-show="uploadingDocument" x-cloak>{{ trans_message('blog_cms.materials_uploading') }}</span>
                                         <input class="ph-blog-inline-editor__file-input" type="file" accept=".pdf,.docx,.xlsx" :disabled="uploadingDocument" x-on:change="uploadDocument($event, item)">
                                     </label>
                                     <label>

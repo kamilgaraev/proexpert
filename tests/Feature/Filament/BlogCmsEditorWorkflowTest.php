@@ -319,6 +319,44 @@ class BlogCmsEditorWorkflowTest extends TestCase
         }
     }
 
+    public function test_legacy_article_keeps_original_html_when_materials_are_saved_repeatedly(): void
+    {
+        $admin = SystemAdmin::factory()->role('content_manager')->create();
+        $article = $this->articleFixture($admin);
+        $html = '<h2 id="plan">График</h2><p>Текст <a href="/features">со ссылкой</a>.</p><table><tr><td>План</td></tr></table>';
+        $article->update(['editor_document' => null, 'content' => $html]);
+        $service = app(\App\Services\Blog\BlogLegacyDocumentService::class);
+        $document = $service->forEditor($article);
+        $this->assertSame($html, $document[0]['data']['html']);
+
+        $asset = BlogMediaAsset::query()->create([
+            'blog_context' => BlogContextEnum::MARKETING->value,
+            'filename' => 'schedule.xlsx',
+            'storage_path' => 'org-1/cms/blog/media/schedule.xlsx',
+            'public_url' => 'https://cdn.example.test/schedule.xlsx',
+            'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'file_size' => 2048,
+        ]);
+        $document[] = ['type' => 'materials', 'data' => ['items' => [['url' => $asset->public_url, 'label' => 'График']]]];
+        $document[0]['data']['html'] = '<script>alert(1)</script>';
+        $article = app(BlogCmsService::class)->updateArticle($article, ['editor_document' => $document], $admin);
+        $this->assertStringStartsWith($html, $article->content);
+        $this->assertStringContainsString('schedule.xlsx', $article->content);
+        $this->assertStringNotContainsString('<script>', $article->content);
+        $saved = $article->content;
+        $article = app(BlogCmsService::class)->updateArticle($article, ['excerpt' => 'Обновлённое описание'], $admin);
+        $this->assertSame($saved, $article->content);
+        $this->assertCount(2, $article->editor_document);
+    }
+
+    public function test_new_article_cannot_inject_legacy_html(): void
+    {
+        $this->expectException(ValidationException::class);
+        app(\App\Services\Blog\BlogLegacyDocumentService::class)->normalize([
+            ['type' => 'legacy_html', 'data' => ['html' => '<script>alert(1)</script>']],
+        ], null);
+    }
+
     private function articleFixture(?SystemAdmin $admin = null, ?BlogCategory $category = null, ?string $slug = null): BlogArticle
     {
         $admin ??= SystemAdmin::factory()->role('content_manager')->create();
