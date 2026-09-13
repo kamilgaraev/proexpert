@@ -60,6 +60,8 @@ final class EstimateFinanceMigrationPlan
                 'contract_updated_at' => $link->contract?->updated_at?->toISOString(), 'position_updated_at' => $link->estimateItem?->updated_at?->toISOString(),
                 'reasons' => $reasons];
             $rows[] = ['legacy_link_id' => (int) $link->id, 'status' => $blocked ? 'blocked' : ($managed ? 'already_managed' : 'requires_review'),
+                'contract_number' => $link->contract?->number, 'position_name' => $link->estimateItem?->name,
+                'position_number' => $link->estimateItem?->position_number,
                 'can_preserve_as_unreviewed' => ! $blocked && ! $managed, 'confirmed_margin_eligible' => $managed ? null : false,
                 'reason_messages' => array_map(static fn (string $reason): string => trans_message('estimate_finance.migration_reasons.'.$reason), $reasons),
                 'source_hash' => hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR)), 'source' => $snapshot];
