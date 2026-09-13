@@ -237,18 +237,44 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $estimate = $this->createEstimate($context->organization, $project);
         $item = $this->createItem($estimate, $this->createMeasurementUnit($context->organization));
+        $estimate->update(['structure_cache_path' => 'stale-constructor.json']);
         $endpoint = "/api/v1/admin/estimates/constructor/{$estimate->id}/bulk-update";
         $response = $this->withHeaders($context->authHeaders())->postJson($endpoint, ['items' => [[
             'id' => $item->id, 'quantity' => 3, 'unit_price' => 150,
             'direct_costs' => 1, 'overhead_amount' => 30, 'profit_amount' => 15, 'total_amount' => 1,
         ]]]);
         $this->assertSame(200, $response->status(), $response->getContent());
+        $this->assertNull($estimate->fresh()->structure_cache_path);
         $this->assertEquals(450, $item->fresh()->direct_costs);
         $this->assertEquals(495, $item->fresh()->total_amount);
         $this->withHeaders($context->authHeaders())->postJson($endpoint, ['items' => [[
             'id' => $item->id, 'quantity' => -1,
         ]]])->assertUnprocessable();
         $this->assertEquals(3, $item->fresh()->quantity);
+    }
+
+    public function test_saving_restored_positions_uses_fresh_structure_and_old_positions_return_conflict(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $oldItem = $this->createItem($estimate, $this->createMeasurementUnit($context->organization));
+        $version = app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService::class)
+            ->createSnapshot($estimate, $context->user->id);
+        $estimate->update(['structure_cache_path' => 'old-positions.json']);
+        app(\App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionRestoreService::class)
+            ->restore($estimate, $version, $context->user->id);
+        $this->assertNull($estimate->fresh()->structure_cache_path);
+        $currentItem = EstimateItem::where('estimate_id', $estimate->id)->firstOrFail();
+        $this->assertNotSame($oldItem->id, $currentItem->id);
+        $endpoint = "/api/v1/admin/estimates/constructor/{$estimate->id}/bulk-update";
+        $this->withHeaders($context->authHeaders())->postJson($endpoint, ['items' => [[
+            'id' => $oldItem->id, 'quantity' => 3,
+        ]]])->assertConflict()->assertJsonPath('message', trans_message('estimate_constructor.positions_changed'));
+        $this->withHeaders($context->authHeaders())->postJson($endpoint, ['items' => [[
+            'id' => $currentItem->id, 'quantity' => 3,
+        ]]])->assertOk();
+        $this->assertEquals(3, $currentItem->fresh()->quantity);
     }
 
     public function test_normative_quantity_change_preserves_indices_and_recalculates_the_total(): void

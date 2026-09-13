@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\DesignManagement\Http\Resources;
 
 use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use BackedEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -15,6 +16,36 @@ final class DesignReviewCommentResource extends JsonResource
     {
         /** @var DesignReviewComment $comment */
         $comment = $this->resource;
+        if ($comment instanceof QualityDefect) {
+            $context = (array) (($comment->metadata ?? [])['design_issue_context'] ?? []);
+            $status = match ($this->enumValue($comment->status)) {
+                'ready_for_review' => 'answered',
+                'resolved' => 'resolved',
+                'rejected' => 'rejected',
+                default => 'open',
+            };
+            $severity = (bool) (($comment->metadata ?? [])['blocking']['active'] ?? false) ? 'blocking' : match ($this->enumValue($comment->severity)) {
+                'critical' => 'warning',
+                'major' => 'warning',
+                default => 'info',
+            };
+
+            return [
+                'revision' => (int) $comment->getAttribute('row_version'),
+                'quality_defect_id' => $comment->id,
+                'id' => app(\App\BusinessModules\Features\DesignManagement\Services\DesignReviewService::class)->legacyApiId($comment), 'organization_id' => $comment->organization_id, 'project_id' => $comment->project_id,
+                'package_id' => $context['package_id'] ?? null, 'round_id' => $context['round_id'] ?? null,
+                'section_id' => $context['section_id'] ?? null, 'artifact_id' => $context['artifact_id'] ?? null,
+                'version_id' => $context['version_id'] ?? null, 'sheet_id' => $context['sheet_id'] ?? null,
+                'author_id' => $comment->created_by, 'assignee_id' => $comment->assigned_to,
+                'severity' => $severity, 'severity_label' => trans_message("design_management.review_comment_severities.{$severity}"),
+                'status' => $status, 'status_label' => trans_message("design_management.review_comment_statuses.{$status}"),
+                'body' => $comment->description ?? $comment->title, 'response' => ($comment->metadata ?? [])['legacy_response'] ?? null,
+                'bim_element_id' => $context['bim_element_id'] ?? null, 'due_date' => $comment->due_date?->format('Y-m-d'),
+                'resolved_by' => null, 'resolved_at' => $comment->resolved_at?->toIso8601String(), 'metadata' => $comment->metadata ?? [],
+                'created_at' => $comment->created_at?->toIso8601String(), 'updated_at' => $comment->updated_at?->toIso8601String(),
+            ];
+        }
         $status = $this->enumValue($comment->status);
         $severity = $this->enumValue($comment->severity);
 

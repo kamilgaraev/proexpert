@@ -30,6 +30,7 @@ final class DesignIfcToFragmentsConverter implements DesignIfcToFragmentsConvert
                 $scriptPath,
                 $sourcePath,
                 $targetPath,
+                $targetPath.'.ifc-index.ndjson',
             ],
             base_path(),
             null,

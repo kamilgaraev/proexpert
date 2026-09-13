@@ -6,6 +6,11 @@
          cacheDirectory=".phpunit.cache/postgres"
 >
     <testsuites>
+        <testsuite name="DesignManagement">
+            <directory>tests/Feature/DesignManagement</directory>
+            <directory>tests/Unit/DesignManagement</directory>
+            <file>tests/Unit/Authorization/PermissionTranslatorTest.php</file>
+        </testsuite>
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
         </testsuite>
@@ -67,7 +72,7 @@
         <env name="DB_CONNECTION" value="pgsql" force="true"/>
         <env name="DB_URL" value="" force="true"/>
         <env name="DB_HOST" value="127.0.0.1" force="true"/>
-        <env name="DB_PORT" value="45433" force="true"/>
+        <env name="DB_PORT" value="55433" force="true"/>
         <env name="DB_DATABASE" value="most_backend_testing" force="true"/>
         <env name="DB_USERNAME" value="most_testing" force="true"/>
         <env name="DB_PASSWORD" value="most_testing_password" force="true"/>

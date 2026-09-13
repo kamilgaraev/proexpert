@@ -7,7 +7,7 @@ namespace App\BusinessModules\Features\DesignManagement\Support\Rules;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignCompletenessStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
-use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
+use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessScope;
 use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessRule;
 use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessRuleResult;
 
@@ -17,21 +17,20 @@ final class SheetRegistryRule implements DesignCompletenessRule
     {
         $results = [];
 
-        foreach ($package->sections ?? [] as $section) {
-            if (!$section instanceof DesignPackageSection) {
-                continue;
-            }
-
-            $documents = collect($section->metadata['documents'] ?? [])->keyBy('document_code');
+        $scope = new DesignCompletenessScope($package);
+        foreach ($scope->sections() as $entry) {
+            $section = $entry['section'];
+            $documents = $entry['documents'];
 
             foreach ($section->artifacts ?? [] as $artifact) {
-                if (!$artifact instanceof DesignArtifact || $artifact->currentVersion === null) {
+                if (!$artifact instanceof DesignArtifact || $artifact->currentVersion === null || ! $scope->includesArtifact($artifact, $documents)) {
                     continue;
                 }
 
                 $document = $documents->get($artifact->document_code);
-                $requiresSheets = (bool) $artifact->requires_sheet_registry
-                    || (bool) ($document['sheet_registry_required'] ?? false);
+                $requiresSheets = $scope->selectedItems() !== null && is_array($document) && array_key_exists('sheet_registry_required', $document)
+                    ? (bool) $document['sheet_registry_required']
+                    : (bool) $artifact->requires_sheet_registry || (bool) ($document['sheet_registry_required'] ?? false);
 
                 if (!$requiresSheets) {
                     continue;

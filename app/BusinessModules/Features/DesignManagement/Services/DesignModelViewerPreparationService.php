@@ -25,8 +25,8 @@ final class DesignModelViewerPreparationService
         private readonly DesignStoragePathService $pathService,
         private readonly FileService $fileService,
         private readonly DesignIfcToFragmentsConverterContract $converter,
-    ) {
-    }
+        private readonly DesignIfcElementIndexer $elementIndexer,
+    ) {}
 
     public function queuePreparation(DesignArtifactVersion $version, int $userId): DesignModelDerivative
     {
@@ -85,16 +85,42 @@ final class DesignModelViewerPreparationService
 
     public function processQueuedDerivative(int $derivativeId): void
     {
-        $derivative = DesignModelDerivative::query()
-            ->with('version.artifact.package')
-            ->find($derivativeId);
+        $derivative = DB::transaction(function () use ($derivativeId): ?DesignModelDerivative {
+            $locked = DesignModelDerivative::query()->lockForUpdate()->find($derivativeId);
+            if (! $locked instanceof DesignModelDerivative) {
+                return null;
+            }
 
-        if (!$derivative instanceof DesignModelDerivative) {
+            $status = $this->statusValue($locked->status);
+            if ($status === DesignDerivativeStatusEnum::READY->value && DesignViewerConverter::isCurrent($locked)) {
+                return null;
+            }
+            if ($status === DesignDerivativeStatusEnum::PROCESSING->value
+                && $locked->processing_started_at !== null
+                && $locked->processing_started_at->gt(now()->subSeconds((int) config('design_management.viewer_stale_processing_seconds', 7500)))) {
+                return null;
+            }
+
+            $locked->forceFill([
+                'status' => DesignDerivativeStatusEnum::PROCESSING,
+                'processing_stage' => 'starting',
+                'processing_started_at' => now(),
+                'processing_finished_at' => null,
+                'failed_reason' => null,
+            ])->save();
+
+            return $locked;
+        });
+
+        if (! $derivative instanceof DesignModelDerivative) {
             return;
         }
 
+        $derivative->load('version.artifact.package');
+
         $sourcePath = null;
         $targetPath = null;
+        $indexPath = null;
         $sourceSizeBytes = null;
         $derivativeSizeBytes = null;
 
@@ -110,6 +136,7 @@ final class DesignModelViewerPreparationService
 
             $sourcePath = $this->temporaryPath($derivativeId, 'ifc');
             $targetPath = $this->temporaryPath($derivativeId, 'frag');
+            $indexPath = $targetPath.'.ifc-index.ndjson';
 
             $this->copyStorageFileToPath(
                 (int) $version->organization_id,
@@ -132,6 +159,7 @@ final class DesignModelViewerPreparationService
                 'Prepared viewer file is empty.'
             );
             $conversionResult->assertRenderableGeometry();
+            $this->elementIndexer->index($version, $derivative, $indexPath, $conversionResult->metadata()['ifc_metadata'] ?? []);
 
             $this->markProcessing($derivative, 95, 'uploading');
             $derivativePath = $this->pathService->derivativePath(
@@ -162,6 +190,7 @@ final class DesignModelViewerPreparationService
         } finally {
             $this->removeTemporaryFile($sourcePath);
             $this->removeTemporaryFile($targetPath);
+            $this->removeTemporaryFile($indexPath);
         }
     }
 
@@ -203,7 +232,7 @@ final class DesignModelViewerPreparationService
         $organization = Organization::query()->find($organizationId);
         $source = $this->fileService->disk($organization)->readStream($storagePath);
 
-        if (!is_resource($source)) {
+        if (! is_resource($source)) {
             throw new DomainException(trans_message('design_management.errors.source_file_not_available'));
         }
 
@@ -242,14 +271,14 @@ final class DesignModelViewerPreparationService
             fclose($source);
         }
 
-        if (!$stored) {
+        if (! $stored) {
             throw new DomainException(trans_message('design_management.errors.derivative_file_not_available'));
         }
     }
 
     private function localFileSize(string $path, string $missingMessage, string $emptyMessage): int
     {
-        if (!is_file($path)) {
+        if (! is_file($path)) {
             throw new RuntimeException($missingMessage);
         }
 
@@ -311,7 +340,7 @@ final class DesignModelViewerPreparationService
     {
         $directory = storage_path('app/design-management/viewer');
 
-        if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+        if (! is_dir($directory) && ! mkdir($directory, 0775, true) && ! is_dir($directory)) {
             throw new RuntimeException('Temporary directory is not writable.');
         }
 
@@ -321,7 +350,7 @@ final class DesignModelViewerPreparationService
             throw new RuntimeException('Temporary file is not available.');
         }
 
-        $targetPath = $path . '.' . $extension;
+        $targetPath = $path.'.'.$extension;
         rename($path, $targetPath);
 
         return $targetPath;

@@ -144,7 +144,7 @@ services:
     image: ${MOST_IMAGE_REF:-ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}}
     container_name: prohelper-worker-ifc
     restart: unless-stopped
-    command: "php -d memory_limit=3072M artisan queue:work redis --queue=ifc-processing --memory=3072 --timeout=7200 --tries=1"
+    command: "php -d memory_limit=3072M artisan queue:work redis_ifc --queue=ifc-processing --memory=3072 --timeout=6900 --tries=1"
     env_file: .env
     environment: *reverb-client-environment
     volumes:

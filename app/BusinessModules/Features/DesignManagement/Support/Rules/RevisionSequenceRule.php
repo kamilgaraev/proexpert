@@ -8,6 +8,7 @@ use App\BusinessModules\Features\DesignManagement\Enums\DesignCompletenessStatus
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessRule;
+use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessScope;
 use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessRuleResult;
 
 final class RevisionSequenceRule implements DesignCompletenessRule
@@ -16,7 +17,7 @@ final class RevisionSequenceRule implements DesignCompletenessRule
     {
         $results = [];
 
-        foreach ($package->artifacts ?? [] as $artifact) {
+        foreach ((new DesignCompletenessScope($package))->artifacts() as $artifact) {
             if (!$artifact instanceof DesignArtifact || $artifact->currentVersion === null) {
                 continue;
             }

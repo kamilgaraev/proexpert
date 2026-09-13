@@ -298,8 +298,13 @@ class QualityDefectControllerWorkflowTest extends TestCase
         $hiddenDefect = $this->createDefect($foreignContext, $foreignProject);
         $this->allowAdminAccess();
         $this->allowModuleAccess();
+        $token = app(\App\Services\Auth\JwtTokenIssuer::class)->issue($context->user, [
+            'guard' => 'api_landing',
+            'organization_id' => $context->organization->id,
+        ]);
+        $headers = ['Authorization' => 'Bearer '.$token, 'Accept' => 'application/json'];
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($headers)
             ->getJson('/api/v1/customer/quality-control/defects');
 
         $response->assertOk();
@@ -307,13 +312,17 @@ class QualityDefectControllerWorkflowTest extends TestCase
         $this->assertContains($visibleDefect->id, $ids);
         $this->assertNotContains($hiddenDefect->id, $ids);
 
-        $showResponse = $this->withHeaders($context->authHeaders())
+        $showResponse = $this->withHeaders($headers)
             ->getJson("/api/v1/customer/quality-control/defects/{$visibleDefect->id}");
 
         $showResponse->assertOk();
         $showResponse->assertJsonPath('data.id', $visibleDefect->id);
 
-        $createResponse = $this->withHeaders($context->authHeaders())
+        $this->withHeaders($headers)
+            ->getJson("/api/v1/customer/quality-control/defects/{$hiddenDefect->id}")
+            ->assertNotFound();
+
+        $createResponse = $this->withHeaders($headers)
             ->postJson('/api/v1/customer/quality-control/defects', [
                 'project_id' => $project->id,
                 'title' => 'Customer mutation attempt',

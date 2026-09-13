@@ -179,6 +179,7 @@ class EstimateVersionRestoreService
         $this->applyParentAssignments($pendingParentAssignments);
         $this->deleteStaleItems($estimate, $restoredItemIds);
         $this->deleteStaleSections($estimate, $restoredSectionIds);
+        app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService::class)->invalidateStructure($estimate);
     }
 
     private function restoreSection(

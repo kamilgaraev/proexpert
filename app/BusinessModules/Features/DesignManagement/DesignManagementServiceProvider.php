@@ -12,6 +12,8 @@ final class DesignManagementServiceProvider extends ServiceProvider
     {
         $this->app->singleton(DesignManagementModule::class);
         $this->app->singleton(Services\DesignStoragePathService::class);
+        $this->app->singleton(Services\DesignIfcElementIndexer::class);
+        $this->app->singleton(Services\DesignIfcElementQueryService::class);
         $this->app->singleton(Services\DesignNormativeCatalogService::class);
         $this->app->singleton(Services\DesignSectionGenerationService::class);
         $this->app->singleton(Services\DesignDocumentMetadataExtractor::class);
@@ -21,6 +23,7 @@ final class DesignManagementServiceProvider extends ServiceProvider
         $this->app->singleton(Services\DesignWorkflowService::class);
         $this->app->singleton(Services\DesignPackageIssueRegisterService::class);
         $this->app->singleton(Services\DesignManagementService::class);
+        $this->app->singleton(Services\DesignSourceLinkService::class);
         $this->app->bind(
             Services\Contracts\DesignModelRegistrationService::class,
             Services\DesignManagementService::class,
@@ -49,6 +52,13 @@ final class DesignManagementServiceProvider extends ServiceProvider
         $routesPath = __DIR__.'/routes.php';
         if (is_file($routesPath)) {
             require $routesPath;
+        }
+
+        foreach (['routes-composition.php', 'routes-ifc.php', 'routes-bim.php', 'routes-issues.php', 'routes-links.php'] as $routeFile) {
+            $moduleRoutes = __DIR__.'/'.$routeFile;
+            if (is_file($moduleRoutes)) {
+                require $moduleRoutes;
+            }
         }
 
         $this->app['router']->aliasMiddleware(

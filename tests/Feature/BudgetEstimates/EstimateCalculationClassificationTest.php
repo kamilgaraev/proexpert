@@ -177,6 +177,116 @@ class EstimateCalculationClassificationTest extends TestCase
         $this->assertEquals(0, $work->fresh()->machinery_hours);
     }
 
+    public function test_imported_resource_hours_are_deduplicated_without_changing_money(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $estimate = $this->createEstimate();
+        $work = $this->createItem($estimate, [
+            'is_manual' => true,
+            'current_total_amount' => 4134.53,
+            'direct_costs' => 4134.53,
+            'metadata' => ['raw_data' => []],
+        ]);
+        foreach ([
+            ['ОТ(ЗТ)', 'ОТ', 4.235],
+            ['Средний разряд рабочих', '1-100-01', 4.235],
+            ['ОТм(ЗТм)', 'ОТм', 0.144],
+            ['ОТм(ЗТм) Средний разряд', '4-100-01', 0.144],
+        ] as [$name, $code, $hours]) {
+            $this->createItem($estimate, [
+                'parent_work_id' => $work->id,
+                'name' => $name,
+                'normative_rate_code' => $code,
+                'item_type' => 'labor',
+                'quantity' => $hours,
+                'labor_hours' => $hours,
+                'labor_cost' => 1354.65,
+                'is_manual' => true,
+                'is_not_accounted' => true,
+                'metadata' => ['raw_data' => []],
+            ]);
+        }
+
+        $calculator = app(EstimateCalculationService::class);
+        $calculator->recalculateAll($estimate);
+        $work->refresh();
+        $this->assertEqualsWithDelta(4.379, $work->labor_hours, 0.000001);
+        $this->assertEquals(4134.53, $work->total_amount);
+        $this->assertEquals(4134.53, $work->direct_costs);
+        $this->assertEquals(0, $work->labor_cost);
+        $calculator->recalculateAll($estimate);
+        $this->assertEqualsWithDelta(4.379, $work->fresh()->labor_hours, 0.000001);
+    }
+
+    public function test_backfill_restores_only_missing_imported_work_hours(): void
+    {
+        $estimate = $this->createEstimate();
+        $works = [];
+        foreach ([0, 7.5] as $hours) {
+            $work = $this->createItem($estimate, [
+                'is_manual' => true,
+                'labor_hours' => $hours,
+                'total_amount' => 900,
+                'metadata' => ['raw_data' => []],
+            ]);
+            $this->createItem($estimate, [
+                'parent_work_id' => $work->id,
+                'item_type' => 'labor',
+                'quantity' => 4.235,
+                'labor_hours' => 0,
+                'is_manual' => true,
+                'is_not_accounted' => true,
+                'metadata' => ['raw_data' => []],
+            ]);
+            $works[] = $work;
+        }
+        $estimate->update(['structure_cache_path' => 'old-snapshot.json']);
+        $migration = require database_path('migrations/2026_09_12_180000_restore_imported_work_labor_hours.php');
+        $migration->up();
+        $migration->up();
+        $this->assertEqualsWithDelta(4.235, $works[0]->fresh()->labor_hours, 0.000001);
+        $this->assertEquals(7.5, $works[1]->fresh()->labor_hours);
+        $this->assertEquals(900, $works[0]->fresh()->total_amount);
+        $this->assertSame('draft', $estimate->fresh()->status);
+        $this->assertNull($estimate->fresh()->structure_cache_path);
+    }
+
+    public function test_backfill_skips_sealed_approved_estimates(): void
+    {
+        $estimate = $this->createEstimate();
+        $work = $this->createItem($estimate, [
+            'is_manual' => true,
+            'labor_hours' => 0,
+            'metadata' => ['raw_data' => []],
+        ]);
+        $this->createItem($estimate, [
+            'parent_work_id' => $work->id,
+            'item_type' => 'labor',
+            'labor_hours' => 4.235,
+            'is_manual' => true,
+            'is_not_accounted' => true,
+            'metadata' => ['raw_data' => []],
+        ]);
+        $version = \App\Models\EstimateVersion::query()->create([
+            'estimate_id' => $estimate->id,
+            'organization_id' => $estimate->organization_id,
+            'version_number' => 1,
+            'snapshot_type' => 'approval',
+            'estimate_status' => 'approved',
+            'status' => 'approved',
+            'snapshot' => [],
+        ]);
+        $estimate->update([
+            'status' => 'approved',
+            'current_version_id' => $version->id,
+            'structure_cache_path' => 'sealed-snapshot.json',
+        ]);
+        $migration = require database_path('migrations/2026_09_12_180000_restore_imported_work_labor_hours.php');
+        $migration->up();
+        $this->assertEquals(0, $work->fresh()->labor_hours);
+        $this->assertSame('sealed-snapshot.json', $estimate->fresh()->structure_cache_path);
+    }
+
     private function createEstimate(): Estimate
     {
         $organization = Organization::factory()->create();

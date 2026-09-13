@@ -114,7 +114,7 @@ final class QualityDefectController extends Controller
                 'assigned_to' => ['required', 'integer'],
                 'comment' => ['nullable', 'string', 'max:1000'],
             ]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findForAction($request, $id, $organizationId);
 
             return AdminResponse::success(new QualityDefectResource($this->service->assign(
                 $defect,
@@ -136,7 +136,7 @@ final class QualityDefectController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validate(['comment' => ['nullable', 'string', 'max:1000']]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findForAction($request, $id, $organizationId);
 
             return AdminResponse::success(new QualityDefectResource($this->service->start(
                 $defect,
@@ -165,7 +165,7 @@ final class QualityDefectController extends Controller
                 'photos.*.caption' => ['nullable', 'string', 'max:255'],
                 'photos.*.metadata' => ['nullable', 'array'],
             ]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findForAction($request, $id, $organizationId);
 
             return AdminResponse::success(new QualityDefectResource($this->service->resolve(
                 $defect,
@@ -189,7 +189,7 @@ final class QualityDefectController extends Controller
                 'accepted' => ['required', 'boolean'],
                 'comment' => ['nullable', 'string', 'max:1000'],
             ]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findForAction($request, $id, $organizationId);
 
             return AdminResponse::success(new QualityDefectResource($this->service->verify(
                 $defect,
@@ -213,7 +213,7 @@ final class QualityDefectController extends Controller
             $validated = $request->validate([
                 'comment' => ['required', 'string', 'max:1000'],
             ]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findForAction($request, $id, $organizationId);
 
             return AdminResponse::success(new QualityDefectResource($this->service->reject(
                 $defect,
@@ -236,7 +236,7 @@ final class QualityDefectController extends Controller
             $validated = $request->validate([
                 'comment' => ['required', 'string', 'max:1000'],
             ]);
-            $defect = $this->findOrFail($id, $organizationId);
+            $defect = $this->findForAction($request, $id, $organizationId);
 
             return AdminResponse::success(new QualityDefectResource($this->service->cancel(
                 $defect,
@@ -250,6 +250,19 @@ final class QualityDefectController extends Controller
         } catch (\Throwable $e) {
             return $this->failedAction('cancel', $id, $e);
         }
+    }
+
+    private function findForAction(Request $request, int $id, int $organizationId)
+    {
+        $defect = $this->findOrFail($id, $organizationId);
+        $data = $request->validate([
+            'expected_revision' => [Rule::requiredIf($defect->kind === 'project'), 'nullable', 'integer', 'min:1'],
+        ]);
+        if (isset($data['expected_revision'])) {
+            $this->service->assertExpectedRevision($defect, (int) $data['expected_revision']);
+        }
+
+        return $defect;
     }
 
     private function findOrFail(int $id, int $organizationId)

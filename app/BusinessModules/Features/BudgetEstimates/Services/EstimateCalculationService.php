@@ -72,8 +72,6 @@ class EstimateCalculationService
              // ⭐ УМНЫЙ СБОР ФОТ И ТРУДОЗАТРАТ ИЗ ДЕТЕЙ (MAX-BASED DEDUPLICATION)
              $fotOtAgg = 0; $fotOtDet = 0;
              $fotOtmAgg = 0; $fotOtmDet = 0;
-             $hoursOtAgg = 0; $hoursOtDet = 0;
-             $hoursOtmAgg = 0; $hoursOtmDet = 0;
              $machineryHours = 0;
 
              $allChildren = EstimateItem::where('parent_work_id', $item->id)
@@ -89,22 +87,18 @@ class EstimateCalculationService
                      // Детальные разряды (1-100-XXX)
                      if (str_starts_with($code, '1-100-')) {
                          $fotOtDet += (float)$child->labor_cost;
-                         $hoursOtDet += (float)$child->labor_hours;
                      } 
                      // ЗП машинистов детали (4-100-XXX)
                      elseif (str_starts_with($code, '4-100-')) {
                          $fotOtmDet += (float)$child->labor_cost;
-                         $hoursOtmDet += (float)$child->labor_hours;
                      } 
                      // Агрегаторы ЗП Машинистов (ОТм, ЗТм...)
                      elseif (str_contains($name, 'отм') || str_contains($name, 'зтм')) {
                          $fotOtmAgg += (float)$child->labor_cost;
-                         $hoursOtmAgg += (float)$child->labor_hours;
                      } 
                      // Основные агрегаторы (ОТ, ЗТ, ОТ(ЗТ)...)
                      else {
                          $fotOtAgg += (float)$child->labor_cost;
-                         $hoursOtAgg += (float)$child->labor_hours;
                      }
                  } elseif ($type === \App\Enums\EstimatePositionItemType::MACHINERY) {
                      $machineryHours += (float)$child->machinery_hours;
@@ -113,7 +107,7 @@ class EstimateCalculationService
 
              // Расчет итогов с дедупликацией (защита от двойного счета ОТ и деталей разрядов)
              $finalFot = max($fotOtAgg, $fotOtDet) + max($fotOtmAgg, $fotOtmDet);
-             $finalHours = max($hoursOtAgg, $hoursOtDet) + max($hoursOtmAgg, $hoursOtmDet);
+             $finalHours = (new EstimateLaborHoursService)->calculate($item);
 
              if ($hasChildren || $finalFot > 0) $item->labor_cost = $finalFot;
              if ($hasChildren || $finalHours > 0) $item->labor_hours = $finalHours;
@@ -449,4 +443,3 @@ class EstimateCalculationService
         ];
     }
 }
-

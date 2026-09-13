@@ -30,6 +30,15 @@ return [
 
     'connections' => [
 
+        'redis_estimate_revisions' => [
+            'driver' => 'redis',
+            'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
+            'queue' => 'estimate-revisions',
+            'retry_after' => 720,
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+
         'sync' => [
             'driver' => 'sync',
         ],
@@ -82,6 +91,15 @@ return [
             ),
             'block_for' => null,
             'after_commit' => false,
+        ],
+
+        'redis_ifc' => [
+            'driver' => 'redis',
+            'connection' => env('IFC_REDIS_QUEUE_CONNECTION', env('REDIS_QUEUE_CONNECTION', 'default')),
+            'queue' => env('IFC_REDIS_QUEUE', 'ifc-processing'),
+            'retry_after' => (int) env('IFC_REDIS_QUEUE_RETRY_AFTER', 7200),
+            'block_for' => null,
+            'after_commit' => true,
         ],
 
         'redis_estimate_generation' => [

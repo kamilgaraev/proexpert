@@ -60,6 +60,7 @@ Route::prefix('api/v1/admin')
                 Route::get('/', [EstimateVersionController::class, 'index'])->name('index');
                 Route::post('/', [EstimateVersionController::class, 'store'])->name('store');
                 Route::post('/revisions', [EstimateVersionController::class, 'startRevision'])->name('revision.store');
+                Route::get('/revisions/latest', [EstimateVersionController::class, 'revisionStatus'])->name('revision.latest');
                 Route::post('/compare', [EstimateVersionController::class, 'compare'])->name('compare');
                 Route::get('/{versionId}', [EstimateVersionController::class, 'show'])
                     ->whereNumber('versionId')

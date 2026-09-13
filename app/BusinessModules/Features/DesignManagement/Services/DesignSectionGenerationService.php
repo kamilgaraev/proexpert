@@ -20,11 +20,14 @@ final class DesignSectionGenerationService
 {
     public function __construct(
         private readonly DesignNormativeCatalogService $catalogService,
-    ) {
-    }
+    ) {}
 
     public function generateForPackage(DesignPackage $package): Collection
     {
+        if ($package->composition_revision_id !== null) {
+            throw new DomainException(trans_message('design_composition.errors.composition_controls_structure'));
+        }
+
         $projectStage = $this->value($package->project_stage);
         $objectType = $this->value($package->object_type);
         $profileCode = (string) ($package->normative_profile_code ?: $this->catalogService->profileCode($projectStage, $objectType));
@@ -113,7 +116,11 @@ final class DesignSectionGenerationService
 
     public function storeCustomSectionDocument(DesignPackage $package, array $payload): DesignPackageSection
     {
-        if (!DesignPackageWorkflow::canChangeDocuments($package)) {
+        if ($package->composition_revision_id !== null) {
+            throw new DomainException(trans_message('design_composition.errors.composition_controls_structure'));
+        }
+
+        if (! DesignPackageWorkflow::canChangeDocuments($package)) {
             throw new DomainException(trans_message('design_management.errors.package_locked_for_document_changes'));
         }
 
@@ -176,7 +183,7 @@ final class DesignSectionGenerationService
         $documents = is_array($metadata['documents'] ?? null) ? array_values($metadata['documents']) : [];
 
         foreach ($documents as $existingDocument) {
-            if (!is_array($existingDocument)) {
+            if (! is_array($existingDocument)) {
                 continue;
             }
 
@@ -193,7 +200,7 @@ final class DesignSectionGenerationService
 
     private function metadataWithExistingCustomDocuments(array $metadata, mixed $existingMetadata): array
     {
-        if (!is_array($existingMetadata)) {
+        if (! is_array($existingMetadata)) {
             return $metadata;
         }
 
@@ -202,7 +209,7 @@ final class DesignSectionGenerationService
         $documentCodes = [];
 
         foreach ($documents as $document) {
-            if (!is_array($document)) {
+            if (! is_array($document)) {
                 continue;
             }
 
@@ -214,7 +221,7 @@ final class DesignSectionGenerationService
         }
 
         foreach ($existingDocuments as $document) {
-            if (!is_array($document) || !$this->isCustomDocumentMetadata($document)) {
+            if (! is_array($document) || ! $this->isCustomDocumentMetadata($document)) {
                 continue;
             }
 

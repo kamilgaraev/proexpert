@@ -19,6 +19,7 @@ final readonly class DesignViewerConversionResult
         private int $shellCount,
         private ?array $boundingBox,
         private array $warnings,
+        private array $ifcMetadata,
     ) {
     }
 
@@ -38,6 +39,7 @@ final readonly class DesignViewerConversionResult
             shellCount: self::integerMetric($metrics, 'shell_count'),
             boundingBox: self::boundingBox($metrics['bounding_box'] ?? $metrics['bbox'] ?? null),
             warnings: self::warnings($payload['warnings'] ?? $metrics['warnings'] ?? []),
+            ifcMetadata: self::normalizeIfcMetadata($metrics['ifc_metadata'] ?? []),
         );
     }
 
@@ -67,6 +69,7 @@ final readonly class DesignViewerConversionResult
                 'bounding_box' => $this->boundingBox,
             ],
             'warnings' => $this->warnings,
+            'ifc_metadata' => $this->ifcMetadata,
         ];
     }
 
@@ -157,5 +160,10 @@ final readonly class DesignViewerConversionResult
             array_map(static fn (mixed $warning): string => (string) $warning, $value),
             static fn (string $warning): bool => $warning !== ''
         ));
+    }
+
+    private static function normalizeIfcMetadata(mixed $value): array
+    {
+        return is_array($value) ? $value : [];
     }
 }

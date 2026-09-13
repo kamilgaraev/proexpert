@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\BusinessModules\Features\BudgetEstimates\Services\AutoSchedulingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\MemoryLayerService;
-use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateRevisionService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateRevisionQueueService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionComparisonService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionRestoreService;
 use App\BusinessModules\Features\BudgetEstimates\Services\WhatIfSimulatorService;
@@ -37,7 +37,7 @@ class EstimateVersionController extends Controller
         protected WhatIfSimulatorService $whatIfService,
         protected AutoSchedulingService $schedulerService,
         protected MemoryLayerService $memoryLayer,
-        private readonly EstimateRevisionService $revisionService
+        private readonly EstimateRevisionQueueService $revisionService
     ) {}
 
     public function index(EstimateVersionIndexRequest $request, int $estimateId): JsonResponse
@@ -115,44 +115,83 @@ class EstimateVersionController extends Controller
     public function startRevision(StartEstimateRevisionRequest $request, int $estimateId): JsonResponse
     {
         $estimate = $this->findEstimateOrFail($estimateId);
-        $this->authorizeVersionCreation($estimate);
-        $this->authorize('update', $estimate);
+        $this->authorize('view', $estimate);
         $validated = $request->validated();
-        $revision = $this->revisionService->start(
-            estimate: $estimate,
-            actorId: (int) $request->user()->id,
-            reason: $validated['reason'],
-            idempotencyKey: $validated['idempotency_key']
-        );
+        try {
+            $operation = $this->revisionService->enqueue(
+                (int) $estimate->id,
+                (int) $estimate->organization_id,
+                $request->user(),
+                $validated['reason'],
+                $validated['idempotency_key']
+            );
+        } catch (\DomainException $exception) {
+            return AdminResponse::error(trans_message('estimate.revision_conflict'), Response::HTTP_CONFLICT);
+        } catch (\Illuminate\Auth\Access\AuthorizationException $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            if ($exception instanceof \Illuminate\Database\QueryException && $exception->getCode() === '55P03') {
+                return AdminResponse::error(trans_message('estimate.revision_conflict'), Response::HTTP_CONFLICT);
+            }
+            $this->revisionService->logError($exception, [
+                'estimate_id' => $estimate->id,
+                'organization_id' => $estimate->organization_id,
+                'actor_id' => $request->user()->id,
+                'stage' => 'enqueue',
+            ]);
+
+            return AdminResponse::error(trans_message('estimate.revision_queue_unavailable'), Response::HTTP_SERVICE_UNAVAILABLE);
+        }
 
         return AdminResponse::success(
-            new EstimateResource($revision),
-            trans_message('estimate.revision_started'),
-            Response::HTTP_CREATED
+            $operation->payload(),
+            trans_message('estimate.revision_operation_'.$operation->status),
+            in_array($operation->status, ['queued', 'processing'], true) ? Response::HTTP_ACCEPTED : Response::HTTP_OK
         );
+    }
+
+    public function revisionStatus(Request $request, int $estimateId): JsonResponse
+    {
+        $operation = $this->revisionService->latest(
+            $estimateId,
+            (int) $request->attributes->get('current_organization_id'),
+            $request->user()
+        );
+
+        return AdminResponse::success($operation?->payload());
     }
 
     public function rollback(Request $request, int $estimateId, int $versionId): JsonResponse
     {
+        $request->merge(['idempotency_key' => $request->header('Idempotency-Key')]);
+        $validated = $request->validate(['idempotency_key' => ['required', 'string', 'min:16', 'max:128']]);
         try {
             $estimate = $this->findEstimateOrFail($estimateId);
-            $version = $this->findVersionForEstimate($estimate, $versionId);
-            $this->authorize('rollbackVersion', $version->estimate);
-            $restoredEstimate = $this->versionRestoreService->restore(
-                estimate: $version->estimate,
-                version: $version,
-                actorId: (int) $request->user()->id
+            $this->authorize('rollbackVersion', $estimate);
+            $operation = $this->revisionService->enqueue(
+                $estimate->id, $estimate->organization_id, $request->user(), '', $validated['idempotency_key'], $versionId
             );
         } catch (\InvalidArgumentException $e) {
             return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('estimate.version_not_found'), Response::HTTP_NOT_FOUND);
+        } catch (\DomainException $e) {
+            return AdminResponse::error(trans_message('estimate.restore_conflict'), Response::HTTP_CONFLICT);
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            if ($e instanceof \Illuminate\Database\QueryException && $e->getCode() === '55P03') {
+                return AdminResponse::error(trans_message('estimate.restore_conflict'), Response::HTTP_CONFLICT);
+            }
+            $this->revisionService->logError($e, ['estimate_id' => $estimateId, 'target_version_id' => $versionId, 'stage' => 'enqueue_restore']);
+
+            return AdminResponse::error(trans_message('estimate.restore_queue_unavailable'), Response::HTTP_SERVICE_UNAVAILABLE);
         }
 
         return AdminResponse::success(
-            new EstimateResource($restoredEstimate),
-            trans_message('estimate.version_rollback'),
-            Response::HTTP_CREATED
+            $operation->payload(),
+            $operation->payload()['message'],
+            in_array($operation->status, ['queued', 'processing'], true) ? Response::HTTP_ACCEPTED : Response::HTTP_OK
         );
     }
 

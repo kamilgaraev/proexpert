@@ -28,7 +28,7 @@ final class QualityControlMobileTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAccess();
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/quality-control/defects', [
                 'project_id' => $project->id,
                 'title' => 'Mobile quality defect',
@@ -51,7 +51,7 @@ final class QualityControlMobileTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAccess();
 
-        $createResponse = $this->withHeaders($context->authHeaders())
+        $createResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/quality-control/defects', [
                 'project_id' => $project->id,
                 'title' => 'Mobile quality defect',
@@ -66,7 +66,7 @@ final class QualityControlMobileTest extends TestCase
 
         $defectId = (int) $createResponse->json('data.id');
 
-        $startResponse = $this->withHeaders($context->authHeaders())
+        $startResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/quality-control/defects/{$defectId}/start", [
                 'comment' => 'Работы начаты на объекте',
             ]);
@@ -79,7 +79,7 @@ final class QualityControlMobileTest extends TestCase
             'comment' => 'Работы начаты на объекте',
         ]);
 
-        $resolveResponse = $this->withHeaders($context->authHeaders())
+        $resolveResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/quality-control/defects/{$defectId}/resolve");
 
         $resolveResponse->assertOk()
@@ -106,14 +106,14 @@ final class QualityControlMobileTest extends TestCase
             'due_date' => now()->subDay()->toDateString(),
         ]);
 
-        $filteredResponse = $this->withHeaders($context->authHeaders())
+        $filteredResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/quality-control/defects?status=open&severity=critical&overdue=1&sort_by=due_date&sort_dir=asc');
 
         $filteredResponse->assertOk();
         $filteredIds = collect($filteredResponse->json('data.items'))->pluck('id')->all();
         $this->assertSame([$openCritical->id], $filteredIds);
 
-        $notOverdueResponse = $this->withHeaders($context->authHeaders())
+        $notOverdueResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/quality-control/defects?overdue=0&per_page=50');
 
         $notOverdueResponse->assertOk();
@@ -122,7 +122,7 @@ final class QualityControlMobileTest extends TestCase
         $this->assertContains($openMajor->id, $allIds);
         $this->assertContains($resolvedCritical->id, $allIds);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/quality-control/defects?status=unknown')
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', trans_message('quality_control.validation.status_invalid'));
@@ -150,7 +150,7 @@ final class QualityControlMobileTest extends TestCase
                 ->andReturn($previewUrl);
         });
 
-        $resolveResponse = $this->withHeaders($context->authHeaders())
+        $resolveResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->post("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", [
                 'photos' => [
                     [
@@ -171,7 +171,7 @@ final class QualityControlMobileTest extends TestCase
             'url' => $storedPath,
         ]);
 
-        $verifyResponse = $this->withHeaders($context->authHeaders())
+        $verifyResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/quality-control/defects/{$defect->id}/verify", [
                 'comment' => 'Результат проверен на объекте',
             ]);
@@ -186,12 +186,12 @@ final class QualityControlMobileTest extends TestCase
 
         $rejectedDefect = $this->createDefect($context, $project, 'ready_for_review', 'major');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/quality-control/defects/{$rejectedDefect->id}/reject")
             ->assertStatus(422)
             ->assertJsonPath('errors.comment.0', trans_message('quality_control.validation.comment_required'));
 
-        $rejectResponse = $this->withHeaders($context->authHeaders())
+        $rejectResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/quality-control/defects/{$rejectedDefect->id}/reject", [
                 'comment' => 'Нужно переделать примыкание',
             ]);

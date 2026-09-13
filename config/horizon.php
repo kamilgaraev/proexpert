@@ -63,6 +63,15 @@ return [
 
     'environments' => [
         'production' => [
+            'supervisor-estimate-revisions' => [
+                'connection' => 'redis_estimate_revisions',
+                'queue' => ['estimate-revisions'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 1,
+                'timeout' => 660,
+                'memory' => 512,
+            ],
             'supervisor-critical' => [
                 'connection' => 'redis',
                 'queue' => ['notifications-critical'],
@@ -214,6 +223,15 @@ return [
         ],
 
         'local' => [
+            'supervisor-estimate-revisions' => [
+                'connection' => 'redis_estimate_revisions',
+                'queue' => ['estimate-revisions'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 1,
+                'timeout' => 660,
+                'memory' => 512,
+            ],
             'supervisor-estimate-generation-units' => [
                 'connection' => 'redis_estimate_generation',
                 'queue' => ['estimate-generation-units'],

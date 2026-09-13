@@ -69,6 +69,25 @@ class PermissionTranslatorTest extends TestCase
         $this->assertSame('Личный кабинет', $translated['interface_access']['lk']);
     }
 
+    public function test_design_composition_and_model_permissions_have_distinct_russian_labels(): void
+    {
+        $permissions = [
+            'design-management.models.edit' => 'Управление наборами BIM-моделей',
+            'design-management.composition.edit' => 'Редактирование состава проектных комплектов',
+            'design-management.composition.approve' => 'Утверждение состава проектных комплектов',
+            'design-management.issues.manage_blocking' => 'Установка и снятие блокировки выпуска замечанием',
+        ];
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => ['design-management' => array_keys($permissions)],
+        ]);
+
+        $this->assertSame($permissions, $translated['module_permissions']['design-management']);
+        $catalog = json_decode(file_get_contents(dirname(__DIR__, 3).'/config/ModuleList/features/design-management.json'), true, flags: JSON_THROW_ON_ERROR);
+        foreach (array_keys($permissions) as $permission) {
+            $this->assertContains($permission, $catalog['permissions']);
+        }
+    }
+
     public function test_missing_translation_keys_are_not_exposed_to_frontend(): void
     {
         $translated = PermissionTranslator::translatePermissionsData([

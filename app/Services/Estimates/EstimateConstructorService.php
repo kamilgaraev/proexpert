@@ -303,11 +303,14 @@ class EstimateConstructorService
     private function withMutableEstimate(Estimate $estimate, callable $operation): mixed
     {
         return DB::transaction(function () use ($estimate, $operation): mixed {
-            $lockedEstimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            $lockedEstimate = Estimate::query()->whereKey($estimate->id)->lock('FOR UPDATE NOWAIT')->firstOrFail();
             $this->assertMutable($lockedEstimate);
             $estimate->setRawAttributes($lockedEstimate->getAttributes(), true);
 
-            return $operation();
+            $result = $operation();
+            app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService::class)->invalidateStructure($estimate);
+
+            return $result;
         });
     }
 
