@@ -501,6 +501,29 @@ final class EstimateFinanceTest extends TestCase
         $remainingReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
         self::assertSame('0.01', $remainingReport['sources'][0]['remaining_amount']);
         self::assertSame('0.01', $remainingReport['sources'][0]['remaining_without_vat']);
+        $edit = array_replace($registration, ['revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'source_version' => 1, 'amount' => '200', 'vat_mode' => 'none', 'vat_rate' => null]);
+        unset($edit['source_hash']);
+        $edit['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $edit)['source_hash'];
+        $this->save($edit);
+        foreach ([[$this->estimate, $b], [$second, $c]] as [$scope, $position]) {
+            $this->finance->save($this->actor, $scope->project_id, $scope->id, array_replace($command($scope, $position, '100', 1),
+                ['source_version' => 2, 'source_hash' => $edit['source_hash']]));
+        }
+        $edit = array_replace($edit, ['revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'source_version' => 2, 'amount' => '50']);
+        unset($edit['source_hash']);
+        $edit['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $edit)['source_hash'];
+        $this->save($edit);
+        foreach ([[$this->estimate, $b], [$second, $c], [$this->estimate, $a]] as [$scope, $position]) {
+            $clear = array_replace($command($scope, $position, '0', 2), ['source_version' => 3, 'source_hash' => $edit['source_hash']]);
+            $this->finance->save($this->actor, $scope->project_id, $scope->id, $clear);
+        }
+        $reviewed = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertFalse($reviewed['sources'][0]['requires_review']);
+        self::assertSame('50.00', $reviewed['sources'][0]['amount']);
+        self::assertSame('50.00', $reviewed['sources'][0]['remaining_amount']);
+        self::assertSame(3, $db::table('estimate_finance_own_cost_allocations')->where('own_cost_id', $cost->id)->count());
     }
 
     public function test_migration_preserves_signed_act_lines_and_payment_history(): void

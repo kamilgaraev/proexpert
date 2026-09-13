@@ -108,14 +108,16 @@ final class EstimateFinanceOwnCostDistribution
                 $weights['a:'.$allocationId] = $change['amount'];
                 $remaining = FinanceDecimal::subtract($remaining, $change['amount']);
             }
-            if (FinanceDecimal::compare($remaining, '0') < 0 || ($availableNet !== null
-                && (FinanceDecimal::compare($availableNet, '0') < 0 || FinanceDecimal::compare($availableNet, $available) > 0))) {
+            $clearing = $changed !== [] && collect($changed)->every(fn (array $change) => FinanceDecimal::compare($change['amount'], '0') === 0);
+            if (! $clearing && (FinanceDecimal::compare($remaining, '0') < 0 || ($availableNet !== null
+                && (FinanceDecimal::compare($availableNet, '0') < 0 || FinanceDecimal::compare($availableNet, $available) > 0)))) {
                 $this->invalid('own_cost_exceeded');
             }
             $weights['remaining'] = $remaining;
-            $net = $availableNet === null ? array_fill_keys(array_keys($weights), null)
+            $net = $clearing ? array_replace(array_fill_keys(array_keys($weights), '0.00'), ['remaining' => $availableNet])
+                : ($availableNet === null ? array_fill_keys(array_keys($weights), null)
                 : (FinanceDecimal::compare($available, '0') === 0 ? array_fill_keys(array_keys($weights), '0.00')
-                    : FinanceDecimal::allocate($availableNet, $weights));
+                    : FinanceDecimal::allocate($availableNet, $weights)));
             $previewLines = [];
             foreach ($changed as $allocationId => $change) {
                 $previewLines[] = ['allocation_key' => $change['allocation']->key, 'amount' => $change['amount'],
