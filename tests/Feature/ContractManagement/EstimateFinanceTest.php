@@ -616,6 +616,41 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame(3, $db::table('estimate_finance_own_cost_allocations')->where('own_cost_id', $cost->id)->count());
     }
 
+    public function test_sealed_estimate_allows_financial_migration_without_changing_approved_content(): void
+    {
+        $link = ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
+            'estimate_item_id' => $this->item->id, 'quantity' => '1', 'amount' => '152.40']);
+        $version = \App\Models\EstimateVersion::query()->create([
+            'estimate_id' => $this->estimate->id, 'organization_id' => $this->estimate->organization_id,
+            'version_number' => 1, 'snapshot_type' => 'approval', 'estimate_status' => 'approved',
+            'status' => 'approved', 'snapshot' => [],
+        ]);
+        $this->estimate->update(['status' => 'approved', 'current_version_id' => $version->id]);
+        $before = \Illuminate\Support\Arr::except($this->estimate->fresh()->getAttributes(), ['finance_revision', 'updated_at']);
+        $itemBefore = $this->item->fresh()->getAttributes();
+        $plan = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, ['preview_operation' => 'migration_plan']);
+        $command = ['operation' => 'migration_apply', 'mutation_id' => (string) Str::uuid(), 'revision' => $plan['revision'],
+            'links' => [['legacy_link_id' => $link->id, 'source_hash' => $plan['rows'][0]['source_hash']]]];
+        $this->save($command);
+        self::assertTrue((bool) $link->fresh()->finance_managed);
+        self::assertSame('152.40', $link->fresh()->amount);
+        self::assertGreaterThan($plan['revision'], $this->estimate->fresh()->finance_revision);
+        self::assertSame($before, \Illuminate\Support\Arr::except($this->estimate->fresh()->getAttributes(), ['finance_revision', 'updated_at']));
+        self::assertSame($itemBefore, $this->item->fresh()->getAttributes());
+        self::assertTrue($this->save($command)['replayed']);
+        self::assertSame(1, EstimateFinanceAllocation::query()->where('contract_estimate_item_id', $link->id)->count());
+        foreach (['name' => 'Changed', 'total_amount' => '999', 'status' => 'archived'] as $field => $value) {
+            try {
+                \Illuminate\Support\Facades\DB::transaction(fn () => \Illuminate\Support\Facades\DB::table('estimates')
+                    ->where('id', $this->estimate->id)->update([$field => $value,
+                        'finance_revision' => \Illuminate\Support\Facades\DB::raw('finance_revision + 1')]));
+                self::fail('Approved content changed together with financial revision');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                self::assertStringContainsString('approved_estimate_is_immutable', $exception->getMessage());
+            }
+        }
+    }
+
     public function test_migration_preserves_signed_act_lines_and_payment_history(): void
     {
         $link = ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
