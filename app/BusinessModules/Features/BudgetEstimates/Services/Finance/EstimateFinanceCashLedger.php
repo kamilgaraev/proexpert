@@ -64,7 +64,7 @@ final class EstimateFinanceCashLedger
                 'transaction_id' => (int) $row->payment_transaction_id, 'version' => (int) $row->version,
                 'amount' => $row->amount, 'currency' => $row->currency, 'source_changed' => $changed];
             $fact = array_replace($source, ['transaction_id' => $row->id, 'amount' => $row->amount,
-                'native_transaction_id' => $source['transaction_id'], 'target_key' => $key,
+                'native_transaction_id' => $source['transaction_id'], 'target_key' => $key, 'estimate_item_id' => (int) $row->estimate_item_id,
                 'direction_requires_review' => $source['direction_requires_review'] || $changed]);
             $facts[] = $fact;
             unset($state);
@@ -90,6 +90,56 @@ final class EstimateFinanceCashLedger
         }
 
         return ['scope' => 'allocated_positions', 'sources' => array_values($states), 'allocations' => $allocations,
-            'totals' => $this->summary->calculate($facts)['totals'], 'positions' => $positions];
+            'totals' => $this->summary->calculate($facts)['totals'], 'positions' => $positions,
+            'sections' => $this->sections($estimate, $facts)];
+    }
+
+    private function sections(Estimate $estimate, array $facts): array
+    {
+        if ($facts === []) {
+            return [];
+        }
+        $items = DB::table('estimate_items')->where('estimate_id', $estimate->id)
+            ->whereIn('id', array_unique(array_column($facts, 'estimate_item_id')))
+            ->pluck('estimate_section_id', 'id');
+        $tree = DB::table('estimate_sections')->where('estimate_id', $estimate->id)
+            ->orderBy('sort_order')->orderBy('id')->get(['id', 'parent_section_id', 'name'])->keyBy('id');
+        $paths = $groups = [];
+        foreach ($facts as $fact) {
+            $sectionId = $items->get($fact['estimate_item_id']);
+            $pathKey = $sectionId ?? 'none';
+            if (! isset($paths[$pathKey])) {
+                $path = [];
+                $current = $sectionId;
+                $invalid = false;
+                while ($current !== null) {
+                    $section = $tree->get($current);
+                    if ($section === null || isset($path[$current])) {
+                        $invalid = true;
+                        break;
+                    }
+                    $path[$current] = $section;
+                    $current = $section->parent_section_id;
+                }
+                $paths[$pathKey] = ['path' => $path, 'invalid' => $invalid];
+            }
+            $path = $paths[$pathKey];
+            foreach ($path['path'] ?: [null] as $section) {
+                $key = $section?->id ?? 'none';
+                $groups[$key] ??= ['estimate_id' => (int) $estimate->id, 'section_id' => $section === null ? null : (int) $section->id,
+                    'name' => $section?->name, 'parent_section_id' => $section?->parent_section_id,
+                    'hierarchy_requires_review' => false, 'facts' => []];
+                $groups[$key]['hierarchy_requires_review'] = $groups[$key]['hierarchy_requires_review']
+                    || $path['invalid'] || ! $items->has($fact['estimate_item_id']);
+                $groups[$key]['facts'][] = $fact;
+            }
+        }
+        foreach ($groups as &$group) {
+            $group['totals'] = $this->summary->calculate($group['facts'])['totals'];
+            unset($group['facts']);
+        }
+        unset($group);
+
+        return array_values($groups);
     }
 }

@@ -64,6 +64,9 @@ final class EstimateFinanceTest extends TestCase
 
     public function test_cash_distribution_saves_once_and_preserves_refund_limits_and_versions(): void
     {
+        $parent = EstimateSection::query()->create(['estimate_id' => $this->estimate->id, 'name' => 'Раздел оплат', 'section_number' => '1']);
+        $child = EstimateSection::query()->create(['estimate_id' => $this->estimate->id, 'name' => 'Вложенные оплаты', 'section_number' => '1.1', 'parent_section_id' => $parent->id]);
+        $this->item->update(['estimate_section_id' => $child->id]);
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
         $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
         $document = $this->cashDocument($this->customer, 'incoming');
@@ -106,6 +109,13 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('300.00', $cashReport['summary']['totals']['RUB']['difference']);
         self::assertSame('100.00', $cashReport['distribution']['totals']['RUB']['difference']);
         self::assertSame('100.00', $cashReport['distribution']['positions'][0]['totals']['RUB']['difference']);
+        $sections = array_column($cashReport['distribution']['sections'], null, 'section_id');
+        self::assertCount(2, $sections);
+        foreach ([$parent->id, $child->id] as $sectionId) {
+            self::assertSame('100.00', $sections[$sectionId]['totals']['RUB']['difference']);
+            self::assertSame('100.00', $sections[$sectionId]['totals']['RUB']['customer_refunds']);
+            self::assertFalse($sections[$sectionId]['hierarchy_requires_review']);
+        }
         $states = array_column($cashReport['distribution']['sources'], null, 'transaction_id');
         self::assertSame('200.00', $states[$payment->id]['remaining_amount']);
         self::assertSame('0.00', $states[$refund->id]['remaining_amount']);
