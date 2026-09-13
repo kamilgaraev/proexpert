@@ -6,6 +6,7 @@ import pako from "pako";
 import * as FRAGS from "@thatopen/fragments";
 import { IfcAPI } from "web-ifc";
 import { getElementPropertySets } from "./ifc-element-properties.mjs";
+import { writeConverterMessage } from "./converter-output.mjs";
 
 const [, , inputPath, outputPath, indexPath] = process.argv;
 const VIEWER_GEOMETRY_PROFILE = "ifc_properties_geometry_v2";
@@ -275,8 +276,8 @@ try {
     ...inspectFragments(fragmentsData, false),
   };
   await fs.writeFile(outputPath, Buffer.from(fragmentsData));
-  emit({ event: "result", metrics });
-  emit({ event: "progress", progress: 100, stage: "written" });
+  await writeConverterMessage(process.stdout, { event: "result", metrics });
+  await writeConverterMessage(process.stdout, { event: "progress", progress: 100, stage: "written" });
   process.exit(0);
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
