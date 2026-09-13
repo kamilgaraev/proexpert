@@ -1971,6 +1971,18 @@ final class EstimateFinanceTest extends TestCase
         if ($rows !== []) {
             ContractEstimateItem::query()->insert($rows);
         }
+        $resourceRows = [];
+        foreach (EstimateItem::query()->where('estimate_id', $this->estimate->id)->pluck('id') as $itemId) {
+            $resourceRows[] = ['estimate_item_id' => $itemId, 'resource_type' => 'material',
+                'name' => 'Включённый ресурс '.$itemId, 'total_quantity' => '1', 'quantity_per_unit' => '1', 'total_amount' => '50'];
+            if (count($resourceRows) === 500) {
+                EstimateItemResource::query()->insert($resourceRows);
+                $resourceRows = [];
+            }
+        }
+        if ($resourceRows !== []) {
+            EstimateItemResource::query()->insert($resourceRows);
+        }
         $contracts = app(ContractEstimateService::class);
         $progress = app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class);
         \Illuminate\Support\Facades\DB::enableQueryLog();
@@ -1987,7 +1999,7 @@ final class EstimateFinanceTest extends TestCase
         \Illuminate\Support\Facades\DB::disableQueryLog();
 
         self::assertCount(8001, $serialized);
-        self::assertCount(8001, $report['rows']);
+        self::assertCount(16002, $report['rows']);
         self::assertSame($loadedQueries, $serializedQueries);
         self::assertLessThanOrEqual(40, $totalQueries);
         self::assertSame(8001, $summary['summary']['linked_items_count']);
