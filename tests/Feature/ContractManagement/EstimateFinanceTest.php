@@ -816,6 +816,34 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($row['key'], $db::table('estimate_finance_own_costs')->where('id', $id)->value('key'));
     }
 
+    public function test_execution_distribution_source_tracks_native_remainder_and_rejects_unapproved_act(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'SOURCE-REMAINDER',
+            'act_date' => '2026-09-13', 'amount' => '120', 'amount_without_vat' => '100',
+            'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+        $service = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExecutionSource::class);
+        $source = $service->read($this->estimate, $act);
+        self::assertSame('120.00', $source['amount_with_vat']);
+        self::assertSame('100.00', $source['amount_without_vat']);
+        self::assertSame($source['source_hash'], $service->read($this->estimate, $act)['source_hash']);
+        $line = \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id,
+            'estimate_item_id' => $this->item->id, 'line_type' => 'manual', 'manual_reason' => 'Основание', 'title' => 'Работа',
+            'quantity' => '1', 'unit_price' => '60', 'amount' => '60', 'currency' => 'RUB']);
+        $next = $service->read($this->estimate, $act);
+        self::assertSame('60.00', $next['amount_with_vat']);
+        self::assertNull($next['amount_without_vat']);
+        self::assertNotSame($source['source_hash'], $next['source_hash']);
+        $act->update(['status' => 'draft', 'is_approved' => false]);
+        $line->update(['title' => 'Уточнённая работа']);
+        $act->update(['status' => 'approved', 'is_approved' => true]);
+        self::assertNotSame($next['source_hash'], $service->read($this->estimate, $act)['source_hash']);
+        $act->update(['status' => 'draft', 'is_approved' => false]);
+        $this->expectException(ValidationException::class);
+        $service->read($this->estimate, $act);
+    }
+
     public function test_execution_distribution_storage_preserves_unknown_values_and_fact_references(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));

@@ -10,13 +10,14 @@ use Illuminate\Support\Facades\DB;
 
 final class EstimateFinanceExecution
 {
-    public function report(Estimate $estimate, array $contracts): array
+    public function report(Estimate $estimate, array $contracts, ?int $actId = null): array
     {
         $linkedIds = DB::table('contract_estimate_items')->where('estimate_id', $estimate->id)->pluck('contract_id')
             ->merge(DB::table('estimate_finance_allocations')->where('estimate_id', $estimate->id)->whereNotNull('contract_id')->pluck('contract_id'))
             ->unique()->all();
         $contracts = array_intersect_key(array_column($contracts, null, 'id'), array_fill_keys($linkedIds, true));
         $acts = ContractPerformanceAct::query()->whereIn('contract_id', array_keys($contracts))
+            ->when($actId !== null, fn ($query) => $query->whereKey($actId))
             ->where('project_id', $estimate->project_id)
             ->whereHas('contract', fn ($query) => $query->where('organization_id', $estimate->organization_id)->where('project_id', $estimate->project_id))
             ->whereIn('status', [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED])
@@ -30,6 +31,7 @@ final class EstimateFinanceExecution
             $contract = $contracts[$act->contract_id];
             $currency = $act->currency ?: $contract['currency'];
             $mapped = '0.00';
+            $mappedNet = '0.00';
             $inEstimate = '0.00';
             $net = '0.00';
             $lines = [];
@@ -71,6 +73,7 @@ final class EstimateFinanceExecution
                     $net = $net === null || $line['amount_without_vat'] === null ? null : FinanceDecimal::add($net, $line['amount_without_vat']);
                     if ($line['estimate_id'] !== null) {
                         $mapped = FinanceDecimal::add($mapped, (string) $line['amount_with_vat']);
+                        $mappedNet = $mappedNet === null || $line['amount_without_vat'] === null ? null : FinanceDecimal::add($mappedNet, $line['amount_without_vat']);
                     }
                     if ((int) $line['estimate_id'] === (int) $estimate->id) {
                         $inEstimate = FinanceDecimal::add($inEstimate, (string) $line['amount_with_vat']);
@@ -95,6 +98,7 @@ final class EstimateFinanceExecution
                 'amount_without_vat' => $documentNet,
                 'estimate_amount_with_vat' => $inEstimate,
                 'unallocated_amount_with_vat' => $unallocated,
+                'unallocated_amount_without_vat' => $currencyMismatch || $documentNet === null || $mappedNet === null ? null : FinanceDecimal::subtract($documentNet, $mappedNet),
                 'needs_review' => $currencyMismatch || ($unallocated !== null && FinanceDecimal::compare($unallocated, '0') < 0)];
         }
 
