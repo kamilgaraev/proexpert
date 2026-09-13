@@ -32,7 +32,7 @@ final class EstimateFinanceExecutionLedger
             if ($rows->isEmpty()) {
                 continue;
             }
-            $hash = hash('sha256', json_encode(EstimateFinanceExecutionSnapshot::make($byAct->get($document['id']), $document), JSON_THROW_ON_ERROR));
+            $hash = EstimateFinanceExecutionSnapshot::hash(EstimateFinanceExecutionSnapshot::make($byAct->get($document['id']), $document));
             $gross = '0.00';
             $net = '0.00';
             $inEstimate = '0.00';

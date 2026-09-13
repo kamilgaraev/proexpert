@@ -37,7 +37,7 @@ final class EstimateFinanceExecutionSource
 
         return ['act_id' => (int) $act->id, 'contract_id' => $document['contract_id'], 'currency' => $document['currency'],
             'amount_with_vat' => $document['unallocated_amount_with_vat'], 'amount_without_vat' => $document['unallocated_amount_without_vat'],
-            'source_hash' => hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR)), 'snapshot' => $snapshot];
+            'source_hash' => EstimateFinanceExecutionSnapshot::hash($snapshot), 'snapshot' => $snapshot];
     }
 
     private function invalid(): never

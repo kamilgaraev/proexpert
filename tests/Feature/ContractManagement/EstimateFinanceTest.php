@@ -1094,6 +1094,50 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame(2, $db::table('estimate_finance_execution_versions')->count());
     }
 
+    public function test_signing_keeps_manual_execution_current_and_annulment_preserves_its_history(): void
+    {
+        $line = $this->line($this->customer, '100', '1000');
+        $this->save($this->command([$line]));
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'SIGN-DISTRIBUTION',
+            'act_date' => '2026-09-13', 'amount' => '120', 'amount_without_vat' => '100',
+            'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+        $command = ['operation' => 'execution_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'act_id' => $act->id,
+            'lines' => [['allocation_key' => $line['key'], 'condition_version' => 1, 'version' => 0, 'amount' => '60', 'quantity' => '10']]];
+        $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
+        $this->save($command);
+        $db = \Illuminate\Support\Facades\DB::class;
+        $saved = (array) $db::table('estimate_finance_execution_allocations')->where('performance_act_id', $act->id)->first();
+        $history = $db::table('estimate_finance_execution_versions')->where('execution_allocation_id', $saved['id'])->get()->toArray();
+        $file = \App\Models\File::query()->create(['organization_id' => $this->estimate->organization_id,
+            'fileable_id' => $act->id, 'fileable_type' => \App\Models\ContractPerformanceAct::class, 'user_id' => $this->actor->id,
+            'name' => 'signed.pdf', 'original_name' => 'signed.pdf', 'path' => 'org-'.$this->estimate->organization_id.'/acts/signed.pdf',
+            'mime_type' => 'application/pdf', 'size' => 100, 'disk' => 's3', 'type' => 'document', 'category' => 'signed_act']);
+        $this->mock(\App\Services\ActReport\ActReportNotificationService::class)->shouldReceive('notifyStatusChanged')->once();
+        $workflow = app(\App\Services\ActReport\ActReportWorkflowService::class);
+        $signed = $workflow->markSigned($act, $file->id, $this->actor->id);
+        $workflow->markSigned($signed, $file->id, $this->actor->id);
+        $source = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExecutionSource::class)->read($this->estimate, $signed->fresh());
+        self::assertSame($command['source_hash'], $source['source_hash']);
+        self::assertSame('signed', $source['snapshot']['act']['status']);
+        $changed = $source['snapshot'];
+        $changed['act']['amount'] = '121.00';
+        self::assertNotSame($source['source_hash'], \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExecutionSnapshot::hash($changed));
+        $execution = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution'];
+        self::assertCount(1, $execution['rows']);
+        self::assertFalse($execution['rows'][0]['requires_review']);
+        self::assertSame('60.00', $execution['rows'][0]['amount_with_vat']);
+        self::assertSame('60.00', $execution['documents'][0]['unallocated_amount_with_vat']);
+        $reversalKey = (string) Str::uuid();
+        $workflow->annul($signed, $this->actor->id, 'Исправление акта', $reversalKey);
+        $workflow->annul($signed, $this->actor->id, 'Исправление акта', $reversalKey);
+        $execution = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution'];
+        self::assertSame([], $execution['rows']);
+        self::assertSame($saved, (array) $db::table('estimate_finance_execution_allocations')->where('id', $saved['id'])->first());
+        self::assertEquals($history, $db::table('estimate_finance_execution_versions')->where('execution_allocation_id', $saved['id'])->get()->toArray());
+    }
+
     public function test_execution_distribution_source_tracks_native_remainder_and_rejects_unapproved_act(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
