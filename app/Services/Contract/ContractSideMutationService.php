@@ -469,8 +469,9 @@ class ContractSideMutationService
 
         if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
             $supplierId = null;
-            $contractorId = null;
-            $this->assertProjectCustomerCounterpartyIsConfigured($contractDTO);
+            if ($contractorId === null) {
+                $this->assertProjectCustomerCounterpartyIsConfigured($contractDTO);
+            }
         }
 
         if ($contractorId !== null) {
@@ -532,8 +533,11 @@ class ContractSideMutationService
             throw new Exception(trans_message('contract.customer_counterparty_required'));
         }
 
-        if ($project->customer_counterparty_id === null) {
-            throw new Exception(trans_message('contract.customer_counterparty_required'));
+        if ($project->customer_counterparty_id === null && empty($project->customer)) {
+            $resolved = app(\App\Services\Project\ProjectCustomerResolverService::class)->resolveLegalCustomer($project);
+            if (empty($resolved['name'])) {
+                throw new Exception(trans_message('contract.customer_counterparty_required'));
+            }
         }
     }
 
