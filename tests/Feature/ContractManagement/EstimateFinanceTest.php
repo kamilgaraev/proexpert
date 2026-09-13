@@ -343,6 +343,22 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('0.02', $projectCostReport['allocated_totals']['RUB']['amount']);
         self::assertCount(1, $projectCostReport['sources']);
         self::assertCount(3, $projectCostReport['rows']);
+        $exportReport = $this->finance->projectReport($this->actor, $this->estimate->project_id, 'without_vat', true, 'execution');
+        $book = app(EstimateFinanceExport::class)->workbook($exportReport['estimates'], 'without_vat', [], 'execution', $exportReport['execution'], null, $exportReport['own_costs']);
+        try {
+            $summarySheet = $book->getSheetByName('Собственные расходы');
+            $sourceSheet = $book->getSheetByName('Основания расходов');
+            $lineSheet = $book->getSheetByName('Расходы позиций');
+            self::assertSame(2, $sourceSheet->getHighestRow());
+            self::assertSame(4, $lineSheet->getHighestRow());
+            self::assertEquals('0.02', $summarySheet->getCell('D2')->getValue());
+            self::assertEquals('0.02', $sourceSheet->getCell('H2')->getValue());
+            self::assertEquals('0.03', $sourceSheet->getCell('I2')->getValue());
+            self::assertEquals('0.00', $sourceSheet->getCell('L2')->getValue());
+            self::assertEquals(1, $lineSheet->getCell('J2')->getValue());
+        } finally {
+            $book->disconnectWorksheets();
+        }
         self::assertSame(3, $db::table('estimate_finance_own_cost_allocation_versions')->count());
         self::assertEquals($firstRow, $db::table('estimate_finance_own_cost_allocations')->where('id', $firstRow->id)->first());
         try {

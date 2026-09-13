@@ -25,7 +25,7 @@ final class EstimateFinanceExport
         }
         $project = $estimateId === null ? $this->finance->projectReport($actor, $projectId, $basis, true, $view) : null;
         $reports = $project !== null ? $project['estimates'] : [$this->finance->report($actor, $projectId, $estimateId, $basis, $view)];
-        $book = $this->workbook($reports, $basis, $project['totals'] ?? [], $view, $project['execution'] ?? null, $project['cash'] ?? null);
+        $book = $this->workbook($reports, $basis, $project['totals'] ?? [], $view, $project['execution'] ?? null, $project['cash'] ?? null, $project['own_costs'] ?? null);
         ob_start();
         try {
             (new Xlsx($book))->save('php://output');
@@ -41,13 +41,16 @@ final class EstimateFinanceExport
         return new Response($content, 200, ['Content-Type' => $mime, 'Content-Disposition' => 'attachment; filename="estimate-finance.xlsx"']);
     }
 
-    public function workbook(array $reports, string $basis, array $projectTotals = [], string $view = 'plan', ?array $projectExecution = null, ?array $projectCash = null): Spreadsheet
+    public function workbook(array $reports, string $basis, array $projectTotals = [], string $view = 'plan', ?array $projectExecution = null, ?array $projectCash = null, ?array $projectOwnCosts = null): Spreadsheet
     {
         if ($view === 'cash') {
             return $this->cashWorkbook($reports, $projectCash);
         }
         if ($view === 'execution') {
-            return $this->executionWorkbook($reports, $basis, $projectExecution);
+            $book = $this->executionWorkbook($reports, $basis, $projectExecution);
+            $this->ownCostSheets($book, $reports, $basis, $projectOwnCosts);
+
+            return $book;
         }
         $book = new Spreadsheet;
         $summary = $book->getActiveSheet();
@@ -274,6 +277,57 @@ final class EstimateFinanceExport
         $book->setActiveSheetIndex(0);
 
         return $book;
+    }
+
+    private function ownCostSheets(Spreadsheet $book, array $reports, string $basis, ?array $projectOwnCosts): void
+    {
+        $summary = $book->createSheet();
+        $this->header($summary, 'own_cost_summary', ['name', 'own_cost_scope', 'currency', 'own_cost_confirmed_amount', 'own_cost_known_amount', 'unpriced', 'basis']);
+        $sources = $book->createSheet();
+        $this->header($sources, 'own_cost_sources', ['own_cost_key', 'document_date', 'own_cost_basis', 'own_cost_category', 'source', 'document_id', 'currency',
+            'own_cost_confirmed_amount', 'own_cost_saved_gross', 'net', 'cash_allocated', 'cash_remaining', 'own_cost_version', 'status']);
+        $lines = $book->createSheet();
+        $this->header($lines, 'own_cost_lines', ['estimate', 'name', 'own_cost_key', 'allocation_key', 'currency', 'own_cost_confirmed_amount',
+            'own_cost_saved_gross', 'net', 'own_cost_version', 'condition_version', 'status']);
+        $costs = $projectOwnCosts ?? ($reports[0]['own_costs'] ?? null);
+        if ($costs !== null) {
+            foreach ($costs['source_totals'] as $currency => $total) {
+                $this->row($summary, [trans_message('estimate_finance.project_total'), trans_message('estimate_finance.own_cost_project_scope'), $currency,
+                    $total['amount'], $total['known_amount'], $total['unknown_count'], trans_message('estimate_finance.'.$basis)], [4, 5, 6]);
+            }
+            foreach ($costs['sources'] as $source) {
+                if (! $source['available']) {
+                    $this->row($sources, [$source['key'], null, null, null, null, null, null, null, null, null, null, null, null,
+                        trans_message('estimate_finance.own_cost_unavailable')], []);
+                    continue;
+                }
+                $this->row($sources, [$source['key'], $source['expense_date'], $source['basis'], $source['category_name'],
+                    trans_message('estimate_finance.own_cost_'.$source['source_type']), $source['advance_transaction_id'], $source['currency'],
+                    $source['amount'], $source['saved_amount'], $source['saved_without_vat'],
+                    $basis === 'with_vat' ? $source['allocated_amount'] : $source['allocated_without_vat'],
+                    $basis === 'with_vat' ? $source['remaining_amount'] : $source['remaining_without_vat'], $source['version'],
+                    trans_message('estimate_finance.'.($source['status'] === 'voided' ? 'own_cost_voided' : ($source['requires_review'] ? 'incomplete' : 'complete')))], [6, 8, 9, 10, 11, 12, 13]);
+            }
+        }
+        foreach ($reports as $report) {
+            $own = $report['own_costs'] ?? null;
+            if ($own === null) {
+                $this->row($summary, [$report['name'], trans_message('estimate_finance.own_cost_unavailable')], []);
+                continue;
+            }
+            foreach ($own['allocated_totals'] as $currency => $total) {
+                $this->row($summary, [$report['name'], trans_message('estimate_finance.own_cost_estimate_scope'), $currency,
+                    $total['amount'], $total['known_amount'], $total['unknown_count'], trans_message('estimate_finance.'.$basis)], [4, 5, 6]);
+            }
+            foreach ($own['rows'] as $line) {
+                $this->row($lines, [$report['name'], $line['name'], $line['cost_key'], $line['allocation_key'], $line['currency'], $line['amount'],
+                    $line['saved_amount'], $line['saved_without_vat'], $line['version'], $line['recorded_condition_version'],
+                    trans_message('estimate_finance.'.($line['status'] === 'voided' ? 'own_cost_voided' : ($line['requires_review'] ? 'incomplete' : 'complete')))], [6, 7, 8, 9, 10]);
+            }
+        }
+        foreach ([$summary, $sources, $lines] as $sheet) {
+            $sheet->setAutoFilter('A1:'.$sheet->getHighestColumn().$sheet->getHighestRow());
+        }
     }
 
     private function executionValues(array $total): array
