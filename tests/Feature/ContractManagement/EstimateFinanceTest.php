@@ -816,6 +816,46 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($row['key'], $db::table('estimate_finance_own_costs')->where('id', $id)->value('key'));
     }
 
+    public function test_manual_execution_quantity_counts_other_acts_and_can_clear_distribution(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $acts = [];
+        foreach (['ONE', 'TWO'] as $number) {
+            $acts[] = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+                'project_id' => $this->estimate->project_id, 'act_document_number' => 'QUANTITY-'.$number,
+                'act_date' => '2026-09-13', 'amount' => '120', 'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+        }
+        $make = fn (int $actId, string $quantity): array => ['operation' => 'execution_distribution',
+            'revision' => (int) $this->estimate->fresh()->finance_revision, 'mutation_id' => (string) Str::uuid(), 'act_id' => $actId,
+            'lines' => [['allocation_key' => $allocation->key, 'condition_version' => 1, 'version' => 0, 'amount' => '60', 'quantity' => $quantity]]];
+        $first = $make($acts[0]->id, '60.12345678');
+        $first['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $first)['source_hash'];
+        $this->save($first);
+        $second = $make($acts[1]->id, '40');
+        try {
+            $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $second);
+            self::fail('Other act quantity was ignored');
+        } catch (ValidationException) {
+            self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_execution_allocations')->count());
+        }
+        $second['lines'][0]['quantity'] = '39.87654322';
+        $second['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $second)['source_hash'];
+        $this->save($second);
+        $db = \Illuminate\Support\Facades\DB::class;
+        $rows = $db::table('estimate_finance_execution_allocations')->orderBy('id')->get();
+        self::assertSame('100.00000000', FinanceDecimal::value(FinanceDecimal::add($rows[0]->quantity, $rows[1]->quantity), 8));
+        $second['revision'] = (int) $this->estimate->fresh()->finance_revision;
+        $second['mutation_id'] = (string) Str::uuid();
+        $second['lines'][0]['version'] = 1;
+        $second['lines'][0]['amount'] = '0';
+        unset($second['lines'][0]['quantity']);
+        $this->save($second);
+        self::assertSame('0.00000000', $db::table('estimate_finance_execution_allocations')->where('id', $rows[1]->id)->value('quantity'));
+        self::assertSame($rows[1]->key, $db::table('estimate_finance_execution_allocations')->where('id', $rows[1]->id)->value('key'));
+        self::assertSame(3, $db::table('estimate_finance_execution_versions')->count());
+    }
+
     public function test_manual_execution_protects_conditions_until_fact_is_annulled(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));

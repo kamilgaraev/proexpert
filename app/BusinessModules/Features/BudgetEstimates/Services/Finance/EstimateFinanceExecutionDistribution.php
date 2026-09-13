@@ -19,7 +19,7 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 final class EstimateFinanceExecutionDistribution
 {
     public function __construct(private readonly EstimateFinanceAccess $access, private readonly EstimateFinanceQuery $query,
-        private readonly EstimateFinanceExecutionSource $sources) {}
+        private readonly EstimateFinanceExecutionSource $sources, private readonly EstimateFinanceExecutionQuantity $quantities) {}
 
     public function handle(User $actor, int $projectId, int $estimateId, array $input, bool $save): array
     {
@@ -75,9 +75,18 @@ final class EstimateFinanceExecutionDistribution
                     $this->conflict();
                 }
                 $targetKeys[] = $targetKey;
-                $changes[$allocation->id] = ['before' => $before, 'allocation' => $allocation, 'amount' => FinanceDecimal::value($line['amount'])];
+                $amount = FinanceDecimal::value($line['amount']);
+                $quantity = array_key_exists('quantity', $line) ? $line['quantity'] : $before?->quantity;
+                if ($quantity !== null) {
+                    $quantity = FinanceDecimal::value((string) $quantity, 8);
+                }
+                if (FinanceDecimal::compare($amount, '0') === 0 && ! array_key_exists('quantity', $line)) {
+                    $quantity = '0.00000000';
+                }
+                $changes[$allocation->id] = ['before' => $before, 'allocation' => $allocation, 'amount' => $amount, 'quantity' => $quantity];
             }
             $this->access->editContracts($actor, $estimate, $targetKeys, [(int) $act->contract_id]);
+            $this->quantities->assertAvailable($estimate, (int) $act->contract_id, (int) $act->id, $changes);
             $available = $source['amount_with_vat'];
             $availableNet = $source['amount_without_vat'];
             foreach ($existing as $allocationId => $row) {
@@ -105,7 +114,7 @@ final class EstimateFinanceExecutionDistribution
             $previewLines = [];
             foreach ($changes as $allocationId => $change) {
                 $previewLines[] = ['allocation_key' => $change['allocation']->key, 'amount' => $change['amount'], 'amount_without_vat' => $net['a:'.$allocationId],
-                    'quantity' => $change['before']?->quantity, 'version' => (int) ($change['before']?->version ?? 0), 'condition_version' => (int) $change['allocation']->condition_version];
+                    'quantity' => $change['quantity'], 'version' => (int) ($change['before']?->version ?? 0), 'condition_version' => (int) $change['allocation']->condition_version];
             }
             if (! $save) {
                 return ['operation' => 'execution_distribution', 'revision' => (int) $estimate->finance_revision, 'act_id' => (int) $act->id,
@@ -120,7 +129,7 @@ final class EstimateFinanceExecutionDistribution
                 $before = $change['before'];
                 $row = ['key' => $before?->key ?? (string) Str::uuid(), 'organization_id' => (int) $actor->current_organization_id,
                     'project_id' => $projectId, 'estimate_id' => $estimateId, 'allocation_id' => $allocationId, 'performance_act_id' => (int) $act->id,
-                    'currency' => $source['currency'], 'quantity' => $before?->quantity, 'amount_with_vat' => $change['amount'], 'amount_without_vat' => $net['a:'.$allocationId],
+                    'currency' => $source['currency'], 'quantity' => $change['quantity'], 'amount_with_vat' => $change['amount'], 'amount_without_vat' => $net['a:'.$allocationId],
                     'version' => (int) ($before?->version ?? 0) + 1, 'condition_version' => (int) $change['allocation']->condition_version,
                     'source_hash' => $source['source_hash'], 'source_snapshot' => json_encode(array_diff_key($source, ['snapshot' => true]), JSON_THROW_ON_ERROR),
                     'condition_snapshot' => json_encode($change['allocation']->getAttributes(), JSON_THROW_ON_ERROR),
@@ -132,7 +141,7 @@ final class EstimateFinanceExecutionDistribution
             }
             foreach (array_chunk($writes, 500) as $batch) {
                 DB::table('estimate_finance_execution_allocations')->upsert($batch, ['performance_act_id', 'allocation_id'],
-                    ['amount_with_vat', 'amount_without_vat', 'version', 'condition_version', 'source_hash', 'source_snapshot', 'condition_snapshot', 'updated_by', 'updated_at']);
+                    ['quantity', 'amount_with_vat', 'amount_without_vat', 'version', 'condition_version', 'source_hash', 'source_snapshot', 'condition_snapshot', 'updated_by', 'updated_at']);
             }
             $ids = DB::table('estimate_finance_execution_allocations')->where('performance_act_id', $act->id)->where('estimate_id', $estimateId)->pluck('id', 'allocation_id');
             foreach ($history as $allocationId => &$entry) {

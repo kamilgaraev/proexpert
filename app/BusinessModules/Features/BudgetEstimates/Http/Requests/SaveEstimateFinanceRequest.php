@@ -104,6 +104,7 @@ class SaveEstimateFinanceRequest extends FormRequest
         unset($rules['transaction_id']);
         $rules['operation'] = ['required', 'in:execution_distribution'];
         $rules['act_id'] = ['required', 'integer', 'min:1'];
+        $rules['lines.*.quantity'] = ['sometimes', 'nullable', 'string', 'regex:/^\d{1,12}(\.\d{1,8})?$/'];
         $rules['lines.*.amount'] = ['required', 'string', 'regex:/^\d{1,12}(\.\d{1,2})?$/'];
 
         return $rules;
