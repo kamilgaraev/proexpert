@@ -30,6 +30,8 @@ final class EstimateFinanceOwnCostReport
             ->where('project_id', $projectId)->orderBy('id')->get()->keyBy('id');
         $native = $canViewSource ? AdvanceAccountTransaction::query()->where('organization_id', $actor->current_organization_id)
             ->where('project_id', $projectId)->whereIn('id', $costs->pluck('advance_transaction_id')->filter())->get()->keyBy('id') : collect();
+        $categories = $native->isEmpty() ? collect() : DB::table('cost_categories')->where('organization_id', $actor->current_organization_id)
+            ->whereIn('id', $native->pluck('cost_category_id')->filter())->get(['id', 'name', 'is_active'])->keyBy('id');
         $ledger = DB::table('estimate_finance_own_cost_allocations as ledger')
             ->leftJoin('estimate_finance_allocations as allocation', 'allocation.id', '=', 'ledger.allocation_id')
             ->leftJoin('estimates as estimate', 'estimate.id', '=', 'ledger.estimate_id')
@@ -59,7 +61,13 @@ final class EstimateFinanceOwnCostReport
                     'approved_at', 'approved_by_user_id', 'document_number', 'document_date', 'description', 'cost_category_id']);
                 $changed = $document === null || json_decode(json_encode($document, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR) != ($snapshot['document'] ?? null);
             }
+            $current = $native->get($cost->advance_transaction_id);
+            $category = $current ? $categories->get($current->cost_category_id) : null;
             $sources[$cost->id] = ['id' => (int) $cost->id, 'key' => $cost->key, 'available' => true,
+                'current_document' => $current ? ['id' => (int) $current->id, 'number' => $current->document_number, 'date' => $current->document_date?->format('Y-m-d'),
+                    'description' => $current->description, 'amount' => (string) $current->amount, 'currency' => null,
+                    'cost_category_id' => $current->cost_category_id, 'category_name' => $category?->name, 'category_active' => $category ? (bool) $category->is_active : null,
+                    'approved' => $current->type === AdvanceAccountTransaction::TYPE_EXPENSE && $current->reporting_status === AdvanceAccountTransaction::STATUS_APPROVED && $current->approved_at !== null] : null,
                 'currency' => $cost->currency, 'status' => $cost->status, 'version' => (int) $cost->version,
                 'source_hash' => $cost->source_hash, 'source_type' => $cost->source_type,
                 'advance_transaction_id' => $cost->advance_transaction_id === null ? null : (int) $cost->advance_transaction_id,

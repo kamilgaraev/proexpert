@@ -849,6 +849,10 @@ final class EstimateFinanceTest extends TestCase
         $changedReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
         self::assertTrue($changedReport['sources'][0]['requires_review']);
         self::assertTrue($changedReport['sources'][0]['source_changed']);
+        self::assertSame((int) $source->id, $changedReport['sources'][0]['current_document']['id']);
+        self::assertSame('120.00', $changedReport['sources'][0]['current_document']['amount']);
+        self::assertSame($category->name, $changedReport['sources'][0]['current_document']['category_name']);
+        self::assertTrue($changedReport['sources'][0]['current_document']['approved']);
         self::assertNull($changedReport['source_totals']['RUB']['amount']);
         self::assertNull($changedReport['allocated_totals']['RUB']['amount']);
         $refresh = array_replace($command, ['revision' => (int) $this->estimate->fresh()->finance_revision,
