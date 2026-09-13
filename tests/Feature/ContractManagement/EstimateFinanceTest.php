@@ -1551,7 +1551,7 @@ final class EstimateFinanceTest extends TestCase
         \Illuminate\Support\Facades\DB::disableQueryLog();
 
         self::assertCount(30, $data);
-        self::assertLessThanOrEqual(5, $queryCount);
+        self::assertLessThanOrEqual(15, $queryCount);
         self::assertSame($queryCount, $serializedQueryCount);
         self::assertSame(20.0, $data[0]['item']['actual_quantity']);
         self::assertSame(5.0, $data[0]['item']['acted_quantity']);
@@ -1942,6 +1942,16 @@ final class EstimateFinanceTest extends TestCase
         $accepted = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAcceptedVolume::class);
         $key = $this->contractor->id.':'.$this->item->id;
         self::assertSame(0, FinanceDecimal::compare($accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id])[$key], '50'));
+        \App\Models\CompletedWork::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'estimate_item_id' => $this->item->id, 'contract_id' => $this->contractor->id,
+            'user_id' => $this->actor->id, 'quantity' => '100', 'completed_quantity' => '100', 'price' => '1',
+            'total_amount' => '100', 'completion_date' => '2026-09-13', 'status' => 'confirmed', 'description' => 'Выполнение']);
+        $links = app(ContractEstimateService::class)->getItemsForContract($this->contractor);
+        $progress = app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class);
+        $progress->prepare($this->contractor, $links, $this->actor);
+        $data = \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource::collection($links)->resolve(request());
+        self::assertSame(50.0, $data[0]['item']['acted_quantity']);
+        self::assertSame(50.0, $data[0]['item']['available_quantity']);
         $candidate = $allocation->getAttributes();
         $candidate['quantity'] = '40';
         try {
@@ -1958,11 +1968,32 @@ final class EstimateFinanceTest extends TestCase
         $command['lines'][0]['quantity'] = null;
         $this->save($command);
         self::assertNull($accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id])[$key]);
+        $progress->prepare($this->contractor, $links, $this->actor);
+        $data = \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource::collection($links)->resolve(request());
+        self::assertNull($data[0]['item']['acted_quantity']);
+        self::assertNull($data[0]['item']['available_quantity']);
         $manual->update(['status' => 'annulled', 'annulled_at' => now()]);
         self::assertSame(0, FinanceDecimal::compare($accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id])[$key], '20'));
         $other = clone $this->estimate;
         $other->organization_id = 0;
         self::assertSame([], $accepted->quantities($other, [$this->contractor->id], [$this->item->id]));
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(
+            static fn ($actor, string $permission): bool => $permission !== 'contracts.performance_acts.view');
+        $db = \Illuminate\Support\Facades\DB::class;
+        $db::enableQueryLog();
+        $db::flushQueryLog();
+        try {
+            app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class)->prepare($this->contractor, $links, $this->actor);
+            $data = \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource::collection($links)->resolve(request());
+            self::assertNull($data[0]['item']['acted_quantity']);
+            foreach ($db::getQueryLog() as $query) {
+                self::assertStringNotContainsString('performance_act', $query['query']);
+                self::assertStringNotContainsString('estimate_finance_execution', $query['query']);
+            }
+        } finally {
+            $db::disableQueryLog();
+            $db::flushQueryLog();
+        }
     }
 
     public function test_act_basis_uses_contract_conditions_and_keeps_previous_snapshot(): void

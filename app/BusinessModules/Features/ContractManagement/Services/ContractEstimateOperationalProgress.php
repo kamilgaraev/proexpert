@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ContractManagement\Services;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExecution;
+use App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceQuery;
+use App\BusinessModules\Features\BudgetEstimates\Services\Finance\FinanceDecimal;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\CompletedWork;
 use App\Models\Contract;
+use App\Models\Estimate;
 use App\Models\PerformanceActLine;
 use App\Models\User;
 use App\Services\Acting\ActingQuantityStatus;
@@ -16,7 +20,8 @@ use Illuminate\Support\Collection;
 
 final class ContractEstimateOperationalProgress
 {
-    public function __construct(private readonly AuthorizationService $authorization, private readonly UserProjectAccessService $projects) {}
+    public function __construct(private readonly AuthorizationService $authorization, private readonly UserProjectAccessService $projects,
+        private readonly EstimateFinanceExecution $execution, private readonly EstimateFinanceQuery $financeQuery) {}
 
     public function prepare(Contract $contract, Collection $links, ?User $actor): void
     {
@@ -39,6 +44,7 @@ final class ContractEstimateOperationalProgress
         $itemIds = $links->pluck('estimate_item_id')->unique()->values()->all();
         $actual = [];
         $acting = [];
+        $approved = [];
 
         if ($itemIds !== [] && $canViewWorks) {
             $actual = CompletedWork::query()->effectiveForSchedule()
@@ -56,11 +62,29 @@ final class ContractEstimateOperationalProgress
                     $query->where('contract_id', $contract->id)->where('project_id', $contract->project_id);
                 })->get();
             foreach ($lines as $line) {
-                if (ActingQuantityStatus::isReleased($line->performanceAct)) {
+                if (ActingQuantityStatus::isReleased($line->performanceAct) || ActingQuantityStatus::isApproved($line->performanceAct)) {
                     continue;
                 }
-                $field = ActingQuantityStatus::isApproved($line->performanceAct) ? 'approved_acted_quantity' : 'reserved_quantity';
-                $acting[$line->estimate_item_id][$field] = ($acting[$line->estimate_item_id][$field] ?? 0.0) + (float) $line->quantity;
+                $acting[$line->estimate_item_id]['reserved_quantity'] = FinanceDecimal::add($acting[$line->estimate_item_id]['reserved_quantity'] ?? '0', (string) $line->quantity);
+            }
+            $estimateIds = $links->pluck('estimate_id')->unique()->values();
+            $estimates = Estimate::query()->where('organization_id', $contract->organization_id)->where('project_id', $contract->project_id)
+                ->whereIn('id', $estimateIds)->get();
+            if ($estimates->count() !== $estimateIds->count()) {
+                throw new AuthorizationException;
+            }
+            $allowedItems = array_fill_keys($itemIds, true);
+            $contracts = $estimates->isEmpty() ? [] : array_values(array_filter($this->financeQuery->contracts($estimates->first()),
+                static fn (array $row): bool => (int) $row['id'] === (int) $contract->id));
+            foreach ($estimates as $estimate) {
+                foreach ($this->execution->report($estimate, $contracts)['rows'] as $source) {
+                    if (! isset($allowedItems[$source['item_id']]) || ($source['resource_id'] ?? null) !== null) {
+                        continue;
+                    }
+                    $itemId = (int) $source['item_id'];
+                    $previous = array_key_exists($itemId, $approved) ? $approved[$itemId] : '0';
+                    $approved[$itemId] = $previous === null || $source['quantity'] === null ? null : FinanceDecimal::add($previous, $source['quantity']);
+                }
             }
         }
 
@@ -71,8 +95,9 @@ final class ContractEstimateOperationalProgress
                 'can_edit' => $canEdit,
                 'can_create_act' => $canCreateAct,
                 'actual_quantity' => $canViewWorks ? round((float) ($actual[$link->estimate_item_id] ?? 0), 4) : null,
-                'reserved_quantity' => $canViewActs ? round($acting[$link->estimate_item_id]['reserved_quantity'] ?? 0.0, 4) : null,
-                'approved_acted_quantity' => $canViewActs ? round($acting[$link->estimate_item_id]['approved_acted_quantity'] ?? 0.0, 4) : null,
+                'reserved_quantity' => $canViewActs ? round((float) ($acting[$link->estimate_item_id]['reserved_quantity'] ?? '0'), 4) : null,
+                'approved_acted_quantity' => ! $canViewActs || (array_key_exists($link->estimate_item_id, $approved) && $approved[$link->estimate_item_id] === null)
+                    ? null : round((float) ($approved[$link->estimate_item_id] ?? '0'), 4),
             ]);
         }
     }
