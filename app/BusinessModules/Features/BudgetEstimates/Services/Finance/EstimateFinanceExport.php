@@ -121,11 +121,25 @@ final class EstimateFinanceExport
         $allocatedLines = $book->createSheet();
         $this->header($allocatedLines, 'cash_allocated_lines', ['estimate', 'name', 'transaction_id', 'document_id', 'number', 'currency',
             'cash_allocated', 'cash_recorded_allocation', 'allocation_key', 'cash_allocation_version', 'condition_version', 'status']);
+        $sections = $book->createSheet();
+        $this->header($sections, 'cash_sections', ['estimate', 'name', 'currency', 'cash_receipts', 'cash_payments', 'cash_difference',
+            'customer_refunds', 'contractor_refunds', 'unknown_direction', 'status']);
         $contracts = [];
         $estimateNames = [];
         $positionNames = [];
         foreach ($reports as $report) {
             $contracts += array_column($report['contracts'], null, 'id');
+            if ($report['cash']['available'] ?? false) {
+                foreach ($report['cash']['distribution']['sections'] ?? [] as $section) {
+                    foreach ($section['totals'] as $currency => $total) {
+                        $this->row($sections, [$report['name'], $section['name'] ?? trans_message('estimate_finance.cash_no_section'),
+                            $currency, $total['receipts'], $total['payments'], $total['difference'],
+                            $total['customer_refunds'], $total['contractor_refunds'], $total['unclassified_count'],
+                            trans_message('estimate_finance.'.($section['hierarchy_requires_review'] || $total['unclassified_count'] > 0 ? 'incomplete' : 'cash_confirmed'))],
+                            [4, 5, 6, 7, 8, 9]);
+                    }
+                }
+            }
             if (isset($report['estimate_id'])) {
                 $estimateNames[$report['estimate_id']] = $report['name'];
                 $positionNames[$report['estimate_id']] = array_column($report['rows'] ?? [], 'name', 'key');

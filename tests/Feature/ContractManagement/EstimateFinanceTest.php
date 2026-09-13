@@ -132,6 +132,11 @@ final class EstimateFinanceTest extends TestCase
         self::assertEquals(-100, $cashBook->getSheet(4)->getCell('G3')->getValue());
         self::assertSame($allocation->key, $cashBook->getSheet(4)->getCell('I2')->getValue());
         self::assertEquals(2, $cashBook->getSheet(4)->getCell('J2')->getValue());
+        self::assertSame('Оплаты разделов', $cashBook->getSheet(5)->getTitle());
+        self::assertSame(3, $cashBook->getSheet(5)->getHighestRow());
+        self::assertEquals(100, $cashBook->getSheet(5)->getCell('F2')->getValue());
+        self::assertEquals(100, $cashBook->getSheet(5)->getCell('F3')->getValue());
+        self::assertEquals(100, $cashBook->getSheet(5)->getCell('G2')->getValue());
         $cashBook->disconnectWorksheets();
         $probe = $this->cashCommand($allocation, $payment->id, '0');
         $probe['lines'] = [];
