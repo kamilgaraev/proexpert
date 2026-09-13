@@ -45,6 +45,19 @@ final class EstimateFinanceOwnCost
             if ((int) $estimate->finance_revision !== (int) $data['revision']) {
                 $this->conflict();
             }
+            $existing = DB::table('estimate_finance_own_costs')->where('organization_id', $actor->current_organization_id)
+                ->where('project_id', $projectId)->where('key', $data['cost_key'])->lockForUpdate()->first();
+            if ($existing) {
+                if ((int) $existing->version !== (int) ($data['source_version'] ?? 0)) {
+                    $this->conflict();
+                }
+                if ($existing->source_type !== 'manual' || $data['source_type'] !== 'manual'
+                    || $existing->currency !== $data['currency'] || $existing->status !== 'confirmed') {
+                    $this->invalid();
+                }
+            } elseif (isset($data['source_version'])) {
+                $this->conflict();
+            }
             $category = CostCategory::query()->where('organization_id', $actor->current_organization_id)
                 ->whereKey($data['cost_category_id'])->lockForUpdate()->first();
             if (! $category || ($data['source_type'] === 'manual' && ! $category->is_active)
@@ -73,7 +86,7 @@ final class EstimateFinanceOwnCost
                     $this->invalid('own_cost_duplicate');
                 }
             }
-            if (DB::table('estimate_finance_own_costs')->where('key', $data['cost_key'])->exists()) {
+            if (! $existing && DB::table('estimate_finance_own_costs')->where('key', $data['cost_key'])->exists()) {
                 $this->conflict();
             }
             $sourceHash = hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR));
@@ -88,12 +101,21 @@ final class EstimateFinanceOwnCost
                 'source_type' => $data['source_type'], 'advance_transaction_id' => $data['advance_transaction_id'] ?? null,
                 'cost_category_id' => $category->id, 'expense_date' => $data['expense_date'], 'basis' => trim($data['basis']),
                 'currency' => $data['currency'], 'amount' => $amount, 'amount_without_vat' => $tax['amount_without_vat'],
-                'vat_mode' => $tax['vat_mode'], 'vat_rate' => $data['vat_rate'] ?? null, 'status' => 'confirmed', 'version' => 1,
+                'vat_mode' => $tax['vat_mode'], 'vat_rate' => $data['vat_rate'] ?? null, 'status' => 'confirmed', 'version' => $existing ? (int) $existing->version + 1 : 1,
                 'source_hash' => $sourceHash, 'source_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
                 'confirmed_by' => $actor->id, 'confirmed_at' => now(), 'updated_by' => $actor->id, 'created_at' => now(), 'updated_at' => now()];
-            $id = DB::table('estimate_finance_own_costs')->insertGetId($row);
-            DB::table('estimate_finance_own_cost_versions')->insert(['own_cost_id' => $id, 'version' => 1,
-                'mutation_id' => $data['mutation_id'], 'before' => null, 'after' => json_encode($row, JSON_THROW_ON_ERROR),
+            if ($existing) {
+                $id = $existing->id;
+                $row['created_at'] = $existing->created_at;
+                DB::table('estimate_finance_own_costs')->where('id', $id)->update($row);
+            } else {
+                if (DB::table('estimate_finance_own_costs')->insertOrIgnore($row) !== 1) {
+                    $this->conflict();
+                }
+                $id = DB::table('estimate_finance_own_costs')->where('key', $data['cost_key'])->value('id');
+            }
+            DB::table('estimate_finance_own_cost_versions')->insert(['own_cost_id' => $id, 'version' => $row['version'],
+                'mutation_id' => $data['mutation_id'], 'before' => $existing ? json_encode($existing, JSON_THROW_ON_ERROR) : null, 'after' => json_encode($row, JSON_THROW_ON_ERROR),
                 'actor_id' => $actor->id, 'created_at' => now()]);
             $revision = (int) $estimate->finance_revision + 1;
             DB::table('estimates')->where('id', $estimateId)->update(['finance_revision' => $revision]);

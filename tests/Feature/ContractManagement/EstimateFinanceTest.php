@@ -586,6 +586,52 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_manual_own_cost_correction_preserves_identity_history_and_requires_distribution_review(): void
+    {
+        $db = \Illuminate\Support\Facades\DB::class;
+        $line = array_replace($this->line($this->contractor, '100', '100'), ['source' => 'own', 'contract_id' => null]);
+        $this->save($this->command([$line]));
+        $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,
+            'name' => 'Собственные расходы', 'code' => 'OWN-EDIT', 'is_active' => true]);
+        $command = ['operation' => 'own_cost', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'cost_key' => (string) Str::uuid(), 'confirmed' => true,
+            'source_type' => 'manual', 'cost_category_id' => $category->id, 'expense_date' => '2026-09-13',
+            'basis' => 'Первая запись', 'currency' => 'RUB', 'amount' => '100', 'vat_mode' => 'none', 'price_basis' => 'without_vat'];
+        $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
+        $this->save($command);
+        $original = $db::table('estimate_finance_own_costs')->where('key', $command['cost_key'])->first();
+        $this->save(['operation' => 'own_cost_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'cost_key' => $original->key, 'source_version' => 1, 'source_hash' => $original->source_hash,
+            'lines' => [['allocation_key' => $line['key'], 'condition_version' => 1, 'version' => 0, 'amount' => '100']]]);
+        $distribution = $db::table('estimate_finance_own_cost_allocations')->where('own_cost_id', $original->id)->first();
+        $edit = array_replace($command, ['revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'source_version' => 1, 'amount' => '80', 'basis' => 'Исправлена сумма']);
+        unset($edit['source_hash']);
+        $edit['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $edit)['source_hash'];
+        self::assertEquals($original, $db::table('estimate_finance_own_costs')->where('id', $original->id)->first());
+        $result = $this->save($edit);
+        self::assertTrue($this->save($edit)['replayed']);
+        $updated = $db::table('estimate_finance_own_costs')->where('key', $original->key)->first();
+        self::assertSame($original->id, $updated->id);
+        self::assertSame(2, $updated->version);
+        self::assertSame('80.00', $updated->amount);
+        self::assertSame($original->created_at, $updated->created_at);
+        self::assertEquals($distribution, $db::table('estimate_finance_own_cost_allocations')->where('id', $distribution->id)->first());
+        $history = $db::table('estimate_finance_own_cost_versions')->where('own_cost_id', $original->id)->orderBy('version')->get();
+        self::assertCount(2, $history);
+        self::assertSame('100.00', json_decode($history[1]->before, true)['amount']);
+        self::assertSame('80.00', json_decode($history[1]->after, true)['amount']);
+        $report = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertTrue($report['sources'][0]['requires_review']);
+        self::assertNull($report['sources'][0]['amount']);
+        try {
+            $this->save(array_replace($edit, ['revision' => $result['revision'], 'mutation_id' => (string) Str::uuid()]));
+            self::fail('Stale source version was accepted');
+        } catch (ConflictHttpException) {
+            self::assertSame(2, $db::table('estimate_finance_own_cost_versions')->where('own_cost_id', $original->id)->count());
+        }
+    }
+
     public function test_own_cost_registration_previews_tax_and_replays_without_duplicate_expense(): void
     {
         $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,
