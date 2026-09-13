@@ -517,6 +517,8 @@ final class EstimateFinanceTest extends TestCase
         $document = $this->cashDocument($this->contractor, 'outgoing');
         $transaction = $this->cashTransaction($document->id, '50');
         $before = [$act->fresh()->getAttributes(), $line->fresh()->getAttributes(), $document->fresh()->getAttributes(), $transaction->fresh()->getAttributes()];
+        $coverageService = app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class);
+        $coverageBefore = $coverageService->getCoverageForEstimate($this->estimate);
         $execution = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution'];
         $plan = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, ['preview_operation' => 'migration_plan']);
         $command = ['operation' => 'migration_apply', 'mutation_id' => (string) Str::uuid(), 'revision' => $plan['revision'],
@@ -527,6 +529,12 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($execution['rows'], $after['rows']);
         self::assertSame($execution['documents'], $after['documents']);
         self::assertSame($execution['summary']['totals'], $after['summary']['totals']);
+        $coverageAfter = $coverageService->getCoverageForEstimate($this->estimate);
+        self::assertSame($coverageBefore['contracts'][0]['linked_items_count'], $coverageAfter['contracts'][0]['linked_items_count']);
+        self::assertNull($coverageAfter['contracts'][0]['linked_amount']);
+        $preserved = EstimateFinanceAllocation::query()->where('contract_estimate_item_id', $link->id)->firstOrFail();
+        self::assertEquals($coverageBefore['contracts'][0]['linked_amount'], $preserved->legacy_amount);
+        self::assertSame('120.00', $link->fresh()->amount);
         self::assertTrue($this->save($command)['replayed']);
         self::assertSame(1, EstimateFinanceAllocation::query()->where('contract_estimate_item_id', $link->id)->count());
     }
