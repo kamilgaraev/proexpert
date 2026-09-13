@@ -97,8 +97,9 @@ final class EstimateFinanceHistory
 
     public function forEstimate(Estimate $estimate, int $afterId = 0): array
     {
-        $rows = DB::table('estimate_finance_condition_versions')->where('organization_id', $estimate->organization_id)
-            ->where('estimate_id', $estimate->id)->where('id', '>', $afterId)->orderBy('id')->limit(101)->get();
+        $rows = DB::table('estimate_finance_condition_versions as history')->leftJoin('users as actor', 'actor.id', '=', 'history.actor_id')
+            ->where('history.organization_id', $estimate->organization_id)->where('history.estimate_id', $estimate->id)
+            ->where('history.id', '>', $afterId)->orderBy('history.id')->limit(101)->get(['history.*', 'actor.name as actor_name']);
         $hasMore = $rows->count() > 100;
         $page = $rows->take(100)->map(static function (object $row): array {
             $value = (array) $row;
@@ -107,6 +108,24 @@ final class EstimateFinanceHistory
 
             return $value;
         })->values()->all();
+
+        $snapshots = array_map(static fn (array $entry): array => $entry['after'] ?? $entry['before'] ?? [], $page);
+        $items = DB::table('estimate_items')->where('estimate_id', $estimate->id)
+            ->whereIn('id', array_column($snapshots, 'estimate_item_id'))->pluck('name', 'id');
+        $resources = DB::table('estimate_item_resources as resource')->join('estimate_items as item', 'item.id', '=', 'resource.estimate_item_id')
+            ->where('item.estimate_id', $estimate->id)->whereIn('resource.id', array_column($snapshots, 'resource_id'))
+            ->get(['resource.id', 'resource.estimate_item_id', 'resource.name'])->keyBy('id');
+        $contracts = DB::table('contracts')->where('organization_id', $estimate->organization_id)->where('project_id', $estimate->project_id)
+            ->whereIn('id', array_column($snapshots, 'contract_id'))->pluck('number', 'id');
+        foreach ($page as $index => &$entry) {
+            $snapshot = $snapshots[$index];
+            $resource = $resources->get($snapshot['resource_id'] ?? 0);
+            $entry['title'] = isset($snapshot['resource_id'])
+                ? ($resource !== null && (int) $resource->estimate_item_id === (int) ($snapshot['estimate_item_id'] ?? 0) ? $resource->name : null)
+                : $items->get($snapshot['estimate_item_id'] ?? 0);
+            $entry['contract_number'] = $contracts->get($snapshot['contract_id'] ?? 0);
+        }
+        unset($entry);
 
         return ['data' => $page, 'has_more' => $hasMore, 'next_cursor' => $hasMore ? end($page)['id'] : null];
     }

@@ -2853,6 +2853,9 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('1200000.00', $history['data'][2]['before']['amount_with_vat']);
         self::assertNull($history['data'][2]['after']);
         self::assertSame($this->actor->id, $history['data'][1]['actor_id']);
+        self::assertSame($this->actor->name, $history['data'][1]['actor_name']);
+        self::assertSame($this->item->name, $history['data'][2]['title']);
+        self::assertSame($this->customer->number, $history['data'][2]['contract_number']);
         self::assertDatabaseCount('estimate_finance_allocations', 0);
         $this->expectException(ConflictHttpException::class);
         $this->save($this->command([$line]));
