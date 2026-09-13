@@ -989,3 +989,9 @@
 - На viewport390x844 documentWidth=390, drawerWidth=390, drawerScrollWidth=390. Скриншот output/playwright/finance-binding-mobile.png просмотрен: поля/подписи переносятся, горизонтального переполнения нет. Артефакты остаются untracked, в release не включены. Browser finance-binding закрыт, Vite93392 штатно остановлен terminal1.
 - Повторный production SSH64914 terminal1: banner timeout до авторизации. Данных сервера нет.
 - FULL EstimateFinanceTest сейчас session41808, finance-final-integration-tests.log; последний live poll подтвердил running, в логе63/101 без отмеченных ошибок. До terminal не запускать другой PG launcher. No push/PR/deploy; цель активна.
+
+## Итог полного финансового набора — 2026-09-13
+
+- Session41808 завершён terminal0. finance-final-integration-tests.log: OK101 tests/1035 assertions,12:38.758/566MB. Оба прежних падения resync/explicitrelease устранены, весь набор прошёл совместно после последних изменений. Повторять этот набор без нового изменения покрываемого кода не требуется.
+- git status --short --untracked-files=no чист в backend и admin. Незакоммиченные logs и output/playwright — проверочные артефакты. Собственных живых PG/Vite/browser процессов нет.
+- Оставшаяся приёмка: реальный allorg inventory/сверка и перенос однозначных связей, фактический contract275/estimate436, полный пользовательский маршрут с правами, завершение проверки всех потребителей/конкурентных изменений в согласованном объёме, PR/CI/штатный deploy и проверка клиента. Не считать production и перенос завершёнными по локальным fixtures. Цель активна; no push/PR/deploy.
