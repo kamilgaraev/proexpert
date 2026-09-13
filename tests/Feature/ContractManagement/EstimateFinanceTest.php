@@ -702,6 +702,17 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($distribution->key, $reviewed['rows'][0]['key']);
         self::assertSame(2, $reviewed['rows'][0]['source_version']);
         self::assertSame(2, $db::table('estimate_finance_own_cost_allocation_versions')->where('own_cost_allocation_id', $distribution->id)->count());
+        $allocationAudit = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'own_cost_distribution', $original->key);
+        self::assertCount(2, $allocationAudit['data']);
+        self::assertNull($allocationAudit['data'][0]['before']);
+        self::assertSame('100.00', $allocationAudit['data'][1]['before']['amount']);
+        self::assertSame('80.00', $allocationAudit['data'][1]['after']['amount']);
+        self::assertSame(2, $allocationAudit['data'][1]['after']['source_version']);
+        self::assertSame($distribution->key, $allocationAudit['data'][1]['distribution_key']);
+        self::assertSame($this->item->name, $allocationAudit['data'][1]['title']);
+        self::assertArrayNotHasKey('own_cost_id', $allocationAudit['data'][1]['after']);
+        self::assertSame([], $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id,
+            $allocationAudit['data'][1]['id'], 'own_cost_distribution', $original->key)['data']);
         $audit = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'own_cost', $original->key);
         self::assertCount(2, $audit['data']);
         self::assertNull($audit['data'][0]['before']);

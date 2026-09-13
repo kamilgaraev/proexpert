@@ -43,7 +43,7 @@ final class EstimateFinanceHistory
         return ['data' => $page, 'has_more' => $rows->count() > 100, 'next_cursor' => $rows->count() > 100 ? end($page)['id'] : null];
     }
 
-    public function forOwnCost(User $actor, Estimate $estimate, string $costKey, int $afterId): array
+    public function forOwnCost(User $actor, Estimate $estimate, string $costKey, int $afterId, bool $distribution = false): array
     {
         $cost = DB::table('estimate_finance_own_costs')->where('organization_id', $estimate->organization_id)
             ->where('project_id', $estimate->project_id)->where('key', $costKey)->firstOrFail();
@@ -51,6 +51,9 @@ final class EstimateFinanceHistory
             ->can($actor, 'advance_transactions.view', ['context_type' => 'project', 'project_id' => (int) $estimate->project_id,
                 'organization_id' => (int) $estimate->organization_id])) {
             throw new \Illuminate\Auth\Access\AuthorizationException;
+        }
+        if ($distribution) {
+            return $this->ownCostDistribution($estimate, $cost, $afterId);
         }
         $rows = DB::table('estimate_finance_own_cost_versions as history')->leftJoin('users as actors', 'actors.id', '=', 'history.actor_id')
             ->where('history.own_cost_id', $cost->id)->where('history.id', '>', $afterId)->orderBy('history.id')->limit(101)
@@ -60,6 +63,35 @@ final class EstimateFinanceHistory
             foreach (['before', 'after'] as $field) {
                 $entry[$field] = $row->$field === null ? null : array_intersect_key(json_decode($row->$field, true, 512, JSON_THROW_ON_ERROR),
                     array_flip(['expense_date', 'basis', 'currency', 'amount', 'amount_without_vat', 'vat_mode', 'vat_rate', 'status', 'cost_category_id']));
+            }
+
+            return $entry;
+        })->values()->all();
+
+        return ['data' => $page, 'has_more' => $rows->count() > 100, 'next_cursor' => $rows->count() > 100 ? end($page)['id'] : null];
+    }
+
+    private function ownCostDistribution(Estimate $estimate, object $cost, int $afterId): array
+    {
+        $rows = DB::table('estimate_finance_own_cost_allocation_versions as history')
+            ->join('estimate_finance_own_cost_allocations as ledger', 'ledger.id', '=', 'history.own_cost_allocation_id')
+            ->join('estimate_finance_allocations as conditions', 'conditions.id', '=', 'ledger.allocation_id')
+            ->join('estimate_items as item', 'item.id', '=', 'conditions.estimate_item_id')
+            ->leftJoin('estimate_item_resources as resource', fn ($join) => $join->on('resource.id', '=', 'conditions.resource_id')->on('resource.estimate_item_id', '=', 'item.id'))
+            ->leftJoin('users as actor', 'actor.id', '=', 'history.actor_id')
+            ->where('ledger.own_cost_id', $cost->id)->where('ledger.estimate_id', $estimate->id)
+            ->where('conditions.organization_id', $estimate->organization_id)->where('conditions.estimate_id', $estimate->id)
+            ->where('item.estimate_id', $estimate->id)->where('history.id', '>', $afterId)->orderBy('history.id')->limit(101)
+            ->select('history.id', 'history.version', 'history.created_at', 'history.before', 'history.after',
+                'actor.name as actor_name', 'ledger.key as distribution_key', 'conditions.key as allocation_key')
+            ->selectRaw('COALESCE(resource.name, item.name) AS title')->get();
+        $page = $rows->take(100)->map(static function (object $row) use ($cost): array {
+            $entry = ['id' => (int) $row->id, 'version' => (int) $row->version, 'created_at' => $row->created_at,
+                'actor_name' => $row->actor_name, 'title' => $row->title, 'distribution_key' => $row->distribution_key,
+                'allocation_key' => $row->allocation_key, 'currency' => $cost->currency];
+            foreach (['before', 'after'] as $field) {
+                $entry[$field] = $row->$field === null ? null : array_intersect_key(json_decode($row->$field, true, 512, JSON_THROW_ON_ERROR),
+                    array_flip(['amount', 'amount_without_vat', 'source_version', 'condition_version']));
             }
 
             return $entry;
