@@ -2112,6 +2112,51 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame(0, FinanceDecimal::compare((string) $nextLine->fresh()->quantity, '1'));
     }
 
+    public function test_native_resource_volume_is_separate_from_work_and_cannot_be_removed_after_acceptance(): void
+    {
+        $resource = EstimateItemResource::query()->create(['estimate_item_id' => $this->item->id, 'resource_type' => 'material',
+            'name' => 'Отдельный материал', 'total_quantity' => '1000', 'quantity_per_unit' => '10', 'total_amount' => '1000']);
+        $workCondition = $this->line($this->contractor, '100', '100');
+        $resourceCondition = $this->line($this->contractor, '1000', '1000');
+        $resourceCondition['target_key'] = 'r:'.$resource->id;
+        $command = $this->command([$workCondition, $resourceCondition]);
+        $command['target_keys'][] = $resourceCondition['target_key'];
+        $command['confirm_resource_changes'] = true;
+        $this->save($command);
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'RESOURCE-CAP', 'act_date' => '2026-09-13',
+            'amount' => '1100', 'currency' => 'RUB', 'status' => 'draft', 'is_approved' => false]);
+        foreach ([$workCondition, $resourceCondition] as $condition) {
+            \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $this->item->id,
+                'line_type' => 'manual', 'title' => 'Отдельная оплата', 'quantity' => $condition['quantity'], 'unit_price' => '1', 'amount' => $condition['quantity'],
+                'currency' => 'RUB', 'manual_reason' => 'Проверка', 'created_by' => $this->actor->id,
+                'basis_snapshot' => ['basis_type' => 'contract_conditions', 'allocation_key' => $condition['key'],
+                    'estimate_id' => $this->estimate->id, 'contract_id' => $this->contractor->id, 'estimate_item_id' => $this->item->id]]);
+        }
+        $guard = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard::class);
+        \Illuminate\Support\Facades\DB::transaction(fn () => $guard->assertFits($act, $this->contractor));
+        $act->update(['status' => 'approved', 'is_approved' => true]);
+        $accepted = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAcceptedVolume::class);
+        $quantities = $accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id]);
+        self::assertSame(0, FinanceDecimal::compare($quantities[$this->contractor->id.':'.$this->item->id], '100'));
+        $rows = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->get()->map(fn ($row) => $row->getAttributes())->all();
+        $accepted->assertRetained($this->estimate, $command['target_keys'], $rows);
+        foreach ($rows as &$row) {
+            if ($row['key'] === $resourceCondition['key']) {
+                $row['quantity'] = '999';
+            }
+        }
+        unset($row);
+        try {
+            $accepted->assertRetained($this->estimate, [$resourceCondition['target_key']], $rows);
+            self::fail('Accepted resource volume must be retained');
+        } catch (ValidationException) {
+            self::assertSame('approved', $act->fresh()->status);
+        }
+        $this->expectException(ValidationException::class);
+        $accepted->assertRetained($this->estimate, [$resourceCondition['target_key']], []);
+    }
+
     public function test_act_basis_uses_contract_conditions_and_keeps_previous_snapshot(): void
     {
         $line = $this->line($this->contractor, '100', '800000');

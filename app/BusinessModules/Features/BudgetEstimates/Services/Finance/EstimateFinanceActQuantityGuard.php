@@ -47,10 +47,10 @@ final class EstimateFinanceActQuantityGuard
             ->join('estimate_items as items', 'items.id', '=', 'conditions.estimate_item_id')
             ->where('conditions.organization_id', $contract->organization_id)->where('conditions.contract_id', $contract->id)
             ->where('estimates.organization_id', $contract->organization_id)->where('estimates.project_id', $act->project_id)
-            ->whereColumn('items.estimate_id', 'conditions.estimate_id')->whereNull('conditions.resource_id')
+            ->whereColumn('items.estimate_id', 'conditions.estimate_id')
             ->whereIn('conditions.estimate_item_id', array_keys($requested))
-            ->selectRaw('conditions.estimate_id, conditions.estimate_item_id, SUM(conditions.quantity) AS quantity')
-            ->groupBy('conditions.estimate_id', 'conditions.estimate_item_id')->get()->groupBy('estimate_id');
+            ->selectRaw('conditions.estimate_id, conditions.estimate_item_id, conditions.resource_id, SUM(conditions.quantity) AS quantity')
+            ->groupBy('conditions.estimate_id', 'conditions.estimate_item_id', 'conditions.resource_id')->get()->groupBy('estimate_id');
         $estimates = Estimate::query()->where('organization_id', $contract->organization_id)->where('project_id', $act->project_id)
             ->whereIn('id', $conditions->keys())->get()->keyBy('id');
         foreach ($conditions as $estimateId => $items) {
@@ -58,20 +58,24 @@ final class EstimateFinanceActQuantityGuard
             if ($estimate === null) {
                 $this->invalid();
             }
-            $accepted = $this->accepted->quantities($estimate, [(int) $contract->id], $items->pluck('estimate_item_id')->all(), (int) $act->id);
+            $resourceQuantities = $this->assertConditionQuantities($estimate, $contract, $act, $lines);
+            $accepted = $this->accepted->quantities($estimate, [(int) $contract->id], $items->pluck('estimate_item_id')->unique()->all(), (int) $act->id);
             foreach ($items as $item) {
+                if ($item->resource_id !== null) {
+                    continue;
+                }
                 $key = $contract->id.':'.$item->estimate_item_id;
                 $done = array_key_exists($key, $accepted) ? $accepted[$key] : '0';
-                $quantity = $requested[$item->estimate_item_id];
+                $quantity = $requested[$item->estimate_item_id] === null ? null
+                    : FinanceDecimal::subtract($requested[$item->estimate_item_id], $resourceQuantities[$item->estimate_item_id] ?? '0');
                 if ($done === null || $quantity === null || FinanceDecimal::compare(FinanceDecimal::add($done, $quantity), (string) $item->quantity) > 0) {
                     $this->invalid();
                 }
             }
-            $this->assertConditionQuantities($estimate, $contract, $act, $lines);
         }
     }
 
-    private function assertConditionQuantities(Estimate $estimate, Contract $contract, ContractPerformanceAct $act, Collection $lines): void
+    private function assertConditionQuantities(Estimate $estimate, Contract $contract, ContractPerformanceAct $act, Collection $lines): array
     {
         $keys = $lines->map(fn ($line) => data_get($line, 'basis_snapshot.allocation_key'))
             ->filter(fn ($key) => is_string($key) && Str::isUuid($key))->unique();
@@ -79,6 +83,7 @@ final class EstimateFinanceActQuantityGuard
             ->where('estimate_id', $estimate->id)->where('contract_id', $contract->id)
             ->whereIn('key', $keys)->get()->keyBy('key');
         $changes = [];
+        $resources = [];
         foreach ($lines as $line) {
             $snapshot = data_get($line, 'basis_snapshot', []);
             $condition = $conditions->get($snapshot['allocation_key'] ?? '');
@@ -96,7 +101,10 @@ final class EstimateFinanceActQuantityGuard
                 $this->invalid();
             }
             if ($condition->resource_id !== null) {
-                continue;
+                if ($line['quantity'] === null) {
+                    $this->invalid();
+                }
+                $resources[$condition->estimate_item_id] = FinanceDecimal::add($resources[$condition->estimate_item_id] ?? '0', (string) $line['quantity']);
             }
             $previous = $changes[$condition->id] ?? ['allocation' => $condition, 'quantity' => '0', 'amount' => '0'];
             $previous['quantity'] = $previous['quantity'] === null || $line['quantity'] === null ? null
@@ -105,6 +113,8 @@ final class EstimateFinanceActQuantityGuard
             $changes[$condition->id] = $previous;
         }
         $this->quantities->assertAvailable($estimate, (int) $contract->id, (int) $act->id, $changes, true);
+
+        return $resources;
     }
 
     private function invalid(): never

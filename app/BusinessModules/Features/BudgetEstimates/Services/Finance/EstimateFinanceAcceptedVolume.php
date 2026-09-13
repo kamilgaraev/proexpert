@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Finance;
 
 use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -16,6 +17,19 @@ final class EstimateFinanceAcceptedVolume
         $this->assertManualRetained($estimate, $targetKeys, $rows);
         $itemIds = array_map(static fn (string $key): int => (int) substr($key, 2),
             array_values(array_filter($targetKeys, static fn (string $key): bool => str_starts_with($key, 'i:'))));
+        $resourceIds = array_map(static fn (string $key): int => (int) substr($key, 2),
+            array_values(array_filter($targetKeys, static fn (string $key): bool => str_starts_with($key, 'r:'))));
+        $byKey = array_column($rows, null, 'key');
+        foreach ($this->allocationQuantities($estimate, $itemIds, $resourceIds) as $accepted) {
+            $row = $byKey[$accepted->allocation_key] ?? null;
+            if ($row === null || (int) $row['contract_id'] !== (int) $accepted->contract_id
+                || (int) $row['estimate_item_id'] !== (int) $accepted->estimate_item_id
+                || (int) $row['resource_id'] !== (int) $accepted->resource_id
+                || $row['currency'] !== $accepted->currency
+                || FinanceDecimal::compare($row['quantity'], (string) $accepted->quantity) < 0) {
+                throw ValidationException::withMessages(['lines' => trans_message('estimate_finance.accepted_volume')]);
+            }
+        }
         if ($itemIds === []) {
             return;
         }
@@ -30,17 +44,20 @@ final class EstimateFinanceAcceptedVolume
             $key = $row['contract_id'].':'.$row['estimate_item_id'];
             $quantities[$key] = FinanceDecimal::add($quantities[$key] ?? '0', $row['quantity']);
         }
-        foreach ($this->quantities($estimate, array_values(array_unique($contractIds)), $itemIds) as $key => $quantity) {
-            if ($quantity === null || FinanceDecimal::compare($quantities[$key] ?? '0', $quantity) < 0) {
-                throw ValidationException::withMessages(['lines' => trans_message('estimate_finance.accepted_volume')]);
+        $acceptedQuantities = $this->quantities($estimate, array_values(array_unique($contractIds)), $itemIds);
+        $existingQuantities = [];
+        if (in_array(null, $acceptedQuantities, true)) {
+            $existing = DB::table('estimate_finance_allocations')->where('organization_id', $estimate->organization_id)
+                ->where('estimate_id', $estimate->id)->whereNull('resource_id')->whereIn('contract_id', $contractIds)
+                ->whereIn('estimate_item_id', $itemIds)->selectRaw('contract_id, estimate_item_id, SUM(quantity) AS quantity')
+                ->groupBy('contract_id', 'estimate_item_id')->get();
+            foreach ($existing as $condition) {
+                $existingQuantities[$condition->contract_id.':'.$condition->estimate_item_id] = (string) $condition->quantity;
             }
         }
-        $byKey = array_column($rows, null, 'key');
-        foreach ($this->allocationQuantities($estimate, $itemIds) as $accepted) {
-            $row = $byKey[$accepted->allocation_key] ?? null;
-            if ($row === null || (int) $row['contract_id'] !== (int) $accepted->contract_id
-                || (int) $row['estimate_item_id'] !== (int) $accepted->estimate_item_id || $row['resource_id'] !== null
-                || FinanceDecimal::compare($row['quantity'], (string) $accepted->quantity) < 0) {
+        foreach ($acceptedQuantities as $key => $quantity) {
+            $minimum = $quantity ?? $existingQuantities[$key] ?? null;
+            if ($minimum === null || FinanceDecimal::compare($quantities[$key] ?? '0', $minimum) < 0) {
                 throw ValidationException::withMessages(['lines' => trans_message('estimate_finance.accepted_volume')]);
             }
         }
@@ -78,16 +95,25 @@ final class EstimateFinanceAcceptedVolume
         }
     }
 
-    private function allocationQuantities(Estimate $estimate, array $itemIds): iterable
+    private function allocationQuantities(Estimate $estimate, array $itemIds, array $resourceIds): iterable
     {
         return DB::table('performance_act_lines as lines')
             ->join('contract_performance_acts as acts', 'acts.id', '=', 'lines.performance_act_id')
             ->join('contracts', 'contracts.id', '=', 'acts.contract_id')
+            ->join('estimate_finance_allocations as conditions', fn ($join) => $join
+                ->whereRaw("conditions.key::text = lines.basis_snapshot->>'allocation_key'")
+                ->on('conditions.contract_id', '=', 'acts.contract_id')->on('conditions.estimate_item_id', '=', 'lines.estimate_item_id'))
+            ->where('conditions.organization_id', $estimate->organization_id)->where('conditions.estimate_id', $estimate->id)
             ->where('contracts.organization_id', $estimate->organization_id)->where('contracts.project_id', $estimate->project_id)
             ->where('acts.project_id', $estimate->project_id)->whereNull('acts.annulled_at')->whereIn('acts.status', ['approved', 'signed'])
-            ->whereIn('lines.estimate_item_id', $itemIds)->where('lines.basis_snapshot->basis_type', 'contract_conditions')
-            ->selectRaw("acts.contract_id, lines.estimate_item_id, lines.basis_snapshot->>'allocation_key' AS allocation_key, SUM(lines.quantity) AS quantity")
-            ->groupByRaw("acts.contract_id, lines.estimate_item_id, lines.basis_snapshot->>'allocation_key'")->get();
+            ->where(fn ($query) => $query->whereIn('conditions.resource_id', $resourceIds)
+                ->orWhere(fn ($items) => $items->whereNull('conditions.resource_id')->whereIn('lines.estimate_item_id', $itemIds)))
+            ->where('lines.basis_snapshot->basis_type', 'contract_conditions')
+            ->whereRaw("lines.basis_snapshot->>'estimate_id' = conditions.estimate_id::text")
+            ->whereRaw("lines.basis_snapshot->>'contract_id' = acts.contract_id::text")
+            ->whereRaw("lines.basis_snapshot->>'estimate_item_id' = lines.estimate_item_id::text")
+            ->selectRaw('acts.contract_id, lines.estimate_item_id, conditions.key AS allocation_key, conditions.resource_id, conditions.currency, SUM(lines.quantity) AS quantity')
+            ->groupBy('acts.contract_id', 'lines.estimate_item_id', 'conditions.key', 'conditions.resource_id', 'conditions.currency')->get();
     }
 
     public function quantities(Estimate $estimate, array $contractIds, array $itemIds, ?int $excludedNativeActId = null): array
@@ -102,6 +128,7 @@ final class EstimateFinanceAcceptedVolume
         $nativeActs = (clone $acts)->when($excludedNativeActId !== null, fn ($query) => $query->where('acts.id', '!=', $excludedNativeActId));
         $lines = (clone $nativeActs)->join('performance_act_lines as lines', 'lines.performance_act_id', '=', 'acts.id')
             ->whereIn('lines.estimate_item_id', $itemIds)
+            ->whereNotExists($this->mappedResources($estimate))
             ->selectRaw('acts.contract_id, lines.estimate_item_id, SUM(lines.quantity) AS quantity')
             ->groupBy('acts.contract_id', 'lines.estimate_item_id')->get();
         $legacy = (clone $nativeActs)->join('performance_act_completed_works as pivot', 'pivot.performance_act_id', '=', 'acts.id')
@@ -132,5 +159,20 @@ final class EstimateFinanceAcceptedVolume
         }
 
         return $result;
+    }
+
+    private function mappedResources(Estimate $estimate): Builder
+    {
+        return DB::table('estimate_finance_allocations as resource_conditions')
+            ->join('estimate_item_resources as resources', 'resources.id', '=', 'resource_conditions.resource_id')
+            ->where('resource_conditions.organization_id', $estimate->organization_id)->where('resource_conditions.estimate_id', $estimate->id)
+            ->whereColumn('resource_conditions.contract_id', 'acts.contract_id')->whereColumn('resource_conditions.estimate_item_id', 'lines.estimate_item_id')
+            ->whereColumn('resources.estimate_item_id', 'lines.estimate_item_id')
+            ->whereRaw("resource_conditions.key::text = lines.basis_snapshot->>'allocation_key'")
+            ->where('lines.basis_snapshot->basis_type', 'contract_conditions')
+            ->whereRaw("lines.basis_snapshot->>'estimate_id' = resource_conditions.estimate_id::text")
+            ->whereRaw("lines.basis_snapshot->>'contract_id' = acts.contract_id::text")
+            ->whereRaw("lines.basis_snapshot->>'estimate_item_id' = lines.estimate_item_id::text")
+            ->selectRaw('1');
     }
 }
