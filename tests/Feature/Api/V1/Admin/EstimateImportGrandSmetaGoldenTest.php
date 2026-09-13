@@ -29,7 +29,13 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
 
     private const LONG_CODE = "ГЭСН05-01-002-02\nС40.30-1-F150-W8-B25 (5шт), С90.30-8-F150-W8-B25 (5шт), С120.30-8-F150-W8-B25 (15шт)";
 
-    public function test_grand_smeta_detection_and_preview_stay_stable(): void
+    public static function importSizes(): array
+    {
+        return ['single' => [1], 'large' => [8001]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('importSizes')]
+    public function test_grand_smeta_detection_and_preview_stay_stable(int $itemCount): void
     {
         Storage::fake('s3');
         Queue::fake();
@@ -48,8 +54,8 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
 
         $user = User::factory()->create();
         $organization = Organization::factory()->create();
-        $project = Project::factory()->create(['organization_id' => $organization->id]);
-        $filePath = $this->createGrandSmetaSpreadsheet();
+        $project = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false]);
+        $filePath = $this->createGrandSmetaSpreadsheet($itemCount);
 
         $uploadedFile = new UploadedFile(
             $filePath,
@@ -92,10 +98,26 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         $session->refresh();
 
         self::assertSame('completed', $session->status, $session->error_message ?? '');
-        $item = EstimateItem::query()->where('estimate_id', $session->stats['estimate_id'])->sole();
+        self::assertSame($itemCount, EstimateItem::query()->where('estimate_id', $session->stats['estimate_id'])->count());
+        $item = EstimateItem::query()->where('estimate_id', $session->stats['estimate_id'])->firstOrFail();
         self::assertSame(self::LONG_CODE, $item->normative_rate_code);
         self::assertSame(self::LONG_CODE, $item->metadata['raw_data']['B']);
         self::assertEquals(200, $item->total_amount);
+
+        $user->update(['current_organization_id' => $organization->id]);
+        $user->organizations()->attach($organization->id, ['is_active' => true, 'is_owner' => true, 'project_access_mode' => 'all_projects']);
+        $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)->shouldReceive('can')->andReturn(true);
+        $finance = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceService::class);
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        \Illuminate\Support\Facades\DB::flushQueryLog();
+        try {
+            $report = $finance->report($user, $project->id, (int) $session->stats['estimate_id'], 'without_vat');
+            $queries = count(\Illuminate\Support\Facades\DB::getQueryLog());
+        } finally {
+            \Illuminate\Support\Facades\DB::disableQueryLog();
+        }
+        self::assertCount($itemCount, $report['rows']);
+        self::assertLessThanOrEqual(40, $queries);
 
         $boundaryCode = str_repeat('Я', 1000);
         $item->update(['normative_rate_code' => $boundaryCode]);
@@ -103,7 +125,7 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         unlink($filePath);
     }
 
-    private function createGrandSmetaSpreadsheet(): string
+    private function createGrandSmetaSpreadsheet(int $itemCount): string
     {
         $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
@@ -118,13 +140,16 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         $sheet->setCellValue('L3', '12');
 
         $sheet->setCellValue('A4', 'Раздел 1. Монтажные работы');
-        $sheet->setCellValue('A5', '1');
-        $sheet->setCellValue('B5', self::LONG_CODE);
-        $sheet->setCellValue('C5', 'Погружение дизель-молотом копровой установки на базе экскаватора железобетонных свай длиной: до 6 м в грунты группы 2');
-        $sheet->setCellValue('D5', 'шт');
-        $sheet->setCellValue('G5', 2);
-        $sheet->setCellValue('J5', 100);
-        $sheet->setCellValue('L5', 200);
+        for ($index = 1; $index <= $itemCount; $index++) {
+            $row = $index + 4;
+            $sheet->setCellValue('A'.$row, (string) $index);
+            $sheet->setCellValue('B'.$row, self::LONG_CODE);
+            $sheet->setCellValue('C'.$row, 'Погружение железобетонных свай, позиция '.$index);
+            $sheet->setCellValue('D'.$row, 'шт');
+            $sheet->setCellValue('G'.$row, 2);
+            $sheet->setCellValue('J'.$row, 100);
+            $sheet->setCellValue('L'.$row, 200);
+        }
 
         $filePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'grand-smeta-golden-'.Str::uuid().'.xlsx';
         (new Xlsx($spreadsheet))->save($filePath);

@@ -40,6 +40,7 @@ class ContractPerformanceActService
         FileService $fileService,
         ProductionAcceptanceEventRecorder $productionAcceptanceEvents,
         ActingQuantityReservationService $quantityReservations,
+        private readonly \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard $financeQuantityGuard,
     ) {
         $this->actRepository = $actRepository;
         $this->contractAccessService = $contractAccessService;
@@ -116,6 +117,8 @@ class ContractPerformanceActService
 
         // Выполняем создание акта в транзакции для безопасности
         $act = DB::transaction(function () use ($contract, $actDTO, $projectId) {
+            $contract = Contract::query()->whereKey($contract->id)->where('organization_id', $contract->organization_id)
+                ->lockForUpdate()->firstOrFail();
             // Создаем акт
             $actData = $actDTO->toArray();
             $actData['contract_id'] = $contract->id;
@@ -147,6 +150,7 @@ class ContractPerformanceActService
                 // Пересчитываем сумму акта на основе включенных работ
                 $act->recalculateAmount();
             }
+            $this->financeQuantityGuard->assertFits($act, $contract);
             if ($act->is_approved || in_array($act->status, [
                 ContractPerformanceAct::STATUS_APPROVED,
                 ContractPerformanceAct::STATUS_SIGNED,
@@ -266,9 +270,12 @@ class ContractPerformanceActService
             'act_date',
             'description',
         ]));
-        $updated = DB::transaction(function () use (&$oldData, $actId, $updateData): bool {
+        $updated = DB::transaction(function () use (&$oldData, $actId, $contractId, $organizationId, $updateData): bool {
+            $contract = Contract::query()->whereKey($contractId)->where('organization_id', $organizationId)
+                ->lockForUpdate()->firstOrFail();
             $act = ContractPerformanceAct::query()
                 ->whereKey($actId)
+                ->where('contract_id', $contract->id)
                 ->lockForUpdate()
                 ->first();
             if ($act === null) {
@@ -296,6 +303,7 @@ class ContractPerformanceActService
             if ($current === null) {
                 return false;
             }
+            $this->financeQuantityGuard->assertFits($current, $contract);
 
             return true;
         });

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Finance;
 
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\FinanceInputValidation;
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\SaveEstimateFinanceRequest;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
 use App\Models\Contract;
@@ -12,7 +13,6 @@ use App\Models\Estimate;
 use App\Models\EstimateFinanceAllocation;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
@@ -23,29 +23,51 @@ final class EstimateFinanceService
         private readonly EstimateFinanceQuery $query,
         private readonly EstimateFinanceCalculator $calculator,
         private readonly EstimateCacheService $cache,
+        private readonly EstimateFinanceHistory $history,
+        private readonly EstimateFinanceAcceptedVolume $acceptedVolume,
+        private readonly EstimateFinanceRemainder $remainder,
+        private readonly EstimateFinanceExecution $execution,
+        private readonly EstimateFinanceExecutionSummary $executionSummary,
+        private readonly EstimateFinanceProjectExecution $projectExecution,
+        private readonly EstimateFinanceCashSources $cashSources,
+        private readonly EstimateFinanceProjectCash $projectCash,
+        private readonly EstimateFinanceOwnCost $ownCost,
+        private readonly EstimateFinanceOwnCostDistribution $ownCostDistribution,
+        private readonly EstimateFinanceOwnCostReport $ownCostReport,
+        private readonly EstimateFinanceOwnCostOptions $ownCostOptions,
+        private readonly EstimateFinanceCashDistribution $cashDistribution,
+        private readonly EstimateFinanceExecutionDistribution $executionDistribution,
+        private readonly EstimateFinanceMigrationPlan $migrationPlan,
+        private readonly EstimateFinanceMigrationApply $migrationApply,
     ) {}
 
-    public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat'): array
+    public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat', string $view = 'plan'): array
     {
+        if (! in_array($view, ['plan', 'execution', 'cash'], true)) {
+            $this->invalid();
+        }
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
 
-        return DB::transaction(function () use ($actor, $estimate, $basis): array {
+        return DB::transaction(function () use ($actor, $estimate, $basis, $view): array {
             $locked = Estimate::query()->whereKey($estimate->id)->where('organization_id', $actor->current_organization_id)
                 ->where('project_id', $estimate->project_id)->sharedLock()->firstOrFail();
 
-            return $this->reportEstimate($actor, $locked, $basis);
+            return $this->reportEstimate($actor, $locked, $basis, $view);
         }, 3);
     }
 
-    public function projectReport(User $actor, int $projectId, string $basis, bool $includeDetails = false): array
+    public function projectReport(User $actor, int $projectId, string $basis, bool $includeDetails = false, string $view = 'plan'): array
     {
+        if (! in_array($view, ['plan', 'execution', 'cash'], true)) {
+            $this->invalid();
+        }
         $this->access->project($actor, $projectId);
 
-        return DB::transaction(function () use ($actor, $projectId, $basis, $includeDetails): array {
+        return DB::transaction(function () use ($actor, $projectId, $basis, $includeDetails, $view): array {
             $reports = [];
             foreach (Estimate::query()->where('organization_id', $actor->current_organization_id)->where('project_id', $projectId)->orderBy('id')->sharedLock()->cursor() as $estimate) {
-                $report = $this->reportEstimate($actor, $estimate, $basis);
-                if (! $includeDetails) {
+                $report = $this->reportEstimate($actor, $estimate, $basis, $view);
+                if (! $includeDetails && $view === 'plan') {
                     unset($report['rows'], $report['sections']);
                 }
                 $reports[] = $report;
@@ -66,7 +88,18 @@ final class EstimateFinanceService
                 }
             }
 
-            return ['basis' => $basis, 'estimates' => $reports, 'totals' => array_values($totals)];
+            $execution = $view === 'execution' ? $this->projectExecution->combine($reports, $basis, $this->access->canViewExecution($actor, $projectId)) : null;
+            $cash = $view === 'cash' ? $this->projectCash->combine($reports, $this->access->canViewCash($actor, $projectId)) : null;
+            if (! $includeDetails) {
+                foreach ($reports as &$report) {
+                    unset($report['rows'], $report['sections']);
+                }
+                unset($report);
+            }
+
+            return ['basis' => $basis, 'view' => $view, 'estimates' => $reports, 'totals' => array_values($totals)]
+                + ($view === 'execution' ? ['execution' => $execution, 'own_costs' => $this->ownCostReport->report($actor, $projectId, null, $basis)] : [])
+                + ($view === 'cash' ? ['cash' => $cash] : []);
         }, 3);
     }
 
@@ -104,13 +137,22 @@ final class EstimateFinanceService
             'revision' => $report['revision'], 'basis' => $basis, 'can_edit' => $report['can_edit']];
     }
 
-    private function reportEstimate(User $actor, Estimate $estimate, string $basis): array
+    private function reportEstimate(User $actor, Estimate $estimate, string $basis, string $view = 'plan'): array
     {
         if (! in_array($basis, ['with_vat', 'without_vat'], true)) {
             $this->invalid();
         }
         $targets = $this->query->targets($estimate);
         $allocations = $this->query->allocations($estimate);
+        $canViewExecution = $this->access->canViewExecution($actor, (int) $estimate->project_id);
+        $accepted = $canViewExecution ? $this->remainder->acceptedFacts($estimate, array_column($allocations, 'key')) : [];
+        foreach ($allocations as &$allocation) {
+            $allocation['accepted_basis'] = $canViewExecution ? ($accepted[$allocation['key']] ?? null) : null;
+            if (! $canViewExecution) {
+                $allocation['condition_basis'] = null;
+            }
+        }
+        unset($allocation);
         $calculation = $this->calculator->calculate($targets, $allocations, $basis);
         $sections = $estimate->sections()->get(['id', 'parent_section_id', 'name'])->toArray();
         $sectionRows = [];
@@ -153,19 +195,106 @@ final class EstimateFinanceService
         }
         unset($contract);
 
+        $execution = null;
+        if ($view === 'execution') {
+            $execution = $canViewExecution ? $this->execution->report($estimate, $contracts)
+                : ['available' => false, 'rows' => null, 'documents' => null];
+            if ($canViewExecution) {
+                $execution['summary'] = $this->executionSummary->calculate($execution['rows'], $allocations, $targets, $sections, $basis);
+            }
+        }
+
         return $calculation + [
             'estimate_id' => (int) $estimate->id, 'name' => $estimate->name, 'number' => $estimate->number,
             'revision' => (int) $estimate->finance_revision, 'basis' => $basis,
             'limit' => $basis === 'with_vat' ? $estimate->total_amount_with_vat : $estimate->total_amount,
             'sections' => $sections,
             'contracts' => $contracts, 'can_edit' => $this->access->can($actor, (int) $estimate->project_id, true),
+            'can_view_execution' => $canViewExecution,
+            'view' => $view,
+            'execution' => $execution,
+            'own_costs' => $view === 'execution' ? $this->ownCostReport->report($actor, (int) $estimate->project_id, (int) $estimate->id, $basis) : null,
+            'cash' => $view !== 'cash' ? null : ($this->access->canViewCash($actor, (int) $estimate->project_id)
+                ? $this->cashSources->report($estimate, $contracts)
+                : ['available' => false, 'scope' => 'linked_contracts', 'sources' => null, 'documents' => null]),
         ];
+    }
+
+    public function history(User $actor, int $projectId, int $estimateId, int $afterId = 0, string $kind = 'conditions', string $costKey = ''): array
+    {
+        $estimate = $this->access->estimate($actor, $projectId, $estimateId);
+        if (! in_array($kind, ['conditions', 'execution', 'own_cost', 'own_cost_distribution', 'cash'], true) || $afterId < 0) {
+            $this->invalid();
+        }
+        if ($kind === 'cash') {
+            if (! $this->access->canViewCash($actor, $projectId)) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+
+            return $this->history->forCash($estimate, $afterId);
+        }
+        if (in_array($kind, ['own_cost', 'own_cost_distribution'], true)) {
+            if (! \Illuminate\Support\Str::isUuid($costKey)) {
+                $this->invalid();
+            }
+
+            return $this->history->forOwnCost($actor, $estimate, $costKey, $afterId, $kind === 'own_cost_distribution');
+        }
+        if ($kind === 'execution') {
+            if (! $this->access->canViewExecution($actor, $projectId)) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+
+            return $this->history->forExecution($estimate, $afterId);
+        }
+
+        $history = $this->history->forEstimate($estimate, max(0, $afterId));
+        if (! $this->access->canViewExecution($actor, (int) $estimate->project_id)) {
+            foreach ($history['data'] as &$entry) {
+                foreach (['before', 'after'] as $snapshot) {
+                    if (is_array($entry[$snapshot])) {
+                        unset($entry[$snapshot]['accepted_basis'], $entry[$snapshot]['condition_basis']);
+                    }
+                }
+            }
+            unset($entry);
+        }
+
+        return $history;
     }
 
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'execution_distribution') {
+            return $this->executionDistribution->handle($actor, $projectId, $estimateId, $input, false);
+        }
+        if (($input['preview_operation'] ?? null) === 'migration_plan') {
+            $data = FinanceInputValidation::validate($input, \App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest::migrationPlanRules());
+
+            return $this->migrationPlan->report($actor, $projectId, $estimateId, (int) ($data['after'] ?? 0), (int) ($data['limit'] ?? 100), null, (bool) ($data['include_managed'] ?? false));
+        }
+        if (($input['preview_operation'] ?? null) === 'own_cost_options') {
+            return $this->ownCostOptions->search($actor, $projectId, $estimateId, $input);
+        }
+        if (($input['operation'] ?? null) === 'own_cost_distribution') {
+            return $this->ownCostDistribution->handle($actor, $projectId, $estimateId, $input, false);
+        }
+        if (($input['operation'] ?? null) === 'own_cost') {
+            return $this->ownCost->handle($actor, $projectId, $estimateId, $input, false);
+        }
+        if (($input['operation'] ?? null) === 'cash_distribution') {
+            return $this->cashDistribution->handle($actor, $projectId, $estimateId, $input, false);
+        }
         $estimate = $this->access->estimate($actor, $projectId, $estimateId, true);
-        $data = Validator::make($input, SaveEstimateFinanceRequest::inputRules())->validate();
+        if (($input['preview_operation'] ?? null) === 'source_amount') {
+            $data = FinanceInputValidation::validate($input, \App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest::sourceRules());
+            $targets = $this->query->targets($estimate);
+
+            return ['revision' => (int) $estimate->finance_revision, 'currency' => 'RUB',
+                'amount_without_vat' => EstimateFinanceSelection::amount($targets, $data['item_ids']),
+                'items_count' => count(EstimateFinanceSelection::rootKeys($targets, $data['item_ids']))];
+        }
+        $data = FinanceInputValidation::validate($input, SaveEstimateFinanceRequest::inputRules());
         if ((int) $data['revision'] !== (int) $estimate->finance_revision) {
             throw new ConflictHttpException(trans_message('estimate_finance.conflict'));
         }
@@ -192,6 +321,8 @@ final class EstimateFinanceService
                 $line['amount'] = null;
             }
             unset($line);
+
+            $this->normalize($actor, $estimate, $data, $targets);
 
             return $data;
         }
@@ -228,8 +359,23 @@ final class EstimateFinanceService
 
     public function save(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'execution_distribution') {
+            return $this->executionDistribution->handle($actor, $projectId, $estimateId, $input, true);
+        }
+        if (($input['operation'] ?? null) === 'migration_apply') {
+            return $this->migrationApply->apply($actor, $projectId, $estimateId, $input);
+        }
+        if (($input['operation'] ?? null) === 'own_cost_distribution') {
+            return $this->ownCostDistribution->handle($actor, $projectId, $estimateId, $input, true);
+        }
+        if (($input['operation'] ?? null) === 'own_cost') {
+            return $this->ownCost->handle($actor, $projectId, $estimateId, $input, true);
+        }
+        if (($input['operation'] ?? null) === 'cash_distribution') {
+            return $this->cashDistribution->handle($actor, $projectId, $estimateId, $input, true);
+        }
         $estimate = $this->access->estimate($actor, $projectId, $estimateId, true);
-        $data = Validator::make($input, SaveEstimateFinanceRequest::inputRules())->validate();
+        $data = FinanceInputValidation::validate($input, SaveEstimateFinanceRequest::inputRules());
         $hash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
 
         return DB::transaction(function () use ($actor, $estimate, $data, $hash): array {
@@ -254,19 +400,50 @@ final class EstimateFinanceService
             $existing = EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->get();
             $this->validateResourceChanges($data, $targets, $normalized, $existing->toArray());
             $before = [];
+            $retainedKeys = array_fill_keys(array_column($normalized, 'key'), true);
+            $selectedKeys = array_fill_keys($data['target_keys'], true);
+            $existingByKey = $existing->keyBy('key');
+            $deletedIds = [];
             foreach ($existing as $row) {
                 $key = $row->resource_id ? 'r:'.$row->resource_id : 'i:'.$row->estimate_item_id;
-                if (in_array($key, $data['target_keys'], true)) {
+                if (isset($selectedKeys[$key])) {
                     $before[] = $row->toArray();
-                    $row->delete();
+                    if (! isset($retainedKeys[$row->key])) {
+                        $deletedIds[] = $row->id;
+                    }
                 }
             }
+            foreach (array_chunk($deletedIds, 500) as $ids) {
+                if (DB::table('estimate_finance_cash_allocations')->whereIn('allocation_id', $ids)->exists()) {
+                    $this->invalid('cash_linked');
+                }
+                if (DB::table('estimate_finance_own_cost_allocations')->whereIn('allocation_id', $ids)->exists()) {
+                    $this->invalid('own_cost_linked');
+                }
+                EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereIn('id', $ids)->delete();
+            }
+            $writes = ['created' => [], 'updated' => []];
+            $timestamp = now()->toDateTimeString();
             foreach ($normalized as $row) {
-                EstimateFinanceAllocation::query()->create($row);
+                $previous = $existingByKey->get($row['key']);
+                $allocation = new EstimateFinanceAllocation($row);
+                $allocation->condition_version = (int) ($previous?->condition_version ?? 0) + 1;
+                $allocation->created_at = $previous?->created_at ?? $timestamp;
+                $allocation->updated_at = $timestamp;
+                $action = $previous === null ? 'created' : 'updated';
+                $writes[$action][] = $allocation->getAttributes();
+                if (count($writes[$action]) === 500) {
+                    $this->writeAllocations($writes[$action], $action === 'created');
+                    $writes[$action] = [];
+                }
+            }
+            foreach ($writes as $action => $rows) {
+                $this->writeAllocations($rows, $action === 'created');
             }
             $this->projectLinks($estimate, $data['target_keys']);
-            $revision = (int) $estimate->fresh()->finance_revision + 1;
+            $revision = (int) $estimate->finance_revision + 1;
             DB::table('estimates')->where('id', $estimate->id)->update(['finance_revision' => $revision]);
+            $this->history->record($actor, $estimate, $data['mutation_id'], $revision, $before, array_column($normalized, 'key'));
             DB::table('estimate_finance_mutations')->insert([
                 'estimate_id' => $estimate->id, 'mutation_id' => $data['mutation_id'], 'request_hash' => $hash,
                 'actor_id' => $actor->id, 'revision' => $revision,
@@ -281,16 +458,27 @@ final class EstimateFinanceService
 
     private function normalize(User $actor, Estimate $estimate, array $data, array $targets): array
     {
+        $selectedKeys = array_fill_keys($data['target_keys'], true);
+        $totalKeys = array_fill_keys($data['total_line_keys'] ?? [], true);
+        $this->access->editContracts($actor, $estimate, $data['target_keys'],
+            array_values(array_filter(array_column($data['lines'], 'contract_id'))));
         foreach ($data['target_keys'] as $key) {
             if (! isset($targets[$key]) || $targets[$key]['excluded']) {
                 $this->invalid();
             }
         }
+        $contractIds = array_filter(array_column($data['lines'], 'contract_id'));
+        $contractIds = array_merge($contractIds, ContractEstimateItem::query()->where('estimate_id', $estimate->id)->pluck('contract_id')->all(),
+            EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereNotNull('contract_id')->pluck('contract_id')->all());
         $contracts = Contract::query()->where('organization_id', $estimate->organization_id)->where('project_id', $estimate->project_id)
-            ->whereIn('id', array_filter(array_column($data['lines'], 'contract_id')))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            ->whereIn('id', array_unique($contractIds))->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         $rows = [];
         $quantities = [];
         $knownKeys = EstimateFinanceAllocation::query()->whereIn('key', array_column($data['lines'], 'key'))->get()->keyBy('key');
+        $cashLinked = DB::table('estimate_finance_cash_allocations')->whereIn('allocation_id', $knownKeys->pluck('id'))->pluck('allocation_id')->flip();
+        $costLinked = DB::table('estimate_finance_own_cost_allocations')->whereIn('allocation_id', $knownKeys->pluck('id'))->pluck('allocation_id')->flip();
+        $retiredKeys = DB::table('estimate_finance_condition_versions')->whereIn('allocation_key', array_column($data['lines'], 'key'))
+            ->where('action', 'deleted')->pluck('allocation_key')->flip();
         $legacyLinks = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('finance_managed', false)
             ->whereIn('id', array_column($data['lines'], 'legacy_link_id'))->get()->keyBy('id');
         $total = '0.00';
@@ -300,7 +488,7 @@ final class EstimateFinanceService
             if ($target && (($target['representation_needs_review'] ?? false) || ($target['represented_by_item_id'] ?? null))) {
                 $this->invalid('representation');
             }
-            if (! $target || ! in_array($line['target_key'], $data['target_keys'], true)
+            if (! $target || ! isset($selectedKeys[$line['target_key']])
                 || (FinanceDecimal::compare($line['quantity'], '0') === 0 && (FinanceDecimal::compare($target['quantity'], '0') !== 0 || $line['method'] !== 'total'))) {
                 $this->invalid();
             }
@@ -327,21 +515,31 @@ final class EstimateFinanceService
             } elseif ($line['method'] === 'total' && isset($line['amount'])) {
                 $amount = FinanceDecimal::value($line['amount']);
             }
-            if (in_array($line['key'], $data['total_line_keys'] ?? [], true)) {
+            if (isset($totalKeys[$line['key']])) {
                 if ($amount === null || $line['source'] === 'included') {
                     $this->invalid('total');
                 }
                 $total = FinanceDecimal::add($total, $amount);
                 $bases[$line['currency'].':'.$line['price_basis'].':'.$line['source'].':'.($line['contract_id'] ?? 'own')] = true;
             }
-            $net = $line['price_basis'] === 'without_vat' ? $amount : null;
-            $gross = $line['price_basis'] === 'with_vat' ? $amount : null;
-            if ($amount !== null && isset($line['vat_rate']) && $line['price_basis'] !== 'unknown') {
-                $factor = FinanceDecimal::add('1', FinanceDecimal::divide($line['vat_rate'], '100', 8));
-                $net ??= FinanceDecimal::divide($amount, $factor);
-                $gross ??= FinanceDecimal::multiply($amount, $factor);
-            }
+            $tax = EstimateFinanceTax::calculate($line, $amount);
+            $net = $tax['amount_without_vat'];
+            $gross = $tax['amount_with_vat'];
             $foreignKey = $knownKeys->get($line['key']);
+            if ($foreignKey && isset($costLinked[$foreignKey->id]) && ((int) $foreignKey->contract_id !== (int) ($line['contract_id'] ?? 0)
+                || $foreignKey->currency !== $line['currency'] || $foreignKey->source !== $line['source']
+                || ($foreignKey->resource_id ? 'r:'.$foreignKey->resource_id : 'i:'.$foreignKey->estimate_item_id) !== $line['target_key'])) {
+                $this->invalid('own_cost_linked');
+            }
+            if ($foreignKey && isset($cashLinked[$foreignKey->id]) && ((int) $foreignKey->contract_id !== (int) ($line['contract_id'] ?? 0)
+                || $foreignKey->currency !== $line['currency'] || $foreignKey->source !== $line['source']
+                || ($foreignKey->resource_id ? 'r:'.$foreignKey->resource_id : 'i:'.$foreignKey->estimate_item_id) !== $line['target_key'])) {
+                $this->invalid('cash_linked');
+            }
+            if (isset($retiredKeys[$line['key']]) || (isset($line['condition_version'])
+                && (int) $line['condition_version'] !== (int) ($foreignKey?->condition_version ?? 0))) {
+                throw new ConflictHttpException(trans_message('estimate_finance.conflict'));
+            }
             $legacyLink = $legacyLinks->get($line['legacy_link_id'] ?? 0);
             if (isset($line['legacy_link_id']) && (! $legacyLink || (int) $legacyLink->estimate_item_id !== $target['item_id']
                 || (int) $legacyLink->contract_id !== $contract?->id || $target['resource_id'] !== null)) {
@@ -360,7 +558,7 @@ final class EstimateFinanceService
                 }
             }
             if ($foreignKey && ((int) $foreignKey->estimate_id !== (int) $estimate->id
-                || ! in_array($foreignKey->resource_id ? 'r:'.$foreignKey->resource_id : 'i:'.$foreignKey->estimate_item_id, $data['target_keys'], true))) {
+                || ! isset($selectedKeys[$foreignKey->resource_id ? 'r:'.$foreignKey->resource_id : 'i:'.$foreignKey->estimate_item_id]))) {
                 $this->invalid();
             }
             $rows[] = [
@@ -369,6 +567,7 @@ final class EstimateFinanceService
                 'contract_id' => $contract?->id, 'side' => $side, 'source' => $line['source'], 'currency' => $line['currency'],
                 'quantity' => FinanceDecimal::value($line['quantity'], 8), 'unit_price' => $line['unit_price'] ?? null,
                 'amount_without_vat' => $net, 'amount_with_vat' => $gross, 'vat_rate' => $line['vat_rate'] ?? null,
+                'vat_mode' => $tax['vat_mode'],
                 'legacy_amount' => $line['price_basis'] === 'unknown' ? $amount : null,
                 'price_basis' => $line['price_basis'], 'method' => $line['method'],
                 'composition_confirmed' => $line['composition_confirmed'], 'notes' => $line['notes'] ?? null,
@@ -383,22 +582,43 @@ final class EstimateFinanceService
             $this->invalid('total');
         }
 
-        return $rows;
+        $this->acceptedVolume->assertRetained($estimate, $data['target_keys'], $rows);
+
+        return $this->remainder->apply($estimate, $rows);
+    }
+
+    private function writeAllocations(array $rows, bool $insert): void
+    {
+        if ($rows !== []) {
+            if ($insert) {
+                EstimateFinanceAllocation::query()->insert($rows);
+            } else {
+                EstimateFinanceAllocation::query()->upsert($rows, ['key'],
+                    array_values(array_diff(array_keys($rows[0]), ['key', 'created_at'])));
+            }
+        }
     }
 
     private function projectLinks(Estimate $estimate, array $keys): void
     {
-        foreach ($keys as $key) {
-            if (! str_starts_with($key, 'i:')) {
-                continue;
-            }
-            $itemId = (int) substr($key, 2);
-            $links = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('estimate_item_id', $itemId)->get();
-            $allocations = EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)
-                ->where('estimate_item_id', $itemId)->whereNull('resource_id')->whereNotNull('contract_id')->get()->groupBy('contract_id');
+        $itemIds = array_map(static fn (string $key): int => (int) substr($key, 2),
+            array_values(array_filter($keys, static fn (string $key): bool => str_starts_with($key, 'i:'))));
+        $linksByItem = ContractEstimateItem::query()->where('estimate_id', $estimate->id)
+            ->whereIn('estimate_item_id', $itemIds)->get()->groupBy('estimate_item_id');
+        $allocationsByItem = EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)
+            ->whereIn('estimate_item_id', $itemIds)->whereNull('resource_id')->whereNotNull('contract_id')
+            ->get()->groupBy('estimate_item_id');
+        $writes = [];
+        $timestamp = now()->toDateTimeString();
+        foreach ($itemIds as $itemId) {
+            $links = $linksByItem->get($itemId, collect());
+            $allocations = $allocationsByItem->get($itemId, collect())->groupBy('contract_id');
             foreach ($links as $link) {
-                $link->forceFill(['finance_managed' => true] + (! $allocations->has($link->contract_id)
-                    ? ['quantity' => '0', 'amount' => '0', 'amount_without_vat' => '0'] : []))->save();
+                if (! $allocations->has($link->contract_id)) {
+                    $writes[] = ['contract_id' => $link->contract_id, 'estimate_item_id' => $itemId,
+                        'estimate_id' => $estimate->id, 'finance_managed' => true, 'quantity' => '0',
+                        'amount' => '0', 'amount_without_vat' => '0', 'created_at' => $timestamp, 'updated_at' => $timestamp];
+                }
             }
             foreach ($allocations as $contractId => $group) {
                 $quantity = '0';
@@ -412,12 +632,19 @@ final class EstimateFinanceService
                     $value = $allocation->legacy_amount ?? $allocation->amount_with_vat ?? $allocation->amount_without_vat;
                     $storedAmount = $storedAmount !== null && $value !== null ? FinanceDecimal::add($storedAmount, $value) : null;
                 }
-                $link = ContractEstimateItem::query()->firstOrNew(['contract_id' => $contractId, 'estimate_item_id' => $itemId]);
-                $link->forceFill(['estimate_id' => $estimate->id, 'finance_managed' => true, 'quantity' => $quantity,
-                    'amount' => $storedAmount, 'amount_without_vat' => $net])->save();
-                EstimateFinanceAllocation::query()->whereIn('id', $group->pluck('id'))->update(['contract_estimate_item_id' => $link->id]);
+                $writes[] = ['contract_id' => $contractId, 'estimate_item_id' => $itemId,
+                    'estimate_id' => $estimate->id, 'finance_managed' => true, 'quantity' => $quantity,
+                    'amount' => $storedAmount, 'amount_without_vat' => $net, 'created_at' => $timestamp, 'updated_at' => $timestamp];
             }
         }
+        foreach (array_chunk($writes, 500) as $chunk) {
+            ContractEstimateItem::query()->upsert($chunk, ['contract_id', 'estimate_item_id'],
+                ['estimate_id', 'finance_managed', 'quantity', 'amount', 'amount_without_vat', 'updated_at']);
+        }
+        EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereIn('estimate_item_id', $itemIds)
+            ->whereNull('resource_id')->whereNotNull('contract_id')->update([
+                'contract_estimate_item_id' => DB::raw('(SELECT id FROM contract_estimate_items WHERE contract_estimate_items.contract_id = estimate_finance_allocations.contract_id AND contract_estimate_items.estimate_item_id = estimate_finance_allocations.estimate_item_id AND contract_estimate_items.estimate_id = estimate_finance_allocations.estimate_id)'),
+            ]);
     }
 
     private function validateResourceChanges(array $data, array $targets, array $after, array $before): void

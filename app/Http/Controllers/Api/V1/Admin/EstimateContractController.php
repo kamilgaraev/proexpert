@@ -74,13 +74,16 @@ class EstimateContractController extends Controller
                     ->where('organization_id', $organizationId),
             ],
             'include_vat' => 'sometimes|boolean',
+            'vat_rate' => 'nullable|numeric|min:0|max:100',
         ]);
 
         try {
             $coverage = $this->integrationService->linkToContract(
                 $estimate,
                 (int) $validated['contract_id'],
-                (bool) ($validated['include_vat'] ?? false)
+                (bool) ($validated['include_vat'] ?? false),
+                $request->user(),
+                isset($validated['vat_rate']) ? (string) $validated['vat_rate'] : null
             );
 
             return AdminResponse::success(
@@ -124,7 +127,7 @@ class EstimateContractController extends Controller
             ],
         ]);
 
-        $coverage = $this->integrationService->unlinkFromContract($estimate, (int) $validated['contract_id']);
+        $coverage = $this->integrationService->unlinkFromContract($estimate, (int) $validated['contract_id'], $request->user());
 
         return AdminResponse::success(
             new EstimateCoverageResource($coverage),
@@ -156,7 +159,8 @@ class EstimateContractController extends Controller
         $validation = $this->integrationService->validateContractAmount(
             $estimate,
             $contract,
-            (bool) ($validated['include_vat'] ?? false)
+            (bool) ($validated['include_vat'] ?? false),
+            isset($validated['vat_rate']) ? (string) $validated['vat_rate'] : null
         );
 
         return AdminResponse::success([

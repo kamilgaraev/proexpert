@@ -16,6 +16,7 @@ class EstimateFinanceAllocation extends Model
     protected $guarded = ['id'];
 
     protected $casts = [
+        'condition_version' => 'integer',
         'quantity' => 'decimal:8',
         'unit_price' => 'decimal:8',
         'amount_without_vat' => 'decimal:2',
@@ -24,5 +25,7 @@ class EstimateFinanceAllocation extends Model
         'vat_rate' => 'decimal:4',
         'composition_confirmed' => 'boolean',
         'estimate_snapshot' => 'array',
+        'accepted_basis' => 'array',
+        'condition_basis' => 'array',
     ];
 }

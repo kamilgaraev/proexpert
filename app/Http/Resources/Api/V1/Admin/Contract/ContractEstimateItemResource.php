@@ -5,10 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources\Api\V1\Admin\Contract;
 
 use App\Models\ContractEstimateItem;
-use App\Models\PerformanceActLine;
-use App\Services\Acting\ActingQuantityStatus;
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\Collection;
 
 use function trans_message;
 
@@ -20,21 +17,24 @@ class ContractEstimateItemResource extends JsonResource
         $item = $this->estimateItem;
         $section = $item?->section;
         $plannedQuantity = $item?->resolvePlannedQuantity($this->resource) ?? 0.0;
-        $actualVolume = $item?->getActualVolume((int) $this->contract_id) ?? 0.0;
-        $completionPercentage = $item?->getCompletionPercentageForPlannedQuantity(
-            $plannedQuantity,
-            (int) $this->contract_id,
-        ) ?? 0.0;
-        $actingQuantities = $item ? $this->resolveActingQuantities((int) $item->id, (int) $this->contract_id) : [
-            'reserved_quantity' => 0.0,
-            'approved_acted_quantity' => 0.0,
+        $progress = $this->resource->relationLoaded('operationalProgress') ? $this->resource->getRelation('operationalProgress') : [];
+        $actualVolume = $progress['actual_quantity'] ?? null;
+        $completionPercentage = $actualVolume === null ? null : ($plannedQuantity > 0 ? min(100, $actualVolume / $plannedQuantity * 100) : 0.0);
+        $actingQuantities = [
+            'reserved_quantity' => $progress['reserved_quantity'] ?? null,
+            'approved_acted_quantity' => $progress['approved_acted_quantity'] ?? null,
         ];
-        $availableQuantity = round(max(
+        $availableQuantity = $actualVolume === null || $actingQuantities['reserved_quantity'] === null || $actingQuantities['approved_acted_quantity'] === null ? null : round(max(
             0,
             $actualVolume - $actingQuantities['reserved_quantity'] - $actingQuantities['approved_acted_quantity']
         ), 4);
-        $blockers = $this->buildBlockers($plannedQuantity, $actualVolume);
-        $availableActions = $this->buildAvailableActions($blockers, $availableQuantity);
+        $blockers = $actualVolume === null ? [] : $this->buildBlockers($plannedQuantity, $actualVolume);
+        $availableActions = array_values(array_filter($this->buildAvailableActions($blockers, $availableQuantity ?? 0), static fn (string $action): bool => match ($action) {
+            'view_completed_works' => $progress['can_view_works'] ?? false,
+            'fix_planned_quantity' => $progress['can_edit'] ?? false,
+            'create_act' => $progress['can_create_act'] ?? false,
+            default => false,
+        }));
 
         return [
             'id'                => $this->id,
@@ -42,7 +42,9 @@ class ContractEstimateItemResource extends JsonResource
             'estimate_id'       => $this->estimate_id,
             'estimate_item_id'  => $this->estimate_item_id,
             'quantity'          => (float) $this->quantity,
-            'amount'            => (float) $this->amount,
+            'amount'            => $this->amount === null ? null : (float) $this->amount,
+            'contract_unit_price' => $this->amount === null || (float) $this->quantity <= 0 ? null
+                : (float) \App\BusinessModules\Features\BudgetEstimates\Services\Finance\FinanceDecimal::divide((string) $this->amount, (string) $this->quantity),
             'notes'             => $this->notes,
             'item' => $item ? [
                 'id'              => $item->id,
@@ -65,57 +67,24 @@ class ContractEstimateItemResource extends JsonResource
                     ? ['id' => $item->measurementUnit->id, 'short_name' => $item->measurementUnit->short_name]
                     : null,
                 'children_count' => $item->relationLoaded('childItems') ? $item->childItems->count() : 0,
-                'contracts_count' => $item->contractLinks()->count(),
+                'contracts_count' => $item->getAttribute('contract_links_count'),
                 'planned_quantity' => round((float) $plannedQuantity, 4),
-                'actual_quantity' => round((float) $actualVolume, 4),
-                'actual_volume' => round((float) $actualVolume, 4),
-                'completion_percentage' => round((float) $completionPercentage, 2),
-                'fact_progress_percent' => round((float) $completionPercentage, 2),
+                'actual_quantity' => $actualVolume,
+                'actual_volume' => $actualVolume,
+                'completion_percentage' => $completionPercentage === null ? null : round($completionPercentage, 2),
+                'fact_progress_percent' => $completionPercentage === null ? null : round($completionPercentage, 2),
+                'can_view_works' => $progress['can_view_works'] ?? false,
+                'can_view_acts' => $progress['can_view_acts'] ?? false,
                 'reserved_quantity' => $actingQuantities['reserved_quantity'],
                 'acted_quantity' => $actingQuantities['approved_acted_quantity'],
                 'available_quantity' => $availableQuantity,
-                'acted_progress_percent' => $plannedQuantity > 0
+                'acted_progress_percent' => $actingQuantities['approved_acted_quantity'] === null ? null : ($plannedQuantity > 0
                     ? round(min(100, ($actingQuantities['approved_acted_quantity'] / $plannedQuantity) * 100), 2)
-                    : 0.0,
-                'workflow_state' => $blockers === [] ? 'ready' : 'blocked',
+                    : 0.0),
+                'workflow_state' => $actualVolume === null || $availableQuantity === null ? 'unavailable' : ($blockers === [] ? 'ready' : 'blocked'),
                 'blockers' => $blockers,
                 'available_actions' => $availableActions,
             ] : null,
-        ];
-    }
-
-    private function resolveActingQuantities(int $estimateItemId, int $contractId): array
-    {
-        /** @var Collection<int, PerformanceActLine> $lines */
-        $lines = PerformanceActLine::query()
-            ->with('performanceAct')
-            ->where('estimate_item_id', $estimateItemId)
-            ->whereHas('performanceAct', function ($query) use ($contractId): void {
-                $query->where('contract_id', $contractId);
-            })
-            ->get();
-
-        $reserved = 0.0;
-        $approved = 0.0;
-
-        foreach ($lines as $line) {
-            $act = $line->performanceAct;
-
-            if (ActingQuantityStatus::isReleased($act)) {
-                continue;
-            }
-
-            if (ActingQuantityStatus::isApproved($act)) {
-                $approved += (float) $line->quantity;
-                continue;
-            }
-
-            $reserved += (float) $line->quantity;
-        }
-
-        return [
-            'reserved_quantity' => round($reserved, 4),
-            'approved_acted_quantity' => round($approved, 4),
         ];
     }
 

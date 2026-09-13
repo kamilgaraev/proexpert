@@ -54,6 +54,7 @@ class ActingAvailabilityService
     {
         return CompletedWork::query()
             ->with('estimateItem.contractLinks', 'estimateItem.estimate.currentVersion', 'journalEntry.journal', 'workType')
+            ->with(['estimateItem.financeAllocations' => static fn ($query) => $query->where('contract_id', $contractId)->whereNull('resource_id')])
             ->where(function ($query) use ($contractId): void {
                 $query
                     ->where('contract_id', $contractId)

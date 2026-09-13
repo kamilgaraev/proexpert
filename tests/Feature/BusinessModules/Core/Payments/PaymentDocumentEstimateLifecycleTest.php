@@ -189,15 +189,26 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
             ->where('amount', '>', 0)
             ->sole();
 
-        app(PaymentTransactionService::class)->refundPayment(
-            transactionId: $transaction->id,
-            organizationId: $this->organization->id,
-            actorId: $actor->id,
-            amount: '400.00',
-            reason: 'Корректировка платежа',
-            refundDate: '2026-08-24',
-            idempotencyKey: 'refund-estimate-projection'
-        );
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        \Illuminate\Support\Facades\DB::flushQueryLog();
+        try {
+            app(PaymentTransactionService::class)->refundPayment(
+                transactionId: $transaction->id,
+                organizationId: $this->organization->id,
+                actorId: $actor->id,
+                amount: '400.00',
+                reason: 'Корректировка платежа',
+                refundDate: '2026-08-24',
+                idempotencyKey: 'refund-estimate-projection'
+            );
+            $lockingQueries = array_values(array_filter(\Illuminate\Support\Facades\DB::getQueryLog(),
+                static fn (array $query): bool => str_contains(strtolower($query['query']), 'for update')));
+        } finally {
+            \Illuminate\Support\Facades\DB::disableQueryLog();
+        }
+        $this->assertGreaterThanOrEqual(2, count($lockingQueries));
+        $this->assertStringContainsString('"payment_documents"', $lockingQueries[0]['query']);
+        $this->assertStringContainsString('"payment_transactions"', $lockingQueries[1]['query']);
 
         $this->assertSame('600.00', $document->fresh()->paid_amount);
         $this->assertSame('6.00000000', $item->fresh()->actual_quantity);

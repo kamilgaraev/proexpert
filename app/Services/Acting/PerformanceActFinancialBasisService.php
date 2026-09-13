@@ -19,6 +19,7 @@ final class PerformanceActFinancialBasisService
     public function __construct(
         private readonly EstimateVersionItemSnapshotResolver $snapshotItems,
         private readonly ActingPriceService $legacyPrices,
+        private readonly PerformanceActContractBasisService $contractBasis,
     ) {}
 
     /**
@@ -30,7 +31,7 @@ final class PerformanceActFinancialBasisService
      *     snapshot: array<string, mixed>
      * }
      */
-    public function forCompletedWork(CompletedWork $work, Contract $contract, float $effectiveQuantity): array
+    public function forCompletedWork(CompletedWork $work, Contract $contract, float $effectiveQuantity, ?string $allocationKey = null): array
     {
         $item = $work->estimateItem;
         $estimate = $item?->estimate;
@@ -49,6 +50,11 @@ final class PerformanceActFinancialBasisService
                     'completed_work_total' => $this->money($work->total_amount ?? 0),
                 ],
             ];
+        }
+
+        $contractConditions = $this->contractBasis->resolve($item, $contract, $allocationKey);
+        if ($contractConditions !== null) {
+            return $contractConditions;
         }
 
         $version = $estimate->currentVersion;

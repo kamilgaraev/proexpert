@@ -37,6 +37,7 @@ final class ValidateEstimateContractAmountRequest extends FormRequest
         return [
             'contract_id' => ['nullable', 'integer'],
             'include_vat' => ['nullable', 'boolean'],
+            'vat_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ];
     }
 }

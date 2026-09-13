@@ -48,7 +48,7 @@ final class EstimateFinanceCalculator
                 if ($amount === null) {
                     $warnings[] = 'unknown_price_or_tax';
                 }
-                if ($line['vat_rate'] === null || $line['price_basis'] === 'unknown') {
+                if (($line['vat_rate'] === null && ($line['vat_mode'] ?? null) !== 'none') || $line['price_basis'] === 'unknown') {
                     $warnings[] = 'unknown_price_or_tax';
                 }
                 if (($line['legacy'] ?? false) || ! $line['composition_confirmed']) {

@@ -18,8 +18,11 @@ final class EstimateFinanceQuery
         $items = EstimateItem::query()->where('estimate_id', $estimate->id)
             ->with(['resources.measurementUnit', 'measurementUnit'])->orderBy('id')->get();
         $childParents = $items->whereNotNull('parent_work_id')->pluck('parent_work_id')->flip();
+        $itemIds = array_fill_keys($items->modelKeys(), true);
         foreach ($items as $item) {
             $key = 'i:'.$item->id;
+            $pendingResources = null;
+            $sourceHash = null;
             $targets[$key] = [
                 'key' => $key, 'item_id' => (int) $item->id, 'resource_id' => null,
                 'parent_key' => $item->parent_work_id ? 'i:'.$item->parent_work_id : null,
@@ -30,10 +33,14 @@ final class EstimateFinanceQuery
                 'estimate_amount' => (string) ($item->total_amount ?? '0'),
                 'estimate_amount_with_vat' => $estimate->vat_rate === null ? null : FinanceDecimal::multiply((string) ($item->total_amount ?? '0'), FinanceDecimal::add('1', FinanceDecimal::divide((string) $estimate->vat_rate, '100', 8))),
                 'excluded' => (bool) $item->is_not_accounted,
-                'pending_resources' => $item->resources->isEmpty() ? $this->pendingResources($item) : [],
+                'pending_resources' => $item->resources->isEmpty() ? ($pendingResources = $this->pendingResources($item)) : [],
             ];
             foreach ($item->resources as $resource) {
                 $resourceKey = 'r:'.$resource->id;
+                if ($resource->finance_source_hash !== null && $sourceHash === null) {
+                    $pendingResources ??= $this->pendingResources($item);
+                    $sourceHash = hash('sha256', json_encode($pendingResources, JSON_THROW_ON_ERROR));
+                }
                 $targets[$resourceKey] = [
                     'key' => $resourceKey, 'item_id' => (int) $item->id, 'resource_id' => (int) $resource->id,
                     'parent_key' => $key, 'section_id' => $item->estimate_section_id,
@@ -42,8 +49,8 @@ final class EstimateFinanceQuery
                     'represented_by_item_id' => $resource->represented_by_item_id,
                     'representation' => $resource->finance_representation,
                     'representation_needs_review' => ($childParents->has($item->id) && $resource->finance_representation === 'unreviewed')
-                        || ($resource->represented_by_item_id && ! $items->contains('id', $resource->represented_by_item_id)),
-                    'source_changed' => $resource->finance_source_hash !== null && $resource->finance_source_hash !== hash('sha256', json_encode($this->pendingResources($item), JSON_THROW_ON_ERROR)),
+                        || ($resource->represented_by_item_id && ! isset($itemIds[$resource->represented_by_item_id])),
+                    'source_changed' => $resource->finance_source_hash !== null && $resource->finance_source_hash !== $sourceHash,
                     'quantity' => (string) ($resource->total_quantity ?? '0'),
                     'estimate_amount' => (string) ($resource->total_amount ?? '0'), 'excluded' => (bool) $item->is_not_accounted,
                     'estimate_amount_with_vat' => $estimate->vat_rate === null ? null : FinanceDecimal::multiply((string) ($resource->total_amount ?? '0'), FinanceDecimal::add('1', FinanceDecimal::divide((string) $estimate->vat_rate, '100', 8))),
@@ -72,6 +79,7 @@ final class EstimateFinanceQuery
         $rows = [];
         foreach ($models as $model) {
             $row = $model->attributesToArray();
+            $row['vat_mode'] = EstimateFinanceTax::mode($row);
             if ($model->source === 'contract' && (! $model->contract || $this->side($model->contract) !== $model->side
                 || ($model->contract->currency ?: 'RUB') !== $model->currency
                 || (int) $model->contract->organization_id !== (int) $estimate->organization_id
@@ -86,17 +94,18 @@ final class EstimateFinanceQuery
             $row['legacy'] = false;
         }
         unset($row);
-        $legacy = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('finance_managed', false)->with('contract')->get();
+        $legacy = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('finance_managed', false)
+            ->with(['contract' => fn ($query) => $query->where('organization_id', $estimate->organization_id)->where('project_id', $estimate->project_id)])->get();
         foreach ($legacy as $link) {
             $rows[] = [
                 'key' => 'legacy:'.$link->id, 'target_key' => 'i:'.$link->estimate_item_id,
                 'estimate_item_id' => (int) $link->estimate_item_id, 'resource_id' => null,
                 'contract_id' => (int) $link->contract_id, 'contract_estimate_item_id' => (int) $link->id,
                 'side' => $link->contract ? $this->side($link->contract) : 'unknown', 'source' => 'contract',
-                'currency' => $link->contract?->currency ?? 'RUB', 'quantity' => (string) ($link->quantity ?? '0'),
+                'currency' => $link->contract?->currency ?? '', 'quantity' => (string) ($link->quantity ?? '0'),
                 'unit_price' => null, 'amount_without_vat' => $link->amount_without_vat,
                 'amount_with_vat' => null, 'legacy_amount' => $link->amount,
-                'vat_rate' => null, 'price_basis' => 'unknown', 'method' => 'legacy',
+                'vat_rate' => null, 'vat_mode' => 'unknown', 'price_basis' => 'unknown', 'method' => 'legacy',
                 'composition_confirmed' => false, 'estimate_snapshot' => null, 'notes' => $link->notes, 'legacy' => true,
             ];
         }

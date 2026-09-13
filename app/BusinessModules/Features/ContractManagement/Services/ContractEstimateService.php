@@ -18,125 +18,82 @@ class ContractEstimateService
 {
     public function __construct(
         private readonly EstimateCacheService $estimateCacheService,
+        private readonly \App\BusinessModules\Features\BudgetEstimates\Services\Finance\ContractEstimateFinanceAdapter $financeAdapter,
     ) {}
 
-    public function attachItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
+    public function attachItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false, ?\App\Models\User $actor = null, ?string $rate = null): Collection
     {
-        $attached = DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat) {
-            Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
-            if ((int) $contract->organization_id !== (int) $estimate->organization_id || (int) $contract->project_id !== (int) $estimate->project_id) {
-                throw new DomainException('contract_estimate_items_invalid');
-            }
-            $allIds = $this->resolveWithChildren($estimate->id, $itemIds);
+        if ($actor === null) {
+            throw new \Illuminate\Auth\Access\AuthorizationException;
+        }
+        if ((int) $contract->organization_id !== (int) $estimate->organization_id || (int) $contract->project_id !== (int) $estimate->project_id) {
+            throw new DomainException('contract_estimate_items_invalid');
+        }
+        $allIds = $this->resolveWithChildren($estimate->id, $itemIds);
+        $this->financeAdapter->attach($actor, $contract, $estimate, $allIds, $includeVat, $rate);
 
-            $items = EstimateItem::whereIn('id', $allIds)
-                ->where('estimate_id', $estimate->id)
-                ->lockForUpdate()
-                ->get()
-                ->keyBy('id');
-            if ($items->count() !== count($allIds)) {
-                throw new DomainException('contract_estimate_items_invalid');
-            }
-
-            $attached = collect();
-
-            foreach ($allIds as $itemId) {
-                $item = $items->get($itemId);
-                $link = ContractEstimateItem::firstOrCreate(
-                    [
-                        'contract_id' => $contract->id,
-                        'estimate_item_id' => $item->id,
-                    ],
-                    [
-                        'estimate_id' => $estimate->id,
-                        'quantity' => $item->quantity_total ?? $item->quantity,
-                        'amount' => $this->calculateAmount($item, $estimate, $includeVat),
-                        'amount_without_vat' => $this->calculateAmount($item, $estimate, false),
-                    ]
-                );
-
-                $attached->push($link);
-            }
-
-            Log::info('contract_estimate_items.attached', [
-                'contract_id' => $contract->id,
-                'estimate_id' => $estimate->id,
-                'item_ids' => $allIds,
-                'include_vat' => $includeVat,
-                'count' => $attached->count(),
-            ]);
-
-            $this->estimateCacheService->invalidateStructure($estimate);
-
-            return $attached;
-        });
-
-        return $attached;
+        return $this->getItemsForContract($contract, (int) $estimate->id)->whereIn('estimate_item_id', $allIds)->values();
     }
 
-    public function detachItems(Contract $contract, array $itemIds): void
+    public function detachItems(Contract $contract, array $itemIds, ?\App\Models\User $actor = null): void
     {
-        DB::transaction(function () use ($contract, $itemIds): void {
+        if ($actor === null || (int) $actor->current_organization_id !== (int) $contract->organization_id) {
+            throw new \Illuminate\Auth\Access\AuthorizationException;
+        }
+        DB::transaction(function () use ($contract, $itemIds, $actor): void {
             $allIds = $this->resolveChildrenForDetach($contract->id, $itemIds);
             $estimateIds = ContractEstimateItem::where('contract_id', $contract->id)
                 ->whereIn('estimate_item_id', $allIds)
                 ->pluck('estimate_id')
+                ->merge(\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contract->id)
+                    ->whereIn('estimate_item_id', $allIds)->pluck('estimate_id'))
                 ->unique()
                 ->values();
 
-            Estimate::query()->whereIn('id', $estimateIds)->orderBy('id')->lockForUpdate()->get();
-            if (\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contract->id)->whereIn('estimate_item_id', $allIds)->exists()) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['items' => trans_message('estimate_finance.linked')]);
+            $estimates = Estimate::query()->whereIn('id', $estimateIds)->where('organization_id', $actor->current_organization_id)
+                ->where('project_id', $contract->project_id)->orderBy('id')->lockForUpdate()->get();
+            if ($estimates->count() !== $estimateIds->count()) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
             }
-
-            ContractEstimateItem::where('contract_id', $contract->id)
-                ->whereIn('estimate_item_id', $allIds)
-                ->delete();
-
-            Log::info('contract_estimate_items.detached', [
-                'contract_id' => $contract->id,
-                'item_ids' => $allIds,
-            ]);
-
-            Estimate::query()
-                ->whereIn('id', $estimateIds)
-                ->get()
-                ->each(fn (Estimate $estimate) => $this->estimateCacheService->invalidateStructure($estimate));
+            foreach ($estimates as $estimate) {
+                $this->financeAdapter->detach($actor, $contract, $estimate, $allIds);
+            }
         });
     }
 
-    public function syncItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
+    public function syncItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false, ?\App\Models\User $actor = null, ?string $rate = null): Collection
     {
-        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat) {
-            Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+        if ($actor === null) {
+            throw new \Illuminate\Auth\Access\AuthorizationException;
+        }
+        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat, $actor, $rate) {
+            Estimate::query()->whereKey($estimate->id)->where('organization_id', $actor->current_organization_id)
+                ->where('project_id', $contract->project_id)->lockForUpdate()->firstOrFail();
             $allIds = $this->resolveWithChildren($estimate->id, $itemIds);
             $removed = ContractEstimateItem::where('contract_id', $contract->id)
-                ->where('estimate_id', $estimate->id)->whereNotIn('estimate_item_id', $allIds);
-            if (\App\Models\EstimateFinanceAllocation::query()->whereIn('contract_estimate_item_id', (clone $removed)->select('id'))->exists()) {
-                throw \Illuminate\Validation\ValidationException::withMessages(['items' => trans_message('estimate_finance.linked')]);
-            }
-            ContractEstimateItem::where('contract_id', $contract->id)
-                ->where('estimate_id', $estimate->id)
-                ->whereNotIn('estimate_item_id', $allIds)
-                ->delete();
+                ->where('estimate_id', $estimate->id)->whereNotIn('estimate_item_id', $allIds)->pluck('estimate_item_id')
+                ->merge(\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contract->id)
+                    ->where('estimate_id', $estimate->id)->whereNotIn('estimate_item_id', $allIds)->pluck('estimate_item_id'))
+                ->unique()->values()->all();
+            $this->financeAdapter->detach($actor, $contract, $estimate, $removed);
 
             if (empty($itemIds)) {
                 return collect();
             }
 
-            return $this->attachItems($contract, $estimate, $itemIds, $includeVat);
+            return $this->attachItems($contract, $estimate, $itemIds, $includeVat, $actor, $rate);
         });
     }
 
     public function getItemsForContract(Contract $contract, ?int $estimateId = null): Collection
     {
         $query = ContractEstimateItem::with([
-            'estimateItem',
+            'estimateItem' => fn ($items) => $items->withCount(['contractLinks' => fn ($links) => $links->countedInCoverage()]),
             'estimateItem.section',
             'estimateItem.section.parent',
             'estimateItem.measurementUnit',
             'estimateItem.childItems',
-        ])->countedInCoverage()->where('contract_id', $contract->id);
+        ])->countedInCoverage()->withFinancialAmounts()->where('contract_id', $contract->id);
 
         if ($estimateId !== null) {
             $query->where('estimate_id', $estimateId);
@@ -145,28 +102,15 @@ class ContractEstimateService
         return $query->get();
     }
 
-    public function updateCoverageVat(Contract $contract, Estimate $estimate, bool $includeVat): void
+    public function updateCoverageVat(Contract $contract, Estimate $estimate, bool $includeVat, ?\App\Models\User $actor = null, ?string $rate = null, ?int $revision = null, ?string $mutationId = null): void
     {
-        DB::transaction(function () use ($contract, $estimate, $includeVat): void {
-            Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
-            if ((int) $contract->organization_id !== (int) $estimate->organization_id || (int) $contract->project_id !== (int) $estimate->project_id) {
-                throw new DomainException('contract_estimate_items_invalid');
-            }
-
-            $links = ContractEstimateItem::query()->where('contract_id', $contract->id)
-                ->where('estimate_id', $estimate->id)->with('estimateItem')->lockForUpdate()->get();
-            if ($links->isEmpty()) {
-                throw new DomainException('contract_estimate_items_invalid');
-            }
-
-            foreach ($links as $link) {
-                $baseAmount = $link->estimateItem?->is_not_accounted ? 0.0 : (float) $link->amount_without_vat;
-                $link->amount = round($baseAmount * ($includeVat ? 1 + (float) $estimate->vat_rate / 100 : 1), 2);
-                $link->save();
-            }
-
-            $this->estimateCacheService->invalidateStructure($estimate);
-        });
+        if ($actor === null) {
+            throw new \Illuminate\Auth\Access\AuthorizationException;
+        }
+        if ((int) $contract->organization_id !== (int) $estimate->organization_id || (int) $contract->project_id !== (int) $estimate->project_id) {
+            throw new DomainException('contract_estimate_items_invalid');
+        }
+        $this->financeAdapter->updateVat($actor, $contract, $estimate, $includeVat, $rate, $revision, $mutationId);
     }
 
     public function getContractsByEstimateItem(EstimateItem $item): Collection
@@ -174,41 +118,34 @@ class ContractEstimateService
         return $item->contracts()->get();
     }
 
-    public function calculateContractEstimateTotal(Contract $contract, ?int $estimateId = null): float
+    public function calculateContractEstimateTotal(Contract $contract, ?int $estimateId = null): ?float
     {
-        $query = ContractEstimateItem::query()->countedInCoverage()->where('contract_id', $contract->id);
+        $query = ContractEstimateItem::query()->countedInCoverage()->withFinancialAmounts()->where('contract_id', $contract->id);
 
         if ($estimateId !== null) {
             $query->where('estimate_id', $estimateId);
         }
 
-        return round((float) $query->sum('amount'), 2);
+        $total = DB::query()->fromSub($query, 'financial_links')
+            ->selectRaw('CASE WHEN COUNT(amount) = COUNT(*) THEN COALESCE(SUM(amount), 0) ELSE NULL END AS total')
+            ->value('total');
+
+        return $total === null ? null : round((float) $total, 2);
     }
 
-    public function calculateItemsTotal(Estimate $estimate, array $itemIds, bool $includeVat = false): float
+    public function calculateItemsTotal(Estimate $estimate, array $itemIds, bool $includeVat = false, ?string $rate = null): float
     {
         $allIds = $this->resolveWithChildren($estimate->id, $itemIds);
         if ($allIds === []) {
             return 0.0;
         }
 
-        $items = EstimateItem::query()
-            ->where('estimate_id', $estimate->id)
-            ->whereIn('id', $allIds)
-            ->get();
-
-        if ($items->count() !== count($allIds)) {
-            throw new DomainException('contract_estimate_items_invalid');
-        }
-
-        return round((float) $items->sum(
-            fn (EstimateItem $item): float => $this->calculateAmount($item, $estimate, $includeVat)
-        ), 2);
+        return (float) $this->financeAdapter->initialAmount($estimate, $allIds, $includeVat, $rate);
     }
 
     public function getSummary(Contract $contract): array
     {
-        $links = ContractEstimateItem::query()->countedInCoverage()->where('contract_id', $contract->id)
+        $links = ContractEstimateItem::query()->countedInCoverage()->withFinancialAmounts()->where('contract_id', $contract->id)
             ->with('estimateItem')
             ->get();
 
@@ -219,46 +156,57 @@ class ContractEstimateService
             $estimates[] = [
                 'estimate_id' => $estimateId,
                 'items_count' => $group->count(),
-                'total_amount' => round($group->sum('amount'), 2),
+                'total_amount' => \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts::sum($group, 'amount'),
             ];
         }
 
         return [
             'contract_id' => $contract->id,
             'total_linked_items' => $links->count(),
-            'total_amount' => round($links->sum('amount'), 2),
+            'total_amount' => \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts::sum($links, 'amount'),
             'by_estimate' => $estimates,
         ];
     }
 
     private function resolveWithChildren(int $estimateId, array $itemIds): array
     {
-        $result = array_unique($itemIds);
+        $pending = array_values(array_unique(array_map('intval', $itemIds)));
+        if ($pending === []) {
+            return [];
+        }
+        $children = EstimateItem::query()->where('estimate_id', $estimateId)->whereNotNull('parent_work_id')
+            ->get(['id', 'parent_work_id'])->groupBy('parent_work_id');
+        $seen = array_fill_keys($pending, true);
+        for ($index = 0; $index < count($pending); $index++) {
+            foreach ($children->get($pending[$index], collect()) as $child) {
+                if (! isset($seen[$child->id])) {
+                    $seen[$child->id] = true;
+                    $pending[] = (int) $child->id;
+                }
+            }
+        }
 
-        $parentItems = EstimateItem::whereIn('id', $itemIds)
-            ->where('estimate_id', $estimateId)
-            ->whereNotNull('parent_work_id')
-            ->pluck('id')
-            ->toArray();
-
-        $childIds = EstimateItem::where('estimate_id', $estimateId)
-            ->whereIn('parent_work_id', array_diff($itemIds, $parentItems))
-            ->pluck('id')
-            ->toArray();
-
-        return array_unique(array_merge($result, $childIds));
+        return $pending;
     }
 
     private function resolveChildrenForDetach(int $contractId, array $itemIds): array
     {
-        $childIds = EstimateItem::whereIn('parent_work_id', $itemIds)
-            ->whereHas('contractLinks', function ($q) use ($contractId) {
-                $q->where('contract_id', $contractId);
-            })
-            ->pluck('id')
-            ->toArray();
+        $children = EstimateItem::query()->whereNotNull('parent_work_id')
+            ->whereIn('estimate_id', ContractEstimateItem::query()->where('contract_id', $contractId)->select('estimate_id')
+                ->union(\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contractId)->select('estimate_id')))
+            ->get(['id', 'parent_work_id'])->groupBy('parent_work_id');
+        $pending = array_values(array_unique(array_map('intval', $itemIds)));
+        $seen = array_fill_keys($pending, true);
+        for ($index = 0; $index < count($pending); $index++) {
+            foreach ($children->get($pending[$index], collect()) as $child) {
+                if (! isset($seen[$child->id])) {
+                    $seen[$child->id] = true;
+                    $pending[] = (int) $child->id;
+                }
+            }
+        }
 
-        return array_unique(array_merge($itemIds, $childIds));
+        return $pending;
     }
 
     private function calculateAmount(EstimateItem $item, Estimate $estimate, bool $includeVat): float

@@ -56,6 +56,7 @@ final class ContractFromEstimateController
                 ),
                 array_map('intval', $request->validated('estimate_item_ids')),
                 $request->boolean('include_vat'),
+                $request->validated('coverage_vat_rate') === null ? null : (string) $request->validated('coverage_vat_rate'),
             );
 
             return AdminResponse::success(
@@ -65,6 +66,8 @@ final class ContractFromEstimateController
             );
         } catch (\DomainException $exception) {
             return AdminResponse::error($this->domainMessage($exception), 422);
+        } catch (\Illuminate\Validation\ValidationException|\Illuminate\Auth\Access\AuthorizationException|\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
+            throw $exception;
         } catch (\Throwable $exception) {
             Log::error('contracts.create_from_estimate_failed', [
                 'project_id' => $project->id,

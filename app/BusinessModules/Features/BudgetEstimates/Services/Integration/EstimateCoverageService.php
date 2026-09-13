@@ -5,15 +5,14 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Integration;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAmounts;
 use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
-use App\Services\CompletedWork\CompletedWorkFactService;
 use App\Services\Contract\ContractAuditedMutationService;
-use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -30,7 +29,6 @@ class EstimateCoverageService
 
     public function __construct(
         private readonly ContractEstimateService $contractEstimateService,
-        private readonly CompletedWorkFactService $completedWorkFactService,
         private readonly EstimateCacheService $estimateCacheService,
         private readonly ContractAuditedMutationService $contractMutations,
     ) {}
@@ -51,44 +49,42 @@ class EstimateCoverageService
         });
     }
 
-    public function attachFullCoverage(Contract $contract, Estimate $estimate, bool $includeVat = false): Collection
+    public function attachFullCoverage(Contract $contract, Estimate $estimate, bool $includeVat = false, ?\App\Models\User $actor = null, ?string $rate = null): Collection
     {
         $this->assertOwnership($contract, $estimate);
 
         $itemIds = $this->getCoveredItemIds($estimate)->all();
 
-        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat): Collection {
-            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
-            $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
+        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat, $actor, $rate): Collection {
+            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat, $actor, $rate);
 
             return $links;
         });
     }
 
-    public function syncCoverageItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false): Collection
+    public function syncCoverageItems(Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false, ?\App\Models\User $actor = null, ?string $rate = null): Collection
     {
         $this->assertOwnership($contract, $estimate);
 
-        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat): Collection {
-            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat);
-            $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate, $itemIds);
+        return DB::transaction(function () use ($contract, $estimate, $itemIds, $includeVat, $actor, $rate): Collection {
+            $links = $this->contractEstimateService->syncItems($contract, $estimate, $itemIds, $includeVat, $actor, $rate);
 
             return $links;
         });
     }
 
-    public function detachCoverage(Contract $contract, Estimate $estimate): void
+    public function detachCoverage(Contract $contract, Estimate $estimate, ?\App\Models\User $actor = null): void
     {
         $this->assertOwnership($contract, $estimate);
 
-        DB::transaction(function () use ($contract, $estimate): void {
-            ContractEstimateItem::query()
+        DB::transaction(function () use ($contract, $estimate, $actor): void {
+            $itemIds = ContractEstimateItem::query()
                 ->where('contract_id', $contract->id)
                 ->where('estimate_id', $estimate->id)
-                ->delete();
-
-            $this->estimateCacheService->invalidateStructure($estimate);
-            $this->completedWorkFactService->syncJournalEntriesForContractEstimateCoverage($contract, $estimate);
+                ->pluck('estimate_item_id')
+                ->merge(\App\Models\EstimateFinanceAllocation::query()->where('contract_id', $contract->id)
+                    ->where('estimate_id', $estimate->id)->pluck('estimate_item_id'))->unique()->values()->all();
+            $this->contractEstimateService->detachItems($contract, $itemIds, $actor);
         });
     }
 
@@ -100,6 +96,7 @@ class EstimateCoverageService
         $links = ContractEstimateItem::query()
             ->where('estimate_id', $estimate->id)
             ->countedInCoverage()
+            ->withFinancialAmounts()
             ->with('contract.contractor')
             ->get()
             ->groupBy('contract_id');
@@ -129,7 +126,7 @@ class EstimateCoverageService
                 'coverage_status' => $coverageStatus,
                 'linked_items_count' => $linkedItemsCount,
                 'available_items_count' => max(0, $totalItems - $linkedItemsCount),
-                'linked_amount' => round((float) $group->sum('amount'), 2),
+                'linked_amount' => EstimateFinanceAmounts::sum($group, 'amount'),
                 'is_full' => $coverageStatus === 'full_link',
             ];
         })->values();
@@ -150,6 +147,7 @@ class EstimateCoverageService
         $links = ContractEstimateItem::query()
             ->where('contract_id', $contract->id)
             ->countedInCoverage()
+            ->withFinancialAmounts()
             ->with(['estimate', 'estimateItem'])
             ->get()
             ->groupBy('estimate_id');
@@ -165,12 +163,12 @@ class EstimateCoverageService
                 ->unique()
                 ->intersect($coveredItemIds)
                 ->count();
-            $linkedAmount = round((float) $group->sum('amount'), 2);
+            $linkedAmount = EstimateFinanceAmounts::sum($group, 'amount');
             $linkedQuantities = $group->sum('quantity');
-            $averageAmount = $linkedItemsCount > 0
+            $averageAmount = $linkedAmount === null ? null : ($linkedItemsCount > 0
                 ? round($linkedAmount / $linkedItemsCount, 2)
-                : 0.0;
-            $maxAmount = round((float) $group->max('amount'), 2);
+                : 0.0);
+            $maxAmount = $linkedAmount === null ? null : round((float) $group->max('amount'), 2);
             $linkedSectionsCount = $group
                 ->pluck('estimateItem.estimate_section_id')
                 ->filter()
@@ -182,6 +180,7 @@ class EstimateCoverageService
 
             return [
                 'estimate_id' => $estimateId,
+                'finance_revision' => $estimate ? (int) $estimate->finance_revision : null,
                 'estimate' => $estimate ? [
                     'id' => $estimate->id,
                     'number' => $estimate->number,
@@ -201,7 +200,7 @@ class EstimateCoverageService
                 'coverage_percent' => $coveragePercent,
                 'linked_items_summary' => [
                     'amount' => $linkedAmount,
-                    'amount_without_vat' => round((float) $group->sum('amount_without_vat'), 2),
+                    'amount_without_vat' => EstimateFinanceAmounts::sum($group, 'amount_without_vat'),
                     'average_amount' => $averageAmount,
                     'max_amount' => $maxAmount,
                     'total_quantity' => round((float) $linkedQuantities, 2),
@@ -210,16 +209,16 @@ class EstimateCoverageService
             ];
         })->values();
 
-        $linkedAmount = round((float) $linkedEstimates->sum('linked_items_summary.amount'), 2);
+        $linkedAmount = EstimateFinanceAmounts::sum($linkedEstimates, 'linked_items_summary.amount');
         $linkedItemsCount = (int) $linkedEstimates->sum('linked_items_count');
-        $coveragePercent = $contractAmount > 0
+        $coveragePercent = $linkedAmount === null ? null : ($contractAmount > 0
             ? round(($linkedAmount / $contractAmount) * 100, 2)
-            : 0.0;
-        $uncoveredAmount = max(0.0, round($contractAmount - $linkedAmount, 2));
-        $overcoveredAmount = max(0.0, round($linkedAmount - $contractAmount, 2));
-        $averageLinkedItemAmount = $linkedItemsCount > 0
+            : 0.0);
+        $uncoveredAmount = $linkedAmount === null ? null : max(0.0, round($contractAmount - $linkedAmount, 2));
+        $overcoveredAmount = $linkedAmount === null ? null : max(0.0, round($linkedAmount - $contractAmount, 2));
+        $averageLinkedItemAmount = $linkedAmount === null ? null : ($linkedItemsCount > 0
             ? round($linkedAmount / $linkedItemsCount, 2)
-            : 0.0;
+            : 0.0);
 
         return [
             'contract_id' => $contract->id,
@@ -245,7 +244,8 @@ class EstimateCoverageService
     public function validateContractAmount(
         Estimate $estimate,
         ?Contract $candidateContract = null,
-        bool $includeVat = false
+        bool $includeVat = false,
+        ?string $rate = null
     ): array {
         $coverage = $this->getCoverageForEstimate($estimate);
         $contracts = collect($coverage['contracts']);
@@ -258,7 +258,8 @@ class EstimateCoverageService
                 $coveredAmount = $this->contractEstimateService->calculateItemsTotal(
                     $estimate,
                     $this->getCoveredItemIds($estimate)->all(),
-                    $includeVat
+                    $includeVat,
+                    $rate
                 );
 
                 return $this->amountValidationResult(
@@ -285,7 +286,7 @@ class EstimateCoverageService
 
         $primaryCoverage = $contracts->first();
         $contractAmount = (float) ($primaryCoverage['contract']['total_amount'] ?? 0);
-        $coveredAmount = (float) ($primaryCoverage['linked_amount'] ?? 0);
+        $coveredAmount = $primaryCoverage['linked_amount'];
 
         return $this->amountValidationResult(
             $estimate,
@@ -297,10 +298,22 @@ class EstimateCoverageService
 
     private function amountValidationResult(
         Estimate $estimate,
-        float $coveredAmount,
+        ?float $coveredAmount,
         float $contractAmount,
         string $coverageStatus
     ): array {
+        if ($coveredAmount === null) {
+            return [
+                'valid' => null,
+                'estimate_amount' => (float) $estimate->total_amount,
+                'covered_amount' => null,
+                'contract_amount' => $contractAmount,
+                'difference' => null,
+                'percentage_difference' => null,
+                'message' => trans_message('contract.estimate_amount_unknown'),
+                'coverage_status' => $coverageStatus,
+            ];
+        }
         $difference = round($coveredAmount - $contractAmount, 2);
         $percentageDifference = $contractAmount > 0
             ? round(($difference / $contractAmount) * 100, 2)
@@ -349,23 +362,6 @@ class EstimateCoverageService
                 ['estimate_id' => (int) $estimate->id],
             );
         });
-    }
-
-    public function backfillLegacyCoverage(): void
-    {
-        Estimate::query()
-            ->whereNotNull('contract_id')
-            ->with('items')
-            ->chunkById(100, function (EloquentCollection $estimates): void {
-                foreach ($estimates as $estimate) {
-                    $contract = Contract::query()->find($estimate->contract_id);
-                    if (! $contract) {
-                        continue;
-                    }
-
-                    $this->attachFullCoverage($contract, $estimate);
-                }
-            });
     }
 
     private function getCoveredItemIds(Estimate $estimate): Collection

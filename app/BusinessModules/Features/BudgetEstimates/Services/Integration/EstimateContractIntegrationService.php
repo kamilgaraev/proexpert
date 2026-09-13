@@ -22,23 +22,25 @@ class EstimateContractIntegrationService
     public function validateContractAmount(
         Estimate $estimate,
         ?Contract $contract = null,
-        bool $includeVat = false
+        bool $includeVat = false,
+        ?string $rate = null
     ): array {
-        return $this->coverageService->validateContractAmount($estimate, $contract, $includeVat);
+        return $this->coverageService->validateContractAmount($estimate, $contract, $includeVat, $rate);
     }
 
-    public function linkToContract(Estimate $estimate, int $contractId, bool $includeVat = false): array
+    public function linkToContract(Estimate $estimate, int $contractId, bool $includeVat = false, ?\App\Models\User $actor = null, ?string $rate = null): array
     {
         $contract = Contract::findOrFail($contractId);
-        $this->coverageService->attachFullCoverage($contract, $estimate, $includeVat);
+        $this->coverageService->attachFullCoverage($contract, $estimate, $includeVat, $actor, $rate);
 
         return $this->coverageService->getCoverageForEstimate($estimate);
     }
 
-    public function unlinkFromContract(Estimate $estimate, int $contractId): array
+    public function unlinkFromContract(Estimate $estimate, int $contractId, ?\App\Models\User $actor = null): array
     {
-        $contract = Contract::findOrFail($contractId);
-        $this->coverageService->detachCoverage($contract, $estimate);
+        $contract = Contract::query()->where('organization_id', $estimate->organization_id)
+            ->where('project_id', $estimate->project_id)->findOrFail($contractId);
+        $this->coverageService->detachCoverage($contract, $estimate, $actor);
 
         return $this->coverageService->getCoverageForEstimate($estimate);
     }
