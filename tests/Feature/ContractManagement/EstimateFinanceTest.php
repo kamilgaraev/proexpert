@@ -427,6 +427,25 @@ final class EstimateFinanceTest extends TestCase
                 self::assertTrue(true);
             }
         }
+        $unknown['basis'] = '=SUM(1,2)';
+        $unknown['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $unknown)['source_hash'];
+        $this->save($unknown);
+        $report = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution');
+        $book = app(EstimateFinanceExport::class)->workbook([$report], 'without_vat', [], 'execution');
+        try {
+            $sheet = $book->getSheetByName('Основания расходов');
+            self::assertSame('=SUM(1,2)', $sheet->getCell('C3')->getValue());
+            self::assertSame(\PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING, $sheet->getCell('C3')->getDataType());
+            self::assertSame('', $sheet->getCell('H3')->getValue());
+            self::assertSame('', $sheet->getCell('J3')->getValue());
+            self::assertEquals('100.00', $sheet->getCell('I3')->getValue());
+            $summary = $book->getSheetByName('Собственные расходы');
+            self::assertSame('', $summary->getCell('D2')->getValue());
+            self::assertEquals('100.00', $summary->getCell('E2')->getValue());
+            self::assertEquals(1, $summary->getCell('F2')->getValue());
+        } finally {
+            $book->disconnectWorksheets();
+        }
     }
 
     public function test_own_cost_document_registration_rejects_changed_pending_and_duplicate_source(): void
@@ -525,6 +544,17 @@ final class EstimateFinanceTest extends TestCase
         $queries = \Illuminate\Support\Facades\DB::getQueryLog();
         \Illuminate\Support\Facades\DB::disableQueryLog();
         self::assertSame([], array_values(array_filter($queries, fn ($query) => str_contains($query['query'], 'advance_account_transactions'))));
+        $book = app(EstimateFinanceExport::class)->workbook([['name' => 'Смета', 'own_costs' => $deniedReport]], 'without_vat', [], 'execution');
+        try {
+            $sheet = $book->getSheetByName('Основания расходов');
+            self::assertSame('Данные расходов недоступны', $sheet->getCell('N2')->getValue());
+            foreach (['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M'] as $column) {
+                self::assertSame('', $sheet->getCell($column.'2')->getValue());
+            }
+            self::assertSame(1, $book->getSheetByName('Расходы позиций')->getHighestRow());
+        } finally {
+            $book->disconnectWorksheets();
+        }
     }
 
     public function test_own_cost_storage_preserves_sources_history_and_unknown_tax(): void
