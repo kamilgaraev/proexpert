@@ -162,9 +162,10 @@ final class BlogArticleForm
                             ->label(trans_message('blog_cms.field_author'))
                             ->options(fn (): array => SystemAdmin::query()->where('is_active', true)->orderBy('name')->pluck('name', 'id')->all())
                             ->default(fn (): ?int => Auth::guard('system_admin')->id())
+                            ->placeholder(fn (?BlogArticle $record): ?string => $record?->author_id ? $record->author_label : null)
                             ->searchable()
                             ->preload()
-                            ->required(),
+                            ->required(fn (?BlogArticle $record): bool => $record?->author_id === null),
                         Forms\Components\Select::make('category_id')
                             ->label(trans_message('blog_cms.field_category'))
                             ->options(fn (): array => BlogCategory::query()->marketing()->orderBy('sort_order')->pluck('name', 'id')->all())

@@ -42,6 +42,26 @@ class BlogMediaLibraryTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_temporary_upload_uses_signed_local_endpoint_when_permanent_storage_is_s3(): void
+    {
+        config(['filesystems.default' => 's3']);
+        \Illuminate\Support\Facades\Storage::fake('tmp-for-tests');
+        $this->assertFalse(\Livewire\Features\SupportFileUploads\FileUploadConfiguration::isUsingS3());
+        $file = UploadedFile::fake()->createWithContent('template.pdf', "%PDF-1.4\nTemplate");
+        $this->post(route('livewire.upload-file'), ['files' => [$file]])->assertStatus(401);
+        $url = \Illuminate\Support\Facades\URL::temporarySignedRoute('livewire.upload-file', now()->addMinutes(5));
+        $response = $this->post($url, ['files' => [$file]])->assertOk();
+        $reference = $response->json('paths.0');
+        $this->assertIsString($reference);
+        $path = \Livewire\Features\SupportFileUploads\TemporaryUploadedFile::extractPathFromSignedPath($reference);
+        $this->assertIsString($path);
+        $temporary = \Livewire\Features\SupportFileUploads\TemporaryUploadedFile::createFromLivewire($path);
+        $this->assertSame('template.pdf', $temporary->getClientOriginalName());
+        $this->assertSame("%PDF-1.4\nTemplate", $temporary->getContent());
+        $temporary->delete();
+        $this->assertFalse($temporary->exists());
+    }
+
     public function test_media_resource_declares_upload_guardrails_and_safe_replace_action(): void
     {
         $resourceSource = (string) file_get_contents(app_path('Filament/Resources/BlogMediaAssetResource.php'));
