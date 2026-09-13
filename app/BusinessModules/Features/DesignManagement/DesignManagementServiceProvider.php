@@ -24,6 +24,7 @@ final class DesignManagementServiceProvider extends ServiceProvider
         $this->app->singleton(Services\DesignPackageIssueRegisterService::class);
         $this->app->singleton(Services\DesignManagementService::class);
         $this->app->singleton(Services\DesignSourceLinkService::class);
+        $this->app->singleton(Services\BimConstructionProgressService::class);
         $this->app->bind(
             Services\Contracts\DesignModelRegistrationService::class,
             Services\DesignManagementService::class,
