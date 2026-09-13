@@ -468,6 +468,12 @@ final class EstimateFinanceTest extends TestCase
         }
         self::assertSame('0.03', $gross);
         self::assertSame('0.02', $net);
+        $firstHistory = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'own_cost_distribution', $cost->key);
+        $secondHistory = $this->finance->history($this->actor, $second->project_id, $second->id, 0, 'own_cost_distribution', $cost->key);
+        self::assertSame([$a['key'], $b['key']], array_column($firstHistory['data'], 'allocation_key'));
+        self::assertSame([$c['key']], array_column($secondHistory['data'], 'allocation_key'));
+        self::assertFalse($firstHistory['has_more']);
+        self::assertFalse($secondHistory['has_more']);
         $costReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
         self::assertSame('0.02', $costReport['source_totals']['RUB']['amount']);
         self::assertSame('0.01', $costReport['allocated_totals']['RUB']['amount']);
@@ -744,15 +750,19 @@ final class EstimateFinanceTest extends TestCase
         $denied = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
         $denied->shouldReceive('can')->andReturn(false);
         app()->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $denied);
-        $db::flushQueryLog();
-        $db::enableQueryLog();
-        try {
-            $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'own_cost', $original->key);
-            self::fail('Document history was exposed without source permission');
-        } catch (\Illuminate\Auth\Access\AuthorizationException) {
-            self::assertFalse(collect($db::getQueryLog())->contains(fn (array $query) => str_contains($query['query'], 'estimate_finance_own_cost_versions')));
-        } finally {
-            $db::disableQueryLog();
+        foreach (['own_cost', 'own_cost_distribution'] as $kind) {
+            $db::flushQueryLog();
+            $db::enableQueryLog();
+            try {
+                $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, $kind, $original->key);
+                self::fail('Document history was exposed without source permission');
+            } catch (\Illuminate\Auth\Access\AuthorizationException) {
+                self::assertFalse(collect($db::getQueryLog())->contains(fn (array $query) =>
+                    str_contains($query['query'], 'estimate_finance_own_cost_versions')
+                    || str_contains($query['query'], 'estimate_finance_own_cost_allocation_versions')));
+            } finally {
+                $db::disableQueryLog();
+            }
         }
     }
 
