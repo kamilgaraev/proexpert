@@ -20,6 +20,7 @@ final class EstimateFinanceProjectCash
         $distributionSources = [];
         $allocations = [];
         $positions = [];
+        $sections = [];
         foreach ($reports as $report) {
             if (! ($report['cash']['available'] ?? false)) {
                 return $denied;
@@ -36,6 +37,9 @@ final class EstimateFinanceProjectCash
             }
             foreach ($report['cash']['distribution']['positions'] ?? [] as $position) {
                 $positions[$position['estimate_id'].':'.$position['target_key']] = $position;
+            }
+            foreach ($report['cash']['distribution']['sections'] ?? [] as $section) {
+                $sections[$section['estimate_id'].':'.($section['section_id'] ?? 'none')] = $section;
             }
             foreach ($report['cash']['documents'] as $document) {
                 $documents[$document['id']] = $document;
@@ -60,6 +64,7 @@ final class EstimateFinanceProjectCash
         return ['available' => true, 'scope' => 'linked_contracts', 'sources' => $sources,
             'documents' => array_values($documents), 'summary' => $this->summary->calculate($sources),
             'distribution' => ['scope' => 'allocated_positions', 'sources' => array_values($distributionSources),
-                'allocations' => array_values($allocations), 'positions' => array_values($positions), 'totals' => $this->summary->calculate($facts)['totals']]];
+                'allocations' => array_values($allocations), 'positions' => array_values($positions), 'sections' => array_values($sections),
+                'totals' => $this->summary->calculate($facts)['totals']]];
     }
 }

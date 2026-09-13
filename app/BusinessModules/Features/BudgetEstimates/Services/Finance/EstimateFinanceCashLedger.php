@@ -23,11 +23,14 @@ final class EstimateFinanceCashLedger
         $rows = DB::table('estimate_finance_cash_allocations as cash')
             ->join('estimate_finance_allocations as allocation', 'allocation.id', '=', 'cash.allocation_id')
             ->join('estimates as estimate', 'estimate.id', '=', 'allocation.estimate_id')
+            ->leftJoin('estimate_items as item', fn ($join) => $join->on('item.id', '=', 'allocation.estimate_item_id')->on('item.estimate_id', '=', 'allocation.estimate_id'))
+            ->leftJoin('estimate_item_resources as resource', fn ($join) => $join->on('resource.id', '=', 'allocation.resource_id')->on('resource.estimate_item_id', '=', 'item.id'))
             ->whereIn('cash.payment_transaction_id', array_keys($sources))
             ->select(['cash.*', 'allocation.key as allocation_key', 'allocation.condition_version', 'allocation.contract_id',
                 'allocation.estimate_item_id', 'allocation.resource_id', 'allocation.organization_id as allocation_org',
                 'allocation.estimate_id as allocation_estimate', 'allocation.currency as allocation_currency',
-                'estimate.organization_id as estimate_org', 'estimate.project_id as estimate_project'])->orderBy('cash.id')->get();
+                'estimate.organization_id as estimate_org', 'estimate.project_id as estimate_project',
+                'item.estimate_section_id as section_id', 'item.name as item_name', 'resource.name as resource_name'])->orderBy('cash.id')->get();
         $allocations = [];
         $facts = [];
         $positionFacts = [];
@@ -61,6 +64,8 @@ final class EstimateFinanceCashLedger
             $key = $row->resource_id ? 'r:'.$row->resource_id : 'i:'.$row->estimate_item_id;
             $allocations[] = ['id' => (int) $row->id, 'key' => $row->key, 'estimate_id' => (int) $row->estimate_id,
                 'allocation_key' => $row->allocation_key, 'condition_version' => (int) $row->condition_version, 'target_key' => $key,
+                'section_id' => $row->section_id === null ? null : (int) $row->section_id,
+                'name' => $row->resource_id ? $row->resource_name : $row->item_name,
                 'transaction_id' => (int) $row->payment_transaction_id, 'version' => (int) $row->version,
                 'amount' => $row->amount, 'currency' => $row->currency, 'source_changed' => $changed];
             $fact = array_replace($source, ['transaction_id' => $row->id, 'amount' => $row->amount,

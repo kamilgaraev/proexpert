@@ -110,6 +110,11 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('100.00', $cashReport['distribution']['totals']['RUB']['difference']);
         self::assertSame('100.00', $cashReport['distribution']['positions'][0]['totals']['RUB']['difference']);
         $sections = array_column($cashReport['distribution']['sections'], null, 'section_id');
+        self::assertSame($child->id, $cashReport['distribution']['allocations'][0]['section_id']);
+        self::assertSame($this->item->name, $cashReport['distribution']['allocations'][0]['name']);
+        $combined = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceProjectCash::class)->combine([$fullCashReport, $fullCashReport], true);
+        self::assertCount(2, $combined['distribution']['sections']);
+        self::assertSame('100.00', $combined['distribution']['totals']['RUB']['difference']);
         self::assertCount(2, $sections);
         foreach ([$parent->id, $child->id] as $sectionId) {
             self::assertSame('100.00', $sections[$sectionId]['totals']['RUB']['difference']);
@@ -1496,7 +1501,7 @@ final class EstimateFinanceTest extends TestCase
         $result['estimates'][0]['contracts'][0]['number'] = '=NOT_A_FORMULA()';
         $book = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceExport::class)
             ->workbook($result['estimates'], 'without_vat', [], 'cash', null, $result['cash']);
-        self::assertSame(5, $book->getSheetCount());
+        self::assertSame(6, $book->getSheetCount());
         self::assertSame(2, $book->getSheet(0)->getHighestRow());
         self::assertEquals(300, $book->getSheet(0)->getCell('E2')->getValue());
         self::assertSame('Поступления минус выплаты', $book->getSheet(0)->getCell('E1')->getValue());
