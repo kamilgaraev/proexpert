@@ -309,6 +309,35 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('cost', $query->allocations($this->estimate)[0]['side']);
     }
 
+    public function test_migration_plan_pages_preserved_links_without_inventing_tax_or_writing_data(): void
+    {
+        $link = ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
+            'estimate_item_id' => $this->item->id, 'quantity' => '1', 'amount' => '120', 'amount_without_vat' => '100']);
+        $item = $this->item->replicate();
+        $item->save();
+        $next = ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
+            'estimate_item_id' => $item->id, 'quantity' => '2', 'amount' => '50']);
+        $planner = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceMigrationPlan::class);
+        $before = $link->fresh()->getAttributes();
+        $page = $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 1);
+        self::assertTrue($page['read_only']);
+        self::assertSame($link->id, $page['next_cursor']);
+        self::assertCount(1, $page['rows']);
+        self::assertSame('requires_review', $page['rows'][0]['status']);
+        self::assertFalse($page['rows'][0]['confirmed_margin_eligible']);
+        self::assertContains('tax_terms_not_recorded', $page['rows'][0]['source']['reasons']);
+        self::assertSame('120.00', $page['rows'][0]['source']['amount']);
+        self::assertSame('100.00', $page['rows'][0]['source']['amount_without_vat']);
+        self::assertSame($page, $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 1));
+        self::assertSame($before, $link->fresh()->getAttributes());
+        self::assertSame(0, EstimateFinanceAllocation::query()->count());
+        $second = $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id, $page['next_cursor'], 1);
+        self::assertSame($next->id, $second['rows'][0]['legacy_link_id']);
+        self::assertNull($second['next_cursor']);
+        $link->update(['amount' => '130']);
+        self::assertNotSame($page['rows'][0]['source_hash'], $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 1)['rows'][0]['source_hash']);
+    }
+
     public function test_own_cost_distribution_caps_all_estimates_and_keeps_exact_net_and_history(): void
     {
         $parent = EstimateSection::query()->create(['estimate_id' => $this->estimate->id, 'name' => 'Общий раздел', 'section_number' => '1']);
