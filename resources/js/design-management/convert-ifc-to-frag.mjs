@@ -5,6 +5,7 @@ import { ByteBuffer } from "flatbuffers";
 import pako from "pako";
 import * as FRAGS from "@thatopen/fragments";
 import { IfcAPI } from "web-ifc";
+import { getElementPropertySets } from "./ifc-element-properties.mjs";
 
 const [, , inputPath, outputPath, indexPath] = process.argv;
 const VIEWER_GEOMETRY_PROFILE = "ifc_properties_geometry_v2";
@@ -138,7 +139,7 @@ const namedProperties = (sets) => {
       const name = value(property.Name);
       if (name !== null) properties[String(name)] = value(property.NominalValue ?? property.LengthValue ?? property.AreaValue ?? property.VolumeValue ?? property.CountValue ?? property.WeightValue);
     }
-    result[setName] = properties;
+    result[setName] = { ...result[setName], ...properties };
   }
   return result;
 };
@@ -189,7 +190,7 @@ const extractIfcIndex = async (sourcePath, destination) => {
       const item = api.GetLine(modelID, expressID, false);
       if (!item || !api.IsIfcElement(item.type)) continue;
       const [propertySets, materials] = await Promise.all([
-        api.properties.getPropertySets(modelID, expressID, true, true),
+        getElementPropertySets(api, modelID, expressID),
         api.properties.getMaterialsProperties(modelID, expressID, true, true),
       ]);
       await output.write(`${JSON.stringify({
