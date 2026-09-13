@@ -8,6 +8,9 @@ final class PreviewEstimateFinanceRequest extends SaveEstimateFinanceRequest
 {
     public function rules(): array
     {
+        if ($this->input('preview_operation') === 'migration_plan') {
+            return self::migrationPlanRules();
+        }
         if ($this->input('preview_operation') === 'own_cost_options') {
             return self::ownCostOptionsRules();
         }
@@ -30,6 +33,15 @@ final class PreviewEstimateFinanceRequest extends SaveEstimateFinanceRequest
             'kind' => ['required', 'in:categories,documents'],
             'query' => ['sometimes', 'string', 'max:200'],
             'after' => ['sometimes', 'integer', 'min:0'],
+        ];
+    }
+
+    public static function migrationPlanRules(): array
+    {
+        return [
+            'preview_operation' => ['required', 'in:migration_plan'],
+            'after' => ['sometimes', 'integer', 'min:0'],
+            'limit' => ['sometimes', 'integer', 'min:1', 'max:500'],
         ];
     }
 

@@ -36,6 +36,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceOwnCostReport $ownCostReport,
         private readonly EstimateFinanceOwnCostOptions $ownCostOptions,
         private readonly EstimateFinanceCashDistribution $cashDistribution,
+        private readonly EstimateFinanceMigrationPlan $migrationPlan,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat', string $view = 'plan'): array
@@ -238,6 +239,11 @@ final class EstimateFinanceService
 
     public function preview(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['preview_operation'] ?? null) === 'migration_plan') {
+            $data = FinanceInputValidation::validate($input, \App\BusinessModules\Features\BudgetEstimates\Http\Requests\PreviewEstimateFinanceRequest::migrationPlanRules());
+
+            return $this->migrationPlan->report($actor, $projectId, $estimateId, (int) ($data['after'] ?? 0), (int) ($data['limit'] ?? 100));
+        }
         if (($input['preview_operation'] ?? null) === 'own_cost_options') {
             return $this->ownCostOptions->search($actor, $projectId, $estimateId, $input);
         }

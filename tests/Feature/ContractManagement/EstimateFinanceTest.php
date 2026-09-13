@@ -329,6 +329,17 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('120.00', $page['rows'][0]['source']['amount']);
         self::assertSame('100.00', $page['rows'][0]['source']['amount_without_vat']);
         self::assertSame($page, $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 1));
+        self::assertSame($page, $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id,
+            ['preview_operation' => 'migration_plan', 'after' => 0, 'limit' => 1]));
+        foreach ([-1, 0, 501] as $invalidLimit) {
+            try {
+                $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id,
+                    ['preview_operation' => 'migration_plan', 'limit' => $invalidLimit]);
+                self::fail('Invalid migration page size accepted');
+            } catch (ValidationException) {
+                self::assertTrue(true);
+            }
+        }
         self::assertSame($before, $link->fresh()->getAttributes());
         self::assertSame(0, EstimateFinanceAllocation::query()->count());
         $second = $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id, $page['next_cursor'], 1);
