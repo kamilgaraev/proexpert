@@ -9,6 +9,7 @@ use App\Models\Blog\BlogArticle;
 use App\Models\SystemAdmin;
 use App\Services\Blog\BlogCmsService;
 use App\Services\Blog\BlogMediaService;
+use App\Services\Blog\BlogLegacyDocumentService;
 use Filament\Actions\Action;
 use Filament\Actions\ActionGroup;
 use Filament\Forms;
@@ -79,6 +80,7 @@ class EditBlogArticle extends EditRecord
         /** @var BlogArticle $record */
         $record = $this->getRecord();
         $data['tag_ids'] = $record->tags()->pluck('blog_tags.id')->all();
+        $data['editor_document'] = app(BlogLegacyDocumentService::class)->forEditor($record);
 
         return $data;
     }

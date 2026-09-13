@@ -384,8 +384,9 @@ const registerBlogInlineBlockEditor = (Alpine) => {
         },
 
         focusBlock(index) {
+            const root = this.$root;
             this.$nextTick(() => {
-                this.$root.querySelector(`[data-blog-block-input="${index}"]`)?.focus();
+                root?.querySelector(`[data-blog-block-input="${index}"]`)?.focus();
             });
         },
 

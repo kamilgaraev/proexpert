@@ -28,6 +28,7 @@ class BlogCmsService
         private readonly BlogEditorialChecklistService $editorialChecklist,
         private readonly BlogRevisionService $revisionService,
         private readonly BlogArticleMaterialsService $materialsService,
+        private readonly BlogLegacyDocumentService $legacyDocumentService,
     ) {
     }
 
@@ -192,6 +193,7 @@ class BlogCmsService
         $editorDocument = array_key_exists('editor_document', $data)
             ? Arr::wrap($data['editor_document'])
             : ($article?->editor_document ?? []);
+        $editorDocument = $this->legacyDocumentService->normalize($editorDocument, $article);
         $editorDocument = $this->materialsService->normalize($editorDocument);
         $content = $this->documentRenderer->render($editorDocument);
         $title = trim((string) ($data['title'] ?? $article?->title ?? ''));
