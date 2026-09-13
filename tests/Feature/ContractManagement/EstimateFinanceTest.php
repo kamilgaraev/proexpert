@@ -2806,6 +2806,36 @@ final class EstimateFinanceTest extends TestCase
         self::assertDatabaseCount('estimate_finance_allocations', 2);
     }
 
+    public function test_client_coverage_regression_keeps_sixteen_positions_without_excluded_amount(): void
+    {
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $this->item->update(['quantity' => '1', 'quantity_total' => '1', 'unit_price' => '1000000', 'total_amount' => '1000000']);
+        $ids = [$this->item->id];
+        for ($index = 2; $index <= 16; $index++) {
+            $item = $this->item->replicate();
+            $amount = $index === 16 ? '11533906.30' : '1000000.00';
+            $item->forceFill(['position_number' => (string) $index, 'unit_price' => $amount, 'total_amount' => $amount])->save();
+            $ids[] = $item->id;
+        }
+        $excluded = $this->item->replicate();
+        $excluded->forceFill(['position_number' => '17', 'is_not_accounted' => true, 'total_amount' => '154253129.99'])->save();
+        $ids[] = $excluded->id;
+        $service = app(ContractEstimateService::class);
+        $service->attachItems($this->contractor, $this->estimate, $ids, false, $this->actor);
+        $coverage = app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class);
+        $summary = $coverage->getContractCoverageSummary($this->contractor);
+        self::assertSame(16, $summary['summary']['linked_items_count']);
+        self::assertSame(26533906.30, $summary['summary']['linked_amount']);
+        self::assertSame(26533906.30, $coverage->getCoverageForEstimate($this->estimate)['primary_contract']['linked_amount']);
+        self::assertSame(26533906.30, $service->calculateContractEstimateTotal($this->contractor));
+        $report = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat');
+        self::assertSame('26533906.30', $report['totals'][0]['cost']);
+        $project = $this->finance->projectReport($this->actor, $this->estimate->project_id, 'without_vat');
+        self::assertSame($report['totals'], $project['totals']);
+        self::assertFalse(EstimateFinanceAllocation::query()->where('estimate_item_id', $excluded->id)->exists());
+        self::assertCount(16, $service->getItemsForContract($this->contractor, $this->estimate->id));
+    }
+
     public function test_initial_amount_matches_attached_roots_and_explicit_tax(): void
     {
         $child = $this->item->replicate();
@@ -3032,10 +3062,11 @@ final class EstimateFinanceTest extends TestCase
 
     public function test_resync_preserves_link_identifiers_and_agreed_prices_after_estimate_change(): void
     {
+        $this->app->forgetInstance(ContractEstimateService::class);
         $this->save($this->command([$this->line($this->customer, '100', '1000000'), $this->line($this->contractor, '100', '800000')]));
         $link = ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->firstOrFail();
         $this->item->update(['unit_price' => '15000', 'total_amount' => '1500000']);
-        app(ContractEstimateService::class)->syncItems($this->contractor, $this->estimate, [$this->item->id]);
+        app(ContractEstimateService::class)->syncItems($this->contractor, $this->estimate, [$this->item->id], actor: $this->actor);
         self::assertSame($link->id, $link->fresh()->id);
         self::assertSame('800000.00', $link->fresh()->amount);
         self::assertContains('estimate_changed', $this->report()['rows'][0]['warnings']);
@@ -3201,7 +3232,7 @@ final class EstimateFinanceTest extends TestCase
         $this->save($this->command([]));
         self::assertSame($link->id, $link->fresh()->id);
         self::assertSame('0.00', $link->fresh()->amount);
-        app(ContractEstimateService::class)->detachItems($this->contractor, [$this->item->id]);
+        app(ContractEstimateService::class)->detachItems($this->contractor, [$this->item->id], $this->actor);
         self::assertTrue($this->item->fresh()->delete());
     }
 
