@@ -1447,6 +1447,71 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_execution_history_preserves_changes_paginates_and_scopes_organization(): void
+    {
+        $line = $this->line($this->customer, '100', '1000');
+        $this->save($this->command([$line]));
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'HISTORY-EXECUTION', 'act_date' => '2026-09-13',
+            'amount' => '100', 'amount_without_vat' => '100', 'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+        $command = ['operation' => 'execution_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'act_id' => $act->id,
+            'lines' => [['allocation_key' => $line['key'], 'condition_version' => 1, 'version' => 0, 'amount' => '60', 'quantity' => '10']]];
+        $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
+        $this->save($command);
+        $command['mutation_id'] = (string) Str::uuid();
+        $command['revision'] = (int) $this->estimate->fresh()->finance_revision;
+        $command['lines'][0] = array_replace($command['lines'][0], ['version' => 1, 'amount' => '0', 'quantity' => '0']);
+        $this->save($command);
+        $history = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'execution');
+        self::assertCount(2, $history['data']);
+        self::assertFalse($history['has_more']);
+        self::assertNull($history['data'][0]['before']);
+        self::assertSame($this->actor->name, $history['data'][0]['actor']['name']);
+        self::assertSame('HISTORY-EXECUTION', $history['data'][0]['act']['number']);
+        self::assertSame('60.00', $history['data'][1]['before']['amount_with_vat']);
+        self::assertSame('0.00', $history['data'][1]['after']['amount_with_vat']);
+        self::assertSame($history['data'][0]['distribution_key'], $history['data'][1]['distribution_key']);
+        self::assertArrayNotHasKey('source_snapshot', $history['data'][1]['after']);
+        $db = \Illuminate\Support\Facades\DB::class;
+        $template = (array) $db::table('estimate_finance_execution_versions')->orderByDesc('id')->first();
+        unset($template['id']);
+        $extra = [];
+        for ($version = 3; $version <= 102; $version++) {
+            $extra[] = array_replace($template, ['version' => $version, 'finance_revision' => $version, 'mutation_id' => (string) Str::uuid()]);
+        }
+        $db::table('estimate_finance_execution_versions')->insert($extra);
+        $firstPage = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'execution');
+        self::assertCount(100, $firstPage['data']);
+        self::assertTrue($firstPage['has_more']);
+        $lastPage = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, $firstPage['next_cursor'], 'execution');
+        self::assertCount(2, $lastPage['data']);
+        self::assertSame(101, $lastPage['data'][0]['version']);
+        self::assertNull($lastPage['next_cursor']);
+        $foreign = Organization::factory()->create();
+        $db::table('estimate_finance_execution_allocations')->where('performance_act_id', $act->id)->update(['organization_id' => $foreign->id]);
+        self::assertSame([], $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'execution')['data']);
+    }
+
+    public function test_execution_history_does_not_query_fact_without_act_permission(): void
+    {
+        $this->mock(AuthorizationService::class)->shouldReceive('can')
+            ->andReturnUsing(static fn ($actor, $permission): bool => ! in_array($permission, ['act_reports.view', 'contracts.performance_acts.view'], true));
+        $db = \Illuminate\Support\Facades\DB::class;
+        $db::enableQueryLog();
+        $db::flushQueryLog();
+        try {
+            app(EstimateFinanceService::class)->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'execution');
+            self::fail('Execution history requires act visibility');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            foreach ($db::getQueryLog() as $query) {
+                self::assertDoesNotMatchRegularExpression('/estimate_finance_execution_|contract_performance_acts/', $query['query']);
+            }
+        } finally {
+            $db::disableQueryLog();
+        }
+    }
+
     public function test_execution_report_accepts_contract_permission_in_project_context(): void
     {
         $projectId = (int) $this->estimate->project_id;

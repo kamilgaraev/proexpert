@@ -53,4 +53,49 @@ final class EstimateFinanceHistory
 
         return ['data' => $page, 'has_more' => $hasMore, 'next_cursor' => $hasMore ? end($page)['id'] : null];
     }
+
+    public function forExecution(Estimate $estimate, int $afterId = 0): array
+    {
+        $rows = DB::table('estimate_finance_execution_versions as history')
+            ->join('estimate_finance_execution_allocations as fact', 'fact.id', '=', 'history.execution_allocation_id')
+            ->join('estimate_finance_allocations as conditions', 'conditions.id', '=', 'fact.allocation_id')
+            ->join('contract_performance_acts as acts', 'acts.id', '=', 'fact.performance_act_id')
+            ->join('contracts', 'contracts.id', '=', 'acts.contract_id')
+            ->join('estimate_items as items', 'items.id', '=', 'conditions.estimate_item_id')
+            ->leftJoin('estimate_item_resources as resources', fn ($join) => $join->on('resources.id', '=', 'conditions.resource_id')
+                ->on('resources.estimate_item_id', '=', 'items.id'))
+            ->leftJoin('users as actors', 'actors.id', '=', 'history.actor_id')
+            ->where('fact.organization_id', $estimate->organization_id)->where('fact.project_id', $estimate->project_id)->where('fact.estimate_id', $estimate->id)
+            ->where('conditions.organization_id', $estimate->organization_id)->where('conditions.estimate_id', $estimate->id)
+            ->where('items.estimate_id', $estimate->id)->whereColumn('conditions.contract_id', 'acts.contract_id')
+            ->where('contracts.organization_id', $estimate->organization_id)->where('contracts.project_id', $estimate->project_id)
+            ->where('acts.project_id', $estimate->project_id)->where('history.id', '>', $afterId)
+            ->orderBy('history.id')->limit(101)
+            ->select('history.id', 'history.version', 'history.finance_revision', 'history.actor_id', 'history.created_at', 'history.before', 'history.after',
+                'actors.name as actor_name', 'fact.key as distribution_key', 'conditions.key as allocation_key', 'conditions.resource_id', 'conditions.estimate_item_id',
+                'acts.id as act_id', 'acts.act_document_number as act_number', 'acts.status as act_status', 'contracts.id as contract_id', 'contracts.number as contract_number')
+            ->selectRaw('COALESCE(resources.name, items.name) AS title')->get();
+        $hasMore = $rows->count() > 100;
+        $page = $rows->take(100)->map(function (object $row): array {
+            return ['id' => (int) $row->id, 'version' => (int) $row->version, 'finance_revision' => (int) $row->finance_revision,
+                'created_at' => $row->created_at, 'actor' => ['id' => (int) $row->actor_id, 'name' => $row->actor_name],
+                'distribution_key' => $row->distribution_key, 'allocation_key' => $row->allocation_key,
+                'target_key' => $row->resource_id === null ? 'i:'.$row->estimate_item_id : 'r:'.$row->resource_id, 'title' => $row->title,
+                'act' => ['id' => (int) $row->act_id, 'number' => $row->act_number, 'status' => $row->act_status],
+                'contract' => ['id' => (int) $row->contract_id, 'number' => $row->contract_number],
+                'before' => $this->executionSnapshot($row->before), 'after' => $this->executionSnapshot($row->after)];
+        })->values()->all();
+
+        return ['data' => $page, 'has_more' => $hasMore, 'next_cursor' => $hasMore ? end($page)['id'] : null];
+    }
+
+    private function executionSnapshot(?string $value): ?array
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        return array_intersect_key(json_decode($value, true, 512, JSON_THROW_ON_ERROR),
+            array_flip(['quantity', 'amount_with_vat', 'amount_without_vat', 'currency', 'condition_version']));
+    }
 }

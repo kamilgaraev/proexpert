@@ -32,9 +32,9 @@ class EstimateFinanceController extends Controller
         return AdminResponse::success($this->finance->itemReport($request->user(), $project, $estimate, $item, $request->string('basis', 'with_vat')->toString()));
     }
 
-    public function history(Request $request, int $project, int $estimate): mixed
+    public function history(\App\BusinessModules\Features\BudgetEstimates\Http\Requests\EstimateFinanceHistoryRequest $request, int $project, int $estimate): mixed
     {
-        return AdminResponse::success($this->finance->history($request->user(), $project, $estimate, $request->integer('after_id')));
+        return AdminResponse::success($this->finance->history($request->user(), $project, $estimate, $request->integer('after_id'), $request->string('kind', 'conditions')->toString()));
     }
 
     public function preview(PreviewEstimateFinanceRequest $request, int $project, int $estimate): mixed

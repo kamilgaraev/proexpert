@@ -220,9 +220,19 @@ final class EstimateFinanceService
         ];
     }
 
-    public function history(User $actor, int $projectId, int $estimateId, int $afterId = 0): array
+    public function history(User $actor, int $projectId, int $estimateId, int $afterId = 0, string $kind = 'conditions'): array
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
+        if (! in_array($kind, ['conditions', 'execution'], true) || $afterId < 0) {
+            $this->invalid();
+        }
+        if ($kind === 'execution') {
+            if (! $this->access->canViewExecution($actor, $projectId)) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+
+            return $this->history->forExecution($estimate, $afterId);
+        }
 
         $history = $this->history->forEstimate($estimate, max(0, $afterId));
         if (! $this->access->canViewExecution($actor, (int) $estimate->project_id)) {
