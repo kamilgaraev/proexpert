@@ -816,6 +816,47 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($row['key'], $db::table('estimate_finance_own_costs')->where('id', $id)->value('key'));
     }
 
+    public function test_execution_distribution_storage_preserves_unknown_values_and_fact_references(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'UNDISTRIBUTED',
+            'act_date' => '2026-09-13', 'amount' => '100', 'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+        $db = \Illuminate\Support\Facades\DB::class;
+        $row = ['key' => (string) Str::uuid(), 'organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'estimate_id' => $this->estimate->id, 'allocation_id' => $allocation->id,
+            'performance_act_id' => $act->id, 'currency' => 'RUB', 'quantity' => null, 'amount_with_vat' => '60.00',
+            'amount_without_vat' => null, 'version' => 1, 'condition_version' => 1,
+            'source_hash' => hash('sha256', 'act'), 'source_snapshot' => json_encode(['amount' => '100']),
+            'condition_snapshot' => json_encode(['allocation_key' => $allocation->key]),
+            'updated_by' => $this->actor->id, 'created_at' => now(), 'updated_at' => now()];
+        $id = $db::table('estimate_finance_execution_allocations')->insertGetId($row);
+        $db::table('estimate_finance_execution_versions')->insert(['execution_allocation_id' => $id, 'version' => 1,
+            'mutation_id' => (string) Str::uuid(), 'finance_revision' => 1, 'before' => null, 'after' => json_encode($row),
+            'actor_id' => $this->actor->id, 'created_at' => now()]);
+        $stored = $db::table('estimate_finance_execution_allocations')->where('id', $id)->first();
+        self::assertNull($stored->quantity);
+        self::assertNull($stored->amount_without_vat);
+        foreach ([
+            fn () => $db::table('estimate_finance_execution_allocations')->insert(array_replace($row, ['key' => (string) Str::uuid()])),
+            fn () => $db::table('contract_performance_acts')->where('id', $act->id)->delete(),
+            fn () => $db::table('estimate_finance_allocations')->where('id', $allocation->id)->delete(),
+            fn () => $db::table('estimate_finance_execution_allocations')->where('id', $id)->delete(),
+            fn () => $db::table('estimate_finance_execution_allocations')->where('id', $id)->update(['amount_without_vat' => '61']),
+            fn () => $db::table('estimate_finance_execution_allocations')->where('id', $id)->update(['quantity' => '-1']),
+        ] as $invalidWrite) {
+            try {
+                $db::transaction($invalidWrite);
+                self::fail('Execution source, history or amount constraint was bypassed');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                self::assertContains($exception->getCode(), ['23505', '23503', '23514']);
+            }
+        }
+        self::assertSame('100.00', $act->fresh()->amount);
+        self::assertSame('60.00', $db::table('estimate_finance_execution_allocations')->where('id', $id)->value('amount_with_vat'));
+    }
+
     public function test_cash_allocation_storage_preserves_signed_amount_and_prevents_duplicate_transaction_target(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
