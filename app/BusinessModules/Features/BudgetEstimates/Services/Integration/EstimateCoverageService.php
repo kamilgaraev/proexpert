@@ -97,6 +97,7 @@ class EstimateCoverageService
             ->where('estimate_id', $estimate->id)
             ->countedInCoverage()
             ->withFinancialAmounts()
+            ->addSelect('contract_estimate_items.amount as saved_amount')
             ->with('contract.contractor')
             ->get()
             ->groupBy('contract_id');
@@ -127,6 +128,7 @@ class EstimateCoverageService
                 'linked_items_count' => $linkedItemsCount,
                 'available_items_count' => max(0, $totalItems - $linkedItemsCount),
                 'linked_amount' => EstimateFinanceAmounts::sum($group, 'amount'),
+                'saved_linked_amount' => EstimateFinanceAmounts::sum($group, 'saved_amount'),
                 'is_full' => $coverageStatus === 'full_link',
             ];
         })->values();
