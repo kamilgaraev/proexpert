@@ -6,10 +6,13 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Finance;
 
 use App\Models\Estimate;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 final class EstimateFinanceRemainder
 {
+    public function __construct(private readonly EstimateFinanceQuery $query, private readonly EstimateFinanceExecution $execution) {}
+
     public function apply(Estimate $estimate, array $rows): array
     {
         $facts = $this->acceptedFacts($estimate, array_column($rows, 'key'));
@@ -20,7 +23,7 @@ final class EstimateFinanceRemainder
             if ($accepted === null) {
                 continue;
             }
-            if ($accepted['amount_without_vat'] === null || $row['amount_without_vat'] === null || $row['amount_with_vat'] === null
+            if ($accepted['quantity'] === null || $accepted['amount_with_vat'] === null || $accepted['amount_without_vat'] === null || $row['amount_without_vat'] === null || $row['amount_with_vat'] === null
                 || ! in_array($row['price_basis'], ['with_vat', 'without_vat'], true)) {
                 $this->invalid();
             }
@@ -50,27 +53,30 @@ final class EstimateFinanceRemainder
 
     public function acceptedFacts(Estimate $estimate, array $keys): array
     {
+        $keys = array_values(array_filter($keys, static fn (string $key): bool => Str::isUuid($key)));
         if ($keys === []) {
             return [];
         }
-        $lines = DB::table('performance_act_lines as lines')
-            ->join('contract_performance_acts as acts', 'acts.id', '=', 'lines.performance_act_id')
-            ->join('contracts', 'contracts.id', '=', 'acts.contract_id')
-            ->where('contracts.organization_id', $estimate->organization_id)->where('acts.project_id', $estimate->project_id)
-            ->whereNull('acts.annulled_at')->whereIn('acts.status', ['approved', 'signed'])
-            ->where('lines.basis_snapshot->basis_type', 'contract_conditions')
-            ->whereIn('lines.basis_snapshot->allocation_key', $keys)
-            ->select(['lines.quantity', 'lines.amount', 'lines.basis_snapshot'])->get();
+        $allocations = DB::table('estimate_finance_allocations')->where('organization_id', $estimate->organization_id)
+            ->where('estimate_id', $estimate->id)->whereIn('key', $keys)->get(['key', 'contract_id', 'estimate_item_id', 'resource_id', 'currency'])->keyBy('key');
+        if ($allocations->isEmpty()) {
+            return [];
+        }
+        $report = $this->execution->report($estimate, $this->query->contracts($estimate));
         $facts = [];
-        foreach ($lines as $line) {
-            $snapshot = json_decode($line->basis_snapshot, true, 512, JSON_THROW_ON_ERROR);
-            $key = $snapshot['allocation_key'];
+        foreach ($report['rows'] as $line) {
+            $key = $line['allocation_key'];
+            $allocation = $allocations->get($key);
+            if ($allocation === null) {
+                continue;
+            }
             $facts[$key] ??= ['quantity' => '0', 'amount_without_vat' => '0', 'amount_with_vat' => '0'];
-            $facts[$key]['quantity'] = FinanceDecimal::add($facts[$key]['quantity'], (string) $line->quantity);
-            $facts[$key]['amount_with_vat'] = FinanceDecimal::add($facts[$key]['amount_with_vat'], (string) $line->amount);
-            $basePrice = $snapshot['base_unit_price'] ?? null;
-            $facts[$key]['amount_without_vat'] = $facts[$key]['amount_without_vat'] === null || $basePrice === null
-                ? null : FinanceDecimal::add($facts[$key]['amount_without_vat'], FinanceDecimal::multiply((string) $line->quantity, (string) $basePrice, 8));
+            $scoped = (int) $allocation->contract_id === (int) $line['contract_id'] && (int) $allocation->estimate_item_id === (int) $line['item_id']
+                && $allocation->currency === $line['currency'] && (int) ($allocation->resource_id ?? 0) === (int) ($line['resource_id'] ?? 0);
+            foreach (['quantity', 'amount_without_vat', 'amount_with_vat'] as $field) {
+                $facts[$key][$field] = ! $scoped || $facts[$key][$field] === null || $line[$field] === null
+                    ? null : FinanceDecimal::add($facts[$key][$field], (string) $line[$field]);
+            }
         }
         foreach ($facts as &$fact) {
             $fact['amount_without_vat'] = $fact['amount_without_vat'] === null ? null : FinanceDecimal::value($fact['amount_without_vat']);

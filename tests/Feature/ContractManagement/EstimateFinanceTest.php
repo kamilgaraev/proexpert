@@ -2090,6 +2090,51 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_manual_execution_keeps_historical_price_and_unknown_volume_blocks_repricing(): void
+    {
+        $line = $this->line($this->contractor, '100', '600000');
+        $line['vat_mode'] = 'included';
+        $line['vat_rate'] = '20';
+        $line['price_basis'] = 'with_vat';
+        $this->save($this->command([$line]));
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'MANUAL-REMAINDER', 'act_date' => '2026-09-13',
+            'amount' => '120000', 'amount_without_vat' => '100000', 'currency' => 'RUB', 'status' => 'approved', 'is_approved' => true]);
+        $distribution = ['operation' => 'execution_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'act_id' => $act->id,
+            'lines' => [['allocation_key' => $line['key'], 'condition_version' => 1, 'version' => 0, 'amount' => '120000', 'quantity' => '20']]];
+        $distribution['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $distribution)['source_hash'];
+        $this->save($distribution);
+        $db = \Illuminate\Support\Facades\DB::class;
+        $before = (array) $db::table('estimate_finance_execution_allocations')->first();
+        $actBefore = $act->fresh()->getAttributes();
+        $line['method'] = 'unit';
+        $line['unit_price'] = '12000';
+        foreach ([1, 2] as $attempt) {
+            $this->save($this->command([$line]));
+            $saved = EstimateFinanceAllocation::query()->where('key', $line['key'])->firstOrFail();
+            self::assertSame('1080000.00', $saved->amount_with_vat);
+            self::assertSame('900000.00', $saved->amount_without_vat);
+            self::assertSame('120000.00', $saved->accepted_basis['amount_with_vat']);
+            self::assertSame('960000.00', $saved->condition_basis['amount_with_vat']);
+        }
+        self::assertSame($before, (array) $db::table('estimate_finance_execution_allocations')->first());
+        self::assertSame($actBefore, $act->fresh()->getAttributes());
+        $distribution['revision'] = (int) $this->estimate->fresh()->finance_revision;
+        $distribution['mutation_id'] = (string) Str::uuid();
+        $distribution['lines'][0]['condition_version'] = (int) $saved->condition_version;
+        $distribution['lines'][0]['version'] = 1;
+        $distribution['lines'][0]['quantity'] = null;
+        $this->save($distribution);
+        self::assertNull($this->report()['rows'][0]['allocations'][0]['accepted_basis']['quantity']);
+        try {
+            $this->save($this->command([$line]));
+            self::fail('Unknown accepted volume must not be repriced as zero');
+        } catch (ValidationException) {
+            self::assertSame('1080000.00', $saved->fresh()->amount_with_vat);
+        }
+    }
+
     public function test_legacy_detach_preserves_other_contract_conditions(): void
     {
         $cost = $this->line($this->contractor, '100', '800000');
