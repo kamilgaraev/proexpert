@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Finance;
 use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 final class EstimateFinanceExecution
 {
@@ -27,6 +28,16 @@ final class EstimateFinanceExecution
         $legacyActs = $acts->filter(fn (ContractPerformanceAct $act): bool => $act->lines->isEmpty());
         $legacyActs->load(['completedWorks' => fn ($query) => $query->where('organization_id', $estimate->organization_id)
             ->where('project_id', $estimate->project_id), 'completedWorks.estimateItem:id,estimate_id']);
+        $keys = $acts->flatMap(fn ($act) => $act->lines)->map(fn ($line) => data_get($line->basis_snapshot, 'allocation_key'))
+            ->filter(fn ($key) => is_string($key) && Str::isUuid($key))->unique();
+        $resourceConditions = $keys->isEmpty() ? collect() : DB::table('estimate_finance_allocations as conditions')
+            ->join('estimates', 'estimates.id', '=', 'conditions.estimate_id')
+            ->join('estimate_item_resources as resources', 'resources.id', '=', 'conditions.resource_id')
+            ->where('conditions.organization_id', $estimate->organization_id)->where('estimates.organization_id', $estimate->organization_id)
+            ->where('estimates.project_id', $estimate->project_id)->where('conditions.source', 'contract')
+            ->whereIn('conditions.contract_id', array_keys($contracts))->whereIn('conditions.key', $keys)
+            ->whereColumn('resources.estimate_item_id', 'conditions.estimate_item_id')
+            ->get(['conditions.key', 'conditions.contract_id', 'conditions.estimate_id', 'conditions.estimate_item_id', 'conditions.resource_id', 'conditions.currency'])->keyBy('key');
         $rows = [];
         $documents = [];
         foreach ($acts as $act) {
@@ -39,17 +50,23 @@ final class EstimateFinanceExecution
             $lines = [];
             foreach ($act->lines as $line) {
                 $snapshot = $line->basis_snapshot ?? [];
-                $base = ($snapshot['basis_type'] ?? null) === 'contract_conditions'
+                $scopedSnapshot = ($snapshot['basis_type'] ?? null) === 'contract_conditions'
                     && (int) ($snapshot['contract_id'] ?? 0) === (int) $act->contract_id
                     && (int) ($snapshot['estimate_item_id'] ?? 0) === (int) $line->estimate_item_id
                     && (int) ($snapshot['estimate_id'] ?? 0) === (int) $line->estimateItem?->estimate_id
-                    && ($snapshot['currency'] ?? null) === ($line->currency ?: $currency)
-                    ? ($snapshot['base_unit_price'] ?? null) : null;
+                    && ($snapshot['currency'] ?? null) === ($line->currency ?: $currency);
+                $base = $scopedSnapshot ? ($snapshot['base_unit_price'] ?? null) : null;
+                $condition = $resourceConditions->get($snapshot['allocation_key'] ?? '');
+                $resourceId = $scopedSnapshot && $condition !== null
+                    && (int) $condition->contract_id === (int) $act->contract_id
+                    && (int) $condition->estimate_id === (int) $line->estimateItem?->estimate_id
+                    && (int) $condition->estimate_item_id === (int) $line->estimate_item_id
+                    && $condition->currency === ($line->currency ?: $currency) ? (int) $condition->resource_id : null;
                 if ($line->quantity === null || ! is_string($base) || ! preg_match('/^-?\d+(\.\d+)?$/', $base)) {
                     $base = null;
                 }
                 $lines[] = ['source_type' => 'act_line', 'source_id' => (int) $line->id,
-                    'item_id' => $line->estimate_item_id, 'estimate_id' => $line->estimateItem?->estimate_id,
+                    'item_id' => $line->estimate_item_id, 'resource_id' => $resourceId, 'estimate_id' => $line->estimateItem?->estimate_id,
                     'title' => $line->title, 'quantity' => $line->quantity,
                     'amount_with_vat' => $line->amount, 'currency' => $line->currency ?: $currency,
                     'amount_without_vat' => $base === null ? null : FinanceDecimal::multiply((string) $line->quantity, $base, 8),
@@ -58,7 +75,7 @@ final class EstimateFinanceExecution
             if ($act->lines->isEmpty()) {
                 foreach ($act->completedWorks as $work) {
                     $lines[] = ['source_type' => 'act_work', 'source_id' => (int) $work->id,
-                        'item_id' => $work->estimate_item_id, 'estimate_id' => $work->estimateItem?->estimate_id,
+                        'item_id' => $work->estimate_item_id, 'resource_id' => null, 'estimate_id' => $work->estimateItem?->estimate_id,
                         'title' => $work->description, 'quantity' => $work->pivot->included_quantity,
                         'amount_with_vat' => $work->pivot->included_amount, 'currency' => $work->pivot->currency ?: $currency,
                         'amount_without_vat' => null, 'allocation_key' => null, 'condition_version' => null];

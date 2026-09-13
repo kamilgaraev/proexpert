@@ -2131,6 +2131,7 @@ final class EstimateFinanceTest extends TestCase
                 'line_type' => 'manual', 'title' => 'Отдельная оплата', 'quantity' => $condition['quantity'], 'unit_price' => '1', 'amount' => $condition['quantity'],
                 'currency' => 'RUB', 'manual_reason' => 'Проверка', 'created_by' => $this->actor->id,
                 'basis_snapshot' => ['basis_type' => 'contract_conditions', 'allocation_key' => $condition['key'],
+                    'currency' => 'RUB', 'base_unit_price' => '1', 'condition_version' => 1,
                     'estimate_id' => $this->estimate->id, 'contract_id' => $this->contractor->id, 'estimate_item_id' => $this->item->id]]);
         }
         $guard = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard::class);
@@ -2139,6 +2140,23 @@ final class EstimateFinanceTest extends TestCase
         $accepted = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAcceptedVolume::class);
         $quantities = $accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id]);
         self::assertSame(0, FinanceDecimal::compare($quantities[$this->contractor->id.':'.$this->item->id], '100'));
+        $report = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution');
+        $facts = array_column($report['execution']['rows'], null, 'allocation_key');
+        self::assertNull($facts[$workCondition['key']]['resource_id']);
+        self::assertSame((int) $resource->id, $facts[$resourceCondition['key']]['resource_id']);
+        $volumes = array_column($report['execution']['summary']['contract_quantities'], null, 'target_key');
+        self::assertSame(0, FinanceDecimal::compare($volumes['i:'.$this->item->id]['accepted_quantity'], '100'));
+        self::assertSame(0, FinanceDecimal::compare($volumes['r:'.$resource->id]['accepted_quantity'], '1000'));
+        self::assertSame('1100.00', $report['execution']['summary']['totals']['RUB']['cost']);
+        $basis = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceRemainder::class)
+            ->acceptedFacts($this->estimate, [$resourceCondition['key']]);
+        self::assertSame(0, FinanceDecimal::compare($basis[$resourceCondition['key']]['quantity'], '1000'));
+        self::assertSame('1000.00', $basis[$resourceCondition['key']]['amount_without_vat']);
+        $book = app(EstimateFinanceExport::class)->workbook([$report], 'without_vat', [], 'execution');
+        $exportVolumes = array_column($book->getSheet(3)->toArray(), null, 1);
+        self::assertSame(1000.0, (float) $exportVolumes['Отдельный материал'][6]);
+        self::assertSame(100.0, (float) $exportVolumes['Бетон'][6]);
+        $book->disconnectWorksheets();
         $rows = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->get()->map(fn ($row) => $row->getAttributes())->all();
         $accepted->assertRetained($this->estimate, $command['target_keys'], $rows);
         foreach ($rows as &$row) {
