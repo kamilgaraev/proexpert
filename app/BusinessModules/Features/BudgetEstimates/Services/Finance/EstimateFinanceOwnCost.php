@@ -51,7 +51,9 @@ final class EstimateFinanceOwnCost
                 if ((int) $existing->version !== (int) ($data['source_version'] ?? 0)) {
                     $this->conflict();
                 }
-                if ($existing->source_type !== 'manual' || $data['source_type'] !== 'manual'
+                if ($existing->source_type !== $data['source_type']
+                    || ($existing->source_type === 'advance_expense' && ((int) $existing->advance_transaction_id !== (int) ($data['advance_transaction_id'] ?? 0)
+                        || ($data['status'] ?? 'confirmed') !== 'confirmed'))
                     || $existing->currency !== $data['currency'] || $existing->status !== 'confirmed') {
                     $this->invalid();
                 }
@@ -82,7 +84,8 @@ final class EstimateFinanceOwnCost
                 }
                 $snapshot['document'] = $source->only(['id', 'organization_id', 'project_id', 'type', 'amount', 'reporting_status',
                     'approved_at', 'approved_by_user_id', 'document_number', 'document_date', 'description', 'cost_category_id']);
-                if (DB::table('estimate_finance_own_costs')->where('advance_transaction_id', $source->id)->exists()) {
+                if (DB::table('estimate_finance_own_costs')->where('advance_transaction_id', $source->id)
+                    ->when($existing, fn ($query) => $query->where('id', '<>', $existing->id))->exists()) {
                     $this->invalid('own_cost_duplicate');
                 }
             }

@@ -66,7 +66,7 @@ final class EstimateFinanceOwnCostReport
                 'expense_date' => $cost->expense_date, 'basis' => $cost->basis, 'category_id' => (int) $cost->cost_category_id,
                 'category_name' => $snapshot['category_name'] ?? null, 'vat_mode' => $cost->vat_mode, 'vat_rate' => $cost->vat_rate,
                 'saved_amount' => $cost->amount, 'saved_without_vat' => $cost->amount_without_vat,
-                'requires_review' => $changed, 'allocated_amount' => '0.00', 'allocated_without_vat' => '0.00'];
+                'requires_review' => $changed, 'source_changed' => $changed, 'allocated_amount' => '0.00', 'allocated_without_vat' => '0.00'];
         }
         foreach ($ledger as $row) {
             $cost = $costs->get($row->own_cost_id);

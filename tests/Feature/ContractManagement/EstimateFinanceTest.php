@@ -848,8 +848,38 @@ final class EstimateFinanceTest extends TestCase
         $source->update(['description' => 'Новое описание после регистрации']);
         $changedReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
         self::assertTrue($changedReport['sources'][0]['requires_review']);
+        self::assertTrue($changedReport['sources'][0]['source_changed']);
         self::assertNull($changedReport['source_totals']['RUB']['amount']);
         self::assertNull($changedReport['allocated_totals']['RUB']['amount']);
+        $refresh = array_replace($command, ['revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'source_version' => 1]);
+        unset($refresh['source_hash']);
+        $refresh['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $refresh)['source_hash'];
+        $source->update(['description' => 'Изменение во время сверки']);
+        try {
+            $this->save($refresh);
+            self::fail('Changed source was confirmed from an outdated preview');
+        } catch (ConflictHttpException) {
+            self::assertSame(1, \Illuminate\Support\Facades\DB::table('estimate_finance_own_cost_versions')->count());
+        }
+        unset($refresh['source_hash']);
+        $refresh['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $refresh)['source_hash'];
+        $documentBefore = $source->fresh()->getAttributes();
+        $this->save($refresh);
+        self::assertTrue($this->save($refresh)['replayed']);
+        self::assertSame($documentBefore, $source->fresh()->getAttributes());
+        $refreshed = \Illuminate\Support\Facades\DB::table('estimate_finance_own_costs')->where('key', $command['cost_key'])->first();
+        self::assertSame($savedCost->id, $refreshed->id);
+        self::assertSame(2, $refreshed->version);
+        $pending = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertFalse($pending['sources'][0]['source_changed']);
+        self::assertTrue($pending['sources'][0]['requires_review']);
+        $this->save(['operation' => 'own_cost_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'cost_key' => $refreshed->key, 'source_version' => 2, 'source_hash' => $refreshed->source_hash,
+            'lines' => [['allocation_key' => $ownLine['key'], 'condition_version' => 1, 'version' => 1, 'amount' => '100']]]);
+        $reviewed = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertFalse($reviewed['sources'][0]['requires_review']);
+        self::assertSame('100.00', $reviewed['allocated_totals']['RUB']['amount']);
         $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(
             fn ($actor, $permission, $context) => $permission !== 'advance_transactions.view',
         );
