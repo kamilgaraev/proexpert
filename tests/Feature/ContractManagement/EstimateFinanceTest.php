@@ -893,6 +893,21 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('0.00000000', $db::table('estimate_finance_execution_allocations')->where('id', $rows[1]->id)->value('quantity'));
         self::assertSame($rows[1]->key, $db::table('estimate_finance_execution_allocations')->where('id', $rows[1]->id)->value('key'));
         self::assertSame(3, $db::table('estimate_finance_execution_versions')->count());
+        $report = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution');
+        self::assertCount(1, $report['execution']['rows']);
+        self::assertCount(2, $report['execution']['distributions']);
+        $cleared = collect($report['execution']['distributions'])->firstWhere('act_id', $acts[1]->id);
+        self::assertSame(2, $cleared['version']);
+        self::assertSame('0.00', $cleared['amount']);
+        self::assertSame($rows[1]->key, $cleared['distribution_key']);
+        $second['revision'] = $report['revision'];
+        $second['mutation_id'] = (string) Str::uuid();
+        $second['lines'][0]['version'] = $cleared['version'];
+        $second['lines'][0]['amount'] = '10';
+        $second['lines'][0]['quantity'] = '10';
+        $second['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $second)['source_hash'];
+        $this->save($second);
+        self::assertSame(3, $db::table('estimate_finance_execution_allocations')->where('id', $rows[1]->id)->value('version'));
     }
 
     public function test_manual_execution_protects_conditions_until_fact_is_annulled(): void

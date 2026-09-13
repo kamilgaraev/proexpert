@@ -12,6 +12,7 @@ final class EstimateFinanceExecutionLedger
 {
     public function merge(Estimate $estimate, array $report, Collection $acts): array
     {
+        $report['distributions'] = [];
         if ($acts->isEmpty()) {
             return $report;
         }
@@ -45,6 +46,11 @@ final class EstimateFinanceExecutionLedger
                 if (! $scoped) {
                     $invalid = true;
                     continue;
+                }
+                if ((int) $row->estimate_id === (int) $estimate->id) {
+                    $report['distributions'][] = ['act_id' => (int) $document['id'], 'allocation_key' => $row->allocation_key,
+                        'distribution_key' => $row->key, 'version' => (int) $row->version,
+                        'amount' => $row->amount_with_vat, 'quantity' => $row->quantity];
                 }
                 if (FinanceDecimal::compare($row->amount_with_vat, '0') === 0 && ($row->quantity === null || FinanceDecimal::compare($row->quantity, '0') === 0)) {
                     continue;
