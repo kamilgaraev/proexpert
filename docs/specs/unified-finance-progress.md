@@ -617,3 +617,9 @@
 - ExecutionSummary использует r:resource_id дляручныхресурсов, иначеi:item_id; existing NULLquantityhandling даётunknownaccepted/remaining. Новые UI/types/Excel metadata/полнаяprojectсверка пока не сделаны. Не считать весь интерфейс готовым.
 - Расширен существующий writer regression отчётом: rowmanual60/docremaining60/summaryrevenue60, unknownquantityNULL; полное120даётremaining0; изменённыйдокумент→review/confirmedNULL/saved120;annulment→rows[]/history2. Совместно с shared writer regression PG16PASS2/33 finance-execution-ledger-tests.log,01:26.926/172MB,91095terminal0. PHPStan5productionfilesPASS finance-execution-ledger-phpstan.log,81151terminal0;php-l6/diffcheckPASS. Профиливосстановлены, своихпроцессовнет.
 - Далее: ledger reader project/sharedscope/export/negativeorg/querycount/resource tests, понятные названияресурсов, UI/types/dialog, Remainder historicalprice. Guard/nativesnapshotnegative/unknownbatch/concurrency и остальныепунктыплана/275436/8k/docs/main/CI/deploy остаютсянезавершёнными.
+
+## Ручное выполнение: проект и Excel
+- 79d52257d: ProjectExecution сохраняет NULL, если подтверждённая сумма хотя бы одной сметы неизвестна. Общий акт и ручные распределения двух смет учитываются один раз.
+- Excel строки актов включают идентификатор/версию распределения, сохранённые объём/net/gross и статус проверки. Неизвестный подтверждённый факт остаётся пустой ячейкой; сохранённая сумма доступна отдельно.
+- PG16 final PASS1/22 finance-execution-project-export-final-tests.log (01:22.400,170MB,19737terminal0). PHPStan PASS finance-execution-project-export-phpstan.log; diffcheck PASS; три тестовых профиля восстановлены. Initial test ожидал NULL вместо пустой Excel-ячейки, исправлен только assertion.
+- Следом UI/types ручного ledger, затем ввод распределения и Remainder historicalprice. Общая цель, перенос/реальная регрессия275436/полные проверки/документация/main/CI/deploy не завершены.
