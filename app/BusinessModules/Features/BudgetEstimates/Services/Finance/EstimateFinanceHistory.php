@@ -11,6 +11,38 @@ use Illuminate\Support\Facades\DB;
 
 final class EstimateFinanceHistory
 {
+    public function forCash(Estimate $estimate, int $afterId): array
+    {
+        $rows = DB::table('estimate_finance_cash_versions as history')
+            ->join('estimate_finance_cash_allocations as ledger', 'ledger.id', '=', 'history.cash_allocation_id')
+            ->join('estimate_finance_allocations as conditions', 'conditions.id', '=', 'ledger.allocation_id')
+            ->join('payment_transactions as payment', 'payment.id', '=', 'ledger.payment_transaction_id')
+            ->join('contracts', 'contracts.id', '=', 'conditions.contract_id')
+            ->join('estimate_items as items', 'items.id', '=', 'conditions.estimate_item_id')
+            ->leftJoin('estimate_item_resources as resources', fn ($join) => $join->on('resources.id', '=', 'conditions.resource_id')->on('resources.estimate_item_id', '=', 'items.id'))
+            ->leftJoin('users as actors', 'actors.id', '=', 'history.actor_id')
+            ->where('ledger.organization_id', $estimate->organization_id)->where('ledger.project_id', $estimate->project_id)->where('ledger.estimate_id', $estimate->id)
+            ->where('conditions.organization_id', $estimate->organization_id)->where('conditions.estimate_id', $estimate->id)->where('items.estimate_id', $estimate->id)
+            ->where('contracts.organization_id', $estimate->organization_id)->where('contracts.project_id', $estimate->project_id)
+            ->where('payment.organization_id', $estimate->organization_id)->where(fn ($query) => $query->whereNull('payment.project_id')->orWhere('payment.project_id', $estimate->project_id))
+            ->where('history.id', '>', $afterId)->orderBy('history.id')->limit(101)
+            ->select('history.id', 'history.version', 'history.created_at', 'history.before', 'history.after', 'actors.name as actor_name',
+                'ledger.key as distribution_key', 'payment.id as transaction_id', 'contracts.id as contract_id', 'contracts.number as contract_number')
+            ->selectRaw('COALESCE(resources.name, items.name) AS title')->get();
+        $page = $rows->take(100)->map(function (object $row): array {
+            $entry = ['id' => (int) $row->id, 'version' => (int) $row->version, 'created_at' => $row->created_at,
+                'actor_name' => $row->actor_name, 'distribution_key' => $row->distribution_key, 'title' => $row->title,
+                'transaction_id' => (int) $row->transaction_id, 'contract_id' => (int) $row->contract_id, 'contract_number' => $row->contract_number];
+            foreach (['before', 'after'] as $field) {
+                $entry[$field] = $row->$field === null ? null : array_intersect_key(json_decode($row->$field, true, 512, JSON_THROW_ON_ERROR), array_flip(['amount', 'currency']));
+            }
+
+            return $entry;
+        })->values()->all();
+
+        return ['data' => $page, 'has_more' => $rows->count() > 100, 'next_cursor' => $rows->count() > 100 ? end($page)['id'] : null];
+    }
+
     public function forOwnCost(User $actor, Estimate $estimate, string $costKey, int $afterId): array
     {
         $cost = DB::table('estimate_finance_own_costs')->where('organization_id', $estimate->organization_id)

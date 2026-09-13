@@ -133,6 +133,16 @@ final class EstimateFinanceTest extends TestCase
             self::assertStringContainsString('история распределения оплат', json_encode($exception->errors(), JSON_UNESCAPED_UNICODE));
         }
         self::assertNotNull($allocation->fresh());
+        $audit = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'cash');
+        self::assertCount(3, $audit['data']);
+        self::assertSame('300.00', $audit['data'][0]['after']['amount']);
+        self::assertSame('-100.00', $audit['data'][1]['after']['amount']);
+        self::assertSame('300.00', $audit['data'][2]['before']['amount']);
+        self::assertSame('200.00', $audit['data'][2]['after']['amount']);
+        self::assertSame($cash->key, $audit['data'][2]['distribution_key']);
+        self::assertArrayNotHasKey('source_snapshot', $audit['data'][2]['after']);
+        self::assertFalse($audit['has_more']);
+        self::assertSame([], $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, $audit['data'][2]['id'], 'cash')['data']);
     }
 
     public function test_cash_distribution_caps_shared_payment_across_estimates_and_rejects_atomic_invalid_line(): void

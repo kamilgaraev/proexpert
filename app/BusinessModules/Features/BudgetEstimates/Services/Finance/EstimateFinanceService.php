@@ -223,8 +223,15 @@ final class EstimateFinanceService
     public function history(User $actor, int $projectId, int $estimateId, int $afterId = 0, string $kind = 'conditions', string $costKey = ''): array
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
-        if (! in_array($kind, ['conditions', 'execution', 'own_cost'], true) || $afterId < 0) {
+        if (! in_array($kind, ['conditions', 'execution', 'own_cost', 'cash'], true) || $afterId < 0) {
             $this->invalid();
+        }
+        if ($kind === 'cash') {
+            if (! $this->access->canViewCash($actor, $projectId)) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+
+            return $this->history->forCash($estimate, $afterId);
         }
         if ($kind === 'own_cost') {
             if (! \Illuminate\Support\Str::isUuid($costKey)) {
