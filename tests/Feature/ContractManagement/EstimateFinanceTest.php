@@ -347,6 +347,33 @@ final class EstimateFinanceTest extends TestCase
         self::assertNull($second['next_cursor']);
         $link->update(['amount' => '130']);
         self::assertNotSame($page['rows'][0]['source_hash'], $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 1)['rows'][0]['source_hash']);
+        $freshPlan = $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id);
+        $command = ['operation' => 'migration_apply', 'mutation_id' => (string) Str::uuid(), 'revision' => $freshPlan['revision'],
+            'links' => array_map(fn ($row) => ['legacy_link_id' => $row['legacy_link_id'], 'source_hash' => $row['source_hash']], $freshPlan['rows'])];
+        $invalid = $command;
+        $invalid['links'][1]['source_hash'] = str_repeat('0', 64);
+        try {
+            $this->save($invalid);
+            self::fail('Stale migration source was accepted');
+        } catch (ConflictHttpException) {
+            self::assertSame(0, EstimateFinanceAllocation::query()->count());
+        }
+        $beforeApply = $link->fresh()->getAttributes();
+        $saved = $this->save($command);
+        self::assertFalse($saved['replayed']);
+        self::assertTrue($this->save($command)['replayed']);
+        self::assertSame(2, EstimateFinanceAllocation::query()->count());
+        $afterApply = $link->fresh()->getAttributes();
+        unset($beforeApply['finance_managed'], $afterApply['finance_managed']);
+        self::assertSame($beforeApply, $afterApply);
+        $allocation = EstimateFinanceAllocation::query()->where('contract_estimate_item_id', $link->id)->firstOrFail();
+        self::assertSame('130.00', $allocation->legacy_amount);
+        self::assertSame('100.00', $allocation->amount_without_vat);
+        self::assertNull($allocation->amount_with_vat);
+        self::assertFalse($allocation->composition_confirmed);
+        self::assertSame('unknown', $allocation->price_basis);
+        self::assertSame([], $planner->report($this->actor, $this->estimate->project_id, $this->estimate->id)['rows']);
+        self::assertSame(2, \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->count());
     }
 
     public function test_own_cost_distribution_caps_all_estimates_and_keeps_exact_net_and_history(): void

@@ -37,6 +37,7 @@ final class EstimateFinanceService
         private readonly EstimateFinanceOwnCostOptions $ownCostOptions,
         private readonly EstimateFinanceCashDistribution $cashDistribution,
         private readonly EstimateFinanceMigrationPlan $migrationPlan,
+        private readonly EstimateFinanceMigrationApply $migrationApply,
     ) {}
 
     public function report(User $actor, int $projectId, int $estimateId, string $basis = 'with_vat', string $view = 'plan'): array
@@ -330,6 +331,9 @@ final class EstimateFinanceService
 
     public function save(User $actor, int $projectId, int $estimateId, array $input): array
     {
+        if (($input['operation'] ?? null) === 'migration_apply') {
+            return $this->migrationApply->apply($actor, $projectId, $estimateId, $input);
+        }
         if (($input['operation'] ?? null) === 'own_cost_distribution') {
             return $this->ownCostDistribution->handle($actor, $projectId, $estimateId, $input, true);
         }

@@ -12,7 +12,7 @@ final class EstimateFinanceMigrationPlan
 {
     public function __construct(private readonly EstimateFinanceAccess $access, private readonly EstimateFinanceQuery $query) {}
 
-    public function report(User $actor, int $projectId, int $estimateId, int $after = 0, int $limit = 100): array
+    public function report(User $actor, int $projectId, int $estimateId, int $after = 0, int $limit = 100, ?array $linkIds = null): array
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
         if ($after < 0 || $limit < 1 || $limit > 500) {
@@ -21,6 +21,7 @@ final class EstimateFinanceMigrationPlan
         $links = ContractEstimateItem::query()->where('estimate_id', $estimateId)
             ->where(fn ($builder) => $builder->where('finance_managed', false)->orWhereNull('finance_managed'))
             ->where('id', '>', $after)->orderBy('id')->limit($limit + 1)
+            ->when($linkIds !== null, fn ($builder) => $builder->whereIn('id', $linkIds))
             ->with(['contract' => fn ($builder) => $builder->where('organization_id', $estimate->organization_id)->where('project_id', $projectId),
                 'estimateItem' => fn ($builder) => $builder->where('estimate_id', $estimateId)])
             ->get();

@@ -15,6 +15,9 @@ class SaveEstimateFinanceRequest extends FormRequest
 
     public function rules(): array
     {
+        if ($this->input('operation') === 'migration_apply') {
+            return self::migrationRules();
+        }
         if ($this->input('operation') === 'own_cost_distribution') {
             return self::ownCostDistributionRules();
         }
@@ -55,6 +58,18 @@ class SaveEstimateFinanceRequest extends FormRequest
             'lines.*.condition_version' => ['required', 'integer', 'min:1'],
             'lines.*.version' => ['required', 'integer', 'min:0'],
             'lines.*.amount' => ['required', 'string', 'regex:/^\d{1,12}(\.\d{1,2})?$/'],
+        ];
+    }
+
+    public static function migrationRules(): array
+    {
+        return [
+            'operation' => ['required', 'in:migration_apply'],
+            'revision' => ['required', 'integer', 'min:0'],
+            'mutation_id' => ['required', 'uuid'],
+            'links' => ['required', 'array', 'min:1', 'max:500'],
+            'links.*.legacy_link_id' => ['required', 'integer', 'min:1', 'distinct'],
+            'links.*.source_hash' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/'],
         ];
     }
 
