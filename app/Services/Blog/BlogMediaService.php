@@ -303,11 +303,17 @@ class BlogMediaService
     {
         $organizationId = (int) config('blog.platform_content_organization_id');
 
-        if ($organizationId <= 0) {
-            throw new RuntimeException('PLATFORM_CONTENT_ORGANIZATION_ID is not configured.');
+        $organization = $organizationId > 0
+            ? Organization::query()->find($organizationId)
+            : Organization::query()->where('system_key', 'platform_media_library')->first();
+
+        if (! $organization) {
+            throw ValidationException::withMessages([
+                'upload_file' => [trans_message('blog_cms.media_storage_not_configured')],
+            ]);
         }
 
-        return Organization::query()->findOrFail($organizationId);
+        return $organization;
     }
 
     private function resolveImageDimensions(UploadedFile $file): array
