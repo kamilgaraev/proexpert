@@ -313,6 +313,9 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
                 $scopedQuery->where('contracts.organization_id', $organizationId)
                     ->orWhereHas('contractor', function (Builder $contractorQuery) use ($relatedPartyOrganizationId) {
                         $contractorQuery->where('source_organization_id', $relatedPartyOrganizationId);
+                    })
+                    ->orWhereHas('parties', function (Builder $partyQuery) use ($relatedPartyOrganizationId) {
+                        $partyQuery->where('linked_organization_id', $relatedPartyOrganizationId);
                     });
             });
 
@@ -320,7 +323,12 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         }
 
         if (empty($filters['contractor_context'])) {
-            $query->where('contracts.organization_id', $organizationId);
+            $query->where(function (Builder $scopedQuery) use ($organizationId) {
+                $scopedQuery->where('contracts.organization_id', $organizationId)
+                    ->orWhereHas('parties', function (Builder $partyQuery) use ($organizationId) {
+                        $partyQuery->where('linked_organization_id', $organizationId);
+                    });
+            });
         }
     }
 
@@ -329,9 +337,10 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         return $this->model
             ->where('contracts.id', $contractId)
             ->where(function($q) use ($organizationId) {
-                // 1. Доступ как заказчик (organization_id)
                 $q->where('contracts.organization_id', $organizationId)
-                  // 2. Доступ через участие в проекте
+                  ->orWhereHas('parties', function($partyQuery) use ($organizationId) {
+                      $partyQuery->where('linked_organization_id', $organizationId);
+                  })
                   ->orWhereExists(function($sub) use ($organizationId) {
                       $sub->select(DB::raw(1))
                           ->from('projects as p')
@@ -341,7 +350,6 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
                           })
                           ->whereColumn('p.id', 'contracts.project_id');
                   })
-                  // 3. Доступ как подрядчик (через source_organization_id)
                   ->orWhereHas('contractor', function($contractorQuery) use ($organizationId) {
                       $contractorQuery->where('source_organization_id', $organizationId);
                   });

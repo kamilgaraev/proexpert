@@ -53,7 +53,7 @@ class ContractPartySnapshotService
 
         return match ($sideType) {
             ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR => [
-                $this->fromProjectCustomerCounterparty($contract),
+                $this->fromProjectCustomerCounterparty($contract, $owner),
                 $contract->contractor
                     ? $this->fromContractor($contract, ContractPartyRoleEnum::GENERAL_CONTRACTOR)
                     : $this->fromOrganization($owner, ContractPartyRoleEnum::GENERAL_CONTRACTOR),
@@ -81,27 +81,42 @@ class ContractPartySnapshotService
         };
     }
 
-    private function fromProjectCustomerCounterparty(Contract $contract): ContractPartyData
+    private function fromProjectCustomerCounterparty(Contract $contract, Organization $owner): ContractPartyData
     {
         $counterparty = $contract->project?->customerCounterparty;
 
-        if (!$counterparty instanceof Counterparty) {
-            throw new Exception(trans_message('contract.customer_counterparty_required'));
+        if ($counterparty instanceof Counterparty) {
+            return new ContractPartyData(
+                role: ContractPartyRoleEnum::CUSTOMER,
+                name: $counterparty->name,
+                counterpartyId: $counterparty->id,
+                linkedOrganizationId: $counterparty->linked_organization_id,
+                legalName: $counterparty->legal_name ?? $counterparty->name,
+                inn: $counterparty->inn,
+                kpp: $counterparty->kpp,
+                ogrn: $counterparty->ogrn,
+                legalAddress: $counterparty->legal_address,
+                email: $counterparty->email,
+                phone: $counterparty->phone,
+            );
         }
 
-        return new ContractPartyData(
-            role: ContractPartyRoleEnum::CUSTOMER,
-            name: $counterparty->name,
-            counterpartyId: $counterparty->id,
-            linkedOrganizationId: $counterparty->linked_organization_id,
-            legalName: $counterparty->legal_name,
-            inn: $counterparty->inn,
-            kpp: $counterparty->kpp,
-            ogrn: $counterparty->ogrn,
-            legalAddress: $counterparty->legal_address,
-            email: $counterparty->email,
-            phone: $counterparty->phone,
-        );
+        if ($contract->project !== null) {
+            $resolved = app(\App\Services\Project\ProjectCustomerResolverService::class)->resolveLegalCustomer($contract->project);
+            if (!empty($resolved['name'])) {
+                return new ContractPartyData(
+                    role: ContractPartyRoleEnum::CUSTOMER,
+                    name: (string) $resolved['name'],
+                    counterpartyId: $resolved['counterparty_id'] ?? null,
+                    linkedOrganizationId: $resolved['linked_organization_id'] ?? null,
+                    legalName: (string) ($resolved['legal_name'] ?? $resolved['name']),
+                    inn: $resolved['inn'] ?? null,
+                    kpp: $resolved['kpp'] ?? null,
+                );
+            }
+        }
+
+        return $this->fromOrganization($owner, ContractPartyRoleEnum::CUSTOMER);
     }
 
     private function fromOrganization(Organization $organization, ContractPartyRoleEnum $role): ContractPartyData

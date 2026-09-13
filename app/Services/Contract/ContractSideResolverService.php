@@ -34,18 +34,31 @@ class ContractSideResolverService
             : ($contract->contract_side_type ? ContractSideTypeEnum::tryFrom((string) $contract->contract_side_type) : null);
 
         if ($contract->firstParty instanceof ContractParty && $contract->secondParty instanceof ContractParty) {
+            $firstSnapshot = $this->mapContractPartySnapshot($contract->firstParty);
+            $secondSnapshot = $this->mapContractPartySnapshot($contract->secondParty);
+            $currentOrgId = auth()->user()?->current_organization_id ?? $contract->organization_id;
+            $isSecondParty = $currentOrgId && (
+                ($secondSnapshot['linked_organization_id'] ?? null) == $currentOrgId ||
+                ($secondSnapshot['organization_id'] ?? null) == $currentOrgId
+            );
+            $direction = $isSecondParty ? 'income' : 'expense';
+
             return [
                 'type' => $sideType?->value,
                 'display_label' => $sideType?->label() ?? 'Стороны договора не определены',
-                'first_party' => $this->mapContractPartySnapshot($contract->firstParty),
-                'second_party' => $this->mapContractPartySnapshot($contract->secondParty),
+                'direction' => $direction,
+                'direction_label' => $direction === 'income' ? 'Доходный' : 'Расходный',
+                'is_income' => $direction === 'income',
+                'is_expense' => $direction === 'expense',
+                'first_party' => $firstSnapshot,
+                'second_party' => $secondSnapshot,
                 'first_party_role_label' => $contract->firstParty->role?->label(),
                 'second_party_role_label' => $contract->secondParty->role?->label(),
                 'customer_organization' => $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
-                    ? $this->mapContractPartySnapshot($contract->firstParty)
+                    ? $firstSnapshot
                     : null,
                 'executor_organization' => $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
-                    ? $this->mapContractPartySnapshot($contract->secondParty)
+                    ? $secondSnapshot
                     : null,
             ];
         }
@@ -110,9 +123,20 @@ class ContractSideResolverService
             ? $secondParty
             : null;
 
+        $currentOrgId = auth()->user()?->current_organization_id ?? $contract->organization_id;
+        $isSecond = $currentOrgId && (
+            ($secondParty['organization_id'] ?? null) == $currentOrgId ||
+            ($secondParty['linked_organization_id'] ?? null) == $currentOrgId
+        );
+        $direction = $isSecond ? 'income' : 'expense';
+
         return [
             'type' => $sideType?->value,
             'display_label' => $sideType?->label() ?? 'Стороны договора не определены',
+            'direction' => $direction,
+            'direction_label' => $direction === 'income' ? 'Доходный' : 'Расходный',
+            'is_income' => $direction === 'income',
+            'is_expense' => $direction === 'expense',
             'first_party' => $firstParty,
             'second_party' => $secondParty,
             'first_party_role_label' => $firstPartyRoleLabel,

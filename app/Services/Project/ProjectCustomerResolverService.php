@@ -93,6 +93,39 @@ class ProjectCustomerResolverService
             ];
         }
 
+        $participant = $this->resolveParticipantByRole($project, ProjectOrganizationRole::CUSTOMER);
+        if ($participant !== null) {
+            return [
+                'id' => $participant->organization->id,
+                'name' => $participant->organization->name,
+                'source' => 'project_participant',
+                'role' => ProjectOrganizationRole::CUSTOMER->value,
+                'is_fallback_owner' => false,
+                'entity_type' => 'organization',
+                'counterparty_id' => null,
+                'linked_organization_id' => $participant->organization->id,
+                'legal_name' => $participant->organization->legal_name ?? $participant->organization->name,
+                'inn' => $participant->organization->tax_number,
+                'kpp' => null,
+            ];
+        }
+
+        if (!empty($project->customer)) {
+            return [
+                'id' => null,
+                'name' => trim($project->customer),
+                'source' => 'project_customer_text',
+                'role' => ProjectOrganizationRole::CUSTOMER->value,
+                'is_fallback_owner' => false,
+                'entity_type' => 'text',
+                'counterparty_id' => null,
+                'linked_organization_id' => null,
+                'legal_name' => trim($project->customer),
+                'inn' => null,
+                'kpp' => null,
+            ];
+        }
+
         $resolved = $this->resolve($project);
         $resolved['entity_type'] = 'organization';
         $resolved['counterparty_id'] = null;
@@ -101,6 +134,91 @@ class ProjectCustomerResolverService
         unset($resolved['organization']);
 
         return $resolved;
+    }
+
+    public function resolveGeneralContractor(Project $project): ?array
+    {
+        $participant = $this->resolveParticipantByRole($project, ProjectOrganizationRole::GENERAL_CONTRACTOR);
+
+        if ($participant?->organization instanceof Organization) {
+            return [
+                'id' => $participant->organization->id,
+                'name' => $participant->organization->name,
+                'legal_name' => $participant->organization->legal_name ?? $participant->organization->name,
+                'inn' => $participant->organization->tax_number,
+                'entity_type' => 'organization',
+                'role' => ProjectOrganizationRole::GENERAL_CONTRACTOR->value,
+            ];
+        }
+
+        return null;
+    }
+
+    public function resolveDesigner(Project $project): ?array
+    {
+        $participant = $this->resolveParticipantByRole($project, ProjectOrganizationRole::DESIGNER);
+
+        if ($participant?->organization instanceof Organization) {
+            return [
+                'id' => $participant->organization->id,
+                'name' => $participant->organization->name,
+                'legal_name' => $participant->organization->legal_name ?? $participant->organization->name,
+                'inn' => $participant->organization->tax_number,
+                'entity_type' => 'organization',
+                'role' => ProjectOrganizationRole::DESIGNER->value,
+            ];
+        }
+
+        if (!empty($project->designer)) {
+            return [
+                'id' => null,
+                'name' => trim($project->designer),
+                'legal_name' => trim($project->designer),
+                'inn' => null,
+                'entity_type' => 'text',
+                'role' => ProjectOrganizationRole::DESIGNER->value,
+            ];
+        }
+
+        return null;
+    }
+
+    public function resolveConstructionSupervision(Project $project): ?array
+    {
+        $participant = $this->resolveParticipantByRole($project, ProjectOrganizationRole::CONSTRUCTION_SUPERVISION);
+
+        if ($participant?->organization instanceof Organization) {
+            return [
+                'id' => $participant->organization->id,
+                'name' => $participant->organization->name,
+                'legal_name' => $participant->organization->legal_name ?? $participant->organization->name,
+                'inn' => $participant->organization->tax_number,
+                'entity_type' => 'organization',
+                'role' => ProjectOrganizationRole::CONSTRUCTION_SUPERVISION->value,
+            ];
+        }
+
+        return null;
+    }
+
+    private function resolveParticipantByRole(Project $project, ProjectOrganizationRole $role): ?ProjectOrganization
+    {
+        return ProjectOrganization::query()
+            ->useWritePdo()
+            ->with('organization')
+            ->where('project_id', $project->id)
+            ->where('is_active', true)
+            ->where(function ($query) use ($role): void {
+                $query
+                    ->where('role_new', $role->value)
+                    ->orWhere(function ($fallbackQuery) use ($role): void {
+                        $fallbackQuery
+                            ->whereNull('role_new')
+                            ->where('role', $role->value);
+                    });
+            })
+            ->orderByDesc('id')
+            ->first();
     }
 
     public function resolveCustomerCounterparty(Project $project): ?Counterparty
