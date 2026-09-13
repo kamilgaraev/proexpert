@@ -86,21 +86,9 @@ if (-not $dockerReady) {
 
 $composePath = Join-Path $root 'compose.testing.yml'
 $projectName = 'most-postgres-tests'
-$postgresTestMutex = [System.Threading.Mutex]::new($false, 'Local\MostPostgresTests')
-$postgresTestMutexHeld = $false
 
 Push-Location $root
 try {
-    try {
-        while (-not $postgresTestMutexHeld) {
-            $postgresTestMutexHeld = $postgresTestMutex.WaitOne(30000)
-            if (-not $postgresTestMutexHeld) {
-                Write-Host 'Ожидание общего PostgreSQL-контура другой задачи...'
-            }
-        }
-    } catch [System.Threading.AbandonedMutexException] {
-        $postgresTestMutexHeld = $true
-    }
     & docker compose -p $projectName -f $composePath down --volumes --remove-orphans
     if ($LASTEXITCODE -ne 0) {
         throw 'postgres_test_container_reset_failed'
@@ -125,10 +113,6 @@ try {
     $testExitCode = $LASTEXITCODE
 } finally {
     Pop-Location
-    if ($postgresTestMutexHeld) {
-        $postgresTestMutex.ReleaseMutex()
-    }
-    $postgresTestMutex.Dispose()
 }
 
 exit $testExitCode
