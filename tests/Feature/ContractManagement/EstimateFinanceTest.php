@@ -630,6 +630,25 @@ final class EstimateFinanceTest extends TestCase
         } catch (ConflictHttpException) {
             self::assertSame(2, $db::table('estimate_finance_own_cost_versions')->where('own_cost_id', $original->id)->count());
         }
+        $repair = ['operation' => 'own_cost_distribution', 'revision' => $result['revision'],
+            'mutation_id' => (string) Str::uuid(), 'cost_key' => $updated->key, 'source_version' => 2, 'source_hash' => $updated->source_hash,
+            'lines' => [['allocation_key' => $line['key'], 'condition_version' => 1, 'version' => 1, 'amount' => '100']]];
+        try {
+            $this->save($repair);
+            self::fail('Correction exceeded the revised expense');
+        } catch (ValidationException) {
+            self::assertEquals($distribution, $db::table('estimate_finance_own_cost_allocations')->where('id', $distribution->id)->first());
+        }
+        $repair['lines'][0]['amount'] = '80';
+        $this->save($repair);
+        self::assertTrue($this->save($repair)['replayed']);
+        $reviewed = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertFalse($reviewed['sources'][0]['requires_review']);
+        self::assertSame('80.00', $reviewed['sources'][0]['amount']);
+        self::assertSame('80.00', $reviewed['rows'][0]['amount']);
+        self::assertSame($distribution->key, $reviewed['rows'][0]['key']);
+        self::assertSame(2, $reviewed['rows'][0]['source_version']);
+        self::assertSame(2, $db::table('estimate_finance_own_cost_allocation_versions')->where('own_cost_allocation_id', $distribution->id)->count());
     }
 
     public function test_own_cost_registration_previews_tax_and_replays_without_duplicate_expense(): void
