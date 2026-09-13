@@ -40,6 +40,34 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         if (!empty($filters['contract_side_type'])) {
             $query->where('contracts.contract_side_type', $filters['contract_side_type']);
         }
+
+        if (!empty($filters['direction'])) {
+            $direction = (string) $filters['direction'];
+            if ($direction === 'income') {
+                $query->where(function ($dirQuery) use ($organizationId) {
+                    $dirQuery->whereHas('parties', function ($pq) use ($organizationId) {
+                        $pq->where('linked_organization_id', $organizationId)
+                            ->where('side', 'second');
+                    })->orWhere(function ($fallback) use ($organizationId) {
+                        $fallback->where('contracts.organization_id', '!=', $organizationId)
+                            ->whereDoesntHave('parties');
+                    });
+                });
+            } elseif ($direction === 'expense') {
+                $query->where(function ($dirQuery) use ($organizationId) {
+                    $dirQuery->whereHas('parties', function ($pq) use ($organizationId) {
+                        $pq->where('linked_organization_id', $organizationId)
+                            ->where('side', 'first');
+                    })->orWhere(function ($fallback) use ($organizationId) {
+                        $fallback->where('contracts.organization_id', $organizationId)
+                            ->whereDoesntHave('parties', function ($pq) use ($organizationId) {
+                                $pq->where('linked_organization_id', $organizationId)
+                                    ->where('side', 'second');
+                            });
+                    });
+                });
+            }
+        }
         
         if (!empty($filters['project_id'])) {
             $projectId = $filters['project_id'];

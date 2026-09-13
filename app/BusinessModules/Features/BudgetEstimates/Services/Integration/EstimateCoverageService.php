@@ -98,12 +98,13 @@ class EstimateCoverageService
             ->countedInCoverage()
             ->withFinancialAmounts()
             ->addSelect('contract_estimate_items.amount as saved_amount')
-            ->with('contract.contractor')
+            ->with(['contract.contractor.sourceOrganization', 'contract.organization', 'contract.firstParty', 'contract.secondParty'])
             ->get()
             ->groupBy('contract_id');
 
         $contracts = $links->map(function (Collection $group) use ($coveredItemIds, $totalItems) {
             $contract = $group->first()?->contract;
+            $side = $contract ? app(\App\Services\Contract\ContractSideResolverService::class)->resolve($contract) : null;
             $linkedItemIds = $group
                 ->pluck('estimate_item_id')
                 ->unique()
@@ -119,6 +120,10 @@ class EstimateCoverageService
                     'number' => $contract->number,
                     'date' => $contract->date?->format('Y-m-d'),
                     'total_amount' => (float) $contract->total_amount,
+                    'direction' => $side['direction'] ?? 'expense',
+                    'direction_label' => $side['direction_label'] ?? 'Расходный',
+                    'is_income' => (bool) ($side['is_income'] ?? false),
+                    'is_expense' => (bool) ($side['is_expense'] ?? true),
                     'contractor' => $contract->contractor ? [
                         'id' => $contract->contractor->id,
                         'name' => $contract->contractor->name,
