@@ -524,6 +524,38 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame(1, EstimateFinanceAllocation::query()->where('contract_estimate_item_id', $link->id)->count());
     }
 
+    public function test_migration_requires_contract_edit_and_does_not_resurrect_retired_conditions(): void
+    {
+        $link = ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
+            'estimate_item_id' => $this->item->id, 'quantity' => '1', 'amount' => '120']);
+        $plan = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, ['preview_operation' => 'migration_plan']);
+        $command = ['operation' => 'migration_apply', 'mutation_id' => (string) Str::uuid(), 'revision' => $plan['revision'],
+            'links' => [['legacy_link_id' => $link->id, 'source_hash' => $plan['rows'][0]['source_hash']]]];
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(fn ($actor, $permission) => $permission !== 'contracts.edit');
+        try {
+            app(EstimateFinanceService::class)->save($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+            self::fail('Migration bypassed contract edit permission');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            self::assertSame(0, EstimateFinanceAllocation::query()->count());
+            self::assertFalse((bool) $link->fresh()->finance_managed);
+        }
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnTrue();
+        $key = \Ramsey\Uuid\Uuid::uuid5(\Ramsey\Uuid\Uuid::NAMESPACE_URL, 'most:estimate-finance:legacy:'.$link->id)->toString();
+        \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->insert([
+            'organization_id' => $this->estimate->organization_id, 'estimate_id' => $this->estimate->id, 'allocation_key' => $key,
+            'condition_version' => 2, 'finance_revision' => $plan['revision'], 'mutation_id' => (string) Str::uuid(),
+            'action' => 'deleted', 'before' => json_encode(['key' => $key]), 'after' => null, 'actor_id' => $this->actor->id, 'created_at' => now(),
+        ]);
+        try {
+            app(EstimateFinanceService::class)->save($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+            self::fail('Migration resurrected retired conditions');
+        } catch (ConflictHttpException) {
+            self::assertSame(0, EstimateFinanceAllocation::query()->count());
+            self::assertFalse((bool) $link->fresh()->finance_managed);
+            self::assertSame(0, \Illuminate\Support\Facades\DB::table('estimate_finance_mutations')->count());
+        }
+    }
+
     public function test_own_cost_registration_previews_tax_and_replays_without_duplicate_expense(): void
     {
         $category = \App\Models\CostCategory::query()->create(['organization_id' => $this->estimate->organization_id,

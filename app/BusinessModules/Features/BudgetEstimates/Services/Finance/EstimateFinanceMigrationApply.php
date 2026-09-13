@@ -70,7 +70,8 @@ final class EstimateFinanceMigrationApply
                     'notes' => $source['notes'], 'updated_by' => $actor->id, 'created_at' => now(), 'updated_at' => now()];
             }
             if (DB::table('estimate_finance_allocations')->whereIn('contract_estimate_item_id', $ids)->exists()
-                || DB::table('estimate_finance_allocations')->whereIn('key', $keys)->exists()) {
+                || DB::table('estimate_finance_allocations')->whereIn('key', $keys)->exists()
+                || DB::table('estimate_finance_condition_versions')->whereIn('allocation_key', $keys)->exists()) {
                 throw new ConflictHttpException(trans_message('estimate_finance.conflict'));
             }
             DB::table('estimate_finance_allocations')->insert($writes);
