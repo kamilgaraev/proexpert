@@ -151,8 +151,18 @@ class PaymentTransactionService
             $refundDate,
             $idempotencyKey
         ): array {
+            $documentId = PaymentTransaction::query()
+                ->where('organization_id', $organizationId)
+                ->whereKey($transactionId)
+                ->firstOrFail(['payment_document_id'])->payment_document_id;
+            $document = PaymentDocument::query()
+                ->where('organization_id', $organizationId)
+                ->whereKey($documentId)
+                ->lockForUpdate()
+                ->firstOrFail();
             $transaction = PaymentTransaction::query()
                 ->where('organization_id', $organizationId)
+                ->where('payment_document_id', $document->id)
                 ->whereKey($transactionId)
                 ->lockForUpdate()
                 ->firstOrFail();
@@ -204,11 +214,6 @@ class PaymentTransactionService
                 throw new \DomainException(trans_message('payments.transactions.refund_amount_invalid'));
             }
 
-            $document = PaymentDocument::query()
-                ->where('organization_id', $organizationId)
-                ->whereKey($transaction->payment_document_id)
-                ->lockForUpdate()
-                ->firstOrFail();
             if ($refundAmount->isGreaterThan(BigDecimal::of((string) $document->paid_amount))) {
                 throw new \DomainException(trans_message('payments.transactions.refund_amount_invalid'));
             }
