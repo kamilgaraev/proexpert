@@ -21,11 +21,13 @@ $authorization = Mockery::mock(AuthorizationService::class);
 $authorization->shouldReceive('can')->andReturn(true);
 $app->instance(AuthorizationService::class, $authorization);
 $actor = User::query()->findOrFail($input['actor']);
-echo "READY\n";
+echo 'READY '.\Illuminate\Support\Facades\DB::selectOne('select pg_backend_pid() as pid')->pid."\n";
 flush();
 try {
     $result = $app->make(EstimateFinanceService::class)->save($actor, $input['project'], $input['estimate'], $input['command']);
     echo json_encode(['status' => 200, 'result' => $result], JSON_THROW_ON_ERROR);
 } catch (ConflictHttpException) {
     echo json_encode(['status' => 409], JSON_THROW_ON_ERROR);
+} catch (\Illuminate\Validation\ValidationException) {
+    echo json_encode(['status' => 422], JSON_THROW_ON_ERROR);
 }

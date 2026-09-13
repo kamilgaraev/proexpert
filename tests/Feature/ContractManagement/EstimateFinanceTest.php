@@ -2753,6 +2753,69 @@ final class EstimateFinanceTest extends TestCase
         }
     }
 
+    public function test_manual_execution_waits_for_native_contract_volume_and_rechecks_after_commit(): void
+    {
+        $line = $this->line($this->contractor, '100', '100');
+        $this->save($this->command([$line]));
+        $native = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'PARALLEL-NATIVE', 'act_date' => '2026-09-13',
+            'amount' => '50', 'amount_without_vat' => '50', 'currency' => 'RUB', 'status' => 'draft', 'is_approved' => false]);
+        \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $native->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Работа', 'quantity' => '50', 'unit_price' => '1', 'amount' => '50',
+            'currency' => 'RUB', 'manual_reason' => 'Проверка', 'created_by' => $this->actor->id]);
+        $manual = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'PARALLEL-MANUAL', 'act_date' => '2026-09-13',
+            'amount' => '60', 'amount_without_vat' => '60', 'currency' => 'RUB', 'status' => 'approved', 'is_approved' => true]);
+        $command = ['operation' => 'execution_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'act_id' => $manual->id,
+            'lines' => [['allocation_key' => $line['key'], 'condition_version' => 1, 'version' => 0, 'amount' => '60', 'quantity' => '60']]];
+        $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
+        $db = \Illuminate\Support\Facades\DB::class;
+        $db::commit();
+        $worker = new \Symfony\Component\Process\Process([PHP_BINARY, base_path('tests/Support/EstimateFinanceSaveWorker.php')], base_path());
+        $worker->setTimeout(40);
+        $worker->setInput(json_encode(['actor' => $this->actor->id, 'project' => $this->estimate->project_id,
+            'estimate' => $this->estimate->id, 'command' => $command], JSON_THROW_ON_ERROR));
+        try {
+            $db::transaction(function () use ($worker, $native, $db): void {
+                $contract = Contract::query()->whereKey($this->contractor->id)->lockForUpdate()->firstOrFail();
+                $worker->start();
+                self::assertTrue($worker->waitUntil(static fn (string $type, string $output): bool => str_contains($output, 'READY')));
+                self::assertSame(1, preg_match('/READY (\d+)/', $worker->getOutput(), $match));
+                $blocked = false;
+                for ($attempt = 0; $attempt < 200 && $worker->isRunning(); $attempt++) {
+                    $blocked = (int) $db::selectOne('select cardinality(pg_blocking_pids(?)) as count', [(int) $match[1]])->count > 0;
+                    if ($blocked) {
+                        break;
+                    }
+                    usleep(10000);
+                }
+                self::assertTrue($blocked, 'Manual execution must wait for the contract transaction');
+                app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard::class)->assertFits($native, $contract);
+                $native->update(['status' => 'approved', 'is_approved' => true]);
+            });
+            $worker->wait();
+            self::assertTrue($worker->isSuccessful(), $worker->getErrorOutput());
+            self::assertStringContainsString('"status":422', $worker->getOutput());
+            self::assertFalse($db::table('estimate_finance_execution_allocations')->where('performance_act_id', $manual->id)->exists());
+            self::assertSame('approved', $native->fresh()->status);
+        } finally {
+            if ($worker->isRunning()) {
+                $worker->stop();
+            }
+            $db::table('estimate_finance_execution_versions')->whereIn('execution_allocation_id',
+                $db::table('estimate_finance_execution_allocations')->where('estimate_id', $this->estimate->id)->select('id'))->delete();
+            $db::table('estimate_finance_execution_allocations')->where('estimate_id', $this->estimate->id)->delete();
+            $db::table('performance_act_lines')->whereIn('performance_act_id', [$native->id, $manual->id])->delete();
+            $db::table('contract_performance_acts')->whereIn('id', [$native->id, $manual->id])->delete();
+            EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->delete();
+            ContractEstimateItem::query()->where('estimate_id', $this->estimate->id)->delete();
+            $db::table('estimate_finance_condition_versions')->where('estimate_id', $this->estimate->id)->delete();
+            $db::table('estimate_finance_mutations')->where('estimate_id', $this->estimate->id)->delete();
+            $db::beginTransaction();
+        }
+    }
+
     public function test_mirrored_resource_must_be_resolved_before_procurement(): void
     {
         $child = EstimateItem::query()->create(['estimate_id' => $this->estimate->id, 'parent_work_id' => $this->item->id,

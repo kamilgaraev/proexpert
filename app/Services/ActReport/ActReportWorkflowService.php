@@ -237,8 +237,13 @@ class ActReportWorkflowService
     public function submit(ContractPerformanceAct $act, int $userId): ContractPerformanceAct
     {
         [$updatedAct, $changed] = DB::transaction(function () use ($act, $userId): array {
+            $lockedContract = Contract::query()
+                ->where('id', ContractPerformanceAct::query()->whereKey($act->getKey())->select('contract_id'))
+                ->lockForUpdate()
+                ->firstOrFail();
             $lockedAct = ContractPerformanceAct::query()
                 ->whereKey($act->getKey())
+                ->where('contract_id', $lockedContract->id)
                 ->lockForUpdate()
                 ->firstOrFail();
             if ($lockedAct->status === ContractPerformanceAct::STATUS_PENDING_APPROVAL) {
@@ -254,10 +259,6 @@ class ActReportWorkflowService
                 );
             }
             $this->assertMutable($lockedAct);
-            $lockedContract = Contract::query()
-                ->whereKey($lockedAct->contract_id)
-                ->lockForUpdate()
-                ->firstOrFail();
             $this->financeQuantityGuard->assertFits($lockedAct, $lockedContract);
             $this->contractAmountGuard->assertActFits(
                 $lockedContract,
@@ -290,8 +291,13 @@ class ActReportWorkflowService
     public function approve(ContractPerformanceAct $act, int $userId): ContractPerformanceAct
     {
         [$updatedAct, $changed] = DB::transaction(function () use ($act, $userId): array {
+            $lockedContract = Contract::query()
+                ->where('id', ContractPerformanceAct::query()->whereKey($act->getKey())->select('contract_id'))
+                ->lockForUpdate()
+                ->firstOrFail();
             $lockedAct = ContractPerformanceAct::query()
                 ->whereKey($act->getKey())
+                ->where('contract_id', $lockedContract->id)
                 ->lockForUpdate()
                 ->firstOrFail();
 
@@ -307,10 +313,6 @@ class ActReportWorkflowService
             if ($lockedAct->status !== ContractPerformanceAct::STATUS_PENDING_APPROVAL) {
                 throw new BusinessLogicException(trans_message('act_reports.act_must_be_submitted_before_approval'), 422);
             }
-            $lockedContract = Contract::query()
-                ->whereKey($lockedAct->contract_id)
-                ->lockForUpdate()
-                ->firstOrFail();
             $this->conditionGuard->assertCurrent($lockedAct, $lockedContract);
             $lockedAct = $this->recalculatePricedLines($lockedAct);
             $previousStatus = $this->acceptanceStatus($lockedAct);

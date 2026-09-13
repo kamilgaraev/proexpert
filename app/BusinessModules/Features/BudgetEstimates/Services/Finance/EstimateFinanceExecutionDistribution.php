@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Finance;
 
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\FinanceInputValidation;
 use App\BusinessModules\Features\BudgetEstimates\Http\Requests\SaveEstimateFinanceRequest;
+use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
 use App\Models\EstimateFinanceAllocation;
@@ -44,9 +45,11 @@ final class EstimateFinanceExecutionDistribution
             if ((int) $estimate->finance_revision !== (int) $data['revision']) {
                 $this->conflict();
             }
-            $act = ContractPerformanceAct::query()->whereKey($data['act_id'])->where('project_id', $projectId)
-                ->whereHas('contract', fn ($builder) => $builder->where('organization_id', $actor->current_organization_id)->where('project_id', $projectId))
-                ->lockForUpdate()->firstOrFail();
+            $actQuery = ContractPerformanceAct::query()->whereKey($data['act_id'])->where('project_id', $projectId)
+                ->whereHas('contract', fn ($builder) => $builder->where('organization_id', $actor->current_organization_id)->where('project_id', $projectId));
+            $contract = Contract::query()->where('organization_id', $actor->current_organization_id)->where('project_id', $projectId)
+                ->where('id', (clone $actQuery)->select('contract_id'))->lockForUpdate()->firstOrFail();
+            $act = $actQuery->where('contract_id', $contract->id)->lockForUpdate()->firstOrFail();
             $nativeLines = $act->lines()->orderBy('id')->lockForUpdate()->get();
             if ($nativeLines->isEmpty()) {
                 $act->completedWorks()->orderBy('completed_works.id')->lockForUpdate()->get();
