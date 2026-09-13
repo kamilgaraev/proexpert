@@ -282,6 +282,33 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame([$special->id], array_column($search['data'], 'id'));
     }
 
+    public function test_legacy_finance_read_does_not_infer_terms_from_foreign_contract(): void
+    {
+        $foreign = $this->contractor->replicate();
+        $foreign->organization_id = \App\Models\Organization::factory()->create()->id;
+        $foreign->currency = 'EUR';
+        $foreign->save();
+        $link = ContractEstimateItem::query()->create(['contract_id' => $foreign->id, 'estimate_id' => $this->estimate->id,
+            'estimate_item_id' => $this->item->id, 'quantity' => '1', 'amount' => '123.45', 'finance_managed' => false]);
+        $query = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceQuery::class);
+        $rows = $query->allocations($this->estimate);
+        self::assertCount(1, $rows);
+        self::assertSame('legacy:'.$link->id, $rows[0]['key']);
+        self::assertSame('unknown', $rows[0]['side']);
+        self::assertSame('', $rows[0]['currency']);
+        self::assertSame('123.45', $rows[0]['legacy_amount']);
+        self::assertFalse($rows[0]['composition_confirmed']);
+        $foreign->organization_id = $this->estimate->organization_id;
+        $foreign->project_id = null;
+        $foreign->save();
+        self::assertSame('unknown', $query->allocations($this->estimate)[0]['side']);
+        self::assertSame('', $query->allocations($this->estimate)[0]['currency']);
+        $foreign->project_id = $this->estimate->project_id;
+        $foreign->save();
+        self::assertSame('EUR', $query->allocations($this->estimate)[0]['currency']);
+        self::assertSame('cost', $query->allocations($this->estimate)[0]['side']);
+    }
+
     public function test_own_cost_distribution_caps_all_estimates_and_keeps_exact_net_and_history(): void
     {
         $parent = EstimateSection::query()->create(['estimate_id' => $this->estimate->id, 'name' => 'Общий раздел', 'section_number' => '1']);

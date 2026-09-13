@@ -94,14 +94,15 @@ final class EstimateFinanceQuery
             $row['legacy'] = false;
         }
         unset($row);
-        $legacy = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('finance_managed', false)->with('contract')->get();
+        $legacy = ContractEstimateItem::query()->where('estimate_id', $estimate->id)->where('finance_managed', false)
+            ->with(['contract' => fn ($query) => $query->where('organization_id', $estimate->organization_id)->where('project_id', $estimate->project_id)])->get();
         foreach ($legacy as $link) {
             $rows[] = [
                 'key' => 'legacy:'.$link->id, 'target_key' => 'i:'.$link->estimate_item_id,
                 'estimate_item_id' => (int) $link->estimate_item_id, 'resource_id' => null,
                 'contract_id' => (int) $link->contract_id, 'contract_estimate_item_id' => (int) $link->id,
                 'side' => $link->contract ? $this->side($link->contract) : 'unknown', 'source' => 'contract',
-                'currency' => $link->contract?->currency ?? 'RUB', 'quantity' => (string) ($link->quantity ?? '0'),
+                'currency' => $link->contract?->currency ?? '', 'quantity' => (string) ($link->quantity ?? '0'),
                 'unit_price' => null, 'amount_without_vat' => $link->amount_without_vat,
                 'amount_with_vat' => null, 'legacy_amount' => $link->amount,
                 'vat_rate' => null, 'vat_mode' => 'unknown', 'price_basis' => 'unknown', 'method' => 'legacy',
