@@ -1919,6 +1919,52 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame([], $accepted->quantities($otherOrganization, [$this->contractor->id], [$this->item->id]));
     }
 
+    public function test_retained_volume_combines_native_and_manual_fact_and_preserves_unknown_quantity(): void
+    {
+        $line = $this->line($this->contractor, '100', '100');
+        $this->save($this->command([$line]));
+        $allocation = EstimateFinanceAllocation::query()->where('key', $line['key'])->firstOrFail();
+        $native = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'NATIVE-COMBINED', 'act_date' => '2026-09-13',
+            'amount' => '20', 'amount_without_vat' => '20', 'currency' => 'RUB', 'status' => 'draft']);
+        \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $native->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Работа', 'quantity' => '20', 'unit_price' => '1', 'amount' => '20',
+            'currency' => 'RUB', 'manual_reason' => 'Проверка', 'created_by' => $this->actor->id]);
+        $native->update(['status' => 'approved', 'is_approved' => true]);
+        $manual = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'MANUAL-COMBINED', 'act_date' => '2026-09-13',
+            'amount' => '30', 'amount_without_vat' => '30', 'currency' => 'RUB', 'status' => 'approved', 'is_approved' => true]);
+        $command = ['operation' => 'execution_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'act_id' => $manual->id,
+            'lines' => [['allocation_key' => $line['key'], 'condition_version' => 1, 'version' => 0, 'amount' => '30', 'quantity' => '30']]];
+        $command['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command)['source_hash'];
+        $this->save($command);
+        $accepted = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceAcceptedVolume::class);
+        $key = $this->contractor->id.':'.$this->item->id;
+        self::assertSame(0, FinanceDecimal::compare($accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id])[$key], '50'));
+        $candidate = $allocation->getAttributes();
+        $candidate['quantity'] = '40';
+        try {
+            $accepted->assertRetained($this->estimate, ['i:'.$this->item->id], [$candidate]);
+            self::fail('Combined accepted volume must be retained');
+        } catch (ValidationException) {
+            self::assertSame('100.00000000', $allocation->fresh()->quantity);
+        }
+        $candidate['quantity'] = '50';
+        $accepted->assertRetained($this->estimate, ['i:'.$this->item->id], [$candidate]);
+        $command['revision'] = (int) $this->estimate->fresh()->finance_revision;
+        $command['mutation_id'] = (string) Str::uuid();
+        $command['lines'][0]['version'] = 1;
+        $command['lines'][0]['quantity'] = null;
+        $this->save($command);
+        self::assertNull($accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id])[$key]);
+        $manual->update(['status' => 'annulled', 'annulled_at' => now()]);
+        self::assertSame(0, FinanceDecimal::compare($accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id])[$key], '20'));
+        $other = clone $this->estimate;
+        $other->organization_id = 0;
+        self::assertSame([], $accepted->quantities($other, [$this->contractor->id], [$this->item->id]));
+    }
+
     public function test_act_basis_uses_contract_conditions_and_keeps_previous_snapshot(): void
     {
         $line = $this->line($this->contractor, '100', '800000');

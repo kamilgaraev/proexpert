@@ -31,7 +31,7 @@ final class EstimateFinanceAcceptedVolume
             $quantities[$key] = FinanceDecimal::add($quantities[$key] ?? '0', $row['quantity']);
         }
         foreach ($this->quantities($estimate, array_values(array_unique($contractIds)), $itemIds) as $key => $quantity) {
-            if (FinanceDecimal::compare($quantities[$key] ?? '0', $quantity) < 0) {
+            if ($quantity === null || FinanceDecimal::compare($quantities[$key] ?? '0', $quantity) < 0) {
                 throw ValidationException::withMessages(['lines' => trans_message('estimate_finance.accepted_volume')]);
             }
         }
@@ -116,6 +116,18 @@ final class EstimateFinanceAcceptedVolume
         foreach ($lines->concat($legacy) as $line) {
             $key = $line->contract_id.':'.$line->estimate_item_id;
             $result[$key] = FinanceDecimal::add($result[$key] ?? '0', (string) $line->quantity);
+        }
+        $manual = (clone $acts)->join('estimate_finance_execution_allocations as fact', 'fact.performance_act_id', '=', 'acts.id')
+            ->join('estimate_finance_allocations as conditions', 'conditions.id', '=', 'fact.allocation_id')
+            ->where('fact.organization_id', $estimate->organization_id)->where('fact.project_id', $estimate->project_id)
+            ->where('fact.estimate_id', $estimate->id)->where('conditions.organization_id', $estimate->organization_id)
+            ->where('conditions.estimate_id', $estimate->id)->whereColumn('conditions.contract_id', 'acts.contract_id')
+            ->whereNull('conditions.resource_id')->whereIn('conditions.estimate_item_id', $itemIds)
+            ->selectRaw('acts.contract_id, conditions.estimate_item_id, SUM(COALESCE(fact.quantity, 0)) AS quantity, MAX(CASE WHEN fact.quantity IS NULL AND fact.amount_with_vat > 0 THEN 1 ELSE 0 END) AS unknown_quantity')
+            ->groupBy('acts.contract_id', 'conditions.estimate_item_id')->get();
+        foreach ($manual as $line) {
+            $key = $line->contract_id.':'.$line->estimate_item_id;
+            $result[$key] = (int) $line->unknown_quantity === 1 ? null : FinanceDecimal::add($result[$key] ?? '0', (string) $line->quantity);
         }
 
         return $result;
