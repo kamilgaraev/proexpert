@@ -2805,6 +2805,61 @@ final class EstimateFinanceTest extends TestCase
         self::assertDatabaseCount('estimate_finance_allocations', 0);
     }
 
+    public function test_legacy_detach_removes_excluded_rows_without_changing_estimate(): void
+    {
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $excluded = $this->item->replicate();
+        $excluded->forceFill(['position_number' => '2', 'is_not_accounted' => true])->save();
+        foreach ([$this->item, $excluded] as $item) {
+            ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id,
+                'estimate_id' => $this->estimate->id, 'estimate_item_id' => $item->id,
+                'quantity' => '100', 'amount' => '800000', 'finance_managed' => false]);
+        }
+        $before = $excluded->fresh()->getAttributes();
+        $coverage = app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class);
+        $coverage->detachCoverage($this->contractor, $this->estimate, $this->actor);
+        self::assertSame(0, ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->count());
+        self::assertSame(0, EstimateFinanceAllocation::query()->where('contract_id', $this->contractor->id)->count());
+        self::assertSame($before, $excluded->fresh()->getAttributes());
+        self::assertNotNull($this->item->fresh());
+        $coverage->detachCoverage($this->contractor, $this->estimate, $this->actor);
+        self::assertSame(0, ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->count());
+    }
+
+    public function test_excluded_rows_still_cannot_receive_new_financial_conditions(): void
+    {
+        $this->item->update(['is_not_accounted' => true]);
+        $this->expectException(ValidationException::class);
+        $this->save($this->command([$this->line($this->contractor, '100', '800000')]));
+    }
+
+    public function test_excluded_row_with_accepted_work_blocks_whole_detach(): void
+    {
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $excluded = $this->item->replicate();
+        $excluded->forceFill(['position_number' => '2', 'is_not_accounted' => true])->save();
+        foreach ([$this->item, $excluded] as $item) {
+            ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id,
+                'estimate_id' => $this->estimate->id, 'estimate_item_id' => $item->id,
+                'quantity' => '100', 'amount' => '800000', 'finance_managed' => false]);
+        }
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'EXCLUDED-NATIVE', 'act_date' => '2026-09-13',
+            'amount' => '1', 'currency' => 'RUB', 'status' => 'approved', 'is_approved' => true]);
+        \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $excluded->id,
+            'line_type' => 'manual', 'title' => 'Accepted work', 'quantity' => '1', 'unit_price' => '1', 'amount' => '1',
+            'currency' => 'RUB', 'manual_reason' => 'Regression', 'created_by' => $this->actor->id]);
+        try {
+            app(\App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService::class)
+                ->detachCoverage($this->contractor, $this->estimate, $this->actor);
+            self::fail('Accepted excluded row was detached');
+        } catch (ValidationException $error) {
+            self::assertNotSame(trans_message('estimate_finance.invalid'), $error->getMessage());
+            self::assertSame(2, ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->count());
+            self::assertSame('approved', $act->fresh()->status);
+        }
+    }
+
     public function test_attach_adapter_keeps_contract_price_when_estimate_changes(): void
     {
         $this->app->forgetInstance(ContractEstimateService::class);

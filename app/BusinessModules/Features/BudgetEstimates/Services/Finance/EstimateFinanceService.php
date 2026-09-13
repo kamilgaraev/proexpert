@@ -463,7 +463,7 @@ final class EstimateFinanceService
         $this->access->editContracts($actor, $estimate, $data['target_keys'],
             array_values(array_filter(array_column($data['lines'], 'contract_id'))));
         foreach ($data['target_keys'] as $key) {
-            if (! isset($targets[$key]) || $targets[$key]['excluded']) {
+            if (! isset($targets[$key])) {
                 $this->invalid();
             }
         }
@@ -488,7 +488,7 @@ final class EstimateFinanceService
             if ($target && (($target['representation_needs_review'] ?? false) || ($target['represented_by_item_id'] ?? null))) {
                 $this->invalid('representation');
             }
-            if (! $target || ! isset($selectedKeys[$line['target_key']])
+            if (! $target || $target['excluded'] || ! isset($selectedKeys[$line['target_key']])
                 || (FinanceDecimal::compare($line['quantity'], '0') === 0 && (FinanceDecimal::compare($target['quantity'], '0') !== 0 || $line['method'] !== 'total'))) {
                 $this->invalid();
             }
