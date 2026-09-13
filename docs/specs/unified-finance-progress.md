@@ -980,3 +980,12 @@
 - Последний read-only SSH session47211 terminal1: banner timeout до авторизации. Данные production не прочитаны. Локальная работа продолжается, цель не blocked.
 - Перечитаны MigrationPlan.report и MigrationApply.apply после CBM miss/not_tracked: legacy-проекция не содержит подтверждённых состава цены и режима НДС, поэтому перенос сохраняет такие условия как unknown/requires_review; ставки из разницы сумм не восстанавливаются. Автоматический перенос однозначных данных и полная production-сверка требуют подтверждения исходных данных, не считать завершёнными по одному UI apply.
 - Далее: полный финансовый набор после исправления explicit unlink, итоговая сверка покрытия требований, production inventory/275/436/перенос и штатный выпуск. No push/PR/deploy; цель активна.
+
+## Браузерная проверка единой формы — 2026-09-13
+
+- Playwright/Chromium finance-binding: настоящий EstimateFinanceDrawer в локальном Vite, один выбранный item, две стороны, ответы HTTP подменены. Через реальные элементы выбраны заказчик З-1 с НДС сверху 20%, исполнитель П-1 без НДС, подтверждён состав. Предпросмотр вернул строки, цена исполнителя вручную изменена с 1000.00 на 800.00.
+- После успешного PUT зафиксирован ровно один запрос с двумя lines: одинаковый объём 10, независимые unit_price1000.00/800.00, vat_mode exclusive/none и rate20/null, revision7 и mutation_id. onSaved закрыл форму. Это component browser, не full-app authentication и не запись в production; атомарность подтверждается отдельными PG тестами.
+- Первая попытка сохранения была ошибкой стенда: route ожидал POST вместо штатного PUT. Внешний запрос abort; показалось русское сообщение, данные формы сохранились. Перехват исправлен, повтор сохранён. Production-код не менялся. CLI network не поддерживается, использован консольный лог.
+- На viewport390x844 documentWidth=390, drawerWidth=390, drawerScrollWidth=390. Скриншот output/playwright/finance-binding-mobile.png просмотрен: поля/подписи переносятся, горизонтального переполнения нет. Артефакты остаются untracked, в release не включены. Browser finance-binding закрыт, Vite93392 штатно остановлен terminal1.
+- Повторный production SSH64914 terminal1: banner timeout до авторизации. Данных сервера нет.
+- FULL EstimateFinanceTest сейчас session41808, finance-final-integration-tests.log; последний live poll подтвердил running, в логе63/101 без отмеченных ошибок. До terminal не запускать другой PG launcher. No push/PR/deploy; цель активна.
