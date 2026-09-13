@@ -31,14 +31,20 @@ final class EstimateFinanceExecutionQuantity
         $acts = DB::table('contract_performance_acts as acts')->where('acts.contract_id', $contractId)->where('acts.project_id', $estimate->project_id)
             ->whereIn('acts.status', ['approved', 'signed'])->whereNull('acts.annulled_at');
         $native = (clone $acts)->join('performance_act_lines as line', 'line.performance_act_id', '=', 'acts.id')->whereIn('line.estimate_item_id', $itemIds)
-            ->selectRaw("line.estimate_item_id, line.quantity, line.amount, line.basis_snapshot->>'allocation_key' AS allocation_key")->get();
+            ->selectRaw("line.estimate_item_id, line.quantity, line.amount, line.basis_snapshot->>'allocation_key' AS allocation_key, line.basis_snapshot->>'basis_type' AS basis_type, line.basis_snapshot->>'estimate_item_id' AS snapshot_item_id, line.basis_snapshot->>'estimate_id' AS snapshot_estimate_id, line.basis_snapshot->>'contract_id' AS snapshot_contract_id")->get();
         $legacy = (clone $acts)->join('performance_act_completed_works as pivot', 'pivot.performance_act_id', '=', 'acts.id')
             ->join('completed_works as work', 'work.id', '=', 'pivot.completed_work_id')->where('work.organization_id', $estimate->organization_id)
             ->where('work.project_id', $estimate->project_id)->whereIn('work.estimate_item_id', $itemIds)
             ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('performance_act_lines')->whereColumn('performance_act_id', 'acts.id'))
-            ->selectRaw('work.estimate_item_id, pivot.included_quantity AS quantity, pivot.included_amount AS amount, NULL AS allocation_key')->get();
+            ->selectRaw('work.estimate_item_id, pivot.included_quantity AS quantity, pivot.included_amount AS amount, NULL AS allocation_key, NULL AS basis_type, NULL AS snapshot_item_id, NULL AS snapshot_estimate_id, NULL AS snapshot_contract_id')->get();
         foreach ($native->concat($legacy) as $row) {
             $condition = $row->allocation_key === null ? null : $byKey->get($row->allocation_key);
+            if ($condition && ($row->basis_type !== 'contract_conditions'
+                || (int) $condition->estimate_item_id !== (int) $row->estimate_item_id
+                || (int) $row->snapshot_item_id !== (int) $row->estimate_item_id
+                || (int) $row->snapshot_estimate_id !== (int) $estimate->id || (int) $row->snapshot_contract_id !== $contractId)) {
+                $condition = null;
+            }
             $group = $this->group((int) $row->estimate_item_id, $condition?->resource_id);
             $this->add($totals, $unknown, $group, $row->quantity, $row->amount);
             if ($condition && $row->quantity !== null) {

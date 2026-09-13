@@ -816,6 +816,45 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($row['key'], $db::table('estimate_finance_own_costs')->where('id', $id)->value('key'));
     }
 
+    public function test_manual_quantity_counts_native_lines_once_when_act_also_has_legacy_works(): void
+    {
+        $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
+        $allocation = EstimateFinanceAllocation::query()->where('estimate_id', $this->estimate->id)->firstOrFail();
+        $native = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'NATIVE-MIXED',
+            'act_date' => '2026-09-13', 'amount' => '60', 'status' => 'draft', 'currency' => 'RUB']);
+        \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $native->id,
+            'estimate_item_id' => $this->item->id, 'line_type' => 'manual', 'manual_reason' => 'Основание', 'title' => 'Работа',
+            'quantity' => '60', 'unit_price' => '1', 'amount' => '60', 'currency' => 'RUB',
+            'basis_snapshot' => ['basis_type' => 'contract_conditions', 'allocation_key' => $allocation->key,
+                'contract_id' => $this->customer->id, 'estimate_id' => $this->estimate->id, 'estimate_item_id' => $this->item->id]]);
+        $work = \App\Models\CompletedWork::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'contract_id' => $this->customer->id,
+            'estimate_item_id' => $this->item->id, 'user_id' => $this->actor->id, 'quantity' => '60',
+            'completed_quantity' => '60', 'price' => '1', 'total_amount' => '60',
+            'completion_date' => '2026-09-13', 'status' => 'confirmed', 'description' => 'То же выполнение']);
+        $native->completedWorks()->attach($work->id, ['included_quantity' => '60', 'included_amount' => '60', 'currency' => 'RUB']);
+        $native->update(['status' => 'approved', 'is_approved' => true]);
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->customer->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'MANUAL-MIXED',
+            'act_date' => '2026-09-13', 'amount' => '100', 'status' => 'approved', 'is_approved' => true, 'currency' => 'RUB']);
+        $command = ['operation' => 'execution_distribution', 'revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'act_id' => $act->id,
+            'lines' => [['allocation_key' => $allocation->key, 'condition_version' => 1, 'version' => 0, 'amount' => '40', 'quantity' => '41']]];
+        try {
+            $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+            self::fail('Native accepted quantity was ignored');
+        } catch (ValidationException) {
+            self::assertSame(0, \Illuminate\Support\Facades\DB::table('estimate_finance_execution_allocations')->count());
+        }
+        $command['lines'][0]['quantity'] = '40';
+        $preview = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        self::assertSame('40.00000000', $preview['lines'][0]['quantity']);
+        $command['source_hash'] = $preview['source_hash'];
+        $this->save($command);
+        self::assertSame('40.00000000', \Illuminate\Support\Facades\DB::table('estimate_finance_execution_allocations')->value('quantity'));
+    }
+
     public function test_manual_execution_quantity_counts_other_acts_and_can_clear_distribution(): void
     {
         $this->save($this->command([$this->line($this->customer, '100', '1000000')]));
