@@ -55,7 +55,7 @@ final class PerformanceActFinancialBasisTest extends TestCase
         foreach ([['7', '120.00', '17.14', '100.00', '100.00'], ['3', '100.00', '40.00'], ['3', '120.00', '40.00'], ['1.5', '100.00', '80.00'], ['1.5', '120.00', '80.00'], ['3000000', '100000.00', '0.04', '100000.00']] as $case) {
             [$quantity, $amount, $expectedPrice] = $case;
             $contract = new Contract;
-            $contract->setRawAttributes(['id' => 1, 'organization_id' => 1]);
+            $contract->setRawAttributes(['id' => 1, 'organization_id' => 1, 'project_id' => 1, 'currency' => 'RUB']);
             $version = new \App\Models\EstimateVersion;
             $version->forceFill([
                 'id' => 1,
@@ -78,11 +78,12 @@ final class PerformanceActFinancialBasisTest extends TestCase
                 ],
             ]);
             $estimate = new Estimate;
-            $estimate->setRawAttributes(['id' => 1]);
+            $estimate->setRawAttributes(['id' => 1, 'organization_id' => 1, 'project_id' => 1]);
             $estimate->setRelation('currentVersion', $version);
             $item = new EstimateItem;
             $item->setRawAttributes(['id' => 1]);
             $item->setRelation('estimate', $estimate);
+            $item->setRelation('financeAllocations', collect());
             $work = new CompletedWork;
             $work->setRelation('estimateItem', $item);
 
@@ -144,8 +145,9 @@ final class PerformanceActFinancialBasisTest extends TestCase
             'total_amount' => 1000,
             'current_total_amount' => 1000,
         ]);
-        app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService::class)
-            ->attachItems($contract, $estimate, [$item->id], $includeVat);
+        ContractEstimateItem::query()->create(['contract_id' => $contract->id, 'estimate_id' => $estimate->id,
+            'estimate_item_id' => $item->id, 'quantity' => '1', 'amount' => $includeVat ? '1200.00' : '1000.00',
+            'amount_without_vat' => '1000.00', 'finance_managed' => false]);
         if ($oldCoverage) {
             ContractEstimateItem::query()->where('estimate_item_id', $item->id)
                 ->update(['amount_without_vat' => null]);

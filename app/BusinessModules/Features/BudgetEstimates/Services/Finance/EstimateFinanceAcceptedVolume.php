@@ -90,7 +90,7 @@ final class EstimateFinanceAcceptedVolume
             ->groupByRaw("acts.contract_id, lines.estimate_item_id, lines.basis_snapshot->>'allocation_key'")->get();
     }
 
-    public function quantities(Estimate $estimate, array $contractIds, array $itemIds): array
+    public function quantities(Estimate $estimate, array $contractIds, array $itemIds, ?int $excludedNativeActId = null): array
     {
         if ($contractIds === [] || $itemIds === []) {
             return [];
@@ -99,11 +99,12 @@ final class EstimateFinanceAcceptedVolume
             ->where('contracts.organization_id', $estimate->organization_id)->where('contracts.project_id', $estimate->project_id)
             ->where('acts.project_id', $estimate->project_id)->whereIn('acts.contract_id', $contractIds)
             ->whereNull('acts.annulled_at')->whereIn('acts.status', ['approved', 'signed']);
-        $lines = (clone $acts)->join('performance_act_lines as lines', 'lines.performance_act_id', '=', 'acts.id')
+        $nativeActs = (clone $acts)->when($excludedNativeActId !== null, fn ($query) => $query->where('acts.id', '!=', $excludedNativeActId));
+        $lines = (clone $nativeActs)->join('performance_act_lines as lines', 'lines.performance_act_id', '=', 'acts.id')
             ->whereIn('lines.estimate_item_id', $itemIds)
             ->selectRaw('acts.contract_id, lines.estimate_item_id, SUM(lines.quantity) AS quantity')
             ->groupBy('acts.contract_id', 'lines.estimate_item_id')->get();
-        $legacy = (clone $acts)->join('performance_act_completed_works as pivot', 'pivot.performance_act_id', '=', 'acts.id')
+        $legacy = (clone $nativeActs)->join('performance_act_completed_works as pivot', 'pivot.performance_act_id', '=', 'acts.id')
             ->join('completed_works as works', 'works.id', '=', 'pivot.completed_work_id')
             ->where('works.organization_id', $estimate->organization_id)->where('works.project_id', $estimate->project_id)
             ->whereIn('works.estimate_item_id', $itemIds)

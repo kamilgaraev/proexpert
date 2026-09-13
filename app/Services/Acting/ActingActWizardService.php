@@ -28,6 +28,7 @@ class ActingActWizardService
         private readonly ManualActLineBasisService $manualLineBasis,
         private readonly PerformanceActFinancialTotalsService $financialTotals,
         private readonly FixedContractActAmountGuard $contractAmountGuard,
+        private readonly \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard $financeQuantityGuard,
     ) {}
 
     public function createFromWizard(
@@ -108,6 +109,7 @@ class ActingActWizardService
                 $currency,
             );
             $act = $this->financialTotals->synchronize($act);
+            $this->financeQuantityGuard->assertFits($act, $lockedContract);
             $this->contractAmountGuard->assertActFits($lockedContract, (string) $act->amount, (int) $act->id);
 
             return $act->fresh([

@@ -40,6 +40,7 @@ class ContractPerformanceActService
         FileService $fileService,
         ProductionAcceptanceEventRecorder $productionAcceptanceEvents,
         ActingQuantityReservationService $quantityReservations,
+        private readonly \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard $financeQuantityGuard,
     ) {
         $this->actRepository = $actRepository;
         $this->contractAccessService = $contractAccessService;
@@ -147,6 +148,7 @@ class ContractPerformanceActService
                 // Пересчитываем сумму акта на основе включенных работ
                 $act->recalculateAmount();
             }
+            $this->financeQuantityGuard->assertFits($act, $contract);
             if ($act->is_approved || in_array($act->status, [
                 ContractPerformanceAct::STATUS_APPROVED,
                 ContractPerformanceAct::STATUS_SIGNED,
@@ -296,6 +298,7 @@ class ContractPerformanceActService
             if ($current === null) {
                 return false;
             }
+            $this->financeQuantityGuard->assertFits($current, $current->contract);
 
             return true;
         });

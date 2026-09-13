@@ -1952,6 +1952,21 @@ final class EstimateFinanceTest extends TestCase
         $data = \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource::collection($links)->resolve(request());
         self::assertSame(50.0, $data[0]['item']['acted_quantity']);
         self::assertSame(50.0, $data[0]['item']['available_quantity']);
+        $nextAct = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'NEXT-COMBINED', 'act_date' => '2026-09-13',
+            'amount' => '60', 'currency' => 'RUB', 'status' => 'draft', 'is_approved' => false]);
+        $nextLine = \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $nextAct->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Следующая работа', 'quantity' => '60', 'unit_price' => '1', 'amount' => '60',
+            'currency' => 'RUB', 'manual_reason' => 'Проверка остатка', 'created_by' => $this->actor->id]);
+        $this->mock(\App\Services\ActReport\ActReportNotificationService::class)->shouldReceive('notifyStatusChanged')->never();
+        try {
+            app(\App\Services\ActReport\ActReportWorkflowService::class)->submit($nextAct, $this->actor->id);
+            self::fail('Next act exceeds combined accepted quantity');
+        } catch (ValidationException) {
+            self::assertSame('draft', $nextAct->fresh()->status);
+        }
+        $nextLine->update(['quantity' => '50', 'amount' => '50']);
+        \Illuminate\Support\Facades\DB::transaction(fn () => app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard::class)->assertFits($nextAct, $this->contractor));
         $candidate = $allocation->getAttributes();
         $candidate['quantity'] = '40';
         try {
@@ -1972,6 +1987,12 @@ final class EstimateFinanceTest extends TestCase
         $data = \App\Http\Resources\Api\V1\Admin\Contract\ContractEstimateItemResource::collection($links)->resolve(request());
         self::assertNull($data[0]['item']['acted_quantity']);
         self::assertNull($data[0]['item']['available_quantity']);
+        try {
+            \Illuminate\Support\Facades\DB::transaction(fn () => app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard::class)->assertFits($nextAct, $this->contractor));
+            self::fail('Unknown accepted quantity must block the next act');
+        } catch (ValidationException) {
+            self::assertSame('draft', $nextAct->fresh()->status);
+        }
         $manual->update(['status' => 'annulled', 'annulled_at' => now()]);
         self::assertSame(0, FinanceDecimal::compare($accepted->quantities($this->estimate, [$this->contractor->id], [$this->item->id])[$key], '20'));
         $other = clone $this->estimate;

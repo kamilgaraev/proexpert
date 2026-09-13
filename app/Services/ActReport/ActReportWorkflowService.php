@@ -46,6 +46,7 @@ class ActReportWorkflowService
         private readonly FixedContractActAmountGuard $contractAmountGuard,
         private readonly FinancialBalanceQuery $financialBalances,
         private readonly PerformanceActConditionGuard $conditionGuard,
+        private readonly \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard $financeQuantityGuard,
     ) {}
 
     public function preview(int $organizationId, array $data, ?User $user): array
@@ -257,6 +258,7 @@ class ActReportWorkflowService
                 ->whereKey($lockedAct->contract_id)
                 ->lockForUpdate()
                 ->firstOrFail();
+            $this->financeQuantityGuard->assertFits($lockedAct, $lockedContract);
             $this->contractAmountGuard->assertActFits(
                 $lockedContract,
                 (string) $lockedAct->amount,
@@ -312,6 +314,7 @@ class ActReportWorkflowService
             $this->conditionGuard->assertCurrent($lockedAct, $lockedContract);
             $lockedAct = $this->recalculatePricedLines($lockedAct);
             $previousStatus = $this->acceptanceStatus($lockedAct);
+            $this->financeQuantityGuard->assertFits($lockedAct, $lockedContract);
             if ((float) $lockedAct->amount <= 0) {
                 throw new BusinessLogicException(trans_message('act_reports.empty_act'), 422);
             }
