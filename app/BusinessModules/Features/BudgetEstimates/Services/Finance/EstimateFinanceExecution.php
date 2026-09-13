@@ -10,7 +10,9 @@ use Illuminate\Support\Facades\DB;
 
 final class EstimateFinanceExecution
 {
-    public function report(Estimate $estimate, array $contracts, ?int $actId = null): array
+    public function __construct(private readonly EstimateFinanceExecutionLedger $ledger) {}
+
+    public function report(Estimate $estimate, array $contracts, ?int $actId = null, bool $includeDistributions = true): array
     {
         $linkedIds = DB::table('contract_estimate_items')->where('estimate_id', $estimate->id)->pluck('contract_id')
             ->merge(DB::table('estimate_finance_allocations')->where('estimate_id', $estimate->id)->whereNotNull('contract_id')->pluck('contract_id'))
@@ -102,6 +104,8 @@ final class EstimateFinanceExecution
                 'needs_review' => $currencyMismatch || ($unallocated !== null && FinanceDecimal::compare($unallocated, '0') < 0)];
         }
 
-        return ['available' => true, 'rows' => $rows, 'documents' => $documents];
+        $report = ['available' => true, 'rows' => $rows, 'documents' => $documents];
+
+        return $includeDistributions ? $this->ledger->merge($estimate, $report, $acts) : $report;
     }
 }

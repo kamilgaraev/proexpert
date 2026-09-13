@@ -1009,6 +1009,13 @@ final class EstimateFinanceTest extends TestCase
         self::assertNull($stored->quantity);
         self::assertSame(1, $db::table('estimate_finance_execution_versions')->count());
         self::assertSame($before, $act->fresh()->getAttributes());
+        $execution = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution'];
+        self::assertCount(1, $execution['rows']);
+        self::assertSame('act_distribution', $execution['rows'][0]['source_type']);
+        self::assertSame('60.00', $execution['rows'][0]['amount_with_vat']);
+        self::assertSame('60.00', $execution['documents'][0]['unallocated_amount_with_vat']);
+        self::assertSame('60.00', $execution['summary']['totals']['RUB']['revenue']);
+        self::assertNull($execution['summary']['contract_quantities'][0]['accepted_quantity']);
         $command['mutation_id'] = (string) Str::uuid();
         $command['revision'] = $saved['revision'];
         $command['lines'][0]['version'] = 1;
@@ -1024,6 +1031,19 @@ final class EstimateFinanceTest extends TestCase
         $this->save($command);
         self::assertSame($stored->key, $db::table('estimate_finance_execution_allocations')->value('key'));
         self::assertSame('100.00', $db::table('estimate_finance_execution_allocations')->value('amount_without_vat'));
+        self::assertSame(2, $db::table('estimate_finance_execution_versions')->count());
+        $execution = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution'];
+        self::assertSame('0.00', $execution['documents'][0]['unallocated_amount_with_vat']);
+        self::assertSame('120.00', $execution['summary']['totals']['RUB']['revenue']);
+        $act->update(['status' => 'draft', 'is_approved' => false]);
+        $act->update(['amount' => '150', 'status' => 'approved', 'is_approved' => true]);
+        $changed = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution'];
+        self::assertTrue($changed['rows'][0]['requires_review']);
+        self::assertNull($changed['rows'][0]['amount_with_vat']);
+        self::assertSame('120.00', $changed['rows'][0]['saved_amount_with_vat']);
+        self::assertNull($changed['summary']['totals']['RUB']['revenue']);
+        $act->update(['annulled_at' => now()]);
+        self::assertSame([], $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution']['rows']);
         self::assertSame(2, $db::table('estimate_finance_execution_versions')->count());
     }
 

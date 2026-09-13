@@ -17,7 +17,7 @@ final class EstimateFinanceExecutionSource
         if ((int) $act->project_id !== (int) $estimate->project_id) {
             $this->invalid();
         }
-        $report = $this->execution->report($estimate, $this->query->contracts($estimate), (int) $act->id);
+        $report = $this->execution->report($estimate, $this->query->contracts($estimate), (int) $act->id, false);
         $document = $report['documents'][0] ?? null;
         if (! $document || $document['needs_review'] || $document['side'] === 'unknown'
             || ! preg_match('/^[A-Z]{3}$/', (string) $document['currency'])
@@ -30,12 +30,10 @@ final class EstimateFinanceExecutionSource
             $this->invalid();
         }
         $act->load(['lines' => fn ($builder) => $builder->orderBy('id')]);
-        $snapshot = ['act' => $act->getAttributes(), 'lines' => $act->lines->map(fn ($line) => $line->getAttributes())->all()];
-        $snapshot['capacity'] = array_intersect_key($document, array_flip(['contract_id', 'currency', 'side', 'unallocated_amount_with_vat', 'unallocated_amount_without_vat']));
         if ($act->lines->isEmpty()) {
             $act->load(['completedWorks' => fn ($builder) => $builder->orderBy('completed_works.id')]);
-            $snapshot['works'] = $act->completedWorks->map(fn ($work) => ['work' => $work->getAttributes(), 'pivot' => $work->pivot->getAttributes()])->all();
         }
+        $snapshot = EstimateFinanceExecutionSnapshot::make($act, $document);
 
         return ['act_id' => (int) $act->id, 'contract_id' => $document['contract_id'], 'currency' => $document['currency'],
             'amount_with_vat' => $document['unallocated_amount_with_vat'], 'amount_without_vat' => $document['unallocated_amount_without_vat'],

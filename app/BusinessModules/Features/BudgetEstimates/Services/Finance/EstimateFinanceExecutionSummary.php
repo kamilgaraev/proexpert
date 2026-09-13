@@ -30,7 +30,7 @@ final class EstimateFinanceExecutionSummary
                 continue;
             }
             $seen[$sourceKey] = true;
-            $targetKey = 'i:'.$fact['item_id'];
+            $targetKey = ! empty($fact['resource_id']) ? 'r:'.$fact['resource_id'] : 'i:'.$fact['item_id'];
             $target = $targets[$targetKey] ?? null;
             $currency = $fact['currency'];
             $totals[$currency] ??= $this->emptyTotals();
