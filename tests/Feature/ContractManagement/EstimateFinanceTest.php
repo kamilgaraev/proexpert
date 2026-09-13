@@ -649,6 +649,32 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame($distribution->key, $reviewed['rows'][0]['key']);
         self::assertSame(2, $reviewed['rows'][0]['source_version']);
         self::assertSame(2, $db::table('estimate_finance_own_cost_allocation_versions')->where('own_cost_allocation_id', $distribution->id)->count());
+        $audit = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'own_cost', $original->key);
+        self::assertCount(2, $audit['data']);
+        self::assertNull($audit['data'][0]['before']);
+        self::assertSame('100.00', $audit['data'][1]['before']['amount']);
+        self::assertSame('80.00', $audit['data'][1]['after']['amount']);
+        self::assertArrayNotHasKey('source_snapshot', $audit['data'][1]['after']);
+        self::assertFalse($audit['has_more']);
+        self::assertSame([], $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id,
+            $audit['data'][1]['id'], 'own_cost', $original->key)['data']);
+        $document = \App\Models\AdvanceAccountTransaction::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'user_id' => $this->actor->id, 'type' => 'expense', 'amount' => '80',
+            'balance_after' => '0', 'reporting_status' => 'approved', 'approved_at' => now(), 'created_by_user_id' => $this->actor->id]);
+        $db::table('estimate_finance_own_costs')->where('id', $original->id)->update(['source_type' => 'advance_expense', 'advance_transaction_id' => $document->id]);
+        $denied = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $denied->shouldReceive('can')->andReturn(false);
+        app()->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $denied);
+        $db::flushQueryLog();
+        $db::enableQueryLog();
+        try {
+            $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'own_cost', $original->key);
+            self::fail('Document history was exposed without source permission');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            self::assertFalse(collect($db::getQueryLog())->contains(fn (array $query) => str_contains($query['query'], 'estimate_finance_own_cost_versions')));
+        } finally {
+            $db::disableQueryLog();
+        }
     }
 
     public function test_own_cost_registration_previews_tax_and_replays_without_duplicate_expense(): void

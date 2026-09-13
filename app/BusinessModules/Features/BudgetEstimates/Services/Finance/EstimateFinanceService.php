@@ -220,11 +220,18 @@ final class EstimateFinanceService
         ];
     }
 
-    public function history(User $actor, int $projectId, int $estimateId, int $afterId = 0, string $kind = 'conditions'): array
+    public function history(User $actor, int $projectId, int $estimateId, int $afterId = 0, string $kind = 'conditions', string $costKey = ''): array
     {
         $estimate = $this->access->estimate($actor, $projectId, $estimateId);
-        if (! in_array($kind, ['conditions', 'execution'], true) || $afterId < 0) {
+        if (! in_array($kind, ['conditions', 'execution', 'own_cost'], true) || $afterId < 0) {
             $this->invalid();
+        }
+        if ($kind === 'own_cost') {
+            if (! \Illuminate\Support\Str::isUuid($costKey)) {
+                $this->invalid();
+            }
+
+            return $this->history->forOwnCost($actor, $estimate, $costKey, $afterId);
         }
         if ($kind === 'execution') {
             if (! $this->access->canViewExecution($actor, $projectId)) {

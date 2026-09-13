@@ -11,6 +11,31 @@ use Illuminate\Support\Facades\DB;
 
 final class EstimateFinanceHistory
 {
+    public function forOwnCost(User $actor, Estimate $estimate, string $costKey, int $afterId): array
+    {
+        $cost = DB::table('estimate_finance_own_costs')->where('organization_id', $estimate->organization_id)
+            ->where('project_id', $estimate->project_id)->where('key', $costKey)->firstOrFail();
+        if ($cost->source_type === 'advance_expense' && ! app(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->can($actor, 'advance_transactions.view', ['context_type' => 'project', 'project_id' => (int) $estimate->project_id,
+                'organization_id' => (int) $estimate->organization_id])) {
+            throw new \Illuminate\Auth\Access\AuthorizationException;
+        }
+        $rows = DB::table('estimate_finance_own_cost_versions as history')->leftJoin('users as actors', 'actors.id', '=', 'history.actor_id')
+            ->where('history.own_cost_id', $cost->id)->where('history.id', '>', $afterId)->orderBy('history.id')->limit(101)
+            ->get(['history.id', 'history.version', 'history.created_at', 'history.before', 'history.after', 'actors.name as actor_name']);
+        $page = $rows->take(100)->map(function (object $row): array {
+            $entry = ['id' => (int) $row->id, 'version' => (int) $row->version, 'created_at' => $row->created_at, 'actor_name' => $row->actor_name];
+            foreach (['before', 'after'] as $field) {
+                $entry[$field] = $row->$field === null ? null : array_intersect_key(json_decode($row->$field, true, 512, JSON_THROW_ON_ERROR),
+                    array_flip(['expense_date', 'basis', 'currency', 'amount', 'amount_without_vat', 'vat_mode', 'vat_rate', 'status', 'cost_category_id']));
+            }
+
+            return $entry;
+        })->values()->all();
+
+        return ['data' => $page, 'has_more' => $rows->count() > 100, 'next_cursor' => $rows->count() > 100 ? end($page)['id'] : null];
+    }
+
     public function record(User $actor, Estimate $estimate, string $mutationId, int $revision, array $before, array $keys): void
     {
         $previous = array_column($before, null, 'key');

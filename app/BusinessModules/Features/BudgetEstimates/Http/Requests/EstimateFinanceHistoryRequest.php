@@ -16,6 +16,7 @@ final class EstimateFinanceHistoryRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['after_id' => ['sometimes', 'integer', 'min:0'], 'kind' => ['sometimes', Rule::in(['conditions', 'execution'])]];
+        return ['after_id' => ['sometimes', 'integer', 'min:0'], 'kind' => ['sometimes', Rule::in(['conditions', 'execution', 'own_cost'])],
+            'cost_key' => ['required_if:kind,own_cost', 'uuid']];
     }
 }
