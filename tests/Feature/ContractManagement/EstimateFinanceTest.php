@@ -339,6 +339,50 @@ final class EstimateFinanceTest extends TestCase
         self::assertSame('cost', $query->allocations($this->estimate)[0]['side']);
     }
 
+    public function test_migration_inventory_is_read_only_paged_and_scoped(): void
+    {
+        $link = ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
+            'estimate_item_id' => $this->item->id, 'quantity' => '0.123456', 'amount' => '26533906.30', 'notes' => 'Исходная связь']);
+        $otherOrg = Organization::factory()->create();
+        $other = $this->estimate->replicate();
+        $other->organization_id = $otherOrg->id;
+        $other->save();
+        $foreign = ContractEstimateItem::query()->create(['contract_id' => $this->customer->id, 'estimate_id' => $other->id,
+            'estimate_item_id' => $this->item->id, 'quantity' => '1', 'amount' => '154253129.99']);
+        $inventory = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceMigrationInventory::class);
+        $before = $link->fresh()->getAttributes();
+        \Illuminate\Support\Facades\DB::enableQueryLog();
+        \Illuminate\Support\Facades\DB::flushQueryLog();
+        try {
+            $page = $inventory->page(null, 0, 1);
+            $queries = \Illuminate\Support\Facades\DB::getQueryLog();
+        } finally {
+            \Illuminate\Support\Facades\DB::disableQueryLog();
+        }
+        self::assertCount(2, $queries);
+        foreach ($queries as $query) {
+            self::assertStringStartsWith('select ', strtolower($query['query']));
+        }
+        self::assertTrue($page['read_only']);
+        self::assertSame($link->id, $page['next_cursor']);
+        self::assertSame('26533906.30', $page['rows'][0]['preserved']['amount']);
+        self::assertSame([], $page['rows'][0]['issues']);
+        self::assertSame($page, $inventory->page(null, 0, 1));
+        $next = $inventory->page(null, $page['next_cursor'], 1);
+        self::assertSame($foreign->id, $next['rows'][0]['legacy_link_id']);
+        self::assertContains('contract_outside_scope_or_missing', $next['rows'][0]['issues']);
+        self::assertContains('position_outside_scope_or_missing', $next['rows'][0]['issues']);
+        self::assertNull($next['next_cursor']);
+        $scoped = $inventory->page($this->estimate->organization_id);
+        self::assertSame([$link->id], array_column($scoped['rows'], 'legacy_link_id'));
+        self::assertSame($before, $link->fresh()->getAttributes());
+        $this->artisan('estimates:finance-inventory', ['--organization_id' => $this->estimate->organization_id])
+            ->expectsOutput(json_encode($scoped, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR))->assertSuccessful();
+        $this->artisan('estimates:finance-inventory', ['--after' => '-1'])->assertExitCode(2);
+        $link->update(['amount' => '26533906.31']);
+        self::assertNotSame($page['rows'][0]['preserved_values_hash'], $inventory->page(null, 0, 1)['rows'][0]['preserved_values_hash']);
+    }
+
     public function test_migration_plan_pages_preserved_links_without_inventing_tax_or_writing_data(): void
     {
         $link = ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
@@ -389,10 +433,19 @@ final class EstimateFinanceTest extends TestCase
             self::assertSame(0, EstimateFinanceAllocation::query()->count());
         }
         $beforeApply = $link->fresh()->getAttributes();
+        $inventory = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceMigrationInventory::class);
+        $inventoryBefore = $inventory->page($this->estimate->organization_id);
         $saved = $this->save($command);
         self::assertFalse($saved['replayed']);
         self::assertTrue($this->save($command)['replayed']);
         self::assertSame(2, EstimateFinanceAllocation::query()->count());
+        $inventoryAfter = $inventory->page($this->estimate->organization_id);
+        self::assertSame(array_column($inventoryBefore['rows'], 'preserved_values_hash'), array_column($inventoryAfter['rows'], 'preserved_values_hash'));
+        foreach ($inventoryAfter['rows'] as $row) {
+            self::assertTrue($row['finance_managed']);
+            self::assertCount(1, $row['allocation_keys']);
+            self::assertSame([], $row['issues']);
+        }
         $afterApply = $link->fresh()->getAttributes();
         unset($beforeApply['finance_managed'], $afterApply['finance_managed']);
         self::assertSame($beforeApply, $afterApply);
