@@ -13,7 +13,6 @@ use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Services\Contract\ContractAuditedMutationService;
-use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -363,23 +362,6 @@ class EstimateCoverageService
                 ['estimate_id' => (int) $estimate->id],
             );
         });
-    }
-
-    public function backfillLegacyCoverage(): void
-    {
-        Estimate::query()
-            ->whereNotNull('contract_id')
-            ->with('items')
-            ->chunkById(100, function (EloquentCollection $estimates): void {
-                foreach ($estimates as $estimate) {
-                    $contract = Contract::query()->find($estimate->contract_id);
-                    if (! $contract) {
-                        continue;
-                    }
-
-                    $this->attachFullCoverage($contract, $estimate);
-                }
-            });
     }
 
     private function getCoveredItemIds(Estimate $estimate): Collection

@@ -514,6 +514,18 @@ final class EstimateFinanceTest extends TestCase
             'line_type' => 'manual', 'manual_reason' => 'Старая привязка', 'title' => 'Работа', 'unit' => 'шт',
             'quantity' => '1', 'unit_price' => '120', 'amount' => '120', 'currency' => 'RUB',
             'estimate_item_id' => $this->item->id, 'basis_snapshot' => ['legacy_link_id' => $link->id]]);
+        $work = \App\Models\CompletedWork::query()->create(['organization_id' => $this->estimate->organization_id,
+            'project_id' => $this->estimate->project_id, 'contract_id' => $this->contractor->id,
+            'estimate_item_id' => $this->item->id, 'user_id' => $this->actor->id, 'quantity' => '1',
+            'completed_quantity' => '1', 'price' => '120', 'total_amount' => '120',
+            'completion_date' => '2026-09-12', 'status' => 'confirmed', 'description' => 'Старое выполнение']);
+        $legacyAct = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'MIGRATION-LEGACY-WORK',
+            'act_date' => '2026-09-12', 'amount' => '60', 'status' => 'draft', 'currency' => 'RUB']);
+        $legacyAct->completedWorks()->attach($work->id, ['included_quantity' => '0.5', 'included_amount' => '60', 'currency' => 'RUB']);
+        $legacyAct->update(['status' => 'approved', 'is_approved' => true]);
+        $legacyBefore = [$work->fresh()->getAttributes(), $legacyAct->fresh()->getAttributes(),
+            $legacyAct->completedWorks()->firstOrFail()->pivot->getAttributes()];
         $document = $this->cashDocument($this->contractor, 'outgoing');
         $transaction = $this->cashTransaction($document->id, '50');
         $before = [$act->fresh()->getAttributes(), $line->fresh()->getAttributes(), $document->fresh()->getAttributes(), $transaction->fresh()->getAttributes()];
@@ -526,6 +538,9 @@ final class EstimateFinanceTest extends TestCase
         $this->save($command);
         self::assertSame($before, [$act->fresh()->getAttributes(), $line->fresh()->getAttributes(), $document->fresh()->getAttributes(), $transaction->fresh()->getAttributes()]);
         $after = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'with_vat', 'execution')['execution'];
+        self::assertSame($legacyBefore, [$work->fresh()->getAttributes(), $legacyAct->fresh()->getAttributes(),
+            $legacyAct->completedWorks()->firstOrFail()->pivot->getAttributes()]);
+        self::assertContains('act_work', array_column($after['rows'], 'source_type'));
         self::assertSame($execution['rows'], $after['rows']);
         self::assertSame($execution['documents'], $after['documents']);
         self::assertSame($execution['summary']['totals'], $after['summary']['totals']);
