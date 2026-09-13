@@ -89,6 +89,7 @@ final class ContractEstimateFinanceAdapter
             }
             $this->access->editContracts($actor, $estimate, array_keys($keys), [(int) $contract->id]);
             if ($keys === []) {
+                $this->removeEmptyProjections($contract, $estimate, $itemIds);
                 return;
             }
             $lines = [];
@@ -102,7 +103,25 @@ final class ContractEstimateFinanceAdapter
                 'target_keys' => array_keys($keys), 'lines' => $lines,
                 'confirm_resource_changes' => true,
             ]);
+            $this->removeEmptyProjections($contract, $estimate, $itemIds);
         }, 3);
+    }
+
+    private function removeEmptyProjections(Contract $contract, Estimate $estimate, array $itemIds): void
+    {
+        if ($itemIds === []) {
+            return;
+        }
+        Contract::query()->where('organization_id', $estimate->organization_id)
+            ->where('project_id', $estimate->project_id)->whereKey($contract->id)->lockForUpdate()->firstOrFail();
+        app(EstimateFinanceAcceptedVolume::class)->assertRetained($estimate,
+            array_map(static fn ($id): string => 'i:'.$id, $itemIds), $this->query->allocations($estimate));
+        DB::table('contract_estimate_items')->where('contract_id', $contract->id)->where('estimate_id', $estimate->id)
+            ->whereIn('estimate_item_id', $itemIds)->where('finance_managed', true)->where('quantity', 0)->where('amount', 0)
+            ->where(fn ($query) => $query->where('amount_without_vat', 0)->orWhereNull('amount_without_vat'))
+            ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('estimate_finance_allocations')
+                ->whereColumn('estimate_finance_allocations.contract_estimate_item_id', 'contract_estimate_items.id'))
+            ->delete();
     }
 
     public function attach(User $actor, Contract $contract, Estimate $estimate, array $itemIds, bool $includeVat = false, ?string $rate = null): void

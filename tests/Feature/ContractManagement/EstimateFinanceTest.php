@@ -48,6 +48,7 @@ final class EstimateFinanceTest extends TestCase
         $this->actor->organizations()->attach($org->id, ['is_active' => true, 'is_owner' => true, 'project_access_mode' => 'all_projects']);
         $this->actingAs($this->actor);
         $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturn(true);
+        $this->app->forgetInstance(ContractEstimateService::class);
         $this->estimate = Estimate::query()->create(['organization_id' => $org->id, 'project_id' => $project->id,
             'number' => 'FIN-1', 'name' => 'Бетонирование', 'estimate_date' => '2026-09-09']);
         $this->item = EstimateItem::query()->create(['estimate_id' => $this->estimate->id, 'position_number' => '1',
@@ -3232,8 +3233,32 @@ final class EstimateFinanceTest extends TestCase
         $this->save($this->command([]));
         self::assertSame($link->id, $link->fresh()->id);
         self::assertSame('0.00', $link->fresh()->amount);
+        $history = \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->where('estimate_id', $this->estimate->id)->orderBy('id')->get()->toArray();
         app(ContractEstimateService::class)->detachItems($this->contractor, [$this->item->id], $this->actor);
+        self::assertNull($link->fresh());
+        self::assertEquals($history, \Illuminate\Support\Facades\DB::table('estimate_finance_condition_versions')->where('estimate_id', $this->estimate->id)->orderBy('id')->get()->toArray());
         self::assertTrue($this->item->fresh()->delete());
+    }
+
+    public function test_empty_projection_cannot_be_unlinked_after_native_acceptance(): void
+    {
+        $this->app->forgetInstance(ContractEstimateService::class);
+        $this->save($this->command([$this->line($this->contractor, '100', '800000')]));
+        $this->save($this->command([]));
+        $link = ContractEstimateItem::query()->where('contract_id', $this->contractor->id)->firstOrFail();
+        $act = \App\Models\ContractPerformanceAct::query()->create(['contract_id' => $this->contractor->id,
+            'project_id' => $this->estimate->project_id, 'act_document_number' => 'LATE-NATIVE', 'act_date' => '2026-09-13',
+            'amount' => '1', 'currency' => 'RUB', 'status' => 'approved', 'is_approved' => true]);
+        \App\Models\PerformanceActLine::query()->create(['performance_act_id' => $act->id, 'estimate_item_id' => $this->item->id,
+            'line_type' => 'manual', 'title' => 'Принятая работа', 'quantity' => '1', 'unit_price' => '1', 'amount' => '1',
+            'currency' => 'RUB', 'manual_reason' => 'Проверка', 'created_by' => $this->actor->id]);
+        try {
+            app(ContractEstimateService::class)->detachItems($this->contractor, [$this->item->id], $this->actor);
+            self::fail('Accepted source lost its empty projection');
+        } catch (ValidationException) {
+            self::assertNotNull($link->fresh());
+            self::assertSame('approved', $act->fresh()->status);
+        }
     }
 
     public function test_different_vat_rates_and_own_brigade_are_compared_on_selected_basis(): void
