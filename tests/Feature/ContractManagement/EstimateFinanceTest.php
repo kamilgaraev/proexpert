@@ -658,6 +658,21 @@ final class EstimateFinanceTest extends TestCase
         self::assertFalse($audit['has_more']);
         self::assertSame([], $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id,
             $audit['data'][1]['id'], 'own_cost', $original->key)['data']);
+        $void = array_replace($edit, ['revision' => (int) $this->estimate->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'source_version' => 2, 'status' => 'voided', 'basis' => 'Ошибочная запись']);
+        unset($void['source_hash']);
+        $void['source_hash'] = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $void)['source_hash'];
+        $this->save($void);
+        self::assertTrue($this->save($void)['replayed']);
+        $voidReport = $this->finance->report($this->actor, $this->estimate->project_id, $this->estimate->id, 'without_vat', 'execution')['own_costs'];
+        self::assertSame('voided', $voidReport['sources'][0]['status']);
+        self::assertSame([], $voidReport['source_totals']);
+        self::assertSame([], $voidReport['allocated_totals']);
+        self::assertSame(1, $db::table('estimate_finance_own_cost_allocations')->where('own_cost_id', $original->id)->count());
+        $voidHistory = $this->finance->history($this->actor, $this->estimate->project_id, $this->estimate->id, 0, 'own_cost', $original->key);
+        self::assertCount(3, $voidHistory['data']);
+        self::assertSame('confirmed', $voidHistory['data'][2]['before']['status']);
+        self::assertSame('voided', $voidHistory['data'][2]['after']['status']);
         $document = \App\Models\AdvanceAccountTransaction::query()->create(['organization_id' => $this->estimate->organization_id,
             'project_id' => $this->estimate->project_id, 'user_id' => $this->actor->id, 'type' => 'expense', 'amount' => '80',
             'balance_after' => '0', 'reporting_status' => 'approved', 'approved_at' => now(), 'created_by_user_id' => $this->actor->id]);

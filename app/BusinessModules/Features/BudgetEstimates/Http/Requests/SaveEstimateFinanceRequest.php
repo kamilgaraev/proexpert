@@ -84,6 +84,7 @@ class SaveEstimateFinanceRequest extends FormRequest
             'mutation_id' => ['required', 'uuid'],
             'cost_key' => ['required', 'uuid'],
             'confirmed' => ['required', 'accepted'],
+            'status' => ['sometimes', 'in:confirmed,voided'],
             'source_version' => ['sometimes', 'integer', 'min:1'],
             'source_type' => ['required', 'in:manual,advance_expense'],
             'advance_transaction_id' => ['required_if:source_type,advance_expense', 'prohibited_unless:source_type,advance_expense', 'integer', 'min:1'],

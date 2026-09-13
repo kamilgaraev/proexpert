@@ -55,7 +55,7 @@ final class EstimateFinanceOwnCost
                     || $existing->currency !== $data['currency'] || $existing->status !== 'confirmed') {
                     $this->invalid();
                 }
-            } elseif (isset($data['source_version'])) {
+            } elseif (isset($data['source_version']) || ($data['status'] ?? 'confirmed') !== 'confirmed') {
                 $this->conflict();
             }
             $category = CostCategory::query()->where('organization_id', $actor->current_organization_id)
@@ -69,7 +69,7 @@ final class EstimateFinanceOwnCost
             $snapshot = ['source_type' => $data['source_type'], 'currency' => $data['currency'], 'amount' => $amount,
                 'expense_date' => $data['expense_date'], 'basis' => trim($data['basis']), 'category_id' => (int) $category->id,
                 'category_name' => $category->name, 'vat_mode' => $tax['vat_mode'], 'vat_rate' => $data['vat_rate'] ?? null,
-                'amount_without_vat' => $tax['amount_without_vat']];
+                'amount_without_vat' => $tax['amount_without_vat'], 'status' => $data['status'] ?? 'confirmed'];
             if ($data['source_type'] === 'advance_expense') {
                 $source = AdvanceAccountTransaction::query()->where('organization_id', $actor->current_organization_id)
                     ->where('project_id', $projectId)->whereKey($data['advance_transaction_id'])->lockForUpdate()->first();
@@ -101,7 +101,7 @@ final class EstimateFinanceOwnCost
                 'source_type' => $data['source_type'], 'advance_transaction_id' => $data['advance_transaction_id'] ?? null,
                 'cost_category_id' => $category->id, 'expense_date' => $data['expense_date'], 'basis' => trim($data['basis']),
                 'currency' => $data['currency'], 'amount' => $amount, 'amount_without_vat' => $tax['amount_without_vat'],
-                'vat_mode' => $tax['vat_mode'], 'vat_rate' => $data['vat_rate'] ?? null, 'status' => 'confirmed', 'version' => $existing ? (int) $existing->version + 1 : 1,
+                'vat_mode' => $tax['vat_mode'], 'vat_rate' => $data['vat_rate'] ?? null, 'status' => $data['status'] ?? 'confirmed', 'version' => $existing ? (int) $existing->version + 1 : 1,
                 'source_hash' => $sourceHash, 'source_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
                 'confirmed_by' => $actor->id, 'confirmed_at' => now(), 'updated_by' => $actor->id, 'created_at' => now(), 'updated_at' => now()];
             if ($existing) {
