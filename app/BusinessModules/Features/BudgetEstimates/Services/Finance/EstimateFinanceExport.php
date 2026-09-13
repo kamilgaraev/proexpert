@@ -289,6 +289,8 @@ final class EstimateFinanceExport
         $lines = $book->createSheet();
         $this->header($lines, 'own_cost_lines', ['estimate', 'name', 'own_cost_key', 'allocation_key', 'currency', 'own_cost_confirmed_amount',
             'own_cost_saved_gross', 'net', 'own_cost_version', 'condition_version', 'status']);
+        $sections = $book->createSheet();
+        $this->header($sections, 'own_cost_sections', ['estimate', 'name', 'currency', 'own_cost_confirmed_amount', 'own_cost_known_amount', 'unpriced', 'own_cost_scope', 'status']);
         $costs = $projectOwnCosts ?? ($reports[0]['own_costs'] ?? null);
         if ($costs !== null) {
             foreach ($costs['source_totals'] as $currency => $total) {
@@ -324,8 +326,15 @@ final class EstimateFinanceExport
                     $line['saved_amount'], $line['saved_without_vat'], $line['version'], $line['recorded_condition_version'],
                     trans_message('estimate_finance.'.($line['status'] === 'voided' ? 'own_cost_voided' : ($line['requires_review'] ? 'incomplete' : 'complete')))], [6, 7, 8, 9, 10]);
             }
+            foreach ($own['sections'] ?? [] as $section) {
+                foreach ($section['totals'] as $currency => $total) {
+                    $this->row($sections, [$report['name'], $section['name'] ?? trans_message('estimate_finance.own_cost_no_section'), $currency,
+                        $total['amount'], $total['known_amount'], $total['unknown_count'], trans_message('estimate_finance.own_cost_nested_scope'),
+                        trans_message('estimate_finance.'.($section['hierarchy_requires_review'] ? 'incomplete' : 'complete'))], [4, 5, 6]);
+                }
+            }
         }
-        foreach ([$summary, $sources, $lines] as $sheet) {
+        foreach ([$summary, $sources, $lines, $sections] as $sheet) {
             $sheet->setAutoFilter('A1:'.$sheet->getHighestColumn().$sheet->getHighestRow());
         }
     }

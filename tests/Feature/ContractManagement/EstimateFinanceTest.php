@@ -365,6 +365,11 @@ final class EstimateFinanceTest extends TestCase
             self::assertEquals('0.03', $sourceSheet->getCell('I2')->getValue());
             self::assertEquals('0.00', $sourceSheet->getCell('L2')->getValue());
             self::assertEquals(1, $lineSheet->getCell('J2')->getValue());
+            $sectionSheet = $book->getSheetByName('Расходы разделов');
+            self::assertSame(4, $sectionSheet->getHighestRow());
+            self::assertSame('Вложенный раздел', $sectionSheet->getCell('B2')->getValue());
+            self::assertEquals('0.01', $sectionSheet->getCell('D2')->getValue());
+            self::assertEquals('0.01', $sectionSheet->getCell('D3')->getValue());
         } finally {
             $book->disconnectWorksheets();
         }
