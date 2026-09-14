@@ -248,16 +248,9 @@ class OrganizationProfileService
         $capabilityValues = $this->normalizeCapabilities($organization->capabilities ?? []);
 
         if ($capabilityValues === []) {
-            $isFallbackRole = in_array($role, [
-                \App\Enums\ProjectOrganizationRole::CUSTOMER,
-                \App\Enums\ProjectOrganizationRole::OBSERVER,
-            ], true);
-
             return new \App\Domain\Common\ValidationResult(
-                isValid: $isFallbackRole,
-                errors: $isFallbackRole
-                    ? []
-                    : ['Организация не настроила направления деятельности для выбранной роли проекта.']
+                isValid: true,
+                errors: []
             );
         }
 

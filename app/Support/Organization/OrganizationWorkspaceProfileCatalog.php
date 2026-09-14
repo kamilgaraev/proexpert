@@ -401,9 +401,17 @@ final class OrganizationWorkspaceProfileCatalog
 
     public static function allowedProjectRoles(array $capabilityValues): array
     {
+        $normalized = self::normalizeCapabilityValues($capabilityValues);
+        if ($normalized === []) {
+            return array_map(
+                static fn (ProjectOrganizationRole $role): string => $role->value,
+                ProjectOrganizationRole::cases()
+            );
+        }
+
         $roles = [];
 
-        foreach (self::workspaceOptions($capabilityValues) as $workspaceOption) {
+        foreach (self::workspaceOptions($normalized) as $workspaceOption) {
             foreach ($workspaceOption['allowed_project_roles'] as $role) {
                 if (! in_array($role, $roles, true)) {
                     $roles[] = $role;

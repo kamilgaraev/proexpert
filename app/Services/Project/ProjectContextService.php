@@ -50,10 +50,6 @@ class ProjectContextService
 
     public function getOrganizationRole(Project $project, Organization $organization): ?ProjectOrganizationRole
     {
-        if ($project->organization_id === $organization->id) {
-            return ProjectOrganizationRole::OWNER;
-        }
-
         $pivot = ProjectOrganization::query()
             ->useWritePdo()
             ->where('project_id', $project->id)
@@ -61,13 +57,19 @@ class ProjectContextService
             ->where('is_active', true)
             ->first();
 
-        if (!$pivot instanceof ProjectOrganization) {
-            return null;
+        if ($pivot instanceof ProjectOrganization) {
+            $roleValue = $pivot->getRawOriginal('role_new') ?: $pivot->getRawOriginal('role');
+            $role = ProjectOrganizationRole::tryFrom($roleValue);
+            if ($role instanceof ProjectOrganizationRole) {
+                return $role;
+            }
         }
 
-        $roleValue = $pivot->getRawOriginal('role_new') ?: $pivot->getRawOriginal('role');
+        if ($project->organization_id === $organization->id) {
+            return ProjectOrganizationRole::OWNER;
+        }
 
-        return ProjectOrganizationRole::tryFrom($roleValue);
+        return null;
     }
 
     public function getRoleConfig(ProjectOrganizationRole $role): ProjectRoleConfig
@@ -138,6 +140,24 @@ class ProjectContextService
                 'invited_at' => $participantRecord->invited_at,
                 'accepted_at' => $participantRecord->accepted_at,
             ];
+        }
+
+        if (!isset($participants[$project->organization_id])) {
+            $ownerOrg = $project->relationLoaded('organization')
+                ? $project->organization
+                : Organization::find($project->organization_id);
+
+            if ($ownerOrg instanceof Organization) {
+                $participants[$project->organization_id] = [
+                    'organization' => $ownerOrg,
+                    'role' => ProjectOrganizationRole::OWNER,
+                    'is_active' => true,
+                    'is_owner' => true,
+                    'added_at' => $project->created_at,
+                    'invited_at' => $project->created_at,
+                    'accepted_at' => $project->created_at,
+                ];
+            }
         }
 
         return array_values($participants);
