@@ -156,6 +156,8 @@ class CustomerContractsVisibilityTest extends TestCase
             ContractStatusEnum::ACTIVE,
             ContractSideTypeEnum::CONTRACT
         );
+        app(\App\Services\Contract\ContractPartySnapshotService::class)->syncParties($internalContract, true);
+        self::assertFalse($customerPortalService->canAccessContract($ownerOrganization->id, $internalContract));
         $this->createContract(
             $unrelatedOrganization,
             $foreignProject,

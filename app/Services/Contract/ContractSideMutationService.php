@@ -280,9 +280,16 @@ class ContractSideMutationService
             throw new Exception('Contract not found.');
         }
 
+        $contractorId = $contract->contractor_id;
+        if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACT
+            && (int) $contract->contractor?->source_organization_id === $organizationId
+            && (int) $contract->contractor?->organization_id !== $organizationId) {
+            $contractorId = null;
+        }
+
         $dto = new ContractDTO(
             project_id: $contract->project_id,
-            contractor_id: $contract->contractor_id,
+            contractor_id: $contractorId,
             parent_contract_id: $contract->parent_contract_id,
             number: $contract->number,
             date: $contract->date?->format('Y-m-d') ?? now()->toDateString(),
@@ -379,7 +386,7 @@ class ContractSideMutationService
             return;
         }
 
-        $this->assertProjectsAvailableForContract($projectIdsToSync, $targetOrganizationId, $contractDTO->contract_side_type);
+        $this->assertProjectsAvailableForContract($projectIdsToSync, $targetOrganizationId);
         $contract->syncProjects($projectIdsToSync);
     }
 
@@ -689,8 +696,7 @@ class ContractSideMutationService
 
     private function assertProjectsAvailableForContract(
         array $projectIds,
-        int $targetOrganizationId,
-        ?ContractSideTypeEnum $sideType
+        int $targetOrganizationId
     ): void {
         $projects = Project::query()
             ->whereIn('id', $projectIds)
@@ -702,15 +708,7 @@ class ContractSideMutationService
         }
 
         foreach ($projects as $project) {
-            if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
-                if ($project->customer_counterparty_id === null) {
-                    throw new Exception(trans_message('contract.customer_counterparty_required'));
-                }
-
-                if ((int) $project->organization_id === $targetOrganizationId) {
-                    continue;
-                }
-            } elseif ((int) $project->organization_id === $targetOrganizationId) {
+            if ((int) $project->organization_id === $targetOrganizationId) {
                 continue;
             }
 

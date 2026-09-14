@@ -199,7 +199,7 @@ class UpdateContractRequest extends FormRequest
 
         return [
             'project_id' => $projectIdRules,
-            'contract_side_type' => ['sometimes', 'nullable', new Enum(ContractSideTypeEnum::class)],
+            'contract_side_type' => ['sometimes', 'required', new Enum(ContractSideTypeEnum::class)],
             'contractor_id' => [
                 'sometimes',
                 'nullable',
@@ -279,6 +279,9 @@ class UpdateContractRequest extends FormRequest
     protected function prepareForValidation()
     {
         $input = $this->all();
+        if (is_string($input['contract_side_type'] ?? null)) {
+            $input['contract_side_type'] = ContractSideTypeEnum::tryFromLegacy($input['contract_side_type'])?->value ?? $input['contract_side_type'];
+        }
         $routeProjectId = $this->routeProjectId();
         $this->scopeUpdateRequested = $this->containsScopeField($input);
 

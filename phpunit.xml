@@ -6,6 +6,12 @@
          cacheDirectory=".phpunit.cache/postgres"
 >
     <testsuites>
+        <testsuite name="ContractCanonicalization">
+            <file>tests/Feature/Contract/ContractCanonicalCompatibilityTest.php</file>
+            <file>tests/Feature/Customer/CustomerContractsVisibilityTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ContractCoreExperienceControllerTest.php</file>
+            <file>tests/Feature/Contract/ContractSideReviewTest.php</file>
+        </testsuite>
         <testsuite name="DesignManagement">
             <directory>tests/Feature/DesignManagement</directory>
             <directory>tests/Unit/DesignManagement</directory>

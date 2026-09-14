@@ -11,7 +11,6 @@ use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Traits\HasOnboardingDemo;
 use Carbon\Carbon;
-use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -83,6 +82,7 @@ class Contract extends Model
         'actual_advance_amount' => 'decimal:2',
         'start_date' => 'date',
         'end_date' => 'date',
+        'contract_side_type' => \App\Casts\ContractSideTypeCast::class,
         'requires_contract_side_review' => 'boolean',
         'status' => ContractStatusEnum::class,
         'work_type_category' => ContractWorkTypeCategoryEnum::class,
@@ -91,14 +91,6 @@ class Contract extends Model
         'is_multi_project' => 'boolean',
         'is_self_execution' => 'boolean',
     ];
-
-    protected function contractSideType(): Attribute
-    {
-        return Attribute::make(
-            get: fn ($value) => $value ? (ContractSideTypeEnum::tryFromLegacy((string) $value) ?? $value) : null,
-            set: fn ($value) => $value instanceof ContractSideTypeEnum ? $value->value : ($value ? (ContractSideTypeEnum::tryFromLegacy((string) $value)?->value ?? $value) : null),
-        );
-    }
 
     public function organization(): BelongsTo
     {
