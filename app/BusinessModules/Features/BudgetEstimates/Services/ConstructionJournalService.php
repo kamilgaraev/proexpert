@@ -744,7 +744,6 @@ class ConstructionJournalService
 
         $contract = Contract::query()
             ->where('id', $contractId)
-            ->where('organization_id', $project->organization_id)
             ->where(function ($query) use ($project): void {
                 $query->where('project_id', $project->id)
                     ->orWhereHas('projects', function ($projectsQuery) use ($project): void {
