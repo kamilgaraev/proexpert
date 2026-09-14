@@ -216,10 +216,14 @@ class CustomerPortalService
 
     public function canAccessContract(int $organizationId, Contract $contract, ?User $user = null): bool
     {
-        if (
-            $contract->contract_side_type !== ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
-            || (int) $contract->organization_id !== $organizationId
-        ) {
+        if ((int) $contract->organization_id !== $organizationId) {
+            return false;
+        }
+
+        $isCustomerSide = $contract->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            || $contract->parties()->where('linked_organization_id', $organizationId)->exists();
+
+        if (! $isCustomerSide) {
             return false;
         }
 
@@ -1085,7 +1089,10 @@ class CustomerPortalService
         $query = ContractPerformanceAct::query()
             ->whereHas('contract', function (Builder $contractQuery) use ($organizationId): void {
                 $contractQuery
-                    ->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                    ->where(function (Builder $subQuery) use ($organizationId): void {
+                        $subQuery->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                            ->orWhereHas('parties', fn (Builder $partyQ) => $partyQ->where('linked_organization_id', $organizationId));
+                    })
                     ->where('organization_id', $organizationId);
             })
             ->when(
@@ -1109,7 +1116,10 @@ class CustomerPortalService
     private function baseCustomerContractQuery(int $organizationId, array $filters = [], ?Project $project = null, ?User $user = null): Builder
     {
         $query = Contract::query()
-            ->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+            ->where(function (Builder $subQuery) use ($organizationId): void {
+                $subQuery->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                    ->orWhereHas('parties', fn (Builder $partyQ) => $partyQ->where('linked_organization_id', $organizationId));
+            })
             ->where('organization_id', $organizationId)
             ->when($project !== null, function (Builder $builder) use ($project): void {
                 $builder->where(function (Builder $scope) use ($project): void {
@@ -2327,7 +2337,10 @@ class CustomerPortalService
             $contract = Contract::query()
                 ->whereKey((int) $payload['contract_id'])
                 ->where('organization_id', $organizationId)
-                ->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                ->where(function (Builder $subQuery) use ($organizationId): void {
+                    $subQuery->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                        ->orWhereHas('parties', fn (Builder $partyQ) => $partyQ->where('linked_organization_id', $organizationId));
+                })
                 ->first();
 
             if ($contract === null) {
@@ -2367,7 +2380,10 @@ class CustomerPortalService
             $contract = Contract::query()
                 ->whereKey((int) $payload['contract_id'])
                 ->where('organization_id', $organizationId)
-                ->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                ->where(function (Builder $subQuery) use ($organizationId): void {
+                    $subQuery->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                        ->orWhereHas('parties', fn (Builder $partyQ) => $partyQ->where('linked_organization_id', $organizationId));
+                })
                 ->first();
 
             if ($contract === null) {

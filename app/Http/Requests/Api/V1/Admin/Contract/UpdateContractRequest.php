@@ -199,7 +199,7 @@ class UpdateContractRequest extends FormRequest
 
         return [
             'project_id' => $projectIdRules,
-            'contract_side_type' => ['sometimes', new Enum(ContractSideTypeEnum::class)],
+            'contract_side_type' => ['sometimes', 'nullable', new Enum(ContractSideTypeEnum::class)],
             'contractor_id' => [
                 'sometimes',
                 'nullable',

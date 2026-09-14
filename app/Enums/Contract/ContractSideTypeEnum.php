@@ -16,12 +16,12 @@ enum ContractSideTypeEnum: string
     public function label(): string
     {
         return match ($this) {
-            self::CUSTOMER_TO_GENERAL_CONTRACTOR => 'Заказчик -> Генподрядчик',
-            self::GENERAL_CONTRACTOR_TO_CONTRACTOR => 'Генподрядчик -> Подрядчик',
-            self::GENERAL_CONTRACTOR_TO_SUPPLIER => 'Генподрядчик -> Поставщик',
-            self::CONTRACTOR_TO_SUBCONTRACTOR => 'Подрядчик -> Субподрядчик',
-            self::CONTRACTOR_TO_SUPPLIER => 'Подрядчик -> Поставщик',
-            self::SUBCONTRACTOR_TO_SUPPLIER => 'Субподрядчик -> Поставщик',
+            self::CUSTOMER_TO_GENERAL_CONTRACTOR => 'Генеральный подряд',
+            self::GENERAL_CONTRACTOR_TO_CONTRACTOR => 'Подряд',
+            self::GENERAL_CONTRACTOR_TO_SUPPLIER => 'Поставка (генподрядчик)',
+            self::CONTRACTOR_TO_SUBCONTRACTOR => 'Субподряд',
+            self::CONTRACTOR_TO_SUPPLIER => 'Поставка (подрядчик)',
+            self::SUBCONTRACTOR_TO_SUPPLIER => 'Поставка (субподрядчик)',
         };
     }
 

@@ -75,6 +75,23 @@ class ProjectCustomerResolverService
 
     public function resolveLegalCustomer(Project $project): array
     {
+        $participant = $this->resolveParticipantByRole($project, ProjectOrganizationRole::CUSTOMER);
+        if ($participant !== null) {
+            return [
+                'id' => $participant->organization->id,
+                'name' => $participant->organization->name,
+                'source' => 'project_participant',
+                'role' => ProjectOrganizationRole::CUSTOMER->value,
+                'is_fallback_owner' => false,
+                'entity_type' => 'organization',
+                'counterparty_id' => null,
+                'linked_organization_id' => $participant->organization->id,
+                'legal_name' => $participant->organization->legal_name ?? $participant->organization->name,
+                'inn' => $participant->organization->tax_number ?? $participant->organization->inn,
+                'kpp' => $participant->organization->registration_number ?? $participant->organization->kpp,
+            ];
+        }
+
         $project->loadMissing('customerCounterparty.linkedOrganization');
 
         if ($project->customerCounterparty instanceof Counterparty) {
@@ -90,23 +107,6 @@ class ProjectCustomerResolverService
                 'legal_name' => $project->customerCounterparty->legal_name,
                 'inn' => $project->customerCounterparty->inn,
                 'kpp' => $project->customerCounterparty->kpp,
-            ];
-        }
-
-        $participant = $this->resolveParticipantByRole($project, ProjectOrganizationRole::CUSTOMER);
-        if ($participant !== null) {
-            return [
-                'id' => $participant->organization->id,
-                'name' => $participant->organization->name,
-                'source' => 'project_participant',
-                'role' => ProjectOrganizationRole::CUSTOMER->value,
-                'is_fallback_owner' => false,
-                'entity_type' => 'organization',
-                'counterparty_id' => null,
-                'linked_organization_id' => $participant->organization->id,
-                'legal_name' => $participant->organization->legal_name ?? $participant->organization->name,
-                'inn' => $participant->organization->tax_number ?? $participant->organization->inn,
-                'kpp' => $participant->organization->registration_number ?? $participant->organization->kpp,
             ];
         }
 

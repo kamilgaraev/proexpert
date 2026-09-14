@@ -43,17 +43,21 @@ class ContractSideResolverService
             );
             $direction = $isSecondParty ? 'income' : 'expense';
 
+            $firstRoleLabel = $contract->firstParty->role?->label();
+            $secondRoleLabel = $contract->secondParty->role?->label();
+            $dynamicLabel = ($firstRoleLabel && $secondRoleLabel) ? "{$firstRoleLabel} — {$secondRoleLabel}" : null;
+
             return [
                 'type' => $sideType?->value,
-                'display_label' => $sideType?->label() ?? 'Стороны договора не определены',
+                'display_label' => $dynamicLabel ?? $sideType?->label() ?? 'Стороны договора не определены',
                 'direction' => $direction,
                 'direction_label' => $direction === 'income' ? 'Доходный' : 'Расходный',
                 'is_income' => $direction === 'income',
                 'is_expense' => $direction === 'expense',
                 'first_party' => $firstSnapshot,
                 'second_party' => $secondSnapshot,
-                'first_party_role_label' => $contract->firstParty->role?->label(),
-                'second_party_role_label' => $contract->secondParty->role?->label(),
+                'first_party_role_label' => $firstRoleLabel,
+                'second_party_role_label' => $secondRoleLabel,
                 'customer_organization' => $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
                     ? $firstSnapshot
                     : null,
@@ -130,9 +134,11 @@ class ContractSideResolverService
         );
         $direction = $isSecond ? 'income' : 'expense';
 
+        $dynamicLabel = ($firstPartyRoleLabel && $secondPartyRoleLabel) ? "{$firstPartyRoleLabel} — {$secondPartyRoleLabel}" : null;
+
         return [
             'type' => $sideType?->value,
-            'display_label' => $sideType?->label() ?? 'Стороны договора не определены',
+            'display_label' => $dynamicLabel ?? $sideType?->label() ?? 'Стороны договора не определены',
             'direction' => $direction,
             'direction_label' => $direction === 'income' ? 'Доходный' : 'Расходный',
             'is_income' => $direction === 'income',
