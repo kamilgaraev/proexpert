@@ -35,7 +35,7 @@ class ContractEstimateServiceTest extends TestCase
 
         $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)->shouldReceive('can')->andReturn(true);
         $org = Organization::factory()->create();
-        $project = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $project = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false, 'latitude' => 55.75, 'longitude' => 37.62]);
 
         $user = User::factory()->create([
             'current_organization_id' => $org->id,
@@ -139,7 +139,7 @@ class ContractEstimateServiceTest extends TestCase
         }
 
         $this->service->detachItems($this->contract, [$parent->id], auth()->user());
-        $this->assertDatabaseCount('contract_estimate_items', 3);
+        $this->assertDatabaseCount('contract_estimate_items', 0);
         self::assertSame(0, \App\Models\ContractEstimateItem::query()->countedInCoverage()->count());
     }
 
