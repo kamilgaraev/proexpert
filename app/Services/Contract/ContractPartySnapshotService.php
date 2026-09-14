@@ -9,7 +9,6 @@ use App\Enums\Contract\ContractPartyRoleEnum;
 use App\Enums\Contract\ContractPartySideEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Models\Contract;
-use App\Models\Counterparty;
 use App\Models\Organization;
 use App\Models\Supplier;
 use Exception;
@@ -53,7 +52,7 @@ class ContractPartySnapshotService
 
         return match ($sideType) {
             ContractSideTypeEnum::GENERAL_CONTRACT => [
-                $this->fromProjectCustomerCounterparty($contract, $owner),
+                $this->fromProjectCustomer($contract, $owner),
                 $contract->contractor
                     ? $this->fromContractor($contract, ContractPartyRoleEnum::GENERAL_CONTRACTOR)
                     : $this->fromOrganization($owner, ContractPartyRoleEnum::GENERAL_CONTRACTOR),
@@ -81,26 +80,8 @@ class ContractPartySnapshotService
         };
     }
 
-    private function fromProjectCustomerCounterparty(Contract $contract, Organization $owner): ContractPartyData
+    private function fromProjectCustomer(Contract $contract, Organization $owner): ContractPartyData
     {
-        $counterparty = $contract->project?->customerCounterparty;
-
-        if ($counterparty instanceof Counterparty) {
-            return new ContractPartyData(
-                role: ContractPartyRoleEnum::CUSTOMER,
-                name: $counterparty->name,
-                counterpartyId: $counterparty->id,
-                linkedOrganizationId: $counterparty->linked_organization_id,
-                legalName: $counterparty->legal_name ?? $counterparty->name,
-                inn: $counterparty->inn,
-                kpp: $counterparty->kpp,
-                ogrn: $counterparty->ogrn,
-                legalAddress: $counterparty->legal_address,
-                email: $counterparty->email,
-                phone: $counterparty->phone,
-            );
-        }
-
         if ($contract->project !== null) {
             $resolved = app(\App\Services\Project\ProjectCustomerResolverService::class)->resolveLegalCustomer($contract->project);
             if (!empty($resolved['name'])) {
@@ -113,6 +94,9 @@ class ContractPartySnapshotService
                     inn: $resolved['inn'] ?? null,
                     kpp: $resolved['kpp'] ?? null,
                     ogrn: $resolved['ogrn'] ?? null,
+                    legalAddress: $resolved['legal_address'] ?? null,
+                    email: $resolved['email'] ?? null,
+                    phone: $resolved['phone'] ?? null,
                 );
             }
         }

@@ -11,7 +11,8 @@ use App\Enums\UserProjectAccessMode;
 use App\Models\ConstructionJournal;
 use App\Models\Module;
 use App\Models\Organization;
-use App\Models\OrganizationModuleActivation;
+use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -31,7 +32,7 @@ final class ParticipantProjectAccessTest extends TestCase
                 'project_id' => $project->id,
             ]));
 
-        $response->assertOk();
+        self::assertSame(200, $response->status(), $response->getContent());
         $response->assertJsonPath('success', true);
     }
 
@@ -74,7 +75,7 @@ final class ParticipantProjectAccessTest extends TestCase
                 'project_id' => $project->id,
             ]));
 
-        $response->assertOk();
+        self::assertSame(200, $response->status(), $response->getContent());
         $response->assertJsonPath('data.scope.organization_id', $context->organization->id);
         $response->assertJsonPath('data.scope.project_id', $project->id);
     }
@@ -86,7 +87,7 @@ final class ParticipantProjectAccessTest extends TestCase
         $response = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/projects/{$project->id}/schedules");
 
-        $response->assertOk();
+        self::assertSame(200, $response->status(), $response->getContent());
         $response->assertJsonPath('success', true);
     }
 
@@ -107,7 +108,7 @@ final class ParticipantProjectAccessTest extends TestCase
         $response = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/projects/{$project->id}/construction-journals?per_page=20");
 
-        $response->assertOk();
+        self::assertSame(200, $response->status(), $response->getContent());
         $response->assertJsonPath('success', true);
 
         $journalIds = collect($response->json('data'))->pluck('id')->all();
@@ -151,7 +152,7 @@ final class ParticipantProjectAccessTest extends TestCase
     private function activateModules(int $organizationId, array $slugs): void
     {
         foreach ($slugs as $index => $slug) {
-            $module = Module::query()->firstOrCreate(
+            Module::query()->firstOrCreate(
                 ['slug' => $slug],
                 [
                     'name' => $slug,
@@ -165,18 +166,26 @@ final class ParticipantProjectAccessTest extends TestCase
                     'display_order' => $index + 1,
                 ]
             );
+        }
 
-            OrganizationModuleActivation::query()->updateOrCreate(
-                [
-                    'organization_id' => $organizationId,
-                    'module_id' => $module->id,
-                ],
-                [
-                    'status' => 'active',
-                    'activated_at' => now(),
-                    'expires_at' => null,
-                ]
-            );
+        $account = OrganizationCommercialAccount::query()->create([
+            'organization_id' => $organizationId,
+            'status' => 'active',
+            'offer_type' => 'packages',
+            'quote_version' => 1,
+        ]);
+
+        foreach (['projects-processes', 'estimates-norms', 'planning-schedules'] as $packageSlug) {
+            OrganizationPackageSubscription::query()->create([
+                'organization_id' => $organizationId,
+                'commercial_account_id' => $account->id,
+                'package_slug' => $packageSlug,
+                'status' => 'active',
+                'access_source' => 'paid_package',
+                'price_paid' => 0,
+                'current_period_start_at' => now(),
+                'current_period_end_at' => now()->addMonth(),
+            ]);
         }
     }
 }

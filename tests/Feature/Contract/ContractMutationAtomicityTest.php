@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Contract;
 
-use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
 use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStateEventTypeEnum;
@@ -13,68 +12,28 @@ use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
 use App\Models\ContractStateEvent;
 use App\Observers\ContractObserver;
-use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
-use App\Services\Contract\ContractAccessService;
-use App\Services\Contract\ContractAuditedMutationService;
-use App\Services\Contract\ContractPartySnapshotService;
-use App\Services\Contract\ContractPaymentDocumentService;
 use App\Services\Contract\ContractSideMutationService;
-use App\Services\Contract\ContractStateEventService;
-use App\Services\Contractor\SelfExecutionService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
-use App\Services\Logging\LoggingService;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Mockery;
 use RuntimeException;
 use Tests\TestCase;
 
 class ContractMutationAtomicityTest extends TestCase
 {
-    public function refreshDatabase(): void
+    use \Tests\Support\EnablesImmutableAuditWriter;
+
+    private int $organizationId;
+    private int $contractorId;
+
+    protected function setUp(): void
     {
-        Schema::dropIfExists('contract_state_events');
-        Schema::dropIfExists('contracts');
-
-        Schema::create('contracts', static function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('organization_id');
-            $table->unsignedBigInteger('project_id')->nullable();
-            $table->unsignedBigInteger('contractor_id')->nullable();
-            $table->unsignedBigInteger('supplier_id')->nullable();
-            $table->string('contract_side_type')->nullable();
-            $table->string('contract_category')->nullable();
-            $table->string('number');
-            $table->date('date');
-            $table->string('subject')->nullable();
-            $table->decimal('base_amount', 18, 2)->nullable();
-            $table->decimal('total_amount', 18, 2)->nullable();
-            $table->string('status');
-            $table->boolean('is_fixed_amount')->default(true);
-            $table->boolean('is_multi_project')->default(false);
-            $table->boolean('is_self_execution')->default(false);
-            $table->timestamps();
-            $table->softDeletes();
-        });
-
-        Schema::create('contract_state_events', static function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('contract_id');
-            $table->string('event_type');
-            $table->string('triggered_by_type')->nullable();
-            $table->unsignedBigInteger('triggered_by_id')->nullable();
-            $table->unsignedBigInteger('specification_id')->nullable();
-            $table->decimal('amount_delta', 18, 2)->default(0);
-            $table->date('effective_from')->nullable();
-            $table->unsignedBigInteger('supersedes_event_id')->nullable();
-            $table->json('metadata')->nullable();
-            $table->unsignedBigInteger('created_by_user_id')->nullable();
-            $table->timestamps();
-        });
-
-        Contract::flushEventListeners();
+        parent::setUp();
+        $this->enableImmutableAuditWriter();
+        $this->organizationId = \App\Models\Organization::factory()->create()->id;
+        $this->contractorId = \App\Models\Contractor::create([
+            'organization_id' => $this->organizationId, 'name' => 'Подрядчик', 'contractor_type' => 'manual',
+        ])->id;
     }
 
     public function test_contract_is_rolled_back_when_required_state_event_cannot_be_created(): void
@@ -88,7 +47,7 @@ class ContractMutationAtomicityTest extends TestCase
         $this->expectException(RuntimeException::class);
 
         try {
-            $this->mutationService()->create(1, $this->contractDto());
+            $this->mutationService()->create($this->organizationId, $this->contractDto());
         } finally {
             self::assertFalse(Contract::query()->where('number', 'ATOMIC-100')->exists());
         }
@@ -97,7 +56,7 @@ class ContractMutationAtomicityTest extends TestCase
     public function test_retrieving_contract_does_not_recalculate_or_persist_price(): void
     {
         $contract = Contract::create([
-            'organization_id' => 1,
+            'organization_id' => $this->organizationId,
             'project_id' => null,
             'number' => 'READ-ONLY-100',
             'date' => now()->toDateString(),
@@ -138,7 +97,7 @@ class ContractMutationAtomicityTest extends TestCase
         $this->expectException(RuntimeException::class);
 
         try {
-            $this->mutationService($audit)->create(1, $this->contractDto());
+            $this->mutationService($audit)->create($this->organizationId, $this->contractDto());
         } finally {
             self::assertFalse(Contract::query()->where('number', 'ATOMIC-100')->exists());
         }
@@ -146,55 +105,18 @@ class ContractMutationAtomicityTest extends TestCase
 
     private function mutationService(?LegalDocumentAudit $audit = null): ContractSideMutationService
     {
-        $repository = Mockery::mock(ContractRepositoryInterface::class);
-        $repository->shouldReceive('create')
-            ->once()
-            ->andReturnUsing(static fn (array $data): Contract => Contract::create(array_intersect_key($data, array_flip([
-                'organization_id',
-                'project_id',
-                'contractor_id',
-                'supplier_id',
-                'contract_side_type',
-                'contract_category',
-                'number',
-                'date',
-                'subject',
-                'base_amount',
-                'total_amount',
-                'status',
-                'is_fixed_amount',
-                'is_multi_project',
-                'is_self_execution',
-            ]))));
+        if ($audit !== null) {
+            $this->app->instance(LegalDocumentAudit::class, $audit);
+        }
 
-        $snapshotService = Mockery::mock(ContractPartySnapshotService::class);
-        $snapshotService->shouldReceive('syncParties')->once();
-
-        $contractorSharing = Mockery::mock(ContractorSharingInterface::class);
-        $contractorSharing->shouldReceive('canUseContractor')->andReturnTrue();
-
-        return new ContractSideMutationService(
-            $repository,
-            Mockery::mock(ContractPaymentDocumentService::class),
-            Mockery::mock(ContractAccessService::class),
-            Mockery::mock(LoggingService::class)->shouldIgnoreMissing(),
-            $contractorSharing,
-            Mockery::mock(SelfExecutionService::class),
-            app(ContractStateEventService::class),
-            $snapshotService,
-            new ContractAuditedMutationService(
-                $audit ?? Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
-                DB::connection(),
-            ),
-            app(\App\Services\Contract\ContractDossierRequisitesSyncService::class),
-        );
+        return app(ContractSideMutationService::class);
     }
 
     private function contractDto(): ContractDTO
     {
         return new ContractDTO(
             project_id: null,
-            contractor_id: 1,
+            contractor_id: $this->contractorId,
             parent_contract_id: null,
             number: 'ATOMIC-100',
             date: now()->toDateString(),

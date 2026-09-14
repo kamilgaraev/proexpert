@@ -18,6 +18,7 @@ use App\DTOs\Contract\ContractDTO;
 use App\DTOs\Project\ProjectDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
+use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Project;
@@ -367,7 +368,7 @@ final class DealConversionWizardService
             base_amount: $baseAmount,
             total_amount: $totalAmount,
             gp_percentage: null,
-            gp_calculation_type: null,
+            gp_calculation_type: GpCalculationTypeEnum::PERCENTAGE,
             gp_coefficient: null,
             warranty_retention_calculation_type: null,
             warranty_retention_percentage: null,
@@ -554,7 +555,9 @@ final class DealConversionWizardService
         $mode = $input['mode'] ?? ($existingId ? 'reuse' : 'create');
         $existing = $existingId ? $this->findProjectSummary($organizationId, (int) $existingId) : null;
         $fields = [
-            'name' => $inputFields['name'] ?? $proposal?->title ?? $tender?->title ?? $deal->title,
+            'name' => array_key_exists('name', $inputFields)
+                ? $inputFields['name']
+                : ($proposal?->title ?? $tender?->title ?? $deal->title),
             'description' => $inputFields['description'] ?? $tender?->description,
             'customer' => $inputFields['customer'] ?? $deal->company?->legal_name ?? $deal->company?->name ?? $tender?->customer_name ?? $proposal?->customer_name,
             'address' => $inputFields['address'] ?? $deal->company?->actual_address ?? $deal->company?->legal_address,
@@ -624,7 +627,9 @@ final class DealConversionWizardService
             ? $this->resolveSupplierId($organizationId, $data['counterparty']['supplier_id'] ?? $inputFields['supplier_id'] ?? null)
             : null;
         $fields = [
-            'number' => $inputFields['number'] ?? $proposal?->number ?? $tender?->number,
+            'number' => array_key_exists('number', $inputFields)
+                ? $inputFields['number']
+                : ($proposal?->number ?? $tender?->number),
             'date' => $inputFields['date'] ?? now()->toDateString(),
             'subject' => $inputFields['subject'] ?? trans_message('crm.conversion.defaults.contract_subject', [
                 'title' => (string) ($proposal?->title ?? $tender?->title ?? $deal->title),
@@ -637,7 +642,7 @@ final class DealConversionWizardService
             'end_date' => $inputFields['end_date'] ?? null,
             'notes' => $inputFields['notes'] ?? null,
             'is_fixed_amount' => $isFixedAmount,
-            'contractor_id' => $data['counterparty']['contractor_id'] ?? $counterparty['contractor_id'],
+            'contractor_id' => $counterparty['contractor_id'],
             'supplier_id' => $supplierId,
         ];
         $required = $mode === 'create'

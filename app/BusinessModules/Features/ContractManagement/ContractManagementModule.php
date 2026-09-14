@@ -90,6 +90,8 @@ class ContractManagementModule implements ConfigurableInterface, ModuleInterface
             'contracts.archive',
             'contracts.analytics',
             'contracts.completed_works.view',
+            'contracts.management_report.view',
+            'contracts.management_report.export',
             'contracts.performance_acts.view',
             'contracts.performance_acts.create',
             'contracts.performance_acts.edit',

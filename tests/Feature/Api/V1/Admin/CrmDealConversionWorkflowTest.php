@@ -12,7 +12,7 @@ use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
-use App\Services\Contract\ContractService;
+use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -24,6 +24,13 @@ use Tests\TestCase;
 final class CrmDealConversionWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+    use \Tests\Support\EnablesImmutableAuditWriter;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->enableImmutableAuditWriter();
+    }
 
     public function test_preview_validate_and_convert_create_project_contract_and_source_links(): void
     {
@@ -49,12 +56,12 @@ final class CrmDealConversionWorkflowTest extends TestCase
         $previewResponse->assertJsonPath('data.budget_seed.creates_budget_lines', false);
         $previewResponse->assertJsonPath('data.contract.fields.contractor_id', $source['contractor_id']);
 
-        $validationPayload = $this->conversionPayload($previewResponse->json('data.preview_hash'), $source['contractor_id']);
+        $validationPayload = $this->conversionPayload(null, $source['contractor_id']);
         $validateResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/crm/deals/{$source['deal_id']}/conversion/validate", $validationPayload);
 
         $validateResponse->assertOk();
-        $validateResponse->assertJsonPath('data.ready_to_convert', true);
+        self::assertTrue($validateResponse->json('data.ready_to_convert'), $validateResponse->getContent());
 
         $convertResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/crm/deals/{$source['deal_id']}/conversion/convert", array_merge($validationPayload, [
@@ -311,13 +318,10 @@ final class CrmDealConversionWorkflowTest extends TestCase
         $source = $this->createConversionSource($context);
         $payload = $this->validatedPayload($context, $source, 'crm-conversion-rollback');
 
-        $realContractService = $this->app->make(ContractService::class);
-        $this->mock(ContractService::class, function (MockInterface $mock) use ($realContractService): void {
-            $mock->shouldReceive('createContract')
+        $this->mock(ContractStateEventRepositoryInterface::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('createEvent')
                 ->once()
-                ->withAnyArgs()
                 ->andThrow(new RuntimeException('contract create failed'));
-            $mock->shouldIgnoreMissing($realContractService);
         });
 
         $response = $this->withHeaders($context->authHeaders())
@@ -361,13 +365,13 @@ final class CrmDealConversionWorkflowTest extends TestCase
 
         $previewResponse->assertOk();
 
-        $validationPayload = $this->conversionPayload($previewResponse->json('data.preview_hash'), $source['contractor_id']);
+        $validationPayload = $this->conversionPayload(null, $source['contractor_id']);
 
         $validateResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/crm/deals/{$source['deal_id']}/conversion/validate", $validationPayload);
 
         $validateResponse->assertOk();
-        $validateResponse->assertJsonPath('data.ready_to_convert', true);
+        self::assertTrue($validateResponse->json('data.ready_to_convert'), $validateResponse->getContent());
 
         return array_merge($validationPayload, [
             'preview_hash' => $validateResponse->json('data.preview_hash'),
@@ -668,6 +672,8 @@ final class CrmDealConversionWorkflowTest extends TestCase
         $this->mock(AccessController::class, function (MockInterface $mock): void {
             $mock->shouldReceive('hasModuleAccess')
                 ->andReturnUsing(static fn (int $organizationId, string $moduleSlug): bool => $moduleSlug === 'crm');
+            $mock->shouldReceive('canUserAccessModule')
+                ->andReturnUsing(static fn (User $user, string $moduleSlug): bool => $moduleSlug === 'crm');
         });
     }
 

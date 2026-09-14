@@ -6,6 +6,20 @@
          cacheDirectory=".phpunit.cache/postgres"
 >
     <testsuites>
+        <testsuite name="ProjectParticipants">
+            <file>tests/Feature/Project/ProjectParticipantContractSourceTest.php</file>
+            <file>tests/Feature/Project/ProjectParticipantLifecycleTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ProjectParticipantsControllerTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ParticipantProjectAccessTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ProjectParticipantRouteAuthorizationTest.php</file>
+            <file>tests/Feature/Contract/ContractCanonicalCompatibilityTest.php</file>
+            <file>tests/Feature/Customer/CustomerContractsVisibilityTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ContractCoreExperienceControllerTest.php</file>
+            <file>tests/Feature/Contract/ContractSideReviewTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ContractPermissionAndLifecycleTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/CrmDealConversionWorkflowTest.php</file>
+            <file>tests/Feature/Contract/ContractMutationAtomicityTest.php</file>
+        </testsuite>
         <testsuite name="ContractCanonicalization">
             <file>tests/Feature/Contract/ContractCanonicalCompatibilityTest.php</file>
             <file>tests/Feature/Customer/CustomerContractsVisibilityTest.php</file>
