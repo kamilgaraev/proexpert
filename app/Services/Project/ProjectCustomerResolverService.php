@@ -25,22 +25,7 @@ class ProjectCustomerResolverService
 
     public function resolve(Project $project): array
     {
-        $customerParticipant = ProjectOrganization::query()
-            ->useWritePdo()
-            ->with('organization')
-            ->where('project_id', $project->id)
-            ->where('is_active', true)
-            ->where(function ($query): void {
-                $query
-                    ->where('role_new', ProjectOrganizationRole::CUSTOMER->value)
-                    ->orWhere(function ($fallbackQuery): void {
-                        $fallbackQuery
-                            ->whereNull('role_new')
-                            ->where('role', ProjectOrganizationRole::CUSTOMER->value);
-                    });
-            })
-            ->orderByDesc('id')
-            ->first();
+        $customerParticipant = $this->resolveParticipantByRole($project, ProjectOrganizationRole::CUSTOMER);
 
         $customerOrganization = $customerParticipant?->organization;
 
@@ -75,26 +60,20 @@ class ProjectCustomerResolverService
 
     public function resolveLegalCustomer(Project $project): array
     {
-        $participant = $this->resolveParticipantByRole($project, ProjectOrganizationRole::CUSTOMER);
-        if ($participant !== null) {
-            $registrationNumber = preg_replace('/\D+/', '', (string) $participant->organization->registration_number) ?? '';
-            return [
-                'id' => $participant->organization->id,
-                'name' => $participant->organization->name,
-                'source' => 'project_participant',
-                'role' => ProjectOrganizationRole::CUSTOMER->value,
-                'is_fallback_owner' => false,
-                'entity_type' => 'organization',
-                'counterparty_id' => null,
-                'linked_organization_id' => $participant->organization->id,
-                'legal_name' => $participant->organization->legal_name ?? $participant->organization->name,
-                'inn' => $participant->organization->tax_number ?? $participant->organization->inn,
-                'kpp' => strlen($registrationNumber) === 9 ? $registrationNumber : null,
-                'ogrn' => in_array(strlen($registrationNumber), [13, 15], true) ? $registrationNumber : null,
-            ];
-        }
-
+        $resolved = $this->resolve($project);
         $project->loadMissing('customerCounterparty.linkedOrganization');
+
+        if (!$resolved['is_fallback_owner']) {
+            $customer = $this->fromResolvedOrganization($resolved);
+            $counterparty = $project->customerCounterparty;
+            if ($counterparty instanceof Counterparty
+                && (int) $counterparty->organization_id === (int) $project->organization_id
+                && (int) $counterparty->linked_organization_id === (int) $resolved['id']) {
+                $customer['counterparty_id'] = $counterparty->id;
+            }
+
+            return $customer;
+        }
 
         if ($project->customerCounterparty instanceof Counterparty) {
             return [
@@ -110,6 +89,9 @@ class ProjectCustomerResolverService
                 'inn' => $project->customerCounterparty->inn,
                 'kpp' => $project->customerCounterparty->kpp,
                 'ogrn' => $project->customerCounterparty->ogrn,
+                'legal_address' => $project->customerCounterparty->legal_address,
+                'email' => $project->customerCounterparty->email,
+                'phone' => $project->customerCounterparty->phone,
             ];
         }
 
@@ -129,16 +111,23 @@ class ProjectCustomerResolverService
             ];
         }
 
-        $resolved = $this->resolve($project);
+        return $this->fromResolvedOrganization($resolved);
+    }
+
+    private function fromResolvedOrganization(array $resolved): array
+    {
+        $organization = $resolved['organization'];
+        $registrationNumber = preg_replace('/\D+/', '', (string) $organization->registration_number) ?? '';
         $resolved['entity_type'] = 'organization';
         $resolved['counterparty_id'] = null;
         $resolved['linked_organization_id'] = $resolved['id'];
-        $resolved['legal_name'] = $resolved['organization']->legal_name ?? $resolved['organization']->name;
-        $resolved['inn'] = $resolved['organization']->tax_number ?? $resolved['organization']->inn;
-        $registrationNumber = preg_replace('/\D+/', '', (string) $resolved['organization']->registration_number) ?? '';
+        $resolved['legal_name'] = $organization->legal_name ?? $organization->name;
+        $resolved['inn'] = $organization->tax_number ?? $organization->inn;
         $resolved['kpp'] = strlen($registrationNumber) === 9 ? $registrationNumber : null;
         $resolved['ogrn'] = in_array(strlen($registrationNumber), [13, 15], true) ? $registrationNumber : null;
-
+        $resolved['legal_address'] = $organization->address;
+        $resolved['email'] = $organization->email;
+        $resolved['phone'] = $organization->phone;
         unset($resolved['organization']);
 
         return $resolved;
@@ -214,6 +203,7 @@ class ProjectCustomerResolverService
         return ProjectOrganization::query()
             ->useWritePdo()
             ->with('organization')
+            ->whereHas('organization')
             ->where('project_id', $project->id)
             ->where('is_active', true)
             ->where(function ($query) use ($role): void {

@@ -42,13 +42,12 @@ class ProjectParticipantsControllerTest extends TestCase
             'primary_business_type' => 'design',
         ]);
 
-        $this->project->organizations()->attach($designerOrganization->id, [
-            'role' => 'designer',
-            'role_new' => 'designer',
-            'is_active' => true,
-            'invited_at' => now(),
-            'accepted_at' => now(),
-        ]);
+        app(\App\Services\Project\ProjectParticipantService::class)->attach(
+            $this->project,
+            $designerOrganization->id,
+            \App\Enums\ProjectOrganizationRole::DESIGNER,
+            $this->user,
+        );
 
         $response = $this->actingAs($this->user, 'api_admin')
             ->getJson("/api/v1/admin/projects/{$this->project->id}/participants");

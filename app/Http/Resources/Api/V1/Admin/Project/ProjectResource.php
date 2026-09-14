@@ -29,7 +29,7 @@ class ProjectResource extends JsonResource
             'name' => $this->resource->name,
             'address' => $this->resource->address,
             'description' => $this->resource->description,
-            'customer' => $this->resource->customer ?: ($resolvedCustomer['name'] ?? null),
+            'customer' => $resolvedCustomer['name'] ?? $this->resource->customer,
             'customer_counterparty_id' => $this->resource->customer_counterparty_id,
             'customer_counterparty' => $this->whenLoaded('customerCounterparty', fn () => [
                 'id' => $this->resource->customerCounterparty?->id,
@@ -38,7 +38,7 @@ class ProjectResource extends JsonResource
                 'inn' => $this->resource->customerCounterparty?->inn,
                 'kpp' => $this->resource->customerCounterparty?->kpp,
             ]),
-            'designer' => $this->resource->designer ?: ($resolvedDesigner['name'] ?? null),
+            'designer' => $resolvedDesigner['name'] ?? $this->resource->designer,
             'budget_amount' => $this->resource->budget_amount,
             'site_area_m2' => $this->resource->site_area_m2,
             'contract_number' => $this->resource->contract_number,
