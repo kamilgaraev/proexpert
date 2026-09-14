@@ -41,12 +41,12 @@ final class ContractResourcePartyTest extends TestCase
     public static function contractSideTypes(): array
     {
         return [
-            ['customer_to_general_contractor'],
-            ['general_contractor_to_contractor'],
-            ['general_contractor_to_supplier'],
-            ['contractor_to_subcontractor'],
-            ['contractor_to_supplier'],
-            ['subcontractor_to_supplier'],
+            ['general_contract'],
+            ['contract'],
+            ['general_contractor_supply'],
+            ['subcontract'],
+            ['contractor_supply'],
+            ['subcontractor_supply'],
             [null],
         ];
     }

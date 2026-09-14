@@ -331,7 +331,7 @@ final class PresaleEstimateBudgetTransferWorkflowTest extends TestCase
             'date' => '2026-01-10',
             'subject' => 'Работы по проекту',
             'status' => ContractStatusEnum::DRAFT,
-            'contract_side_type' => ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR,
+            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACT,
             'base_amount' => 250000,
             'total_amount' => 250000,
             'is_fixed_amount' => true,

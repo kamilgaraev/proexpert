@@ -80,7 +80,7 @@ final class ContractSettlementExposureSourceTest extends TestCase
         $method = new ReflectionMethod($source, 'partyIdentity');
         $contractorContract = new Contract;
         $contractorContract->contractor_id = 40;
-        $contractorContract->contract_side_type = ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR;
+        $contractorContract->contract_side_type = ContractSideTypeEnum::CONTRACT;
         self::assertSame(
             [40, ContractSettlementPartyType::CONTRACTOR],
             $method->invoke($source, $contractorContract),
@@ -88,7 +88,7 @@ final class ContractSettlementExposureSourceTest extends TestCase
 
         $supplierContract = new Contract;
         $supplierContract->supplier_id = 40;
-        $supplierContract->contract_side_type = ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER;
+        $supplierContract->contract_side_type = ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY;
         self::assertSame(
             [40, ContractSettlementPartyType::SUPPLIER],
             $method->invoke($source, $supplierContract),

@@ -152,21 +152,21 @@ final class ContractLegalDossierServiceTest extends TestCase
         Organization::query()->forceCreate(['id' => 7, 'name' => 'Наша организация']);
         Supplier::query()->forceCreate(['id' => 55, 'organization_id' => 7, 'name' => 'Текущее имя поставщика']);
         $cases = [
-            'customer_to_general_contractor' => 'Заказчик по договору',
-            'general_contractor_to_contractor' => 'Подрядчик по договору',
-            'contractor_to_subcontractor' => 'Субподрядчик по договору',
-            'general_contractor_to_supplier' => 'Поставщик генподрядчика по договору',
-            'contractor_to_supplier' => 'Поставщик подрядчика по договору',
-            'subcontractor_to_supplier' => 'Поставщик субподрядчика по договору',
+            'general_contract' => 'Заказчик по договору',
+            'contract' => 'Подрядчик по договору',
+            'subcontract' => 'Субподрядчик по договору',
+            'general_contractor_supply' => 'Поставщик генподрядчика по договору',
+            'contractor_supply' => 'Поставщик подрядчика по договору',
+            'subcontractor_supply' => 'Поставщик субподрядчика по договору',
         ];
         foreach ($cases as $type => $name) {
             $contract = $this->contract([
                 'contract_side_type' => $type,
-                'supplier_id' => str_ends_with($type, '_to_supplier') ? 55 : null,
+                'supplier_id' => str_ends_with($type, '_supply') ? 55 : null,
                 'subject' => 'Тестовый договор', 'delivery_terms' => 'Доставка на объект',
                 'base_amount' => 1000, 'total_amount' => 1000,
             ]);
-            $externalSide = $type === 'customer_to_general_contractor' ? 'first' : 'second';
+            $externalSide = $type === 'general_contract' ? 'first' : 'second';
             foreach (['first', 'second'] as $side) {
                 $this->database->table('contract_parties')->insert([
                     'contract_id' => $contract->id, 'side' => $side,

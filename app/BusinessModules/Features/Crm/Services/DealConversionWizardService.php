@@ -38,12 +38,18 @@ use function trans_message;
 final class DealConversionWizardService
 {
     private const CONTRACTOR_SIDE_TYPES = [
+        'general_contract',
+        'contract',
+        'subcontract',
         'customer_to_general_contractor',
         'general_contractor_to_contractor',
         'contractor_to_subcontractor',
     ];
 
     private const SUPPLIER_SIDE_TYPES = [
+        'general_contractor_supply',
+        'contractor_supply',
+        'subcontractor_supply',
         'general_contractor_to_supplier',
         'contractor_to_supplier',
         'subcontractor_to_supplier',
@@ -344,7 +350,7 @@ final class DealConversionWizardService
         }
 
         $fields = $preview['contract']['fields'];
-        $sideType = ContractSideTypeEnum::from((string) $fields['contract_side_type']);
+        $sideType = ContractSideTypeEnum::tryFromLegacy((string) $fields['contract_side_type']) ?? ContractSideTypeEnum::GENERAL_CONTRACT;
         $status = ContractStatusEnum::from((string) $fields['status']);
         $baseAmount = $this->nullableFloat($fields['base_amount'] ?? null);
         $totalAmount = $this->nullableFloat($fields['total_amount'] ?? null) ?? $baseAmount;
@@ -611,7 +617,7 @@ final class DealConversionWizardService
             ?? $proposal?->contract_id;
         $mode = $input['mode'] ?? ($existingId ? 'reuse' : 'create');
         $existing = $existingId ? $this->findContractSummary($organizationId, (int) $existingId) : null;
-        $sideType = $inputFields['contract_side_type'] ?? 'customer_to_general_contractor';
+        $sideType = $inputFields['contract_side_type'] ?? 'general_contract';
         $isFixedAmount = (bool) ($inputFields['is_fixed_amount'] ?? $amount['amount_visible']);
         $baseAmount = $inputFields['base_amount'] ?? ($amount['amount_visible'] ? $amount['value'] : null);
         $supplierId = in_array($sideType, self::SUPPLIER_SIDE_TYPES, true)

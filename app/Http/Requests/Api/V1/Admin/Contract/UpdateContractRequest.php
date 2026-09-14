@@ -67,7 +67,7 @@ class UpdateContractRequest extends FormRequest
     {
         $validator->after(function ($validator): void {
             $contract = $this->resolveContract();
-            $sideType = ContractSideTypeEnum::tryFrom((string) ($this->input('contract_side_type') ?: $contract?->contract_side_type?->value));
+            $sideType = ContractSideTypeEnum::tryFromLegacy((string) ($this->input('contract_side_type') ?: $contract?->contract_side_type?->value));
             $supplierId = $this->input('supplier_id', $contract?->supplier_id);
             $contractorId = $this->input('contractor_id', $contract?->contractor_id);
             $isSelfExecution = $this->has('is_self_execution')
@@ -109,7 +109,7 @@ class UpdateContractRequest extends FormRequest
                 }
             }
 
-            if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
+            if ($sideType === ContractSideTypeEnum::CONTRACT) {
                 if (! $contractorId && ! $isSelfExecution) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
                 }
@@ -119,7 +119,7 @@ class UpdateContractRequest extends FormRequest
                 }
             }
 
-            if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
+            if ($sideType === ContractSideTypeEnum::SUBCONTRACT) {
                 if (! $contractorId) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
                 }
@@ -133,7 +133,7 @@ class UpdateContractRequest extends FormRequest
                 }
             }
 
-            if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
+            if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACT) {
                 if ($supplierId) {
                     $validator->errors()->add('supplier_id', 'Для договора между заказчиком и исполнителем по проекту поставщик не заполняется.');
                 }
@@ -408,7 +408,7 @@ class UpdateContractRequest extends FormRequest
                 ? $validatedData['contract_category']
                 : $contract->contract_category,
             contract_side_type: array_key_exists('contract_side_type', $validatedData)
-                ? ($validatedData['contract_side_type'] ? ContractSideTypeEnum::from($validatedData['contract_side_type']) : null)
+                ? ($validatedData['contract_side_type'] ? ContractSideTypeEnum::tryFromLegacy($validatedData['contract_side_type']) : null)
                 : $contract->contract_side_type,
             currency: mb_strtoupper((string) ($validatedData['currency'] ?? $contract->currency ?? 'RUB')),
         );

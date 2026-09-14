@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Contract;
 
+use App\Enums\Contract\ContractPartyRoleEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Models\Contract;
 use App\Models\ContractParty;
@@ -31,7 +32,7 @@ class ContractSideResolverService
 
         $sideType = $contract->contract_side_type instanceof ContractSideTypeEnum
             ? $contract->contract_side_type
-            : ($contract->contract_side_type ? ContractSideTypeEnum::tryFrom((string) $contract->contract_side_type) : null);
+            : ($contract->contract_side_type ? ContractSideTypeEnum::tryFromLegacy((string) $contract->contract_side_type) : null);
 
         if ($contract->firstParty instanceof ContractParty && $contract->secondParty instanceof ContractParty) {
             $firstSnapshot = $this->mapContractPartySnapshot($contract->firstParty);
@@ -58,10 +59,10 @@ class ContractSideResolverService
                 'second_party' => $secondSnapshot,
                 'first_party_role_label' => $firstRoleLabel,
                 'second_party_role_label' => $secondRoleLabel,
-                'customer_organization' => $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+                'customer_organization' => $contract->firstParty->role === ContractPartyRoleEnum::CUSTOMER
                     ? $firstSnapshot
                     : null,
-                'executor_organization' => $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+                'executor_organization' => $contract->firstParty->role === ContractPartyRoleEnum::CUSTOMER
                     ? $secondSnapshot
                     : null,
             ];
@@ -80,43 +81,43 @@ class ContractSideResolverService
         $secondPartyRoleLabel = null;
 
         switch ($sideType) {
-            case ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR:
+            case ContractSideTypeEnum::GENERAL_CONTRACT:
                 $firstParty = $projectCustomerParty ?? $ownerParty;
                 $secondParty = $contractorParty;
                 $firstPartyRoleLabel = 'Заказчик';
                 $secondPartyRoleLabel = 'Генподрядчик';
                 break;
-            case ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR:
+            case ContractSideTypeEnum::CONTRACT:
                 $firstParty = $ownerParty;
                 $secondParty = $contractorParty;
                 $firstPartyRoleLabel = 'Генподрядчик';
                 $secondPartyRoleLabel = 'Подрядчик';
                 break;
-            case ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER:
+            case ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY:
                 $firstParty = $ownerParty;
                 $secondParty = $supplierParty;
                 $firstPartyRoleLabel = 'Генподрядчик';
                 $secondPartyRoleLabel = 'Поставщик';
                 break;
-            case ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR:
+            case ContractSideTypeEnum::SUBCONTRACT:
                 $firstParty = $ownerParty;
                 $secondParty = $contractorParty;
                 $firstPartyRoleLabel = 'Подрядчик';
                 $secondPartyRoleLabel = 'Субподрядчик';
                 break;
-            case ContractSideTypeEnum::CONTRACTOR_TO_SUPPLIER:
+            case ContractSideTypeEnum::CONTRACTOR_SUPPLY:
                 $firstParty = $ownerParty;
                 $secondParty = $supplierParty;
                 $firstPartyRoleLabel = 'Подрядчик';
                 $secondPartyRoleLabel = 'Поставщик';
                 break;
-            case ContractSideTypeEnum::SUBCONTRACTOR_TO_SUPPLIER:
+            case ContractSideTypeEnum::SUBCONTRACTOR_SUPPLY:
                 $firstParty = $ownerParty;
                 $secondParty = $supplierParty;
                 $firstPartyRoleLabel = 'Субподрядчик';
                 $secondPartyRoleLabel = 'Поставщик';
                 break;
-            default:
+        }    default:
                 break;
         }
 

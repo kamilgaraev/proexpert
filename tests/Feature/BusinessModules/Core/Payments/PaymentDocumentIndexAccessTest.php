@@ -57,7 +57,7 @@ final class PaymentDocumentIndexAccessTest extends TestCase
             'organization_id' => $ownerOrganization->id,
             'project_id' => $project->id,
             'contractor_id' => $contractor->id,
-            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
             'number' => 'PAY-CONTRACT-OWNER',
             'date' => '2026-06-01',
             'subject' => 'Owner contract visible to participant',

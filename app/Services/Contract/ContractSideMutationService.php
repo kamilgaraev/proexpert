@@ -447,7 +447,7 @@ class ContractSideMutationService
             $supplierId = (int) $supplierId;
         }
 
-        if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
+        if ($sideType === ContractSideTypeEnum::CONTRACT) {
             $supplierId = null;
 
             if ($contractDTO->is_self_execution) {
@@ -459,7 +459,7 @@ class ContractSideMutationService
             }
         }
 
-        if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
+        if ($sideType === ContractSideTypeEnum::SUBCONTRACT) {
             $supplierId = null;
 
             if (! $contractorId) {
@@ -467,7 +467,7 @@ class ContractSideMutationService
             }
         }
 
-        if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
+        if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACT) {
             $supplierId = null;
             if ($contractorId === null) {
                 $this->assertProjectCustomerCounterpartyIsConfigured($contractDTO);
@@ -563,12 +563,12 @@ class ContractSideMutationService
         $role = $projectContext->roleConfig->role->value;
 
         $allowedRoles = match ($sideType) {
-            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR => ['owner', 'customer', 'general_contractor', 'contractor'],
-            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
-            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER => ['owner', 'general_contractor'],
-            ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR,
-            ContractSideTypeEnum::CONTRACTOR_TO_SUPPLIER => ['owner', 'contractor'],
-            ContractSideTypeEnum::SUBCONTRACTOR_TO_SUPPLIER => ['owner', 'subcontractor'],
+            ContractSideTypeEnum::GENERAL_CONTRACT => ['owner', 'customer', 'general_contractor', 'contractor'],
+            ContractSideTypeEnum::CONTRACT,
+            ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY => ['owner', 'general_contractor'],
+            ContractSideTypeEnum::SUBCONTRACT,
+            ContractSideTypeEnum::CONTRACTOR_SUPPLY => ['owner', 'contractor'],
+            ContractSideTypeEnum::SUBCONTRACTOR_SUPPLY => ['owner', 'subcontractor'],
         };
 
         if (! in_array($role, $allowedRoles, true)) {
@@ -648,14 +648,14 @@ class ContractSideMutationService
         }
 
         $allowedRoles = match ($sideType) {
-            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR => [
+            ContractSideTypeEnum::GENERAL_CONTRACT => [
                 ProjectOrganizationRole::GENERAL_CONTRACTOR,
                 ProjectOrganizationRole::CONTRACTOR,
             ],
-            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR => [
+            ContractSideTypeEnum::CONTRACT => [
                 ProjectOrganizationRole::CONTRACTOR,
             ],
-            ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR => [
+            ContractSideTypeEnum::SUBCONTRACT => [
                 ProjectOrganizationRole::SUBCONTRACTOR,
             ],
             default => [],

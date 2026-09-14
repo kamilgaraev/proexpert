@@ -326,7 +326,7 @@ final class ContractDossierCreationServiceTest extends TestCase
                 start_date: null,
                 end_date: null,
                 notes: null,
-                contract_side_type: ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
+                contract_side_type: ContractSideTypeEnum::CONTRACT,
             ),
             'contract-dossier-7',
             'Договор ДП-7',

@@ -58,8 +58,8 @@ final class EstimateFinanceTest extends TestCase
         $base = ['organization_id' => $org->id, 'project_id' => $project->id, 'contractor_id' => $party->id,
             'date' => '2026-09-09', 'subject' => 'Работы', 'total_amount' => '1000000', 'currency' => 'RUB', 'status' => 'active',
             'requires_contract_side_review' => false];
-        $this->customer = Contract::query()->create($base + ['number' => 'C-1', 'contract_side_type' => 'customer_to_general_contractor']);
-        $this->contractor = Contract::query()->create($base + ['number' => 'S-1', 'contract_side_type' => 'general_contractor_to_contractor']);
+        $this->customer = Contract::query()->create($base + ['number' => 'C-1', 'contract_side_type' => 'general_contract']);
+        $this->contractor = Contract::query()->create($base + ['number' => 'S-1', 'contract_side_type' => 'contract']);
         $this->finance = app(EstimateFinanceService::class);
     }
 

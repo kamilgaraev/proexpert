@@ -59,12 +59,12 @@ final class ContractDossierCounterpartyTest extends TestCase
         $actor = new User;
         $actor->forceFill(['id' => 3, 'current_organization_id' => 7]);
         $names = [
-            'customer_to_general_contractor' => 'Заказчик объекта',
-            'general_contractor_to_contractor' => 'Подрядчик объекта',
-            'contractor_to_subcontractor' => 'Субподрядчик объекта',
-            'general_contractor_to_supplier' => 'Поставщик генподрядчика',
-            'contractor_to_supplier' => 'Поставщик подрядчика',
-            'subcontractor_to_supplier' => 'Поставщик субподрядчика',
+            'general_contract' => 'Заказчик объекта',
+            'contract' => 'Подрядчик объекта',
+            'subcontract' => 'Субподрядчик объекта',
+            'general_contractor_supply' => 'Поставщик генподрядчика',
+            'contractor_supply' => 'Поставщик подрядчика',
+            'subcontractor_supply' => 'Поставщик субподрядчика',
         ];
         try {
             foreach ($names as $type => $name) {
@@ -74,7 +74,7 @@ final class ContractDossierCounterpartyTest extends TestCase
                         'organization_id' => 7, 'number' => 'Д-'.$database->table('contracts')->count(),
                         'contract_side_type' => $type, 'dossier_creation_key' => $type,
                     ]);
-                    $externalSide = $type === 'customer_to_general_contractor' ? 'first' : 'second';
+                    $externalSide = $type === 'general_contract' ? 'first' : 'second';
                     foreach (['first', 'second'] as $side) {
                         $database->table('contract_parties')->insert([
                             'contract_id' => $contract->id, 'side' => $side,

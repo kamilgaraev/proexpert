@@ -254,7 +254,7 @@ final class ContractDossierRequisitesSyncTest extends TestCase
             start_date: $start,
             end_date: $end,
             notes: null,
-            contract_side_type: ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
+            contract_side_type: ContractSideTypeEnum::CONTRACT,
         );
     }
 }

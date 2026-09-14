@@ -39,6 +39,12 @@ class DealConversionPreviewRequest extends FormRequest
             'contract.fields.subject' => ['nullable', 'string', 'max:2000'],
             'contract.fields.status' => ['nullable', Rule::in(['draft', 'active', 'completed', 'on_hold', 'terminated'])],
             'contract.fields.contract_side_type' => ['nullable', Rule::in([
+                'general_contract',
+                'contract',
+                'general_contractor_supply',
+                'subcontract',
+                'contractor_supply',
+                'subcontractor_supply',
                 'customer_to_general_contractor',
                 'general_contractor_to_contractor',
                 'general_contractor_to_supplier',

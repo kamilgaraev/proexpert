@@ -32,7 +32,7 @@ class CustomerContractsVisibilityTest extends TestCase
             $contractor,
             'FIN-019',
             ContractStatusEnum::ACTIVE,
-            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            ContractSideTypeEnum::GENERAL_CONTRACT
         );
 
         $paymentDocumentId = DB::table('payment_documents')->insertGetId([
@@ -138,7 +138,7 @@ class CustomerContractsVisibilityTest extends TestCase
             $ownerContractor,
             'C-001',
             ContractStatusEnum::ACTIVE,
-            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            ContractSideTypeEnum::GENERAL_CONTRACT
         );
         $resolvedCustomerContract = $this->createContract(
             $customerOrganization,
@@ -146,7 +146,7 @@ class CustomerContractsVisibilityTest extends TestCase
             $customerExecutor,
             'C-002',
             ContractStatusEnum::DRAFT,
-            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            ContractSideTypeEnum::GENERAL_CONTRACT
         );
         $internalContract = $this->createContract(
             $ownerOrganization,
@@ -154,7 +154,7 @@ class CustomerContractsVisibilityTest extends TestCase
             $ownerContractor,
             'C-003',
             ContractStatusEnum::ACTIVE,
-            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR
+            ContractSideTypeEnum::CONTRACT
         );
         $this->createContract(
             $unrelatedOrganization,
@@ -162,7 +162,7 @@ class CustomerContractsVisibilityTest extends TestCase
             $unrelatedContractor,
             'C-004',
             ContractStatusEnum::ACTIVE,
-            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            ContractSideTypeEnum::GENERAL_CONTRACT
         );
 
         $ownerContracts = $customerPortalService->getContracts($ownerOrganization->id, [
@@ -173,7 +173,7 @@ class CustomerContractsVisibilityTest extends TestCase
 
         $this->assertSame(1, $ownerContracts['meta']['total']);
         $this->assertSame('C-001', $ownerContracts['items'][0]['number']);
-        $this->assertSame(ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value, $ownerContracts['items'][0]['contract_side']['type']);
+        $this->assertSame(ContractSideTypeEnum::GENERAL_CONTRACT->value, $ownerContracts['items'][0]['contract_side']['type']);
         $this->assertSame('customer', $ownerContracts['items'][0]['current_organization_role']);
         $this->assertSame('C-00', $ownerContracts['meta']['filters']['search']);
 
@@ -191,7 +191,7 @@ class CustomerContractsVisibilityTest extends TestCase
         $this->assertSame($customerExecutor->id, $customerContracts['meta']['filters']['contractor_id']);
         $this->assertSame(5, $customerContracts['meta']['per_page']);
         $this->assertSame($resolvedCustomerContract->id, $customerContracts['items'][0]['id']);
-        $this->assertSame(ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value, $customerContracts['items'][0]['contract_side']['type']);
+        $this->assertSame(ContractSideTypeEnum::GENERAL_CONTRACT->value, $customerContracts['items'][0]['contract_side']['type']);
         $this->assertSame('customer', $customerContracts['items'][0]['current_organization_role']);
 
         $projectContracts = $customerPortalService->getContracts($customerOrganization->id, [
