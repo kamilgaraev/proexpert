@@ -261,16 +261,37 @@ class Organization extends Model
         return ! empty($this->tax_number) && ! empty($this->address);
     }
 
+    public function getVerificationDataAttribute(mixed $value): ?array
+    {
+        for ($depth = 0; $depth < 2 && is_string($value); $depth++) {
+            $value = json_decode($value, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return null;
+            }
+        }
+
+        return is_array($value) ? $value : null;
+    }
+
     /**
      * Получить оценку верификации из данных верификации.
      */
     public function getVerificationScoreAttribute(): int
     {
         if (! $this->verification_data || ! is_array($this->verification_data)) {
-            // Если верификация не проводилась, рассчитываем базовый рейтинг
             return app(\App\Services\OrganizationVerificationService::class)->calculateBasicScore($this);
         }
 
         return $this->verification_data['score'] ?? 0;
+    }
+
+    public function getInnAttribute(): ?string
+    {
+        return $this->attributes['tax_number'] ?? null;
+    }
+
+    public function getKppAttribute(): ?string
+    {
+        return $this->attributes['registration_number'] ?? null;
     }
 }

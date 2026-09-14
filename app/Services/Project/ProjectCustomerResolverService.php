@@ -105,8 +105,8 @@ class ProjectCustomerResolverService
                 'counterparty_id' => null,
                 'linked_organization_id' => $participant->organization->id,
                 'legal_name' => $participant->organization->legal_name ?? $participant->organization->name,
-                'inn' => $participant->organization->tax_number,
-                'kpp' => null,
+                'inn' => $participant->organization->tax_number ?? $participant->organization->inn,
+                'kpp' => $participant->organization->registration_number ?? $participant->organization->kpp,
             ];
         }
 
@@ -130,6 +130,9 @@ class ProjectCustomerResolverService
         $resolved['entity_type'] = 'organization';
         $resolved['counterparty_id'] = null;
         $resolved['linked_organization_id'] = $resolved['id'];
+        $resolved['legal_name'] = $resolved['organization']->legal_name ?? $resolved['organization']->name;
+        $resolved['inn'] = $resolved['organization']->tax_number ?? $resolved['organization']->inn;
+        $resolved['kpp'] = $resolved['organization']->registration_number ?? $resolved['organization']->kpp;
 
         unset($resolved['organization']);
 

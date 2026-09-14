@@ -102,13 +102,42 @@ class ProjectParticipantService
         ProjectOrganizationRole $newRole,
         ?User $user = null
     ): void {
-        if ($organizationId === $project->organization_id) {
-            throw new BusinessLogicException(trans_message('project.owner_role_change_forbidden'), 400);
-        }
-
         $participantRecord = $this->findParticipantRecord($project->id, $organizationId, false, true);
 
         if (!$participantRecord instanceof ProjectOrganization) {
+            if ($organizationId === $project->organization_id) {
+                $participant = $this->findOrganization($organizationId);
+                $this->enforceUniqueCustomer($project, $newRole, $organizationId);
+                $this->validateRoleCapability($participant, $newRole);
+
+                $now = now();
+                DB::table('project_organization')->insert([
+                    'project_id' => $project->id,
+                    'organization_id' => $organizationId,
+                    'role' => $this->resolveLegacyRoleValue($newRole),
+                    'role_new' => $newRole->value,
+                    'is_active' => true,
+                    'added_by_user_id' => $user?->id,
+                    'invited_at' => $project->created_at ?? $now,
+                    'accepted_at' => $project->created_at ?? $now,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+
+                $this->invalidateProjectContexts($project);
+
+                $this->logging->business('Organization role updated in project', [
+                    'project_id' => $project->id,
+                    'organization_id' => $organizationId,
+                    'old_role' => ProjectOrganizationRole::OWNER->value,
+                    'new_role' => $newRole->value,
+                ]);
+
+                event(new ProjectOrganizationRoleChanged($project, $participant, ProjectOrganizationRole::OWNER, $newRole, $user));
+
+                return;
+            }
+
             throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
         }
 
@@ -142,6 +171,13 @@ class ProjectParticipantService
             'old_role' => $oldRole->value,
             'new_role' => $newRole->value,
         ]);
+
+        if (\in_array($newRole->value, [
+            ProjectOrganizationRole::CONTRACTOR->value,
+            ProjectOrganizationRole::SUBCONTRACTOR->value,
+        ], true) && $organizationId !== $project->organization_id) {
+            $this->ensureContractorExists($project->organization_id, $organizationId);
+        }
 
         event(new ProjectOrganizationRoleChanged($project, $participant, $oldRole, $newRole, $user));
     }
