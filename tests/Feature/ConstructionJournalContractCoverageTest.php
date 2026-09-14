@@ -31,17 +31,18 @@ use DomainException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
-use Tests\Support\ActingTestSchema;
+use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
 
 class ConstructionJournalContractCoverageTest extends TestCase
 {
-    use ActingTestSchema;
+    use EnablesImmutableAuditWriter;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->setUpActingSchema();
+        $this->enableImmutableAuditWriter();
+        $this->allowPermissions();
     }
 
     public function test_existing_contract_coverage_with_schedule_missing_blocks_acting(): void
@@ -49,7 +50,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
         $approver = User::factory()->create(['current_organization_id' => $organization->id]);
         $journal = $this->createJournal($organization, $project, $contract, $user);
-        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id]);
+        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id], actor: $user);
         $this->allowPermissions();
         Notification::fake();
         \Illuminate\Support\Facades\Event::fake();
@@ -100,7 +101,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
             ->assertJsonPath('data.blocked_works.0.blockers.0.code', 'schedule_missing');
     }
 
-    public function test_approved_estimate_coverage_is_saved_atomically_and_restores_journal_fact(): void
+    public function test_approved_estimate_coverage_is_saved_without_rewriting_journal_fact(): void
     {
         Storage::fake('s3');
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
@@ -148,9 +149,9 @@ class ConstructionJournalContractCoverageTest extends TestCase
         ], $user);
         $volume = $entry->workVolumes()->firstOrFail();
         $entry->update(['status' => 'approved']);
-        CompletedWork::query()->where('journal_work_volume_id', $volume->id)->forceDelete();
+        $originalWork = CompletedWork::query()->where('journal_work_volume_id', $volume->id)->firstOrFail();
 
-        app(EstimateCoverageService::class)->attachFullCoverage($contract, $estimate);
+        app(EstimateCoverageService::class)->attachFullCoverage($contract, $estimate, actor: $user);
 
         $this->assertDatabaseHas('contract_estimate_items', [
             'contract_id' => $contract->id,
@@ -159,10 +160,11 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'amount' => 95250,
         ]);
         $this->assertDatabaseHas('completed_works', [
+            'id' => $originalWork->id,
             'journal_work_volume_id' => $volume->id,
-            'contract_id' => $contract->id,
+            'contract_id' => $originalWork->contract_id,
             'estimate_item_id' => $estimateItem->id,
-            'status' => 'confirmed',
+            'status' => $originalWork->getRawOriginal('status'),
         ]);
         $this->assertNull($estimate->fresh()->structure_cache_path);
         Storage::disk('s3')->assertMissing($snapshotPath);
@@ -175,25 +177,28 @@ class ConstructionJournalContractCoverageTest extends TestCase
         }
     }
 
-    public function test_coverage_changes_roll_back_when_journal_fact_sync_fails(): void
+    public function test_coverage_changes_roll_back_when_mutation_recording_fails(): void
     {
         Storage::fake('s3');
-        [$organization, , $contract, , $estimate, $estimateItem] = $this->createJournalFixture();
+        [$organization, $user, $contract, , $estimate, $estimateItem] = $this->createJournalFixture();
         $snapshotPath = "org-{$organization->id}/estimates/{$estimate->id}/structure_snapshot.json";
         $estimate->update(['structure_cache_path' => $snapshotPath]);
         Storage::disk('s3')->put($snapshotPath, '{"sections":[]}');
         $this->coverEstimateItem($contract, $estimate, $estimateItem, 1, 1000);
-        $this->mock(CompletedWorkFactService::class, function ($mock): void {
-            $mock->shouldReceive('syncJournalEntriesForContractEstimateCoverage')
-                ->once()
-                ->andThrow(new DomainException('journal_fact_sync_failed'));
+        $additionalItem = $estimateItem->replicate();
+        $additionalItem->position_number = '6';
+        $additionalItem->save();
+        \Illuminate\Support\Facades\DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query): void {
+            if (str_starts_with($query->sql, 'insert into "estimate_finance_mutations"')) {
+                throw new DomainException('coverage_mutation_recording_failed');
+            }
         });
 
         try {
-            app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id]);
+            app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id, $additionalItem->id], actor: $user);
             self::fail('Coverage sync failure must be propagated.');
         } catch (DomainException $exception) {
-            $this->assertSame('journal_fact_sync_failed', $exception->getMessage());
+            $this->assertSame('coverage_mutation_recording_failed', $exception->getMessage());
         }
 
         $this->assertDatabaseHas('contract_estimate_items', [
@@ -379,7 +384,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $this->assertNull($work->contractor_id);
     }
 
-    public function test_full_coverage_sync_updates_existing_approved_journal_work_contract(): void
+    public function test_full_coverage_sync_preserves_existing_approved_journal_work(): void
     {
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
         $journal = $this->createJournal($organization, $project, $contract, $user);
@@ -400,14 +405,9 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $work = CompletedWork::query()->where('estimate_item_id', $estimateItem->id)->firstOrFail();
         $this->assertNull($work->contract_id);
 
-        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id]);
+        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id], actor: $user);
 
-        $this->assertDatabaseHas('completed_works', [
-            'id' => $work->id,
-            'contract_id' => $contract->id,
-            'contractor_id' => $contract->contractor_id,
-            'total_amount' => 15000,
-        ]);
+        self::assertSame($work->getAttributes(), $work->fresh()->getAttributes());
     }
 
     public function test_approved_journal_material_from_estimate_updates_contract_fact(): void
@@ -451,13 +451,14 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $work = CompletedWork::query()
             ->where('journal_material_id', $material->id)
             ->firstOrFail();
-        $payload = (new ContractEstimateItemResource(
+        $payload = $this->contractItemPayload(
             ContractEstimateItem::query()
                 ->where('contract_id', $contract->id)
                 ->where('estimate_item_id', $materialItem->id)
                 ->firstOrFail()
-                ->fresh('estimateItem')
-        ))->toArray(request());
+                ->fresh('estimateItem'),
+            $user
+        );
 
         $this->assertSame($materialItem->id, $material->estimate_item_id);
         $this->assertSame($materialItem->id, $work->estimate_item_id);
@@ -546,7 +547,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'status' => 'confirmed',
         ]);
 
-        $payload = (new ContractEstimateItemResource($link->fresh('estimateItem')))->toArray(request());
+        $payload = $this->contractItemPayload($link->fresh('estimateItem'), $user);
 
         $this->assertSame(100.0, $payload['item']['planned_quantity']);
         $this->assertSame(85.0, $payload['item']['actual_quantity']);
@@ -588,7 +589,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'status' => 'confirmed',
         ]);
 
-        $payload = (new ContractEstimateItemResource($link->fresh('estimateItem')))->toArray(request());
+        $payload = $this->contractItemPayload($link->fresh('estimateItem'), $user);
 
         $this->assertSame(0.0, $payload['item']['planned_quantity']);
         $this->assertSame(85.0, $payload['item']['actual_quantity']);
@@ -627,7 +628,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
         $approver = User::factory()->create(['current_organization_id' => $organization->id]);
         $journal = $this->createJournal($organization, $project, $contract, $user);
-        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id]);
+        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id], actor: $user);
 
         $this->allowPermissions();
         Notification::fake();
@@ -784,7 +785,9 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $user = User::factory()->create([
             'current_organization_id' => $organization->id,
         ]);
-        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $user->organizations()->attach($organization->id, ['is_active' => true, 'is_owner' => true, 'project_access_mode' => 'all_projects']);
+        $user->organizations()->attach($organization->id, ['is_active' => true, 'is_owner' => true]);
+        $project = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false, 'latitude' => 55.75, 'longitude' => 37.62]);
         $contractor = Contractor::create([
             'organization_id' => $organization->id,
             'name' => 'МТМ СТРОЙ',
@@ -794,6 +797,8 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'project_id' => $project->id,
             'contractor_id' => $contractor->id,
             'number' => 'Тестовый-1',
+            'contract_side_type' => 'subcontract',
+            'requires_contract_side_review' => false,
             'date' => '2026-04-01',
             'subject' => 'Works',
             'total_amount' => 100000,
@@ -803,17 +808,13 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'name' => 'Estimate',
+            'number' => 'J-EST-1',
+            'estimate_date' => '2026-04-01',
             'status' => 'approved',
             'total_amount' => 50000,
         ]);
-        $measurementUnitId = \Illuminate\Support\Facades\DB::table('measurement_units')->insertGetId([
-            'organization_id' => $organization->id,
-            'name' => 'Кубический метр',
-            'short_name' => 'м³',
-            'type' => 'work',
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $measurementUnitId = \App\Models\MeasurementUnit::query()
+            ->where('organization_id', $organization->id)->where('short_name', 'м³')->firstOrFail()->id;
         $workTypeId = \Illuminate\Support\Facades\DB::table('work_types')->insertGetId([
             'organization_id' => $organization->id,
             'name' => 'Бетонирование',
@@ -878,6 +879,9 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $schedule = ProjectSchedule::create([
             'organization_id' => $organization->id,
             'project_id' => $project->id,
+            'created_by_user_id' => $organization->users()->firstOrFail()->id,
+            'planned_start_date' => '2026-04-01',
+            'planned_end_date' => '2026-12-31',
             'name' => 'График работ',
             'status' => 'active',
         ]);
@@ -885,6 +889,9 @@ class ConstructionJournalContractCoverageTest extends TestCase
         return ScheduleTask::create([
             'organization_id' => $organization->id,
             'schedule_id' => $schedule->id,
+            'created_by_user_id' => $schedule->created_by_user_id,
+            'planned_start_date' => '2026-04-01',
+            'planned_end_date' => '2026-12-31',
             'estimate_item_id' => $estimateItem->id,
             'name' => $estimateItem->name,
             'task_type' => 'task',
@@ -896,6 +903,14 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'level' => 0,
             'sort_order' => 1,
         ]);
+    }
+
+    private function contractItemPayload(ContractEstimateItem $link, User $user): array
+    {
+        app(\App\BusinessModules\Features\ContractManagement\Services\ContractEstimateOperationalProgress::class)
+            ->prepare($link->contract, collect([$link]), $user);
+
+        return (new ContractEstimateItemResource($link))->toArray(request());
     }
 
     private function allowPermissions(bool $allowed = true): void
