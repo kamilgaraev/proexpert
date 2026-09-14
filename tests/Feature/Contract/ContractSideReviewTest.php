@@ -25,6 +25,14 @@ use Tests\TestCase;
 
 class ContractSideReviewTest extends TestCase
 {
+    use \Tests\Support\EnablesImmutableAuditWriter;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->enableImmutableAuditWriter();
+    }
+
     public function test_general_contract_uses_external_customer_counterparty_snapshot(): void
     {
         $organization = Organization::factory()->create([
@@ -219,7 +227,7 @@ class ContractSideReviewTest extends TestCase
     public function test_review_resolution_clears_flags_and_rebinds_customer_side_contract_to_project_customer(): void
     {
         $generalContractorOrganization = Organization::factory()->create();
-        $customerOrganization = Organization::factory()->create();
+        $customerOrganization = Organization::factory()->create(['registration_number' => '770201001']);
 
         $participantService = app(ProjectParticipantService::class);
         $mutationService = app(ContractSideMutationService::class);

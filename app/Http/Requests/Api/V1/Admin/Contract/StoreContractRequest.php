@@ -176,7 +176,7 @@ class StoreContractRequest extends FormRequest
 
         return [
             'project_id' => $projectIdRules,
-            'contract_side_type' => ['sometimes', 'nullable', new Enum(ContractSideTypeEnum::class)],
+            'contract_side_type' => ['required', new Enum(ContractSideTypeEnum::class)],
             'contractor_id' => [
                 'nullable',
                 'integer',
@@ -270,6 +270,11 @@ class StoreContractRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $sideType = $this->input('contract_side_type');
+        if (is_string($sideType)) {
+            $this->merge(['contract_side_type' => ContractSideTypeEnum::tryFromLegacy($sideType)?->value ?? $sideType]);
+        }
+
         $routeProjectId = $this->routeProjectId();
 
         if ($routeProjectId !== null && ! $this->has('project_id')) {

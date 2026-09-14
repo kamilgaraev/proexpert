@@ -112,6 +112,7 @@ class ContractPartySnapshotService
                     legalName: (string) ($resolved['legal_name'] ?? $resolved['name']),
                     inn: $resolved['inn'] ?? null,
                     kpp: $resolved['kpp'] ?? null,
+                    ogrn: $resolved['ogrn'] ?? null,
                 );
             }
         }

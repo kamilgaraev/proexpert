@@ -77,6 +77,7 @@ class ProjectCustomerResolverService
     {
         $participant = $this->resolveParticipantByRole($project, ProjectOrganizationRole::CUSTOMER);
         if ($participant !== null) {
+            $registrationNumber = preg_replace('/\D+/', '', (string) $participant->organization->registration_number) ?? '';
             return [
                 'id' => $participant->organization->id,
                 'name' => $participant->organization->name,
@@ -88,7 +89,8 @@ class ProjectCustomerResolverService
                 'linked_organization_id' => $participant->organization->id,
                 'legal_name' => $participant->organization->legal_name ?? $participant->organization->name,
                 'inn' => $participant->organization->tax_number ?? $participant->organization->inn,
-                'kpp' => $participant->organization->registration_number ?? $participant->organization->kpp,
+                'kpp' => strlen($registrationNumber) === 9 ? $registrationNumber : null,
+                'ogrn' => in_array(strlen($registrationNumber), [13, 15], true) ? $registrationNumber : null,
             ];
         }
 
@@ -107,6 +109,7 @@ class ProjectCustomerResolverService
                 'legal_name' => $project->customerCounterparty->legal_name,
                 'inn' => $project->customerCounterparty->inn,
                 'kpp' => $project->customerCounterparty->kpp,
+                'ogrn' => $project->customerCounterparty->ogrn,
             ];
         }
 
@@ -132,7 +135,9 @@ class ProjectCustomerResolverService
         $resolved['linked_organization_id'] = $resolved['id'];
         $resolved['legal_name'] = $resolved['organization']->legal_name ?? $resolved['organization']->name;
         $resolved['inn'] = $resolved['organization']->tax_number ?? $resolved['organization']->inn;
-        $resolved['kpp'] = $resolved['organization']->registration_number ?? $resolved['organization']->kpp;
+        $registrationNumber = preg_replace('/\D+/', '', (string) $resolved['organization']->registration_number) ?? '';
+        $resolved['kpp'] = strlen($registrationNumber) === 9 ? $registrationNumber : null;
+        $resolved['ogrn'] = in_array(strlen($registrationNumber), [13, 15], true) ? $registrationNumber : null;
 
         unset($resolved['organization']);
 

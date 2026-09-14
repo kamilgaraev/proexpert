@@ -26,4 +26,12 @@ class ResolveContractSideReviewRequest extends FormRequest
     {
         return ContractSideTypeEnum::from((string) $this->input('contract_side_type'));
     }
+
+    protected function prepareForValidation(): void
+    {
+        $sideType = $this->input('contract_side_type');
+        if (is_string($sideType)) {
+            $this->merge(['contract_side_type' => ContractSideTypeEnum::tryFromLegacy($sideType)?->value ?? $sideType]);
+        }
+    }
 }

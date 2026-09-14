@@ -28,10 +28,18 @@ use Tests\TestCase;
 class ContractCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
+    use \Tests\Support\EnablesImmutableAuditWriter;
 
-    public function test_owner_can_create_update_list_and_delete_contract_inside_project(): void
+    protected function setUp(): void
     {
-        $context = AdminApiTestContext::create();
+        parent::setUp();
+        $this->enableImmutableAuditWriter();
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('contractSideInputs')]
+    public function test_owner_can_create_update_list_and_archive_contract_inside_project(string $sideInput): void
+    {
+        $context = AdminApiTestContext::create(organizationAttributes: ['registration_number' => '325169000191393']);
         $project = Project::factory()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Contract Owner Project',
@@ -46,7 +54,8 @@ class ContractCoreExperienceControllerTest extends TestCase
         $createResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/contracts", [
                 'project_id' => $project->id,
-                'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
+                'contract_side_type' => $sideInput,
+                'idempotency_key' => 'contract-core-'.$sideInput,
                 'contractor_id' => $contractor->id,
                 'number' => 'CON-001',
                 'date' => '2026-06-01',
@@ -73,6 +82,8 @@ class ContractCoreExperienceControllerTest extends TestCase
         $contract = Contract::query()->findOrFail($createResponse->json('data.id'));
         $this->assertSame($context->organization->id, $contract->organization_id);
         $this->assertSame($project->id, $contract->project_id);
+        self::assertNull($contract->firstParty?->kpp);
+        self::assertSame('325169000191393', $contract->firstParty?->ogrn);
         $this->assertSame(500000.0, (float) $contract->base_amount);
         $this->assertSame(500000.0, (float) $contract->total_amount);
         $this->assertSame(100000.0, (float) $contract->planned_advance_amount);
@@ -94,6 +105,7 @@ class ContractCoreExperienceControllerTest extends TestCase
         $updateResponse = $this->withHeaders($context->authHeaders())
             ->putJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}", [
                 'number' => 'CON-001-UPD',
+                'contract_side_type' => $sideInput,
                 'subject' => 'Updated contract subject',
                 'base_amount' => 650000,
                 'total_amount' => 650000,
@@ -112,10 +124,15 @@ class ContractCoreExperienceControllerTest extends TestCase
         $this->assertNull($contract->notes);
 
         $deleteResponse = $this->withHeaders($context->authHeaders())
-            ->deleteJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}");
+            ->postJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}/archive");
 
-        $deleteResponse->assertNoContent();
-        $this->assertSoftDeleted('contracts', ['id' => $contract->id]);
+        $deleteResponse->assertOk();
+        self::assertSame('archived', $contract->fresh()->status->value);
+    }
+
+    public static function contractSideInputs(): array
+    {
+        return [['contract'], ['general_contractor_to_contractor'], ['general_contract'], ['customer_to_general_contractor']];
     }
 
     public function test_contract_details_include_effective_payment_documents_in_financial_summary(): void
@@ -190,13 +207,13 @@ class ContractCoreExperienceControllerTest extends TestCase
                 'number' => 'SHOULD-NOT-CHANGE',
             ]);
 
-        $updateResponse->assertNotFound();
+        $updateResponse->assertForbidden();
         $this->assertSame('OUT-OF-PROJECT', $contract->fresh()->number);
 
         $deleteResponse = $this->withHeaders($context->authHeaders())
             ->deleteJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}");
 
-        $deleteResponse->assertNotFound();
+        $deleteResponse->assertConflict();
         $this->assertNotSoftDeleted('contracts', ['id' => $contract->id]);
     }
 
@@ -339,7 +356,7 @@ class ContractCoreExperienceControllerTest extends TestCase
 
         $otherDeleteResponse = $this->withHeaders($participantContext->authHeaders())
             ->deleteJson("/api/v1/admin/projects/{$project->id}/contracts/{$otherContract->id}");
-        $otherDeleteResponse->assertNotFound();
+        $otherDeleteResponse->assertConflict();
         $this->assertNotSoftDeleted('contracts', ['id' => $otherContract->id]);
     }
 

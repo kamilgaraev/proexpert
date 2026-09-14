@@ -117,14 +117,14 @@ class ContractSideResolverService
                 $firstPartyRoleLabel = 'Субподрядчик';
                 $secondPartyRoleLabel = 'Поставщик';
                 break;
-        }    default:
+            default:
                 break;
         }
 
-        $deprecatedCustomer = $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+        $deprecatedCustomer = $sideType === ContractSideTypeEnum::GENERAL_CONTRACT
             ? $firstParty
             : null;
-        $deprecatedExecutor = $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+        $deprecatedExecutor = $sideType === ContractSideTypeEnum::GENERAL_CONTRACT
             ? $secondParty
             : null;
 
@@ -157,9 +157,9 @@ class ContractSideResolverService
     {
         $sideType = $contract->contract_side_type instanceof ContractSideTypeEnum
             ? $contract->contract_side_type
-            : ($contract->contract_side_type ? ContractSideTypeEnum::tryFrom((string) $contract->contract_side_type) : null);
+            : ($contract->contract_side_type ? ContractSideTypeEnum::tryFromLegacy((string) $contract->contract_side_type) : null);
 
-        if ($sideType !== ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
+        if ($sideType !== ContractSideTypeEnum::GENERAL_CONTRACT) {
             return null;
         }
 
