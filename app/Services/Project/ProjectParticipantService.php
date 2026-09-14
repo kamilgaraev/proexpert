@@ -105,7 +105,7 @@ class ProjectParticipantService
         $participantRecord = $this->findParticipantRecord($project->id, $organizationId, false, true);
 
         if (!$participantRecord instanceof ProjectOrganization) {
-            if ($organizationId === $project->organization_id) {
+            if ($organizationId === (int) $project->organization_id) {
                 $participant = $this->findOrganization($organizationId);
                 $this->enforceUniqueCustomer($project, $newRole, $organizationId);
                 $this->validateRoleCapability($participant, $newRole);
