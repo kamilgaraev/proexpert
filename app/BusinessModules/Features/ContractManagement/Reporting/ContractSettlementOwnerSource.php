@@ -383,7 +383,7 @@ final readonly class ContractSettlementOwnerSource
 
     private function direction(Contract $contract): string
     {
-        return $this->contractSideType($contract) === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+        return $this->contractSideType($contract) === ContractSideTypeEnum::GENERAL_CONTRACT
             ? 'receivable'
             : 'payable';
     }
@@ -391,7 +391,7 @@ final readonly class ContractSettlementOwnerSource
     private function partyIdentity(Contract $contract): array
     {
         $sideType = $this->contractSideType($contract);
-        if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
+        if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACT) {
             return [null, null];
         }
 
@@ -414,7 +414,7 @@ final readonly class ContractSettlementOwnerSource
             return $contract->contract_side_type;
         }
 
-        return ContractSideTypeEnum::tryFrom((string) $contract->contract_side_type)
+        return ContractSideTypeEnum::tryFromLegacy((string) $contract->contract_side_type)
             ?? throw new DomainException('contract_settlement_contract_side_invalid');
     }
 

@@ -52,29 +52,29 @@ class ContractPartySnapshotService
         }
 
         return match ($sideType) {
-            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR => [
+            ContractSideTypeEnum::GENERAL_CONTRACT => [
                 $this->fromProjectCustomerCounterparty($contract, $owner),
                 $contract->contractor
                     ? $this->fromContractor($contract, ContractPartyRoleEnum::GENERAL_CONTRACTOR)
                     : $this->fromOrganization($owner, ContractPartyRoleEnum::GENERAL_CONTRACTOR),
             ],
-            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR => [
+            ContractSideTypeEnum::CONTRACT => [
                 $this->fromOrganization($owner, ContractPartyRoleEnum::GENERAL_CONTRACTOR),
                 $this->fromContractor($contract, ContractPartyRoleEnum::CONTRACTOR),
             ],
-            ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER => [
+            ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY => [
                 $this->fromOrganization($owner, ContractPartyRoleEnum::GENERAL_CONTRACTOR),
                 $this->fromSupplier($contract, ContractPartyRoleEnum::SUPPLIER),
             ],
-            ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR => [
+            ContractSideTypeEnum::SUBCONTRACT => [
                 $this->fromOrganization($owner, ContractPartyRoleEnum::CONTRACTOR),
                 $this->fromContractor($contract, ContractPartyRoleEnum::SUBCONTRACTOR),
             ],
-            ContractSideTypeEnum::CONTRACTOR_TO_SUPPLIER => [
+            ContractSideTypeEnum::CONTRACTOR_SUPPLY => [
                 $this->fromOrganization($owner, ContractPartyRoleEnum::CONTRACTOR),
                 $this->fromSupplier($contract, ContractPartyRoleEnum::SUPPLIER),
             ],
-            ContractSideTypeEnum::SUBCONTRACTOR_TO_SUPPLIER => [
+            ContractSideTypeEnum::SUBCONTRACTOR_SUPPLY => [
                 $this->fromOrganization($owner, ContractPartyRoleEnum::SUBCONTRACTOR),
                 $this->fromSupplier($contract, ContractPartyRoleEnum::SUPPLIER),
             ],

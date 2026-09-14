@@ -223,7 +223,7 @@ class EstimateContractProgressControllerWorkflowTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'contractor_id' => $contractor->id,
-            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
             'number' => 'CON-' . random_int(10000, 99999),
             'date' => '2026-06-01',
             'subject' => 'Contract subject',

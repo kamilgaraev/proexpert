@@ -81,7 +81,7 @@ final class ProcurementContractConcurrencyTest extends TestCase
             ->once()
             ->withArgs(static function (mixed ...$arguments): bool {
                 return $arguments[1] instanceof ContractDTO
-                    && $arguments[1]->contract_side_type === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER
+                    && $arguments[1]->contract_side_type === ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY
                     && $arguments[1]->gp_calculation_type === GpCalculationTypeEnum::PERCENTAGE;
             })
             ->andReturnUsing(static fn (int $organizationId, ContractDTO $dto): Contract => Contract::query()->create([
@@ -176,7 +176,7 @@ final class ProcurementContractConcurrencyTest extends TestCase
             ->once()
             ->withArgs(static function (mixed ...$arguments): bool {
                 return $arguments[1] instanceof ContractDTO
-                    && $arguments[1]->contract_side_type === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR
+                    && $arguments[1]->contract_side_type === ContractSideTypeEnum::CONTRACT
                     && $arguments[1]->contractor_id !== null
                     && $arguments[1]->supplier_id === null
                     && $arguments[1]->gp_calculation_type === GpCalculationTypeEnum::PERCENTAGE;

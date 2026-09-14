@@ -50,7 +50,7 @@ class StoreContractRequest extends FormRequest
     public function withValidator($validator): void
     {
         $validator->after(function ($validator): void {
-            $sideType = ContractSideTypeEnum::tryFrom((string) $this->input('contract_side_type'));
+            $sideType = ContractSideTypeEnum::tryFromLegacy((string) $this->input('contract_side_type'));
             $supplierId = $this->input('supplier_id');
             $contractorId = $this->input('contractor_id');
             $isSelfExecution = $this->boolean('is_self_execution');
@@ -96,7 +96,7 @@ class StoreContractRequest extends FormRequest
                 }
             }
 
-            if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
+            if ($sideType === ContractSideTypeEnum::CONTRACT) {
                 if (! $contractorId && ! $isSelfExecution) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
                 }
@@ -106,7 +106,7 @@ class StoreContractRequest extends FormRequest
                 }
             }
 
-            if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
+            if ($sideType === ContractSideTypeEnum::SUBCONTRACT) {
                 if (! $contractorId) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
                 }
@@ -120,7 +120,7 @@ class StoreContractRequest extends FormRequest
                 }
             }
 
-            if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
+            if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACT) {
                 if ($supplierId) {
                     $validator->errors()->add('supplier_id', 'Для договора между заказчиком и исполнителем по проекту поставщик не заполняется.');
                 }
@@ -358,7 +358,7 @@ class StoreContractRequest extends FormRequest
             supplier_id: $this->validated('supplier_id'),
             contract_category: $this->validated('contract_category'),
             contract_side_type: $this->validated('contract_side_type')
-                ? ContractSideTypeEnum::from($this->validated('contract_side_type'))
+                ? ContractSideTypeEnum::tryFromLegacy($this->validated('contract_side_type'))
                 : null,
             currency: mb_strtoupper((string) ($this->validated('currency') ?? config('payments.defaults.currency', 'RUB'))),
         );

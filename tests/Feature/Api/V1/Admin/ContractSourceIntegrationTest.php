@@ -520,7 +520,7 @@ final class ContractSourceIntegrationTest extends TestCase
         return [
             'number' => $number,
             'date' => '2026-07-21',
-            'contract_side_type' => 'customer_to_general_contractor',
+            'contract_side_type' => 'general_contract',
             'status' => ContractStatusEnum::DRAFT->value,
             'base_amount' => 1.0,
             'total_amount' => 1.0,

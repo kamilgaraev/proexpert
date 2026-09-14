@@ -131,10 +131,13 @@ final class EstimateFinanceQuery
             return 'unknown';
         }
 
-        return match ($contract->contract_side_type?->value) {
-            'customer_to_general_contractor' => 'revenue',
-            'general_contractor_to_contractor', 'general_contractor_to_supplier',
-            'contractor_to_subcontractor', 'contractor_to_supplier', 'subcontractor_to_supplier' => 'cost',
+        return match ($contract->contract_side_type) {
+            ContractSideTypeEnum::GENERAL_CONTRACT => 'revenue',
+            ContractSideTypeEnum::CONTRACT,
+            ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY,
+            ContractSideTypeEnum::SUBCONTRACT,
+            ContractSideTypeEnum::CONTRACTOR_SUPPLY,
+            ContractSideTypeEnum::SUBCONTRACTOR_SUPPLY => 'cost',
             default => 'unknown',
         };
     }

@@ -105,7 +105,7 @@ class ContractEstimateServiceTest extends TestCase
         $contract2 = $this->createContract([
             'organization_id' => $this->contract->organization_id,
             'project_id' => $this->contract->project_id,
-            'contract_side_type' => 'customer_to_general_contractor',
+            'contract_side_type' => 'general_contract',
         ]);
 
         $this->service->attachItems($this->contract, $this->estimate, [$item->id], false, auth()->user());
@@ -361,11 +361,11 @@ class ContractEstimateServiceTest extends TestCase
         $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)->shouldReceive('can')->andReturn(true);
         $this->app->forgetInstance(ContractEstimateService::class);
         $this->service = app(ContractEstimateService::class);
-        $this->contract->update(['contract_side_type' => 'general_contractor_to_contractor', 'requires_contract_side_review' => false]);
+        $this->contract->update(['contract_side_type' => 'contract', 'requires_contract_side_review' => false]);
         $this->estimate->update(['vat_rate' => 20]);
         $item = $this->createEstimateItem(['total_amount' => 1000, 'is_not_accounted' => false]);
         $other = $this->createContract(['organization_id' => $this->contract->organization_id, 'project_id' => $this->contract->project_id]);
-        $other->update(['contract_side_type' => 'customer_to_general_contractor', 'requires_contract_side_review' => false]);
+        $other->update(['contract_side_type' => 'general_contract', 'requires_contract_side_review' => false]);
         $this->service->attachItems($this->contract, $this->estimate, [$item->id], false, auth()->user());
         $this->service->attachItems($other, $this->estimate, [$item->id], false, auth()->user());
         $before = $this->service->getItemsForContract($this->contract)->first();
@@ -434,7 +434,7 @@ class ContractEstimateServiceTest extends TestCase
             'total_amount' => 100000,
             'status' => 'active',
             'currency' => 'RUB',
-            'contract_side_type' => 'general_contractor_to_contractor',
+            'contract_side_type' => 'contract',
             'requires_contract_side_review' => false,
         ], $attributes);
 

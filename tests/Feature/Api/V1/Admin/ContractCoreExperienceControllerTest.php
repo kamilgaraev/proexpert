@@ -46,7 +46,7 @@ class ContractCoreExperienceControllerTest extends TestCase
         $createResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/contracts", [
                 'project_id' => $project->id,
-                'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+                'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
                 'contractor_id' => $contractor->id,
                 'number' => 'CON-001',
                 'date' => '2026-06-01',
@@ -212,7 +212,7 @@ class ContractCoreExperienceControllerTest extends TestCase
         $foreignProjectResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/contracts", [
                 'project_id' => $foreignProject->id,
-                'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+                'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
                 'contractor_id' => null,
                 'is_self_execution' => true,
                 'number' => 'FOREIGN-PROJECT',
@@ -226,7 +226,7 @@ class ContractCoreExperienceControllerTest extends TestCase
         $foreignContractorResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/contracts", [
                 'project_id' => $project->id,
-                'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+                'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
                 'contractor_id' => $foreignContractor->id,
                 'number' => 'FOREIGN-CONTRACTOR',
                 'date' => '2026-06-01',
@@ -248,7 +248,7 @@ class ContractCoreExperienceControllerTest extends TestCase
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/contracts", [
-                'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+                'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
                 'contractor_id' => $contractor->id,
                 'number' => 'FOREIGN-MULTI-PROJECT',
                 'date' => '2026-06-01',
@@ -407,7 +407,7 @@ class ContractCoreExperienceControllerTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'contractor_id' => $contractor->id,
-            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
             'number' => 'CON-'.random_int(10000, 99999),
             'date' => '2026-06-01',
             'subject' => 'Contract subject',

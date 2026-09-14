@@ -319,7 +319,7 @@ final class CommercialProposalContractWorkflowTest extends TestCase
                 start_date: null,
                 end_date: null,
                 notes: null,
-                contract_side_type: ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
+                contract_side_type: ContractSideTypeEnum::CONTRACT,
             ),
             'commercial-proposal-71',
             'Contract from commercial proposal',

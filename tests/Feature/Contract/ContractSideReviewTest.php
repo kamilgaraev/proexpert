@@ -25,7 +25,7 @@ use Tests\TestCase;
 
 class ContractSideReviewTest extends TestCase
 {
-    public function test_customer_to_general_contractor_contract_uses_external_customer_counterparty_snapshot(): void
+    public function test_general_contract_uses_external_customer_counterparty_snapshot(): void
     {
         $organization = Organization::factory()->create([
             'name' => 'ООО Генподрядчик',
@@ -75,7 +75,7 @@ class ContractSideReviewTest extends TestCase
                 start_date: null,
                 end_date: null,
                 notes: null,
-                contract_side_type: ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR,
+                contract_side_type: ContractSideTypeEnum::GENERAL_CONTRACT,
             )
         );
 
@@ -141,7 +141,7 @@ class ContractSideReviewTest extends TestCase
                 start_date: null,
                 end_date: null,
                 notes: null,
-                contract_side_type: ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR,
+                contract_side_type: ContractSideTypeEnum::GENERAL_CONTRACT,
             )
         );
 
@@ -196,7 +196,7 @@ class ContractSideReviewTest extends TestCase
                 start_date: null,
                 end_date: null,
                 notes: null,
-                contract_side_type: ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
+                contract_side_type: ContractSideTypeEnum::CONTRACT,
             )
         );
 
@@ -254,7 +254,7 @@ class ContractSideReviewTest extends TestCase
             'organization_id' => $generalContractorOrganization->id,
             'project_id' => $project->id,
             'contractor_id' => $contractor->id,
-            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
             'requires_contract_side_review' => true,
             'contract_side_review_reason' => 'ambiguous_backfill',
             'number' => 'CR-101',
@@ -270,12 +270,12 @@ class ContractSideReviewTest extends TestCase
         $resolved = $mutationService->resolveReview(
             $contract->id,
             $generalContractorOrganization->id,
-            ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            ContractSideTypeEnum::GENERAL_CONTRACT
         );
 
         $this->assertSame($generalContractorOrganization->id, $resolved->organization_id);
         $this->assertNull($resolved->contractor_id);
-        $this->assertSame(ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR, $resolved->contract_side_type);
+        $this->assertSame(ContractSideTypeEnum::GENERAL_CONTRACT, $resolved->contract_side_type);
         $this->assertFalse((bool) $resolved->requires_contract_side_review);
         $this->assertNull($resolved->contract_side_review_reason);
 

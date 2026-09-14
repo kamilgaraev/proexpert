@@ -13,7 +13,7 @@ final class ContractDossierCounterpartyResolver
     {
         $type = $contract->contract_side_type;
         if ($type instanceof ContractSideTypeEnum) {
-            $party = $type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+            $party = $type === ContractSideTypeEnum::GENERAL_CONTRACT
                 ? $contract->firstParty
                 : $contract->secondParty;
             $name = trim((string) $party?->name);
@@ -21,7 +21,7 @@ final class ContractDossierCounterpartyResolver
                 return $name;
             }
 
-            if ($type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
+            if ($type === ContractSideTypeEnum::GENERAL_CONTRACT) {
                 return $contract->project?->customerCounterparty?->name;
             }
 

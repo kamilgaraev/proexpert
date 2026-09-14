@@ -216,7 +216,7 @@ class ContractMutationAtomicityTest extends TestCase
             start_date: null,
             end_date: null,
             notes: null,
-            contract_side_type: ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
+            contract_side_type: ContractSideTypeEnum::CONTRACT,
         );
     }
 }

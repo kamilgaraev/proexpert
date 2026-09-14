@@ -294,7 +294,7 @@ final class ContractPermissionAndLifecycleTest extends TestCase
 
         $payload = [
             'project_id' => 17,
-            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
             'number' => 'PROJECT-SCOPE-CREATE',
             'date' => '2026-07-19',
             'is_self_execution' => true,
@@ -323,7 +323,7 @@ final class ContractPermissionAndLifecycleTest extends TestCase
                 'project_id' => null,
                 'project_ids' => [11, 17],
                 'is_multi_project' => true,
-                'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+                'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
                 'number' => 'PROJECT-SCOPE-MULTI-CREATE',
                 'date' => '2026-07-19',
                 'is_self_execution' => true,
@@ -349,7 +349,7 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             'project_id' => null,
             'project_ids' => [11, 17],
             'is_multi_project' => true,
-            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
             'number' => 'PROJECT-SCOPE-MULTI-CREATE',
             'date' => '2026-07-19',
             'is_self_execution' => true,
@@ -819,7 +819,7 @@ final class ContractPermissionAndLifecycleTest extends TestCase
 
         $response = $this->actingAs($this->user(7))->postJson('/__review/contracts', [
             'project_id' => 41,
-            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
             'number' => 'DRAFT-ONLY',
             'date' => '2026-07-19',
             'status' => 'archived',

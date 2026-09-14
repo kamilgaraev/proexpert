@@ -243,15 +243,15 @@ final class ProjectFinanceHealthBuilder
         ProjectContext $projectContext,
         ?int $visibleOrganizationId,
     ): ?float {
-        $revenueSide = match ($projectContext->role) {
-            ProjectOrganizationRole::CONTRACTOR => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
-            ProjectOrganizationRole::SUBCONTRACTOR => ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR,
-            default => ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR,
+        $revenueSides = match ($projectContext->role) {
+            ProjectOrganizationRole::CONTRACTOR => [ContractSideTypeEnum::CONTRACT->value, 'general_contractor_to_contractor'],
+            ProjectOrganizationRole::SUBCONTRACTOR => [ContractSideTypeEnum::SUBCONTRACT->value, 'contractor_to_subcontractor'],
+            default => [ContractSideTypeEnum::GENERAL_CONTRACT->value, 'customer_to_general_contractor'],
         };
 
         $query = Contract::query()
             ->whereNull('contracts.deleted_at')
-            ->where('contracts.contract_side_type', $revenueSide->value)
+            ->whereIn('contracts.contract_side_type', $revenueSides)
             ->where(function ($query) use ($project): void {
                 $query->where('contracts.project_id', $project->getKey())
                     ->orWhereExists(function ($subQuery) use ($project): void {

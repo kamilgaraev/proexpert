@@ -220,7 +220,7 @@ class CustomerPortalService
             return false;
         }
 
-        $isCustomerSide = $contract->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+        $isCustomerSide = in_array($contract->contract_side_type, [ContractSideTypeEnum::GENERAL_CONTRACT, 'customer_to_general_contractor', 'general_contract'], true)
             || $contract->parties()->where('linked_organization_id', $organizationId)->exists();
 
         if (! $isCustomerSide) {
@@ -1090,7 +1090,7 @@ class CustomerPortalService
             ->whereHas('contract', function (Builder $contractQuery) use ($organizationId): void {
                 $contractQuery
                     ->where(function (Builder $subQuery) use ($organizationId): void {
-                        $subQuery->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                        $subQuery->whereIn('contract_side_type', [ContractSideTypeEnum::GENERAL_CONTRACT->value, 'customer_to_general_contractor'])
                             ->orWhereHas('parties', fn (Builder $partyQ) => $partyQ->where('linked_organization_id', $organizationId));
                     })
                     ->where('organization_id', $organizationId);
@@ -1117,7 +1117,7 @@ class CustomerPortalService
     {
         $query = Contract::query()
             ->where(function (Builder $subQuery) use ($organizationId): void {
-                $subQuery->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                $subQuery->whereIn('contract_side_type', [ContractSideTypeEnum::GENERAL_CONTRACT->value, 'customer_to_general_contractor'])
                     ->orWhereHas('parties', fn (Builder $partyQ) => $partyQ->where('linked_organization_id', $organizationId));
             })
             ->where('organization_id', $organizationId)
@@ -1334,7 +1334,7 @@ class CustomerPortalService
         $project = $approval->project;
         $dateLabel = $approval->act_date?->format('d.m.Y');
         $hasCustomerContractAccess = $approval->contract instanceof Contract
-            && $approval->contract->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR;
+            && (in_array($approval->contract->contract_side_type, [ContractSideTypeEnum::GENERAL_CONTRACT, 'customer_to_general_contractor', 'general_contract'], true) || $approval->contract->parties()->where('role', 'customer')->exists());
 
         return [
             'id' => $approval->id,
@@ -1419,7 +1419,7 @@ class CustomerPortalService
 
     private function resolveCurrentOrganizationRole(Contract $contract): string
     {
-        return $contract->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+        return (in_array($contract->contract_side_type, [ContractSideTypeEnum::GENERAL_CONTRACT, 'customer_to_general_contractor', 'general_contract'], true) || $contract->parties()->where('role', 'customer')->exists())
             ? 'customer'
             : 'initiator';
     }
@@ -2338,7 +2338,7 @@ class CustomerPortalService
                 ->whereKey((int) $payload['contract_id'])
                 ->where('organization_id', $organizationId)
                 ->where(function (Builder $subQuery) use ($organizationId): void {
-                    $subQuery->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                    $subQuery->whereIn('contract_side_type', [ContractSideTypeEnum::GENERAL_CONTRACT->value, 'customer_to_general_contractor'])
                         ->orWhereHas('parties', fn (Builder $partyQ) => $partyQ->where('linked_organization_id', $organizationId));
                 })
                 ->first();
@@ -2381,7 +2381,7 @@ class CustomerPortalService
                 ->whereKey((int) $payload['contract_id'])
                 ->where('organization_id', $organizationId)
                 ->where(function (Builder $subQuery) use ($organizationId): void {
-                    $subQuery->where('contract_side_type', ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR->value)
+                    $subQuery->whereIn('contract_side_type', [ContractSideTypeEnum::GENERAL_CONTRACT->value, 'customer_to_general_contractor'])
                         ->orWhereHas('parties', fn (Builder $partyQ) => $partyQ->where('linked_organization_id', $organizationId));
                 })
                 ->first();

@@ -165,7 +165,7 @@ final class MobileCompanionModulesTest extends TestCase
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'contractor_id' => $contractor->id,
-            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'contract_side_type' => ContractSideTypeEnum::CONTRACT->value,
             'number' => 'C-001',
             'date' => now()->toDateString(),
             'subject' => 'Concrete works',

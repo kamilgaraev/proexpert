@@ -283,8 +283,8 @@ class PurchaseContractService
             supplier_id: isset($data['supplier_id']) ? (int) $data['supplier_id'] : null,
             contract_category: 'procurement',
             contract_side_type: ! empty($data['supplier_id'])
-                ? ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER
-                : ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
+                ? ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY
+                : ContractSideTypeEnum::CONTRACT,
             currency: mb_strtoupper((string) ($data['currency'] ?? 'RUB')),
         );
     }
