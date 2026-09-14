@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSnapshotResponse;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateStatusWorkflowService;
@@ -31,7 +32,8 @@ class EstimateController extends Controller
         protected EstimateRepository $repository,
         protected EstimateCoverageService $coverageService,
         private readonly EstimateStructureSnapshotStorage $structureSnapshotStorage,
-        private readonly EstimateStatusWorkflowService $statusWorkflow
+        private readonly EstimateStatusWorkflowService $statusWorkflow,
+        private readonly EstimateSnapshotResponse $snapshotResponse
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -104,7 +106,7 @@ class EstimateController extends Controller
 
         // Если снапшот есть - стримим его с огромной экономией RAM
         if ($this->structureSnapshotStorage->exists($estimateModel->structure_cache_path)) {
-            return $this->streamEstimateWithStructureSnapshot($estimateModel);
+            return $this->streamEstimateWithStructureSnapshot($request, $estimateModel);
         }
 
         // Снапшот отсутствует — запускаем генерацию (синхронно или в фоне)
@@ -121,7 +123,7 @@ class EstimateController extends Controller
 
         // Проверяем снова
         if ($this->structureSnapshotStorage->exists($estimateModel->structure_cache_path)) {
-            return $this->streamEstimateWithStructureSnapshot($estimateModel);
+            return $this->streamEstimateWithStructureSnapshot($request, $estimateModel);
         }
 
         // Финальный фолбэк (очень редкий случай, если джоба упала).
@@ -328,23 +330,9 @@ class EstimateController extends Controller
         return AdminResponse::success($sections);
     }
 
-    private function streamEstimateWithStructureSnapshot(Estimate $estimate): StreamedResponse
+    private function streamEstimateWithStructureSnapshot(Request $request, Estimate $estimate): StreamedResponse
     {
-        $meta = (new EstimateResource($estimate))->resolve();
-        $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE);
-        $snapshotPath = (string) $estimate->structure_cache_path;
-
-        return response()->stream(function () use ($metaJson, $snapshotPath) {
-            echo '{"success":true,"message":null,"data":';
-            echo $metaJson;
-            echo ',"tree":';
-            $stream = $this->structureSnapshotStorage->readStream($snapshotPath);
-            while (! feof($stream)) {
-                echo fread($stream, 8192);
-            }
-            fclose($stream);
-            echo '}';
-        }, 200, ['Content-Type' => 'application/json']);
+        return $this->snapshotResponse->create($request, (new EstimateResource($estimate))->resolve(), (string) $estimate->structure_cache_path);
     }
 
     /**
