@@ -167,7 +167,7 @@ class ScheduleTaskSyncService
 
                 $sumCompleted = (float) CompletedWork::where('schedule_task_id', $task->id)
                     ->whereNull('deleted_at')
-                    ->sum('completed_quantity');
+                    ->sum(DB::raw('COALESCE(completed_quantity, quantity, 0)'));
 
                 if ($sumCompleted < $taskQuantity) {
                     $diff = round($taskQuantity - $sumCompleted, 4);

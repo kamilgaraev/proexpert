@@ -122,6 +122,10 @@ Route::post('/projects/{project}/participant-invitations/{invitation}/resend', [
     ->name('projects.participant-invitations.resend');
 
 // Получить детализированные работы дочерних организаций
+Route::get('/projects/{id}/child-works/statistics', [ProjectChildWorksController::class, 'statistics'])
+    ->middleware('authorize:admin.projects.view')
+    ->name('projects.child-works.statistics');
+
 Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'index'])
     ->middleware('authorize:admin.projects.view')
     ->name('projects.child-works.index');

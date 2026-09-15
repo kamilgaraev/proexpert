@@ -145,7 +145,7 @@ class CompletedWorkResource extends JsonResource
         }
 
         return $this->resolveTaskCompletedQuantity($scheduleTask)
-            ?? ($this->quantity !== null ? (float) $this->quantity : null);
+            ?? $this->effectiveCompletedQuantity();
     }
 
     private function resolvePrice(?ScheduleTask $scheduleTask): ?float
@@ -275,11 +275,7 @@ class CompletedWorkResource extends JsonResource
 
     private function resolveStoredAmountQuantity(): float
     {
-        if ($this->completed_quantity !== null && (float) $this->completed_quantity > 0) {
-            return (float) $this->completed_quantity;
-        }
-
-        return (float) ($this->quantity ?? 0);
+        return $this->effectiveCompletedQuantity();
     }
 
     private function resolveMeasurementUnit(?ScheduleTask $scheduleTask): ?array

@@ -27,6 +27,7 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -84,7 +85,7 @@ class CompletedWorkController extends Controller
 
             $sortBy = $request->query('sortBy', 'completion_date');
             $sortDirection = $request->query('sortDirection', 'desc');
-            $perPage = (int) $request->query('per_page', 15);
+            $perPage = min(max((int) $request->query('per_page', 15), 1), 100);
 
             $completedWorks = $this->completedWorkService->getAll(
                 $filters,
@@ -431,7 +432,7 @@ class CompletedWorkController extends Controller
                 return AdminResponse::error(trans_message('completed_work.bulk_payload_required'), Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 
-            $createdWorks = [];
+            $dtos = [];
             $projectContext = ProjectContextMiddleware::getProjectContext($request);
 
             foreach ($worksPayload as $index => $workPayload) {
@@ -504,10 +505,20 @@ class CompletedWorkController extends Controller
                     description: $validated['description'] ?? null,
                 );
 
-                $createdWorks[] = $this->loadWorkRelations(
-                    $this->completedWorkService->create($dto, $projectContext)
-                );
+                $dtos[] = $dto;
             }
+
+            $createdWorks = DB::transaction(function () use ($dtos, $projectContext): array {
+                $createdWorks = [];
+
+                foreach ($dtos as $dto) {
+                    $createdWorks[] = $this->loadWorkRelations(
+                        $this->completedWorkService->create($dto, $projectContext)
+                    );
+                }
+
+                return $createdWorks;
+            });
 
             return AdminResponse::success(
                 CompletedWorkResource::collection(collect($createdWorks)),

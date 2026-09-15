@@ -7,6 +7,7 @@ namespace App\Services\Schedule;
 use App\Models\CompletedWork;
 use App\Models\ScheduleTask;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class ScheduleTaskCompletedWorkService
 {
@@ -15,7 +16,7 @@ class ScheduleTaskCompletedWorkService
         $total = CompletedWork::query()
             ->where('schedule_task_id', $task->id)
             ->effectiveForSchedule()
-            ->sum('completed_quantity');
+            ->sum(DB::raw('COALESCE(completed_quantity, quantity, 0)'));
 
         $task->completed_quantity = (float) $total;
         $task->saveQuietly();

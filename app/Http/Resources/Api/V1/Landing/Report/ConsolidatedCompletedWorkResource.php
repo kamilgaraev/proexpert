@@ -2,9 +2,11 @@
 
 namespace App\Http\Resources\Api\V1\Landing\Report;
 
+use App\Models\CompletedWork;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
+/** @mixin CompletedWork */
 class ConsolidatedCompletedWorkResource extends JsonResource
 {
     public function toArray(Request $request): array
@@ -27,11 +29,11 @@ class ConsolidatedCompletedWorkResource extends JsonResource
                 'id' => $this->work_type_id,
                 'name' => $this->workType->name ?? null,
             ],
-            'quantity' => (float) $this->quantity,
+            'quantity' => $this->effectiveCompletedQuantity(),
             'price' => (float) $this->price,
             'total_amount' => (float) $this->total_amount,
             'completion_date' => $this->completion_date?->format('Y-m-d'),
             'status' => $this->status,
         ];
     }
-} 
+}
