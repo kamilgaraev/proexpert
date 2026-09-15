@@ -13,7 +13,6 @@ use App\Http\Requests\Api\V1\Admin\ActReport\RejectActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\StoreActFromWizardRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\StoreActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UpdateActReportRequest;
-use App\Http\Requests\Api\V1\Admin\ActReport\UpdateActWorksRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UploadActReportFileRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UploadSignedActFileRequest;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
@@ -220,59 +219,6 @@ class ActReportsController extends Controller
             return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (Throwable $e) {
             Log::error('act_reports.update_failed', [
-                'act_id' => $act->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('act_reports.update_failed'), 500);
-        }
-    }
-
-    public function getAvailableWorks(Request $request, ContractPerformanceAct $act): JsonResponse
-    {
-        try {
-            $organizationId = $this->accessService->currentOrganizationId($request);
-            $this->accessService->authorizeAct($request, $act);
-            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_VIEW, $organizationId);
-
-            $availableWorks = $this->actReportService->getAvailableWorks($act);
-
-            if ($availableWorks->isEmpty()) {
-                return AdminResponse::success([], trans_message('act_reports.no_available_works'));
-            }
-
-            return AdminResponse::success($availableWorks);
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
-        } catch (Throwable $e) {
-            Log::error('act_reports.available_works_failed', [
-                'act_id' => $act->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('act_reports.load_failed'), 500);
-        }
-    }
-
-    public function updateWorks(UpdateActWorksRequest $request, ContractPerformanceAct $act): JsonResponse
-    {
-        try {
-            $organizationId = $this->accessService->currentOrganizationId($request);
-            $this->accessService->authorizeAct($request, $act);
-            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_MANAGE_WORKS, $organizationId);
-
-            $this->actReportService->updateWorksInAct($act, $request->validated()['works']);
-
-            $act->load(['contract', 'completedWorks.workType', 'completedWorks.user']);
-
-            return AdminResponse::success(
-                new ContractPerformanceActResource($act),
-                trans_message('act_reports.works_updated')
-            );
-        } catch (BusinessLogicException $e) {
-            return AdminResponse::error($e->getMessage(), $e->getCode());
-        } catch (Throwable $e) {
-            Log::error('act_reports.update_works_failed', [
                 'act_id' => $act->id,
                 'error' => $e->getMessage(),
             ]);

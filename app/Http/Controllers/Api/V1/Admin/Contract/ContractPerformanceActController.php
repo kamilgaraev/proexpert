@@ -199,33 +199,6 @@ class ContractPerformanceActController extends Controller
         }
     }
 
-    public function availableWorks(Request $request, ...$parameters): JsonResponse
-    {
-        $contractId = $this->getRequiredRouteInt($request, 'contract');
-        $projectId = $this->getRouteInt($request, 'project');
-
-        try {
-            $works = $this->actService->getAvailableWorksForAct(
-                $contractId,
-                $this->getOrganizationId($request),
-                $projectId
-            );
-
-            return AdminResponse::success($works);
-        } catch (Exception $e) {
-            Log::error('contract.performance_acts.available_works_failed', [
-                'contract_id' => $contractId,
-                'project_id' => $projectId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return AdminResponse::error(
-                trans_message('contract.acts_available_works_error'),
-                Response::HTTP_INTERNAL_SERVER_ERROR
-            );
-        }
-    }
-
     public function exportPdf(Request $request, ...$parameters): JsonResponse
     {
         return $this->exportActDocument($request, 'pdf');

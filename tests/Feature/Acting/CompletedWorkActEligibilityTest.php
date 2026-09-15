@@ -14,7 +14,6 @@ use App\Models\Project;
 use App\Services\Acting\ActingAvailabilityService;
 use App\Services\Acting\ActingQuantityReservationService;
 use App\Services\Acting\CompletedWorkActEligibilityService;
-use App\Services\ActReport\ActReportService;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\ActingTestSchema;
 use Tests\TestCase;
@@ -116,33 +115,6 @@ final class CompletedWorkActEligibilityTest extends TestCase
         );
 
         self::assertSame(10000, $available[$work->id]);
-    }
-
-    public function test_legacy_act_selection_uses_the_same_manual_and_journal_eligibility(): void
-    {
-        [$contract, $project, $organization] = $this->createContract();
-        $manual = $this->createWork($organization->id, $project->id, $contract->id);
-        $journal = $this->createWork($organization->id, $project->id, $contract->id, [
-            'journal_entry_id' => 103,
-            'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
-        ]);
-        $act = ContractPerformanceAct::create([
-            'contract_id' => $contract->id,
-            'project_id' => $project->id,
-            'act_document_number' => 'ACT-LEGACY',
-            'act_date' => '2026-04-15',
-            'period_start' => '2026-04-01',
-            'period_end' => '2026-04-30',
-            'amount' => 0,
-            'status' => ContractPerformanceAct::STATUS_DRAFT,
-            'is_approved' => false,
-        ]);
-
-        $available = app(ActReportService::class)->getAvailableWorks($act);
-
-        $availableIds = $available->modelKeys();
-        sort($availableIds);
-        self::assertSame([$manual->id, $journal->id], $availableIds);
     }
 
     private function createWork(int $organizationId, int $projectId, int $contractId, array $attributes = []): CompletedWork
