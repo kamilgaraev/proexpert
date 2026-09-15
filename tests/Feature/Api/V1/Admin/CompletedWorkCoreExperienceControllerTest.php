@@ -49,6 +49,49 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $this->assertSame('Смонтирована секция ограждения', CompletedWork::findOrFail($response->json('data.0.id'))->description);
     }
 
+    public function test_bulk_create_rolls_back_when_a_later_work_fails_contract_validation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = $this->createContractor($context->organization, 'Atomic Bulk Contractor');
+        $contract = $this->createContract($context->organization, $project, $contractor, [
+            'base_amount' => 100,
+            'total_amount' => 100,
+        ]);
+        $workType = $this->createWorkType($context->organization, 'Atomic bulk work');
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works/bulk", [
+                'works' => [
+                    [
+                        'contract_id' => $contract->id,
+                        'contractor_id' => $contractor->id,
+                        'work_type_id' => $workType->id,
+                        'quantity' => 1,
+                        'price' => 10,
+                        'completion_date' => '2026-09-04',
+                        'status' => 'pending',
+                    ],
+                    [
+                        'contract_id' => $contract->id,
+                        'contractor_id' => $contractor->id,
+                        'work_type_id' => $workType->id,
+                        'quantity' => 1,
+                        'price' => 110,
+                        'completion_date' => '2026-09-04',
+                        'status' => 'pending',
+                    ],
+                ],
+            ]);
+
+        $response->assertStatus(422);
+        $this->assertDatabaseMissing('completed_works', [
+            'project_id' => $project->id,
+            'contract_id' => $contract->id,
+        ]);
+    }
+
     public function test_description_survives_create_read_update_and_can_be_cleared(): void
     {
         $context = AdminApiTestContext::create();
