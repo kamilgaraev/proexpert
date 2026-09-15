@@ -38,6 +38,8 @@ class HoldingSummaryController extends Controller
             'date_to' => $request->input('date_to'),
             'status' => $request->input('status'),
             'is_approved' => $request->input('is_approved'),
+            'page' => $request->input('page'),
+            'per_page' => $request->input('per_page'),
         ];
 
         if ($request->filled('export') && strtolower((string) $request->input('export')) === 'csv') {
@@ -48,7 +50,8 @@ class HoldingSummaryController extends Controller
         $projects = $this->holdingService->getConsolidatedProjects($orgIds, $filters);
         $contracts = $this->holdingService->getConsolidatedContracts($orgIds, $filters);
         $acts = $this->holdingService->getConsolidatedActs($orgIds, $filters);
-        $completedWorks = $this->holdingService->getConsolidatedCompletedWorks($orgIds, $filters);
+        $completedWorksPaginator = $this->holdingService->getConsolidatedCompletedWorks($orgIds, $filters);
+        $completedWorks = $completedWorksPaginator->getCollection();
         $stats = $this->holdingService->getGlobalStats($orgIds, $filters);
 
         return LandingResponse::success([
@@ -57,6 +60,12 @@ class HoldingSummaryController extends Controller
             'contracts' => ConsolidatedContractResource::collection($contracts),
             'acts' => ConsolidatedActResource::collection($acts),
             'completed_works' => ConsolidatedCompletedWorkResource::collection($completedWorks),
+            'completed_works_meta' => [
+                'current_page' => $completedWorksPaginator->currentPage(),
+                'last_page' => $completedWorksPaginator->lastPage(),
+                'per_page' => $completedWorksPaginator->perPage(),
+                'total' => $completedWorksPaginator->total(),
+            ],
             'stats' => $stats,
         ], trans_message('landing.holding_summary.loaded'));
     }
@@ -101,7 +110,7 @@ class HoldingSummaryController extends Controller
                 $filename = 'acts_summary_' . date('Ymd_His');
                 break;
             case 'completed_works':
-                $data = $this->holdingService->getConsolidatedCompletedWorks($orgIds, $filters);
+                $data = $this->holdingService->getConsolidatedCompletedWorks($orgIds, $filters, false);
                 $mapping = [
                     trans_message('landing.holding_summary.csv.id') => 'id',
                     trans_message('landing.holding_summary.csv.organization') => 'organization.name',

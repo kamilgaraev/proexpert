@@ -11,6 +11,7 @@ use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectOrganization;
+use App\Models\CompletedWork;
 use App\Models\User;
 use App\Models\Role;
 use App\Services\Logging\LoggingService;
@@ -544,9 +545,10 @@ class ProjectService
             }
 
             // Статистика по выполненным работам
-            $workStats = DB::table('completed_works as cw')
-                ->where('cw.project_id', $id)
-                ->selectRaw("\n                    COUNT(*) as total_works_count,\n                    SUM(cw.quantity) as total_work_quantity,\n                    COUNT(DISTINCT cw.work_type_id) as unique_work_types_count,\n                    SUM(cw.total_amount) as total_work_cost\n                ")
+            $workStats = CompletedWork::query()
+                ->officiallyCompleted()
+                ->where('project_id', $id)
+                ->selectRaw("\n                    COUNT(*) as total_works_count,\n                    COALESCE(SUM(COALESCE(completed_quantity, quantity, 0)), 0) as total_work_quantity,\n                    COUNT(DISTINCT work_type_id) as unique_work_types_count,\n                    COALESCE(SUM(total_amount), 0) as total_work_cost\n                ")
                 ->first();
 
             // Команда проекта
@@ -574,7 +576,8 @@ class ProjectService
                 ->orderBy('movement_date', 'desc')
                 ->first(['movement_date', 'movement_type']);
 
-            $lastWorkCompletion = DB::table('completed_works')
+            $lastWorkCompletion = CompletedWork::query()
+                ->officiallyCompleted()
                 ->where('project_id', $id)
                 ->orderBy('completion_date', 'desc')
                 ->first(['completion_date']);

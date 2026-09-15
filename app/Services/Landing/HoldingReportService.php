@@ -8,6 +8,7 @@ use App\Models\BalanceTransaction;
 use App\Models\Project;
 use App\Models\Organization;
 use App\Models\CompletedWork;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 
 /**
@@ -184,9 +185,14 @@ class HoldingReportService
     /**
      * Получить выполненные работы по организациям.
      */
-    public function getConsolidatedCompletedWorks(array $organizationIds, array $filters = []): Collection
+    public function getConsolidatedCompletedWorks(
+        array $organizationIds,
+        array $filters = [],
+        bool $paginate = true
+    ): LengthAwarePaginator|Collection
     {
         $query = CompletedWork::query()
+            ->officiallyCompleted()
             ->whereIn('organization_id', $organizationIds)
             ->with(['organization', 'project', 'contract', 'workType']);
 
@@ -197,9 +203,24 @@ class HoldingReportService
             $query->whereDate('completion_date', '<=', $filters['date_to']);
         }
         if (!empty($filters['status'])) {
-            $query->where('status', $filters['status']);
+            if (is_array($filters['status'])) {
+                $query->whereIn('status', $filters['status']);
+            } else {
+                $query->where('status', $filters['status']);
+            }
         }
 
-        return $query->get();
+        $query
+            ->orderByDesc('completion_date')
+            ->orderByDesc('id');
+
+        if (!$paginate) {
+            return $query->get();
+        }
+
+        $perPage = min(max((int) ($filters['per_page'] ?? 50), 1), 100);
+        $page = max((int) ($filters['page'] ?? 1), 1);
+
+        return $query->paginate($perPage, ['*'], 'page', $page);
     }
 }

@@ -181,7 +181,9 @@ class CompletedWork extends Model
 
     public function scopeOfficiallyCompleted($query)
     {
-        return $query->whereNull('deleted_at')->where('status', self::STATUS_CONFIRMED);
+        return $query
+            ->whereNull('deleted_at')
+            ->where('status', self::STATUS_CONFIRMED);
     }
 
     public function effectiveCompletedQuantity(): float

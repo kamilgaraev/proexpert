@@ -2,9 +2,9 @@
 
 namespace App\Services\Project;
 
+use App\Models\CompletedWork;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Collection;
 
 class CrossOrgWorkReadService
 {
@@ -21,11 +21,15 @@ class CrossOrgWorkReadService
      */
     public function paginateByProject(int $projectId, array $filters = [], int $perPage = 50): LengthAwarePaginator
     {
+        $perPage = min(max($perPage, 1), 100);
+
         $query = DB::table('cross_org_completed_works as cow')
             ->join('organizations as org', 'org.id', '=', 'cow.child_organization_id')
             ->join('work_types as wt', 'wt.id', '=', 'cow.work_type_id')
             ->leftJoin('measurement_units as mu', 'mu.id', '=', 'wt.measurement_unit_id')
             ->where('cow.project_id', $projectId)
+            ->whereNull('cow.deleted_at')
+            ->where('cow.status', CompletedWork::STATUS_CONFIRMED)
             ->select([
                 'cow.*',
                 'org.name as child_organization_name',
@@ -44,15 +48,42 @@ class CrossOrgWorkReadService
     /**
      * Получить агрегаты (сумма, количество) по фильтрам.
      */
-    public function aggregateByProject(int $projectId, array $filters = []): Collection
+    public function aggregateByProject(int $projectId, array $filters = []): object|null
     {
         $query = DB::table('cross_org_completed_works as cow')
-            ->select(DB::raw('SUM(cow.total_amount) as total_amount'), DB::raw('SUM(cow.quantity) as total_quantity'))
-            ->where('cow.project_id', $projectId);
+            ->select(
+                DB::raw('COALESCE(SUM(cow.total_amount), 0) as total_amount'),
+                DB::raw('COALESCE(SUM(COALESCE(cow.completed_quantity, cow.quantity, 0)), 0) as total_quantity')
+            )
+            ->where('cow.project_id', $projectId)
+            ->whereNull('cow.deleted_at')
+            ->where('cow.status', CompletedWork::STATUS_CONFIRMED);
 
         $this->applyFilters($query, $filters);
 
         return $query->first();
+    }
+
+    public function statisticsByProject(int $projectId, array $filters = []): array
+    {
+        $query = DB::table('cross_org_completed_works as cow')
+            ->where('cow.project_id', $projectId)
+            ->whereNull('cow.deleted_at')
+            ->where('cow.status', CompletedWork::STATUS_CONFIRMED);
+
+        $this->applyFilters($query, $filters);
+
+        $stats = $query
+            ->selectRaw('COUNT(*) as total_works')
+            ->selectRaw('COALESCE(SUM(cow.total_amount), 0) as total_cost')
+            ->selectRaw('COUNT(DISTINCT cow.child_organization_id) as contractors_count')
+            ->first();
+
+        return [
+            'total_works' => (int) ($stats->total_works ?? 0),
+            'total_cost' => (float) ($stats->total_cost ?? 0),
+            'contractors_count' => (int) ($stats->contractors_count ?? 0),
+        ];
     }
 
     /**
@@ -87,4 +118,4 @@ class CrossOrgWorkReadService
             $query->where('cow.notes', 'like', '%' . $filters['search'] . '%');
         }
     }
-} 
+}
