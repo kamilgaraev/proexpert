@@ -10,6 +10,7 @@ use App\Models\CompletedWork;
 use App\Models\PerformanceActLine;
 use App\Exceptions\BusinessLogicException;
 use App\Services\Contract\ContractAccessService;
+use App\Services\Acting\CompletedWorkActEligibilityService;
 use App\Services\Acting\ActingQuantityStatus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -21,7 +22,8 @@ class ActReportService
 {
     public function __construct(
         private readonly ActReportWorkflowService $workflowService,
-        private readonly ContractAccessService $contractAccessService
+        private readonly ContractAccessService $contractAccessService,
+        private readonly CompletedWorkActEligibilityService $completedWorkEligibility,
     ) {
     }
 
@@ -150,16 +152,17 @@ class ActReportService
             ->groupBy('completed_work_id')
             ->pluck('acted_quantity', 'completed_work_id');
 
-        return CompletedWork::where('contract_id', $act->contract_id)
-            ->where('status', 'confirmed')
-            ->where('work_origin_type', CompletedWork::ORIGIN_JOURNAL)
-            ->whereNotNull('journal_entry_id')
+        $periodStart = optional($act->period_start)->toDateString() ?? '1900-01-01';
+        $periodEnd = optional($act->period_end)->toDateString() ?? '2999-12-31';
+
+        return $this->completedWorkEligibility
+            ->query($act->contract_id, $periodStart, $periodEnd)
             ->whereNotIn('id', $existingWorkIds)
             ->with(['workType', 'user'])
             ->orderBy('completion_date', 'desc')
             ->get()
             ->filter(function (CompletedWork $work) use ($actedQuantities): bool {
-                $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
+                $effectiveQuantity = $work->effectiveCompletedQuantity();
                 $actedQuantity = (float) ($actedQuantities[$work->id] ?? 0);
 
                 return $effectiveQuantity > $actedQuantity;

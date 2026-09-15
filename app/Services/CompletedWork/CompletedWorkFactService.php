@@ -477,6 +477,7 @@ class CompletedWorkFactService
             'notes' => $volume->notes ?: $entry->work_description,
             'status' => $this->mapJournalStatusToCompletedWorkStatus($entry->status),
             'additional_info' => array_filter([
+                'fact_kind' => 'production',
                 'journal_entry_number' => $entry->entry_number,
                 'journal_status' => $entry->status?->value,
                 'weather_conditions' => $entry->weather_conditions,

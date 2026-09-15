@@ -281,7 +281,7 @@ class ActingAvailabilityServiceTest extends TestCase
         $this->assertSame([], $available);
     }
 
-    public function test_available_works_include_only_journal_origin_facts(): void
+    public function test_available_works_include_confirmed_manual_and_journal_origin_facts(): void
     {
         [$contract, $project, $organization] = $this->createContract();
 
@@ -318,9 +318,13 @@ class ActingAvailabilityServiceTest extends TestCase
             '2026-04-30'
         );
 
-        $this->assertCount(1, $available);
-        $this->assertSame(CompletedWork::ORIGIN_JOURNAL, $available[0]['work_origin_type']);
+        $this->assertCount(2, $available);
+        $this->assertSame([
+            CompletedWork::ORIGIN_JOURNAL,
+            CompletedWork::ORIGIN_MANUAL,
+        ], array_column($available, 'work_origin_type'));
         $this->assertSame(1003, $available[0]['journal_entry_id']);
+        $this->assertNull($available[1]['journal_entry_id']);
     }
 
     public function test_available_work_contains_user_facing_names(): void
