@@ -15,7 +15,8 @@ use function trans_message;
 class ActingAvailabilityService
 {
     public function __construct(
-        private readonly PerformanceActFinancialBasisService $financialBasis
+        private readonly PerformanceActFinancialBasisService $financialBasis,
+        private readonly CompletedWorkActEligibilityService $completedWorkEligibility,
     ) {}
 
     public function getAvailableWorks(int $contractId, string $periodStart, string $periodEnd): array
@@ -52,27 +53,9 @@ class ActingAvailabilityService
 
     private function baseWorksQuery(int $contractId, string $periodStart, string $periodEnd)
     {
-        return CompletedWork::query()
+        return $this->completedWorkEligibility->query($contractId, $periodStart, $periodEnd)
             ->with('estimateItem.contractLinks', 'estimateItem.estimate.currentVersion', 'journalEntry.journal', 'workType')
-            ->with(['estimateItem.financeAllocations' => static fn ($query) => $query->where('contract_id', $contractId)->whereNull('resource_id')])
-            ->where(function ($query) use ($contractId): void {
-                $query
-                    ->where('contract_id', $contractId)
-                    ->orWhere(function ($fallbackQuery) use ($contractId): void {
-                        $fallbackQuery
-                            ->whereNull('contract_id')
-                            ->whereHas('estimateItem.contractLinks', function ($contractLinkQuery) use ($contractId): void {
-                                $contractLinkQuery->where('contract_id', $contractId);
-                            });
-                    });
-            })
-            ->where('status', 'confirmed')
-            ->where(function ($query): void {
-                $query
-                    ->where('work_origin_type', CompletedWork::ORIGIN_JOURNAL)
-                    ->orWhereNotNull('journal_entry_id');
-            })
-            ->whereBetween('completion_date', [$periodStart, $periodEnd]);
+            ->with(['estimateItem.financeAllocations' => static fn ($query) => $query->where('contract_id', $contractId)->whereNull('resource_id')]);
     }
 
     private function resolveQuantityUsage(array $workIds): array
@@ -123,7 +106,7 @@ class ActingAvailabilityService
 
     private function mapWork(CompletedWork $work, Contract $contract, array $quantityUsage): array
     {
-        $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
+        $effectiveQuantity = $work->effectiveCompletedQuantity();
         $reservedQuantity = (float) ($quantityUsage['reserved_quantity'] ?? 0);
         $approvedActedQuantity = (float) ($quantityUsage['approved_acted_quantity'] ?? 0);
         $actedQuantity = $reservedQuantity + $approvedActedQuantity;

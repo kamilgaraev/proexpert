@@ -224,17 +224,8 @@ class ActingAvailabilityServiceTest extends TestCase
         $this->assertSame([], $service->getBlockedWorks($contract->id, '2026-04-01', '2026-04-30'));
         $this->assertNotNull($line->fresh());
         $this->assertSame(ContractPerformanceAct::STATUS_ANNULLED, $act->fresh()->status);
-        $nextAct = ContractPerformanceAct::create([
-            'contract_id' => $contract->id,
-            'project_id' => $project->id,
-            'act_document_number' => 'NEXT-DRAFT',
-            'act_date' => '2026-04-16',
-            'amount' => 0,
-            'status' => ContractPerformanceAct::STATUS_DRAFT,
-            'is_approved' => false,
-        ]);
-        $nextWorks = app(\App\Services\ActReport\ActReportService::class)->getAvailableWorks($nextAct);
-        $this->assertSame([$work->id], $nextWorks->modelKeys());
+        $nextWorks = $service->getAvailableWorks($contract->id, '2026-04-01', '2026-04-30');
+        $this->assertSame([$work->id], array_column($nextWorks, 'id'));
     }
 
     public function test_fully_acted_work_is_not_returned(): void
@@ -281,7 +272,7 @@ class ActingAvailabilityServiceTest extends TestCase
         $this->assertSame([], $available);
     }
 
-    public function test_available_works_include_only_journal_origin_facts(): void
+    public function test_available_works_include_confirmed_manual_and_journal_origin_facts(): void
     {
         [$contract, $project, $organization] = $this->createContract();
 
@@ -318,9 +309,13 @@ class ActingAvailabilityServiceTest extends TestCase
             '2026-04-30'
         );
 
-        $this->assertCount(1, $available);
-        $this->assertSame(CompletedWork::ORIGIN_JOURNAL, $available[0]['work_origin_type']);
+        $this->assertCount(2, $available);
+        $this->assertSame([
+            CompletedWork::ORIGIN_JOURNAL,
+            CompletedWork::ORIGIN_MANUAL,
+        ], array_column($available, 'work_origin_type'));
         $this->assertSame(1003, $available[0]['journal_entry_id']);
+        $this->assertNull($available[1]['journal_entry_id']);
     }
 
     public function test_available_work_contains_user_facing_names(): void

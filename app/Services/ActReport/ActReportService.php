@@ -6,22 +6,18 @@ namespace App\Services\ActReport;
 
 use App\Models\ContractPerformanceAct;
 use App\Models\Contract;
-use App\Models\CompletedWork;
-use App\Models\PerformanceActLine;
 use App\Exceptions\BusinessLogicException;
 use App\Services\Contract\ContractAccessService;
-use App\Services\Acting\ActingQuantityStatus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
 
 class ActReportService
 {
     public function __construct(
         private readonly ActReportWorkflowService $workflowService,
-        private readonly ContractAccessService $contractAccessService
+        private readonly ContractAccessService $contractAccessService,
     ) {
     }
 
@@ -127,60 +123,6 @@ class ActReportService
                 $e
             );
         }
-    }
-
-    /**
-     * Получить доступные работы для добавления в акт
-     */
-    public function getAvailableWorks(ContractPerformanceAct $act): Collection
-    {
-        $existingWorkIds = $act->completedWorks()->pluck('completed_works.id')->toArray();
-        $actedQuantities = PerformanceActLine::query()
-            ->where('line_type', PerformanceActLine::TYPE_COMPLETED_WORK)
-            ->whereNot('performance_act_id', $act->id)
-            ->whereHas('performanceAct', function (Builder $query) use ($act): void {
-                $query->where('contract_id', $act->contract_id)
-                    ->where(function (Builder $statusQuery): void {
-                        $statusQuery->whereNull('status')
-                            ->orWhereNotIn('status', ActingQuantityStatus::releasedStatuses());
-                    });
-            })
-            ->whereNotNull('completed_work_id')
-            ->selectRaw('completed_work_id, SUM(quantity) as acted_quantity')
-            ->groupBy('completed_work_id')
-            ->pluck('acted_quantity', 'completed_work_id');
-
-        return CompletedWork::where('contract_id', $act->contract_id)
-            ->where('status', 'confirmed')
-            ->where('work_origin_type', CompletedWork::ORIGIN_JOURNAL)
-            ->whereNotNull('journal_entry_id')
-            ->whereNotIn('id', $existingWorkIds)
-            ->with(['workType', 'user'])
-            ->orderBy('completion_date', 'desc')
-            ->get()
-            ->filter(function (CompletedWork $work) use ($actedQuantities): bool {
-                $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
-                $actedQuantity = (float) ($actedQuantities[$work->id] ?? 0);
-
-                return $effectiveQuantity > $actedQuantity;
-            })
-            ->values();
-    }
-
-    /**
-     * Прикрепить работы к акту
-     */
-    public function attachWorksToAct(ContractPerformanceAct $act, array $workIds): void
-    {
-        throw new BusinessLogicException(trans_message('act_reports.use_acting_wizard'), 422);
-    }
-
-    /**
-     * Обновить работы в акте
-     */
-    public function updateWorksInAct(ContractPerformanceAct $act, array $updates): void
-    {
-        throw new BusinessLogicException(trans_message('act_reports.use_acting_wizard'), 422);
     }
 
     /**

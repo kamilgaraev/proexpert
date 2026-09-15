@@ -16,7 +16,7 @@ class CompletedWorkProjectRoutesTest extends TestCase
         $routes = file_get_contents(dirname(__DIR__, 3) . '/routes/api/v1/admin/project-based.php');
 
         $this->assertIsString($routes);
-        $this->assertSame(5, substr_count($routes, '{completed_work}'));
+        $this->assertSame(6, substr_count($routes, '{completed_work}'));
         $this->assertSame(0, substr_count($routes, '{completedWork}'));
     }
 
@@ -34,6 +34,10 @@ class CompletedWorkProjectRoutesTest extends TestCase
             $routes
         );
         $this->assertStringContainsString(
+            "Route::post('/{completed_work}/confirm', [CompletedWorkController::class, 'confirmProjectWork']);",
+            $routes
+        );
+        $this->assertStringContainsString(
             "Route::delete('/{completed_work}', [CompletedWorkController::class, 'destroyProjectWork']);",
             $routes
         );
@@ -43,6 +47,7 @@ class CompletedWorkProjectRoutesTest extends TestCase
     {
         $methods = [
             'showProjectWork' => ['project', 'completed_work'],
+            'confirmProjectWork' => ['project', 'completed_work'],
             'updateProjectWork' => ['request', 'project', 'completed_work'],
             'destroyProjectWork' => ['project', 'completed_work'],
         ];

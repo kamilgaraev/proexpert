@@ -89,7 +89,7 @@ final readonly class ActingQuantityReservationService
         foreach ($lockedWorks as $work) {
             $workId = (int) $work->id;
             $effective = AcceptedProductionQuantity::scaled(
-                (string) ($work->completed_quantity ?? $work->quantity ?? '0'),
+                (string) $work->effectiveCompletedQuantity(),
                 'acting_quantity_source_invalid',
             );
             $alreadyReserved = $reserved[$workId] ?? 0;

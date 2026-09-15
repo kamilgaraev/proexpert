@@ -35,10 +35,13 @@ class UpdateCompletedWorkRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('contracts', 'id')->where('organization_id', $organizationId),
-                function ($attribute, $value, $fail) use ($projectId) {
+                function ($attribute, $value, $fail) use ($projectId): void {
                     if ($value && $projectId) {
                         $contract = Contract::find($value);
-                        if ($contract && $contract->project_id != $projectId) {
+                        $projectIds = $contract?->getProjectIds() ?? [];
+                        if ($contract
+                            && $projectIds !== []
+                            && ! in_array($projectId, array_map('intval', $projectIds), true)) {
                             $fail('Указанный договор не относится к выбранному проекту.');
                         }
                     }
@@ -100,8 +103,22 @@ class UpdateCompletedWorkRequest extends FormRequest
             'completion_date' => 'sometimes|required|date_format:Y-m-d',
             'notes' => 'sometimes|nullable|string|max:65535',
             'description' => 'sometimes|nullable|string|max:65535',
-            'status' => 'sometimes|required|string|in:draft,pending,in_review,confirmed,cancelled,rejected',
-            'work_origin_type' => 'sometimes|nullable|string|in:manual,schedule,journal',
+            'status' => 'sometimes|required|string|in:draft,pending,in_review,cancelled,rejected',
+            'work_origin_type' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'in:manual,schedule,journal',
+                function ($attribute, $value, $fail) use ($completedWork): void {
+                    if ($value !== ($completedWork->work_origin_type ?? CompletedWork::ORIGIN_MANUAL)) {
+                        $fail('Источник выполненной работы нельзя изменить после создания.');
+                    }
+
+                    if ($value === CompletedWork::ORIGIN_SCHEDULE && ! $this->filled('schedule_task_id') && ! $completedWork->schedule_task_id) {
+                        $fail('Источник «Из графика» требует задачи графика.');
+                    }
+                },
+            ],
             'planning_status' => 'sometimes|nullable|string|in:planned,requires_schedule',
             'additional_info' => 'sometimes|nullable|array',
             'materials' => 'sometimes|nullable|array',

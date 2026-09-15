@@ -7,6 +7,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\Contract;
 use App\Models\Contractor;
+use App\Models\CompletedWork;
 use App\Services\Export\CsvExporterService;
 use App\Services\Export\ExcelExporterService;
 use Carbon\Carbon;
@@ -337,9 +338,9 @@ class HoldingReportService
 
         $contractsTotal = $this->calculateContractAmountFromDb($contractIds);
 
-        $completedWorksTotal = DB::table('completed_works')
+        $completedWorksTotal = CompletedWork::query()
+            ->officiallyCompleted()
             ->whereIn('project_id', $projects->pluck('id'))
-            ->where('status', 'confirmed')
             ->sum('total_amount');
 
         $materialsTotal = DB::table('material_receipts')
@@ -444,9 +445,9 @@ class HoldingReportService
             
             $contractsAmount = $this->calculateContractAmountFromDb($contractIds);
 
-            $completedWorks = DB::table('completed_works')
+            $completedWorks = CompletedWork::query()
+                ->officiallyCompleted()
                 ->whereIn('project_id', $projectIds)
-                ->where('status', 'confirmed')
                 ->sum('total_amount');
 
             $result[] = [
@@ -1179,11 +1180,14 @@ class HoldingReportService
                             ->where('is_approved', true)
                             ->where('project_id', $project->id);
                         $works = $contract->completedWorks
-                            ->where('status', 'confirmed')
+                            ->where('status', CompletedWork::STATUS_CONFIRMED)
+                            ->whereNull('deleted_at')
                             ->where('project_id', $project->id);
                     } else {
                         $acts = $contract->performanceActs->where('is_approved', true);
-                        $works = $contract->completedWorks->where('status', 'confirmed');
+                        $works = $contract->completedWorks
+                            ->where('status', CompletedWork::STATUS_CONFIRMED)
+                            ->whereNull('deleted_at');
                     }
 
                     // Рассчитываем суммы с учетом аллокаций
@@ -1283,7 +1287,7 @@ class HoldingReportService
                             return [
                                 'id' => $work->id,
                                 'work_type' => $work->workType?->name,
-                                'quantity' => round($work->quantity ?? 0, 3),
+                                'quantity' => round($work->effectiveCompletedQuantity(), 3),
                                 'price' => round($work->price ?? 0, 2),
                                 'total_amount' => round($work->total_amount ?? 0, 2),
                                 'completion_date' => $work->completion_date?->format('Y-m-d'),

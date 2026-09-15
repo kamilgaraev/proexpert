@@ -24,6 +24,7 @@ class ActingActWizardService
     public function __construct(
         private readonly ActingPolicyResolver $policyResolver,
         private readonly ActingQuantityReservationService $quantityReservations,
+        private readonly CompletedWorkActEligibilityService $completedWorkEligibility,
         private readonly PerformanceActFinancialBasisService $financialBasis,
         private readonly ManualActLineBasisService $manualLineBasis,
         private readonly PerformanceActFinancialTotalsService $financialTotals,
@@ -149,7 +150,7 @@ class ActingActWizardService
                 throw new BusinessLogicException(trans_message('act_reports.work_not_available_for_acting'), 422);
             }
 
-            $effectiveQuantity = (float) ($work->completed_quantity ?? $work->quantity);
+            $effectiveQuantity = $work->effectiveCompletedQuantity();
             $availableQuantity = $availableQuantities[$workId] ?? 0;
             $allocationKeys = $selectedWorks->map(static fn (array $selection): ?string => $selection['allocation_key'] ?? null)->unique()->values();
             if ($allocationKeys->count() > 1) {
@@ -202,34 +203,16 @@ class ActingActWizardService
         }
 
         $workIds = $selectedGroups->keys()->map(fn ($id): int => (int) $id)->values();
-        $works = CompletedWork::query()
+        $works = $this->completedWorkEligibility
+            ->query($contract->id, $data['period_start'], $data['period_end'])
             ->with(
                 'estimateItem.contractLinks',
                 'estimateItem.estimate.currentVersion',
                 'workType.measurementUnit',
                 'journalEntry',
             )
-            ->where('organization_id', $organizationId)
             ->with(['estimateItem.financeAllocations' => static fn ($query) => $query->where('contract_id', $contract->id)->whereNull('resource_id')])
             ->whereIn('id', $workIds)
-            ->where(function ($query) use ($contract): void {
-                $query
-                    ->where('contract_id', $contract->id)
-                    ->orWhere(function ($fallbackQuery) use ($contract): void {
-                        $fallbackQuery
-                            ->whereNull('contract_id')
-                            ->whereHas('estimateItem.contractLinks', function ($contractLinkQuery) use ($contract): void {
-                                $contractLinkQuery->where('contract_id', $contract->id);
-                            });
-                    });
-            })
-            ->where('status', 'confirmed')
-            ->where(function ($query): void {
-                $query
-                    ->where('work_origin_type', CompletedWork::ORIGIN_JOURNAL)
-                    ->orWhereNotNull('journal_entry_id');
-            })
-            ->whereBetween('completion_date', [$data['period_start'], $data['period_end']])
             ->orderBy('id')
             ->lockForUpdate()
             ->get()

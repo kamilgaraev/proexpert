@@ -24,6 +24,18 @@ class CompletedWork extends Model
 
     public const ORIGIN_JOURNAL = 'journal';
 
+    public const STATUS_DRAFT = 'draft';
+
+    public const STATUS_PENDING = 'pending';
+
+    public const STATUS_IN_REVIEW = 'in_review';
+
+    public const STATUS_CONFIRMED = 'confirmed';
+
+    public const STATUS_CANCELLED = 'cancelled';
+
+    public const STATUS_REJECTED = 'rejected';
+
     public const PLANNING_PLANNED = 'planned';
 
     public const PLANNING_REQUIRES_SCHEDULE = 'requires_schedule';
@@ -160,6 +172,40 @@ class CompletedWork extends Model
     public function scopeRequiresSchedule($query)
     {
         return $query->where('planning_status', self::PLANNING_REQUIRES_SCHEDULE);
+    }
+
+    public function scopeConfirmed($query)
+    {
+        return $query->where('status', self::STATUS_CONFIRMED);
+    }
+
+    public function scopeOfficiallyCompleted($query)
+    {
+        return $query
+            ->whereNull('deleted_at')
+            ->where('status', self::STATUS_CONFIRMED);
+    }
+
+    public function effectiveCompletedQuantity(): float
+    {
+        $quantity = $this->completed_quantity ?? $this->quantity ?? 0;
+
+        return max(0.0, (float) $quantity);
+    }
+
+    public function isResourceFact(): bool
+    {
+        $factKind = data_get($this->additional_info, 'fact_kind');
+
+        return in_array($factKind, ['material', 'equipment', 'labor', 'worker'], true)
+            || $this->journal_material_id !== null
+            || $this->journal_equipment_id !== null
+            || $this->journal_worker_id !== null;
+    }
+
+    public function isProductionFact(): bool
+    {
+        return ! $this->isResourceFact();
     }
 
     public function scopeEffectiveForSchedule($query)

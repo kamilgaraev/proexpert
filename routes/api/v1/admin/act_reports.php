@@ -27,12 +27,6 @@ Route::prefix('act-reports')->group(function () {
     Route::post('bulk-export/excel', [ActReportsController::class, 'bulkExportExcel'])
         ->name('act-reports.bulk-export.excel');
 
-    // Получить доступные работы для включения в акт
-
-    // Обновить состав работ в акте
-    Route::put('{act}/works', [ActReportsController::class, 'updateWorks'])
-        ->name('act-reports.update-works');
-
     // Экспорт акта в PDF
     Route::get('{act}/export/pdf', [ActReportsController::class, 'exportPdf'])
         ->name('act-reports.export.pdf');

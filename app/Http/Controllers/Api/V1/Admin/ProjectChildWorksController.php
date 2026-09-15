@@ -72,7 +72,7 @@ class ProjectChildWorksController extends Controller
                 'search',
             ]);
 
-            $perPage = (int)($request->get('per_page', 50));
+            $perPage = min(max((int) $request->get('per_page', 50), 1), 100);
 
 
             $worksPaginator = $this->service->paginateByProject($projectId, $filters, $perPage);
@@ -95,7 +95,7 @@ class ProjectChildWorksController extends Controller
                         'name' => $row->work_type_name,
                         'measurement_unit' => $row->measurement_unit,
                     ],
-                    'quantity' => $row->quantity,
+                    'quantity' => $row->completed_quantity ?? $row->quantity,
                     'price' => $row->price,
                     'total_amount' => $row->total_amount,
                     'completion_date' => $row->completion_date,
@@ -128,4 +128,47 @@ class ProjectChildWorksController extends Controller
             );
         }
     }
-} 
+
+    public function statistics(Request $request, int $projectId): JsonResponse
+    {
+        try {
+            $project = Project::findOrFail($projectId);
+            $user = $request->user();
+            if (!$user) {
+                return AdminResponse::error(trans_message('project.unauthorized'), 401);
+            }
+
+            $organization = Organization::find($user->current_organization_id);
+            if (!$organization) {
+                return AdminResponse::error(trans_message('project.organization_not_found'), 404);
+            }
+
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $organization)) {
+                return AdminResponse::error(trans_message('project.child_works_access_denied'), 403);
+            }
+
+            $filters = $request->only([
+                'child_organization_id',
+                'work_type_id',
+                'status',
+                'date_from',
+                'date_to',
+                'search',
+            ]);
+
+            return AdminResponse::success(
+                $this->service->statisticsByProject($projectId, $filters)
+            );
+        } catch (\Throwable $e) {
+            Log::error('[ProjectChildWorksController] statistics error', [
+                'project_id' => $projectId,
+                'message' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(
+                app()->environment('production') ? trans_message('project.child_works_error') : $e->getMessage(),
+                500
+            );
+        }
+    }
+}
