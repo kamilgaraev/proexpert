@@ -94,6 +94,38 @@ final class CompletedWorkSourceParityTest extends TestCase
         $this->assertSame('confirmed', $work->fresh()->status);
     }
 
+    public function test_officially_completed_scope_excludes_deleted_and_non_confirmed_facts(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $common = [
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'quantity' => 5,
+            'completion_date' => '2026-09-15',
+            'work_origin_type' => CompletedWork::ORIGIN_MANUAL,
+            'planning_status' => CompletedWork::PLANNING_REQUIRES_SCHEDULE,
+        ];
+
+        $confirmed = CompletedWork::query()->create($common + ['status' => CompletedWork::STATUS_CONFIRMED]);
+        $deleted = CompletedWork::query()->create($common + ['status' => CompletedWork::STATUS_CONFIRMED]);
+        $deleted->delete();
+
+        foreach (['draft', 'pending', 'in_review', 'rejected', 'cancelled'] as $status) {
+            CompletedWork::query()->create($common + ['status' => $status]);
+        }
+
+        $ids = CompletedWork::query()
+            ->where('project_id', $project->id)
+            ->officiallyCompleted()
+            ->pluck('id')
+            ->all();
+
+        $this->assertSame([$confirmed->id], $ids);
+        $this->assertSame(0.0, (new CompletedWork(['quantity' => 5, 'completed_quantity' => 0]))->effectiveCompletedQuantity());
+        $this->assertSame(5.0, (new CompletedWork(['quantity' => 5, 'completed_quantity' => null]))->effectiveCompletedQuantity());
+    }
+
     private function allowAdminAccess(): void
     {
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
