@@ -21,6 +21,7 @@ use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Services\CompletedWork\CompletedWorkFactService;
 use App\Services\CompletedWork\CompletedWorkService;
+use App\Services\CompletedWork\CompletedWorkWorkflowService;
 use App\Services\Schedule\ScheduleTaskCompletedWorkService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -42,6 +43,7 @@ class CompletedWorkController extends Controller
         protected CompletedWorkService $completedWorkService,
         protected ScheduleTaskCompletedWorkService $scheduleTaskService,
         protected CompletedWorkFactService $completedWorkFactService,
+        protected CompletedWorkWorkflowService $completedWorkWorkflowService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -159,6 +161,48 @@ class CompletedWorkController extends Controller
         }
 
         return AdminResponse::success(new CompletedWorkResource($this->loadWorkRelations($completed_work)));
+    }
+
+    public function confirmProjectWork(int $project, CompletedWork $completed_work): JsonResponse
+    {
+        if ((int) $completed_work->project_id !== $project) {
+            return AdminResponse::error(trans_message('completed_work.not_found'), 404);
+        }
+
+        if (! $this->canAccessProjectWork($completed_work, request())) {
+            return AdminResponse::error(trans_message('completed_work.not_found'), 404);
+        }
+
+        /** @var \App\Models\User|null $actor */
+        $actor = Auth::user();
+        if (! $actor) {
+            return AdminResponse::error(trans_message('completed_work.forbidden'), 403);
+        }
+
+        try {
+            $confirmedWork = $this->completedWorkWorkflowService->confirm($completed_work, $actor);
+
+            return AdminResponse::success(
+                new CompletedWorkResource($this->loadWorkRelations($confirmedWork)),
+                trans_message('completed_work.confirmed')
+            );
+        } catch (BusinessLogicException $e) {
+            Log::error('completed_work.confirm.error', [
+                'error' => $e->getMessage(),
+                'completed_work_id' => $completed_work->id,
+                'user_id' => Auth::id(),
+            ]);
+
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        } catch (\Throwable $e) {
+            Log::error('completed_work.confirm.error', [
+                'error' => $e->getMessage(),
+                'completed_work_id' => $completed_work->id,
+                'user_id' => Auth::id(),
+            ]);
+
+            return AdminResponse::error(trans_message('completed_work.confirm_error'), 500);
+        }
     }
 
     public function updateProjectWork(UpdateCompletedWorkRequest $request, int $project, CompletedWork $completed_work): JsonResponse

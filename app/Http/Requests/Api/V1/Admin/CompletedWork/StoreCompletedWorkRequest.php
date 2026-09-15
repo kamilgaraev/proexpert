@@ -8,6 +8,7 @@ use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use App\Models\CompletedWork;
 use App\Models\Contract;
+use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
 use App\Rules\ProjectAccessibleRule;
 use Carbon\Carbon;
@@ -94,8 +95,40 @@ class StoreCompletedWorkRequest extends FormRequest
             'completion_date' => 'required|date_format:Y-m-d',
             'notes' => 'nullable|string|max:65535',
             'description' => 'nullable|string|max:65535',
-            'status' => 'required|string|in:draft,pending,in_review,confirmed,cancelled,rejected',
-            'work_origin_type' => 'nullable|string|in:manual,schedule,journal',
+            'status' => 'required|string|in:draft,pending,in_review,cancelled,rejected',
+            'work_origin_type' => [
+                'nullable',
+                'string',
+                'in:manual,schedule,journal',
+                function ($attribute, $value, $fail): void {
+                    if ($value === CompletedWork::ORIGIN_MANUAL && $this->filled('schedule_task_id')) {
+                        $fail('Работа с задачей графика должна иметь источник «Из графика».');
+                    }
+
+                    if ($value === CompletedWork::ORIGIN_SCHEDULE && ! $this->filled('schedule_task_id')) {
+                        $fail('Источник «Из графика» требует задачи графика.');
+                    }
+                },
+            ],
+            'journal_entry_id' => [
+                'nullable',
+                'integer',
+                'required_if:work_origin_type,journal',
+                'prohibited_unless:work_origin_type,journal',
+                Rule::exists('construction_journal_entries', 'id')->whereNull('deleted_at'),
+                function ($attribute, $value, $fail) use ($projectId, $organizationId): void {
+                    if (! $value) {
+                        return;
+                    }
+
+                    $entry = ConstructionJournalEntry::query()->with('journal')->find($value);
+                    if (! $entry
+                        || (int) $entry->journal?->project_id !== $projectId
+                        || (int) $entry->journal?->organization_id !== $organizationId) {
+                        $fail('Запись журнала не относится к выбранному проекту.');
+                    }
+                },
+            ],
             'planning_status' => 'nullable|string|in:planned,requires_schedule',
             'additional_info' => 'nullable|array',
             'materials' => 'nullable|array',
@@ -129,8 +162,9 @@ class StoreCompletedWorkRequest extends FormRequest
             project_id: $validatedData['project_id'],
             schedule_task_id: $validatedData['schedule_task_id'] ?? null,
             estimate_item_id: $validatedData['estimate_item_id'] ?? null,
-            journal_entry_id: null,
-            work_origin_type: $validatedData['work_origin_type'] ?? CompletedWork::ORIGIN_MANUAL,
+            journal_entry_id: $validatedData['journal_entry_id'] ?? null,
+            work_origin_type: $validatedData['work_origin_type']
+                ?? (($validatedData['schedule_task_id'] ?? null) ? CompletedWork::ORIGIN_SCHEDULE : CompletedWork::ORIGIN_MANUAL),
             planning_status: $validatedData['planning_status'] ?? (($validatedData['schedule_task_id'] ?? null)
                 ? CompletedWork::PLANNING_PLANNED
                 : CompletedWork::PLANNING_REQUIRES_SCHEDULE),

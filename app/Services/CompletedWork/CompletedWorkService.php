@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\CompletedWork;
 
 use App\Domain\Project\ValueObjects\ProjectContext;
@@ -13,6 +15,7 @@ use App\Exceptions\ContractException;
 use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\Contractor;
+use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Rules\ProjectAccessibleRule;
@@ -69,6 +72,8 @@ class CompletedWorkService
 
     public function create(CompletedWorkDTO $dto, ?ProjectContext $projectContext = null): CompletedWork
     {
+        $this->assertCreateSourcePolicy($dto);
+
         // Project-Based RBAC: валидация прав и auto-fill contractor_org_id
         if ($projectContext) {
             // Проверка: может ли роль создавать работы
@@ -169,60 +174,16 @@ class CompletedWorkService
                 throw new BusinessLogicException('Проект недоступен для вашей организации.', 422);
             }
 
-            // Валидация контракта перед созданием работы
+            $data = $this->prepareFinancialData($dto);
+
             if ($dto->contract_id) {
                 $this->validateContract(
                     $dto->contract_id,
-                    $dto->total_amount,
+                    $data['total_amount'],
                     $dto->organization_id,
                     $dto->project_id,
                     $dto->contractor_id
                 );
-            }
-
-            $data = $dto->toArray();
-            unset($data['materials']);
-
-            // Автовычисление цены / суммы
-            if ($data['price'] === null && $data['total_amount'] !== null && $data['quantity'] > 0) {
-                $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
-            }
-
-            if ($data['total_amount'] === null && $data['price'] !== null) {
-                $data['total_amount'] = round($data['price'] * $data['quantity'], 2);
-            }
-
-            // Если всё ещё нет суммы, пытаемся рассчитать из материалов
-            if ($data['total_amount'] === null && ! empty($dto->materials)) {
-                $materialsSum = 0;
-                foreach ($dto->materials as $m) {
-                    if ($m instanceof \App\DTOs\CompletedWork\CompletedWorkMaterialDTO) {
-                        $materialsSum += $m->total_amount ?? ($m->quantity * ($m->unit_price ?? 0));
-                    } elseif (is_array($m)) {
-                        $materialsSum += $m['total_amount'] ?? ($m['quantity'] * ($m['unit_price'] ?? 0));
-                    }
-                }
-                if ($materialsSum > 0) {
-                    $data['total_amount'] = round($materialsSum, 2);
-                    if ($data['price'] === null && $data['quantity'] > 0) {
-                        $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
-                    }
-                }
-            }
-
-            // Применяем коэффициенты к стоимости работ, если рассчитана сумма
-            if (isset($data['total_amount'])) {
-                $coeff = $this->rateCoefficientService->calculateAdjustedValueDetailed(
-                    $dto->organization_id,
-                    $data['total_amount'],
-                    RateCoefficientAppliesToEnum::WORK_COSTS->value,
-                    null,
-                    ['project_id' => $dto->project_id, 'work_type_id' => $dto->work_type_id]
-                );
-                $data['total_amount'] = $coeff['final'];
-                if ($data['quantity'] > 0) {
-                    $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
-                }
             }
 
             $createdModel = $this->completedWorkRepository->create($data);
@@ -281,64 +242,31 @@ class CompletedWorkService
         return DB::transaction(function () use ($id, $dto) {
             $existingWork = $this->getById($id, $dto->organization_id);
 
-            // Валидация контракта при изменении суммы или статуса
-            if ($dto->contract_id && ($dto->total_amount !== $existingWork->total_amount || $dto->status !== $existingWork->status)) {
-                // Расчет разницы в сумме
-                $amountDifference = ($dto->total_amount ?? 0) - ($existingWork->total_amount ?? 0);
+            $this->assertUpdateSourcePolicy($existingWork, $dto);
 
-                if ($amountDifference > 0) {
-                    $this->validateContract(
-                        $dto->contract_id,
-                        $amountDifference,
-                        $dto->organization_id,
-                        $dto->project_id,
-                        $dto->contractor_id
-                    );
-                }
-            }
+            $data = $this->prepareFinancialData($dto);
+            $newContractId = $dto->contract_id;
+            $contractChanged = (int) ($newContractId ?? 0) !== (int) ($existingWork->contract_id ?? 0);
+            $contractorChanged = (int) ($dto->contractor_id ?? 0) !== (int) ($existingWork->contractor_id ?? 0);
+            $projectChanged = (int) $dto->project_id !== (int) $existingWork->project_id;
+            $statusChanged = $dto->status !== $existingWork->status;
+            $finalAmount = (float) ($data['total_amount'] ?? 0);
+            $existingAmount = (float) ($existingWork->total_amount ?? 0);
 
-            $data = $dto->toArray();
-            unset($data['materials']);
+            if ($newContractId && ($contractChanged || $contractorChanged || $projectChanged || $statusChanged || $finalAmount !== $existingAmount)) {
+                $amountToValidate = $contractChanged
+                    ? $finalAmount
+                    : max(0.0, $finalAmount - $existingAmount);
 
-            if ($data['price'] === null && $data['total_amount'] !== null && $data['quantity'] > 0) {
-                $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
-            }
-
-            if ($data['total_amount'] === null && $data['price'] !== null) {
-                $data['total_amount'] = round($data['price'] * $data['quantity'], 2);
-            }
-
-            if ($data['total_amount'] === null && ! empty($dto->materials)) {
-                $materialsSum = 0;
-                foreach ($dto->materials as $m) {
-                    if ($m instanceof \App\DTOs\CompletedWork\CompletedWorkMaterialDTO) {
-                        $materialsSum += $m->total_amount ?? ($m->quantity * ($m->unit_price ?? 0));
-                    } elseif (is_array($m)) {
-                        $materialsSum += $m['total_amount'] ?? ($m['quantity'] * ($m['unit_price'] ?? 0));
-                    }
-                }
-                if ($materialsSum > 0) {
-                    $data['total_amount'] = round($materialsSum, 2);
-                    if ($data['price'] === null && $data['quantity'] > 0) {
-                        $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
-                    }
-                }
-            }
-
-            // Применяем коэффициенты к стоимости работ
-            if (isset($data['total_amount'])) {
-                $coeff = $this->rateCoefficientService->calculateAdjustedValueDetailed(
+                $this->validateContract(
+                    $newContractId,
+                    $amountToValidate,
                     $dto->organization_id,
-                    $data['total_amount'],
-                    RateCoefficientAppliesToEnum::WORK_COSTS->value,
-                    null,
-                    ['project_id' => $dto->project_id, 'work_type_id' => $dto->work_type_id]
+                    $dto->project_id,
+                    $dto->contractor_id
                 );
-                $data['total_amount'] = $coeff['final'];
-                if ($data['quantity'] > 0) {
-                    $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
-                }
             }
+
 
             $success = $this->completedWorkRepository->update($id, $data);
             if (! $success) {
@@ -370,6 +298,116 @@ class CompletedWorkService
         }
 
         return true;
+    }
+
+    private function prepareFinancialData(CompletedWorkDTO $dto): array
+    {
+        $data = $dto->toArray();
+        unset($data['materials']);
+
+        if ($data['price'] === null && $data['total_amount'] !== null && $data['quantity'] > 0) {
+            $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
+        }
+
+        if ($data['total_amount'] === null && $data['price'] !== null) {
+            $data['total_amount'] = round($data['price'] * $data['quantity'], 2);
+        }
+
+        if ($data['total_amount'] === null && ! empty($dto->materials)) {
+            $materialsSum = 0.0;
+            foreach ($dto->materials as $material) {
+                if ($material instanceof CompletedWorkMaterialDTO) {
+                    $materialsSum += $material->total_amount ?? ($material->quantity * ($material->unit_price ?? 0));
+                } elseif (is_array($material)) {
+                    $materialsSum += (float) ($material['total_amount'] ?? (($material['quantity'] ?? 0) * ($material['unit_price'] ?? 0)));
+                }
+            }
+
+            if ($materialsSum > 0) {
+                $data['total_amount'] = round($materialsSum, 2);
+                if ($data['price'] === null && $data['quantity'] > 0) {
+                    $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
+                }
+            }
+        }
+
+        if ($data['total_amount'] !== null) {
+            $coeff = $this->rateCoefficientService->calculateAdjustedValueDetailed(
+                $dto->organization_id,
+                (float) $data['total_amount'],
+                RateCoefficientAppliesToEnum::WORK_COSTS->value,
+                null,
+                ['project_id' => $dto->project_id, 'work_type_id' => $dto->work_type_id]
+            );
+            $data['total_amount'] = $coeff['final'];
+            if ($data['quantity'] > 0) {
+                $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
+            }
+        }
+
+        return $data;
+    }
+
+    private function assertCreateSourcePolicy(CompletedWorkDTO $dto): void
+    {
+        if ($dto->status === CompletedWork::STATUS_CONFIRMED) {
+            throw new BusinessLogicException(trans_message('completed_work.confirm_requires_operation'), 422);
+        }
+
+        if (! in_array($dto->work_origin_type, [
+            CompletedWork::ORIGIN_MANUAL,
+            CompletedWork::ORIGIN_SCHEDULE,
+            CompletedWork::ORIGIN_JOURNAL,
+        ], true)) {
+            throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
+        }
+
+        if ($dto->work_origin_type === CompletedWork::ORIGIN_MANUAL && ($dto->schedule_task_id !== null || $dto->journal_entry_id !== null)) {
+            throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
+        }
+
+        if ($dto->work_origin_type === CompletedWork::ORIGIN_SCHEDULE && $dto->schedule_task_id === null) {
+            throw new BusinessLogicException(trans_message('completed_work.schedule_origin_requires_task'), 422);
+        }
+
+        if ($dto->work_origin_type === CompletedWork::ORIGIN_JOURNAL && $dto->journal_entry_id === null) {
+            throw new BusinessLogicException(trans_message('completed_work.journal_origin_requires_entry'), 422);
+        }
+
+        $this->assertJournalEntryScope($dto->journal_entry_id, $dto->organization_id, $dto->project_id);
+    }
+
+    private function assertUpdateSourcePolicy(CompletedWork $existingWork, CompletedWorkDTO $dto): void
+    {
+        $existingOrigin = $existingWork->work_origin_type ?? CompletedWork::ORIGIN_MANUAL;
+
+        if ($dto->work_origin_type !== $existingOrigin || $dto->journal_entry_id !== $existingWork->journal_entry_id) {
+            throw new BusinessLogicException(trans_message('completed_work.origin_immutable'), 422);
+        }
+
+        if ($existingOrigin === CompletedWork::ORIGIN_MANUAL && $dto->schedule_task_id !== null) {
+            throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
+        }
+
+        if ($existingOrigin === CompletedWork::ORIGIN_SCHEDULE && $dto->schedule_task_id === null) {
+            throw new BusinessLogicException(trans_message('completed_work.schedule_origin_requires_task'), 422);
+        }
+
+        $this->assertJournalEntryScope($dto->journal_entry_id, $dto->organization_id, $dto->project_id);
+    }
+
+    private function assertJournalEntryScope(?int $journalEntryId, int $organizationId, int $projectId): void
+    {
+        if ($journalEntryId === null) {
+            return;
+        }
+
+        $entry = ConstructionJournalEntry::query()->with('journal')->find($journalEntryId);
+        if (! $entry
+            || (int) $entry->journal?->organization_id !== $organizationId
+            || (int) $entry->journal?->project_id !== $projectId) {
+            throw new BusinessLogicException(trans_message('completed_work.journal_entry_not_found'), 422);
+        }
     }
 
     protected function syncMaterials(CompletedWork $completedWork, array $materials): void

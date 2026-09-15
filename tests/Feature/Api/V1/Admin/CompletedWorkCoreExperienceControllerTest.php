@@ -114,7 +114,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
                 'price' => 1250,
                 'completion_date' => '2026-06-10',
                 'notes' => 'First owner work',
-                'status' => 'confirmed',
+                'status' => 'pending',
             ]);
 
         $createResponse->assertCreated();
@@ -128,6 +128,11 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $this->assertSame($context->organization->id, $work->organization_id);
         $this->assertSame($project->id, $work->project_id);
         $this->assertSame(10000.0, (float) $work->total_amount);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}/confirm")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'confirmed');
 
         $otherProjectWork = $this->createCompletedWork($context->organization, $anotherProject, $contractor, [
             'notes' => 'Other project work',
@@ -146,7 +151,6 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
                 'quantity' => 5,
                 'total_amount' => 15000,
                 'notes' => 'Updated owner work',
-                'status' => 'pending',
             ]);
 
         $updateResponse->assertOk();
