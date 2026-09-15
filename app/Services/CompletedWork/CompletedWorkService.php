@@ -244,7 +244,12 @@ class CompletedWorkService
 
             $this->assertUpdateSourcePolicy($existingWork, $dto);
 
-            $data = $this->prepareFinancialData($dto);
+            $financialInputsChanged = $this->financialInputsChanged($existingWork, $dto);
+            $data = $this->prepareFinancialData($dto, $financialInputsChanged);
+            if (! $financialInputsChanged) {
+                $data['price'] = $existingWork->price;
+                $data['total_amount'] = $existingWork->total_amount;
+            }
             $newContractId = $dto->contract_id;
             $contractChanged = (int) ($newContractId ?? 0) !== (int) ($existingWork->contract_id ?? 0);
             $contractorChanged = (int) ($dto->contractor_id ?? 0) !== (int) ($existingWork->contractor_id ?? 0);
@@ -300,7 +305,7 @@ class CompletedWorkService
         return true;
     }
 
-    private function prepareFinancialData(CompletedWorkDTO $dto): array
+    private function prepareFinancialData(CompletedWorkDTO $dto, bool $applyCoefficients = true): array
     {
         $data = $dto->toArray();
         unset($data['materials']);
@@ -331,7 +336,7 @@ class CompletedWorkService
             }
         }
 
-        if ($data['total_amount'] !== null) {
+        if ($applyCoefficients && $data['total_amount'] !== null) {
             $coeff = $this->rateCoefficientService->calculateAdjustedValueDetailed(
                 $dto->organization_id,
                 (float) $data['total_amount'],
@@ -346,6 +351,27 @@ class CompletedWorkService
         }
 
         return $data;
+    }
+
+    private function financialInputsChanged(CompletedWork $existingWork, CompletedWorkDTO $dto): bool
+    {
+        return $dto->materials !== null
+            || abs((float) $dto->quantity - (float) $existingWork->quantity) > 0.0000001
+            || $this->nullableFloatChanged($dto->price, $existingWork->price)
+            || $this->nullableFloatChanged($dto->total_amount, $existingWork->total_amount);
+    }
+
+    private function nullableFloatChanged(?float $value, mixed $existingValue): bool
+    {
+        if ($value === null && $existingValue === null) {
+            return false;
+        }
+
+        if ($value === null || $existingValue === null) {
+            return true;
+        }
+
+        return abs($value - (float) $existingValue) > 0.0000001;
     }
 
     private function assertCreateSourcePolicy(CompletedWorkDTO $dto): void
@@ -445,8 +471,12 @@ class CompletedWorkService
             throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
         }
 
-        if ($projectId !== null && (int) $contract->project_id !== (int) $projectId) {
-            throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
+        if ($projectId !== null) {
+            $allowedProjectIds = $contract->getProjectIds();
+            if (($contract->is_multi_project && $allowedProjectIds === [])
+                || ($allowedProjectIds !== [] && ! in_array((int) $projectId, array_map('intval', $allowedProjectIds), true))) {
+                throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
+            }
         }
 
         if ($contractorId !== null && (int) $contract->contractor_id !== (int) $contractorId) {
@@ -465,9 +495,9 @@ class CompletedWorkService
         // Проверка лимита суммы
         if ($workAmount && ! $contract->canAddWork($workAmount)) {
             throw ContractException::amountExceedsLimit(
-                $contract->completed_works_amount,
-                $contract->total_amount,
-                $workAmount
+                (float) $contract->completed_works_amount,
+                (float) $contract->total_amount,
+                (float) $workAmount
             );
         }
     }

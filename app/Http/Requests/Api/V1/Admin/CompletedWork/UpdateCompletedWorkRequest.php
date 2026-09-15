@@ -35,10 +35,13 @@ class UpdateCompletedWorkRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('contracts', 'id')->where('organization_id', $organizationId),
-                function ($attribute, $value, $fail) use ($projectId) {
+                function ($attribute, $value, $fail) use ($projectId): void {
                     if ($value && $projectId) {
                         $contract = Contract::find($value);
-                        if ($contract && $contract->project_id != $projectId) {
+                        $projectIds = $contract?->getProjectIds() ?? [];
+                        if ($contract
+                            && $projectIds !== []
+                            && ! in_array($projectId, array_map('intval', $projectIds), true)) {
                             $fail('Указанный договор не относится к выбранному проекту.');
                         }
                     }

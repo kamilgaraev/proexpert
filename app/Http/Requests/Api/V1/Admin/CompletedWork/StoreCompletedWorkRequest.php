@@ -34,10 +34,13 @@ class StoreCompletedWorkRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('contracts', 'id')->where('organization_id', $organizationId),
-                function ($attribute, $value, $fail) {
+                function ($attribute, $value, $fail): void {
                     if ($value && $this->input('project_id')) {
                         $contract = Contract::find($value);
-                        if ($contract && $contract->project_id != $this->input('project_id')) {
+                        $projectIds = $contract?->getProjectIds() ?? [];
+                        if ($contract
+                            && $projectIds !== []
+                            && ! in_array((int) $this->input('project_id'), array_map('intval', $projectIds), true)) {
                             $fail('Указанный договор не относится к выбранному проекту.');
                         }
                     }
