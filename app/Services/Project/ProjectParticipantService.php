@@ -138,6 +138,10 @@ class ProjectParticipantService
                 return;
             }
 
+            if ($this->findParticipantRecord($project->id, $organizationId, true, true) instanceof ProjectOrganization) {
+                throw new BusinessLogicException(trans_message('project.participant_inactive_role_change'), 422);
+            }
+
             throw new BusinessLogicException(trans_message('project.participant_not_found'), 404);
         }
 

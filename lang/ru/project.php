@@ -55,6 +55,7 @@ return [
     'participant_deactivate_error' => 'Не удалось деактивировать участника проекта.',
     'participant_deactivated' => 'Участник проекта успешно деактивирован.',
     'participant_details_error' => 'Не удалось получить данные участника проекта.',
+    'participant_inactive_role_change' => 'Участник отключён от проекта. Чтобы изменить роль, сначала активируйте его.',
     'participant_not_found' => 'Организация не является участником проекта.',
     'participant_remove_conflict' => 'Не удалось удалить участника проекта. Повторите попытку.',
     'participant_removed' => 'Участник успешно удален из проекта.',

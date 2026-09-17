@@ -36,6 +36,7 @@ return [
     'participant_added' => 'Участник успешно добавлен в проект',
     'participant_add_error' => 'Ошибка при добавлении участника в проект',
     'participant_not_found' => 'Организация не является участником проекта',
+    'participant_inactive_role_change' => 'Участник отключён от проекта. Чтобы изменить роль, сначала активируйте его.',
     'participant_details_error' => 'Ошибка при получении данных участника',
     'participant_role_updated' => 'Роль участника успешно обновлена',
     'participant_role_update_error' => 'Ошибка при обновлении роли участника',

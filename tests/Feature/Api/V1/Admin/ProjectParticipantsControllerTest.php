@@ -89,4 +89,78 @@ class ProjectParticipantsControllerTest extends TestCase
             (string) $response->json('message')
         );
     }
+
+    public function test_role_change_of_inactive_participant_returns_actionable_422(): void
+    {
+        $contractorOrganization = Organization::factory()->create([
+            'capabilities' => ['smr'],
+            'primary_business_type' => 'contractor',
+        ]);
+
+        $service = app(\App\Services\Project\ProjectParticipantService::class);
+        $service->attach(
+            $this->project,
+            $contractorOrganization->id,
+            \App\Enums\ProjectOrganizationRole::CONTRACTOR,
+            $this->user,
+        );
+        $service->setActiveState($this->project, $contractorOrganization->id, false);
+
+        $response = $this->actingAs($this->user, 'api_admin')
+            ->patchJson("/api/v1/admin/projects/{$this->project->id}/participants/{$contractorOrganization->id}/role", [
+                'role' => 'subcontractor',
+            ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertStringContainsString(
+            'активируйте',
+            mb_strtolower((string) $response->json('message'))
+        );
+    }
+
+    public function test_role_change_of_unknown_organization_stays_404(): void
+    {
+        $strangerOrganization = Organization::factory()->create();
+
+        $response = $this->actingAs($this->user, 'api_admin')
+            ->patchJson("/api/v1/admin/projects/{$this->project->id}/participants/{$strangerOrganization->id}/role", [
+                'role' => 'observer',
+            ]);
+
+        $response->assertStatus(404)
+            ->assertJsonPath('success', false);
+    }
+
+    public function test_role_change_of_active_participant_applies_to_target_organization(): void
+    {
+        $contractorOrganization = Organization::factory()->create([
+            'capabilities' => ['smr'],
+            'primary_business_type' => 'contractor',
+        ]);
+
+        app(\App\Services\Project\ProjectParticipantService::class)->attach(
+            $this->project,
+            $contractorOrganization->id,
+            \App\Enums\ProjectOrganizationRole::CONTRACTOR,
+            $this->user,
+        );
+
+        $response = $this->actingAs($this->user, 'api_admin')
+            ->patchJson("/api/v1/admin/projects/{$this->project->id}/participants/{$contractorOrganization->id}/role", [
+                'role' => 'observer',
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertSame(
+            'observer',
+            \App\Models\ProjectOrganization::query()
+                ->where('project_id', $this->project->id)
+                ->where('organization_id', $contractorOrganization->id)
+                ->value('role_new')
+        );
+    }
 }

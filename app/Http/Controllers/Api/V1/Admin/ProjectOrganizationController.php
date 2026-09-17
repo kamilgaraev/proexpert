@@ -106,7 +106,7 @@ class ProjectOrganizationController extends Controller
         }
     }
 
-    public function show(Request $request, int $organization): JsonResponse
+    public function show(Request $request, int $project, int $organization): JsonResponse
     {
         try {
             [$project] = $this->getProjectWithAccess($request);
@@ -158,7 +158,7 @@ class ProjectOrganizationController extends Controller
         }
     }
 
-    public function updateRole(Request $request, int $organization): JsonResponse
+    public function updateRole(Request $request, int $project, int $organization): JsonResponse
     {
         try {
             [$project, $currentOrg, $projectContext] = $this->getProjectWithAccess($request);
@@ -202,7 +202,7 @@ class ProjectOrganizationController extends Controller
         }
     }
 
-    public function destroy(Request $request, int $organization): JsonResponse
+    public function destroy(Request $request, int $project, int $organization): JsonResponse
     {
         try {
             [$project, $currentOrg, $projectContext] = $this->getProjectWithAccess($request);
@@ -230,7 +230,7 @@ class ProjectOrganizationController extends Controller
         }
     }
 
-    public function activate(Request $request, int $organization): JsonResponse
+    public function activate(Request $request, int $project, int $organization): JsonResponse
     {
         try {
             [$project, $currentOrg, $projectContext] = $this->getProjectWithAccess($request);
@@ -258,7 +258,7 @@ class ProjectOrganizationController extends Controller
         }
     }
 
-    public function deactivate(Request $request, int $organization): JsonResponse
+    public function deactivate(Request $request, int $project, int $organization): JsonResponse
     {
         try {
             [$project, $currentOrg, $projectContext] = $this->getProjectWithAccess($request);
