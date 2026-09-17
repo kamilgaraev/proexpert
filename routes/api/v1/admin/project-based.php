@@ -49,7 +49,6 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::get('/', [ProjectOrganizationController::class, 'index']);
         Route::post('/', [ProjectOrganizationController::class, 'store'])->middleware('authorize:projects.organizations.manage');
         Route::get('/{organization}', [ProjectOrganizationController::class, 'show']);
-        Route::put('/{organization}', [ProjectOrganizationController::class, 'update'])->middleware('authorize:projects.organizations.manage');
         Route::patch('/{organization}/role', [ProjectOrganizationController::class, 'updateRole'])->middleware('authorize:projects.organizations.manage');
         Route::delete('/{organization}', [ProjectOrganizationController::class, 'destroy'])->middleware('authorize:projects.organizations.manage');
         Route::post('/{organization}/activate', [ProjectOrganizationController::class, 'activate'])->middleware('authorize:projects.organizations.manage');
