@@ -231,6 +231,48 @@ class ProjectParticipantsControllerTest extends TestCase
         );
     }
 
+    public function test_deactivated_participant_stays_visible_until_activated(): void
+    {
+        $contractorOrganization = Organization::factory()->create([
+            'capabilities' => ['smr'],
+            'primary_business_type' => 'contractor',
+        ]);
+
+        $service = app(\App\Services\Project\ProjectParticipantService::class);
+        $service->attach(
+            $this->project,
+            $contractorOrganization->id,
+            \App\Enums\ProjectOrganizationRole::CONTRACTOR,
+            $this->user,
+        );
+        $service->setActiveState($this->project, $contractorOrganization->id, false);
+
+        $response = $this->actingAs($this->user, 'api_admin')
+            ->getJson("/api/v1/admin/projects/{$this->project->id}/participants");
+
+        $response->assertOk()->assertJsonPath('success', true);
+
+        $contractorParticipant = collect($response->json('data.participants'))
+            ->firstWhere('id', $contractorOrganization->id);
+
+        $this->assertNotNull($contractorParticipant);
+        $this->assertFalse((bool) $contractorParticipant['is_active']);
+        $this->assertSame('inactive', $contractorParticipant['status']);
+
+        $service->setActiveState($this->project, $contractorOrganization->id, true);
+
+        $reactivated = collect(
+            $this->actingAs($this->user, 'api_admin')
+                ->getJson("/api/v1/admin/projects/{$this->project->id}/participants")
+                ->json('data.participants')
+        )->firstWhere('id', $contractorOrganization->id);
+
+        $this->assertNotNull($reactivated);
+        $this->assertTrue((bool) $reactivated['is_active']);
+        $this->assertSame('active', $reactivated['status']);
+        $this->assertSame('contractor', $reactivated['role']['value']);
+    }
+
     public function test_role_change_of_unknown_organization_stays_404(): void
     {
         $strangerOrganization = Organization::factory()->create();

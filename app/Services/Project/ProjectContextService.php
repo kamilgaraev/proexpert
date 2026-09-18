@@ -106,17 +106,21 @@ class ProjectContextService
         );
     }
 
-    public function getAllProjectParticipants(Project $project): array
+    public function getAllProjectParticipants(Project $project, bool $includeInactive = false): array
     {
         $participants = [];
 
-        $allParticipants = ProjectOrganization::query()
+        $query = ProjectOrganization::query()
             ->useWritePdo()
             ->with('organization')
             ->where('project_id', $project->id)
-            ->where('is_active', true)
-            ->orderBy('id')
-            ->get();
+            ->orderBy('id');
+
+        if (!$includeInactive) {
+            $query->where('is_active', true);
+        }
+
+        $allParticipants = $query->get();
 
         foreach ($allParticipants as $participantRecord) {
             $organization = $participantRecord->organization;
@@ -131,10 +135,17 @@ class ProjectContextService
                 continue;
             }
 
+            $isActive = (bool) $participantRecord->is_active;
+            $existing = $participants[$organization->id] ?? null;
+
+            if ($existing !== null && $existing['is_active'] && !$isActive) {
+                continue;
+            }
+
             $participants[$organization->id] = [
                 'organization' => $organization,
                 'role' => $role,
-                'is_active' => (bool) $participantRecord->is_active,
+                'is_active' => $isActive,
                 'is_owner' => $project->organization_id === $organization->id,
                 'added_at' => $participantRecord->created_at,
                 'invited_at' => $participantRecord->invited_at,
@@ -159,6 +170,17 @@ class ProjectContextService
                 ];
             }
         }
+
+        usort($participants, static function (array $a, array $b): int {
+            if ($a['is_active'] !== $b['is_active']) {
+                return $a['is_active'] ? -1 : 1;
+            }
+
+            $aAddedAt = $a['added_at'] instanceof \DateTimeInterface ? $a['added_at']->getTimestamp() : 0;
+            $bAddedAt = $b['added_at'] instanceof \DateTimeInterface ? $b['added_at']->getTimestamp() : 0;
+
+            return $aAddedAt <=> $bAddedAt;
+        });
 
         return array_values($participants);
     }

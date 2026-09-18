@@ -36,7 +36,7 @@ class ProjectOrganizationController extends Controller
     {
         try {
             [$project, $currentOrg, $projectContext] = $this->getProjectWithAccess($request);
-            $participants = $this->projectContextService->getAllProjectParticipants($project);
+            $participants = $this->projectContextService->getAllProjectParticipants($project, true);
 
             return AdminResponse::success([
                 'participants' => array_map(
