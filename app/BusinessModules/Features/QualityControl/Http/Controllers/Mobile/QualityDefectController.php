@@ -42,19 +42,25 @@ final class QualityDefectController extends Controller
                 'sort_by' => ['nullable', 'string', Rule::in(['created_at', 'due_date', 'severity', 'status'])],
                 'sort_dir' => ['nullable', 'string', Rule::in(['asc', 'desc'])],
             ]);
-            $filters['project_ids'] = $this->accessibleProjectIds($request);
+            $projectIds = $this->accessibleProjectIds($request);
+
+            if ($projectIds === []) {
+                return MobileResponse::error(trans_message('quality_control.errors.no_accessible_projects'), 403);
+            }
+
+            $filters['project_ids'] = $projectIds;
 
             $defects = $this->service->paginate($organizationId, $perPage, $filters);
 
-            return MobileResponse::success([
-                'items' => QualityDefectResource::collection($defects->getCollection())->resolve(),
-                'meta' => [
+            return MobileResponse::paginated(
+                QualityDefectResource::collection($defects->getCollection()),
+                [
                     'current_page' => $defects->currentPage(),
                     'per_page' => $defects->perPage(),
                     'total' => $defects->total(),
                     'last_page' => $defects->lastPage(),
-                ],
-            ]);
+                ]
+            );
         } catch (ValidationException $e) {
             return MobileResponse::error(
                 trans_message('quality_control.errors.validation_failed'),
@@ -263,11 +269,10 @@ final class QualityDefectController extends Controller
             return [];
         }
 
-        return $this->projectAccess
-            ->query($user, (int) $request->attributes->get('current_organization_id'))
-            ->pluck('projects.id')
-            ->map(static fn ($id): int => (int) $id)
-            ->all();
+        return $this->projectAccess->ids(
+            $user,
+            (int) $request->attributes->get('current_organization_id')
+        );
     }
 
     private function failedAction(string $action, int $id, \Throwable $e): JsonResponse

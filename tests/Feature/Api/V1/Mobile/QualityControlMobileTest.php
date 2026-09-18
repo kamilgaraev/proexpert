@@ -8,9 +8,11 @@ use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\UserProjectAccessMode;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Mobile\MobileDashboardService;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -110,14 +112,14 @@ final class QualityControlMobileTest extends TestCase
             ->getJson('/api/v1/mobile/quality-control/defects?status=open&severity=critical&overdue=1&sort_by=due_date&sort_dir=asc');
 
         $filteredResponse->assertOk();
-        $filteredIds = collect($filteredResponse->json('data.items'))->pluck('id')->all();
+        $filteredIds = collect($filteredResponse->json('data'))->pluck('id')->all();
         $this->assertSame([$openCritical->id], $filteredIds);
 
         $notOverdueResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/quality-control/defects?overdue=0&per_page=50');
 
         $notOverdueResponse->assertOk();
-        $allIds = collect($notOverdueResponse->json('data.items'))->pluck('id')->all();
+        $allIds = collect($notOverdueResponse->json('data'))->pluck('id')->all();
         $this->assertContains($openCritical->id, $allIds);
         $this->assertContains($openMajor->id, $allIds);
         $this->assertContains($resolvedCritical->id, $allIds);
@@ -126,6 +128,67 @@ final class QualityControlMobileTest extends TestCase
             ->getJson('/api/v1/mobile/quality-control/defects?status=unknown')
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', trans_message('quality_control.validation.status_invalid'));
+    }
+
+    public function test_mobile_quality_defect_list_uses_admin_paginated_envelope_without_project_id(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $firstProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $secondProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+
+        $firstDefect = $this->createDefect($context, $firstProject, 'open', 'major');
+        $secondDefect = $this->createDefect($context, $secondProject, 'open', 'critical');
+        $resolvedDefect = $this->createDefect($context, $secondProject, 'resolved', 'minor');
+
+        $response = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/quality-control/defects?per_page=50');
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+        $this->assertIsList($response->json('data'));
+        $this->assertArrayNotHasKey('items', $response->json());
+        $this->assertSame(
+            ['current_page', 'per_page', 'total', 'last_page'],
+            array_keys($response->json('meta'))
+        );
+        $this->assertContains($firstDefect->id, collect($response->json('data'))->pluck('id')->all());
+        $this->assertContains($secondDefect->id, collect($response->json('data'))->pluck('id')->all());
+        $this->assertContains($resolvedDefect->id, collect($response->json('data'))->pluck('id')->all());
+        $this->assertGreaterThanOrEqual(3, (int) $response->json('meta.total'));
+        $this->assertIsBool($response->json('data.0.inspection_required'));
+
+        $projectFiltered = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/quality-control/defects?project_id='.$firstProject->id);
+
+        $projectFiltered->assertOk();
+        $filteredIds = collect($projectFiltered->json('data'))->pluck('id')->all();
+        $this->assertContains($firstDefect->id, $filteredIds);
+        $this->assertNotContains($secondDefect->id, $filteredIds);
+
+        $dashboard = app(MobileDashboardService::class)->build($context->user);
+        $qualityWidget = collect($dashboard['widgets'])->firstWhere('slug', 'quality_control');
+        $this->assertNotNull($qualityWidget);
+        $this->assertSame(2, $qualityWidget['primary_metric']['value']);
+    }
+
+    public function test_mobile_quality_defect_list_rejects_empty_project_access(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value,
+        ]);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $this->createDefect($context, $project, 'open', 'major');
+
+        $response = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/quality-control/defects');
+
+        $response->assertStatus(403)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', trans_message('quality_control.errors.no_accessible_projects'))
+            ->assertJsonPath('data', null);
     }
 
     public function test_mobile_quality_defect_can_upload_result_photo_verify_and_reject(): void
@@ -224,6 +287,15 @@ final class QualityControlMobileTest extends TestCase
                         ->get();
                 }
             );
+            $mock->shouldReceive('getUserPermissionsStructured')->andReturn([
+                'system' => [],
+                'modules' => [
+                    'quality-control' => [
+                        'quality-control.view',
+                        'quality-control.defects.view',
+                    ],
+                ],
+            ]);
         });
     }
 

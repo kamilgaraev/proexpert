@@ -41,6 +41,18 @@ final class MobileProjectAccessResolver
         return $this->projects->queryAccessibleProjects($user, $organizationId);
     }
 
+    /**
+     * @return list<int>
+     */
+    public function ids(User $user, int $organizationId): array
+    {
+        return $this->query($user, $organizationId)
+            ->pluck('projects.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->values()
+            ->all();
+    }
+
     public function assert(
         User $user,
         int $organizationId,

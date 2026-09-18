@@ -258,7 +258,7 @@ class QualityDefectControllerWorkflowTest extends TestCase
         $this->allowAdminAccess();
         $this->allowModuleAccess();
 
-        $createResponse = $this->withHeaders($context->authHeaders())
+        $createResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/quality-control/defects', [
                 'project_id' => $project->id,
                 'title' => 'Mobile quality defect',
@@ -273,13 +273,13 @@ class QualityDefectControllerWorkflowTest extends TestCase
 
         $defectId = (int) $createResponse->json('data.id');
 
-        $listResponse = $this->withHeaders($context->authHeaders())
+        $listResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/quality-control/defects?project_id={$project->id}");
 
         $listResponse->assertOk();
-        $this->assertContains($defectId, collect($listResponse->json('data.items'))->pluck('id')->all());
+        $this->assertContains($defectId, collect($listResponse->json('data'))->pluck('id')->all());
 
-        $resolveResponse = $this->withHeaders($context->authHeaders())
+        $resolveResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/quality-control/defects/{$defectId}/resolve", [
                 'comment' => 'Repair completed on site',
             ]);

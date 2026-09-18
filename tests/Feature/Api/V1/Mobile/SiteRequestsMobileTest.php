@@ -12,9 +12,11 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\UserProjectAccessMode;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Mobile\MobileDashboardService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Mockery\MockInterface;
@@ -34,7 +36,7 @@ final class SiteRequestsMobileTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAccess();
 
-        $createResponse = $this->withHeaders($context->authHeaders())
+        $createResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/site-requests', [
                 'project_id' => $project->id,
                 'title' => 'Mobile concrete request',
@@ -63,6 +65,7 @@ final class SiteRequestsMobileTest extends TestCase
             'material_unit' => 'm3',
         ]);
 
+        $this->flushHeaders();
         $adminShowResponse = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/site-requests/{$requestId}");
 
@@ -85,7 +88,8 @@ final class SiteRequestsMobileTest extends TestCase
             ->assertJsonPath('data.title', 'Admin clarified concrete request')
             ->assertJsonPath('data.priority', SiteRequestPriorityEnum::URGENT->value);
 
-        $mobileRefreshResponse = $this->withHeaders($context->authHeaders())
+        $this->flushHeaders();
+        $mobileRefreshResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/site-requests/{$requestId}");
 
         $mobileRefreshResponse->assertOk()
@@ -98,7 +102,7 @@ final class SiteRequestsMobileTest extends TestCase
             ->getJson("/api/v1/admin/site-requests?project_id={$project->id}&search=clarified");
 
         $adminListResponse->assertOk();
-        $this->assertContains($requestId, collect($adminListResponse->json('data'))->pluck('id')->all());
+        $this->assertContains($requestId, collect($adminListResponse->json('data.data'))->pluck('id')->all());
     }
 
     public function test_mobile_detail_uses_snake_case_procurement_contract_only(): void
@@ -120,7 +124,7 @@ final class SiteRequestsMobileTest extends TestCase
             'material_unit' => 'm3',
         ]);
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/site-requests/{$siteRequest->id}");
 
         $response->assertOk()
@@ -237,6 +241,142 @@ final class SiteRequestsMobileTest extends TestCase
         );
     }
 
+    public function test_mobile_site_request_list_uses_admin_paginated_envelope_without_project_id(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $firstProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $secondProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+
+        $firstRequest = $this->createSiteRequest($context, $firstProject, SiteRequestStatusEnum::DRAFT, 'First object request');
+        $secondRequest = $this->createSiteRequest($context, $secondProject, SiteRequestStatusEnum::PENDING, 'Second object request');
+
+        $response = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/site-requests?per_page=50');
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+        $this->assertIsList($response->json('data'));
+        $this->assertArrayHasKey('meta', $response->json());
+        $this->assertSame(
+            ['current_page', 'per_page', 'total', 'last_page'],
+            array_keys($response->json('meta'))
+        );
+        $this->assertArrayNotHasKey('current_page', $response->json('data'));
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertContains($firstRequest->id, $ids);
+        $this->assertContains($secondRequest->id, $ids);
+        $this->assertGreaterThanOrEqual(2, (int) $response->json('meta.total'));
+
+        $projectFiltered = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/site-requests?project_id='.$firstProject->id);
+
+        $projectFiltered->assertOk();
+        $filteredIds = collect($projectFiltered->json('data'))->pluck('id')->all();
+        $this->assertContains($firstRequest->id, $filteredIds);
+        $this->assertNotContains($secondRequest->id, $filteredIds);
+    }
+
+    public function test_mobile_approvals_without_project_id_match_dashboard_pending_and_in_review(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $author = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($author->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+        $firstProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $secondProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+
+        $this->createSiteRequest($context, $firstProject, SiteRequestStatusEnum::DRAFT, 'Own draft');
+        $inReview = $this->createSiteRequest($context, $firstProject, SiteRequestStatusEnum::IN_REVIEW, 'Needs review');
+        $pending = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $secondProject->id,
+            'user_id' => $author->id,
+            'title' => 'Pending on another object',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'status' => SiteRequestStatusEnum::PENDING->value,
+            'priority' => SiteRequestPriorityEnum::MEDIUM->value,
+            'material_name' => 'Bricks',
+            'material_quantity' => 20,
+            'material_unit' => 'pcs',
+        ]);
+
+        $response = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/site-requests?scope=approvals&per_page=50');
+
+        $response->assertOk();
+        $this->assertIsList($response->json('data'));
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertContains($inReview->id, $ids);
+        $this->assertContains($pending->id, $ids);
+        $this->assertSame(2, (int) $response->json('meta.total'));
+        $this->assertSame(2, count($ids));
+
+        $dashboard = app(MobileDashboardService::class)->build($context->user);
+        $approvalsWidget = collect($dashboard['widgets'])->firstWhere('slug', 'site_request_approvals');
+        $this->assertNotNull($approvalsWidget);
+        $this->assertSame(1, $approvalsWidget['primary_metric']['value']);
+        $this->assertSame(1, $approvalsWidget['secondary_metric']['value']);
+        $this->assertSame(
+            (int) $response->json('meta.total'),
+            $approvalsWidget['primary_metric']['value'] + $approvalsWidget['secondary_metric']['value']
+        );
+
+        $projectFiltered = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/site-requests?scope=approvals&project_id='.$firstProject->id);
+
+        $projectFiltered->assertOk();
+        $filteredIds = collect($projectFiltered->json('data'))->pluck('id')->all();
+        $this->assertContains($inReview->id, $filteredIds);
+        $this->assertNotContains($pending->id, $filteredIds);
+    }
+
+    public function test_mobile_site_request_list_rejects_empty_project_access(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value,
+        ]);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $this->createSiteRequest($context, $project, SiteRequestStatusEnum::PENDING, 'Hidden request');
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/site-requests')
+            ->assertStatus(403)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', trans_message('site_requests::mobile.no_accessible_projects'))
+            ->assertJsonPath('data', null);
+    }
+
+    private function createSiteRequest(
+        AdminApiTestContext $context,
+        Project $project,
+        SiteRequestStatusEnum $status,
+        string $title
+    ): SiteRequest {
+        return SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => $title,
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'status' => $status->value,
+            'priority' => SiteRequestPriorityEnum::MEDIUM->value,
+            'material_name' => 'Concrete',
+            'material_quantity' => 1,
+            'material_unit' => 'm3',
+        ]);
+    }
+
     private function allowAccess(): void
     {
         $this->mock(AccessController::class, function (MockInterface $mock): void {
@@ -257,11 +397,13 @@ final class SiteRequestsMobileTest extends TestCase
                 }
             );
             $mock->shouldReceive('getUserPermissionsStructured')->andReturn([
+                'system' => [],
                 'modules' => [
                     'site-requests' => [
                         'site_requests.view',
                         'site_requests.create',
                         'site_requests.change_status',
+                        'site_requests.approve',
                     ],
                 ],
             ]);

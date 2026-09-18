@@ -50,7 +50,8 @@ class MobileDashboardService
 
     public function __construct(
         private readonly AuthorizationService $authorizationService,
-        private readonly AccessController $accessController
+        private readonly AccessController $accessController,
+        private readonly MobileProjectAccessResolver $projectAccess,
     ) {
     }
 
@@ -69,6 +70,7 @@ class MobileDashboardService
             ->values()
             ->all();
         $modules = is_array($permissions['modules'] ?? null) ? $permissions['modules'] : [];
+        $projectIds = $this->projectAccess->ids($user, $organizationId);
         $widgets = [];
         $unavailableWidgets = [];
 
@@ -93,12 +95,12 @@ class MobileDashboardService
             'site_requests',
             $organizationId,
             (int) $user->id,
-            function () use ($modules, $organizationId, $user): ?array {
+            function () use ($modules, $organizationId, $user, $projectIds): ?array {
                 if (!$this->canShowSiteRequests($modules, $organizationId)) {
                     return null;
                 }
 
-                return $this->buildSiteRequestsWidget($organizationId, (int) $user->id);
+                return $this->buildSiteRequestsWidget($organizationId, (int) $user->id, $projectIds);
             }
         );
 
@@ -108,12 +110,12 @@ class MobileDashboardService
             'site_request_approvals',
             $organizationId,
             (int) $user->id,
-            function () use ($modules, $organizationId): ?array {
+            function () use ($modules, $organizationId, $projectIds): ?array {
                 if (!$this->canShowApprovals($modules, $organizationId)) {
                     return null;
                 }
 
-                return $this->buildApprovalsWidget($organizationId);
+                return $this->buildApprovalsWidget($organizationId, $projectIds);
             }
         );
 
@@ -143,7 +145,7 @@ class MobileDashboardService
             'schedule',
             $organizationId,
             (int) $user->id,
-            function () use ($modules, $organizationId): ?array {
+            function () use ($modules, $organizationId, $projectIds): ?array {
                 if (!$this->canShowModule($modules, $organizationId, 'schedule-management', [
                     'schedule-management.view',
                     'schedule-management.notifications',
@@ -155,7 +157,7 @@ class MobileDashboardService
                     return null;
                 }
 
-                return $this->buildScheduleWidget($organizationId);
+                return $this->buildScheduleWidget($organizationId, $projectIds);
             }
         );
 
@@ -201,7 +203,7 @@ class MobileDashboardService
             'quality_control',
             $organizationId,
             (int) $user->id,
-            function () use ($modules, $organizationId): ?array {
+            function () use ($modules, $organizationId, $projectIds): ?array {
                 if (!$this->canShowModule($modules, $organizationId, 'quality-control', [
                     'quality-control.view',
                     'quality-control.defects.view',
@@ -209,7 +211,7 @@ class MobileDashboardService
                     return null;
                 }
 
-                return $this->buildQualityControlWidget($organizationId);
+                return $this->buildQualityControlWidget($organizationId, $projectIds);
             }
         );
 
@@ -287,14 +289,14 @@ class MobileDashboardService
             'handover_acceptance',
             $organizationId,
             (int) $user->id,
-            function () use ($modules, $organizationId): ?array {
+            function () use ($modules, $organizationId, $projectIds): ?array {
                 if (!$this->canShowModule($modules, $organizationId, 'handover-acceptance', [
                     'handover-acceptance.view',
                 ])) {
                     return null;
                 }
 
-                return $this->buildHandoverAcceptanceWidget($organizationId);
+                return $this->buildHandoverAcceptanceWidget($organizationId, $projectIds);
             }
         );
 
@@ -391,11 +393,12 @@ class MobileDashboardService
         );
     }
 
-    private function buildSiteRequestsWidget(int $organizationId, int $userId): array
+    private function buildSiteRequestsWidget(int $organizationId, int $userId, array $projectIds): array
     {
         $query = SiteRequest::query()
             ->forOrganization($organizationId)
-            ->forUser($userId);
+            ->forUser($userId)
+            ->whereIn('project_id', $projectIds);
         $activeCount = (int) (clone $query)->active()->count();
         $overdueCount = (int) (clone $query)->overdue()->count();
 
@@ -411,9 +414,11 @@ class MobileDashboardService
         );
     }
 
-    private function buildApprovalsWidget(int $organizationId): array
+    private function buildApprovalsWidget(int $organizationId, array $projectIds): array
     {
-        $query = SiteRequest::query()->forOrganization($organizationId);
+        $query = SiteRequest::query()
+            ->forOrganization($organizationId)
+            ->whereIn('project_id', $projectIds);
         $pendingCount = (int) (clone $query)->withStatus(SiteRequestStatusEnum::PENDING)->count();
         $inReviewCount = (int) (clone $query)->withStatus(SiteRequestStatusEnum::IN_REVIEW)->count();
 
@@ -456,12 +461,14 @@ class MobileDashboardService
         );
     }
 
-    private function buildScheduleWidget(int $organizationId): array
+    private function buildScheduleWidget(int $organizationId, array $projectIds): array
     {
         $today = now()->toDateString();
         $upcomingTo = now()->addDays(7)->toDateString();
         $activeStatuses = ['scheduled', 'in_progress'];
-        $query = ProjectEvent::query()->where('organization_id', $organizationId);
+        $query = ProjectEvent::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('project_id', $projectIds);
         $upcomingCount = (int) (clone $query)
             ->whereBetween('event_date', [$today, $upcomingTo])
             ->whereIn('status', $activeStatuses)
@@ -533,7 +540,7 @@ class MobileDashboardService
         );
     }
 
-    private function buildQualityControlWidget(int $organizationId): array
+    private function buildQualityControlWidget(int $organizationId, array $projectIds): array
     {
         $openStatuses = [
             QualityDefectStatusEnum::OPEN->value,
@@ -542,7 +549,9 @@ class MobileDashboardService
             QualityDefectStatusEnum::READY_FOR_REVIEW->value,
             QualityDefectStatusEnum::REJECTED->value,
         ];
-        $query = QualityDefect::query()->forOrganization($organizationId);
+        $query = QualityDefect::query()
+            ->forOrganization($organizationId)
+            ->whereIn('project_id', $projectIds);
         $openCount = (int) (clone $query)->whereIn('status', $openStatuses)->count();
         $overdueCount = (int) (clone $query)
             ->whereIn('status', $openStatuses)
@@ -660,10 +669,14 @@ class MobileDashboardService
         );
     }
 
-    private function buildHandoverAcceptanceWidget(int $organizationId): array
+    private function buildHandoverAcceptanceWidget(int $organizationId, array $projectIds): array
     {
-        $scopesQuery = AcceptanceScope::query()->where('organization_id', $organizationId);
-        $findingsQuery = AcceptanceFinding::query()->where('organization_id', $organizationId);
+        $scopesQuery = AcceptanceScope::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('project_id', $projectIds);
+        $findingsQuery = AcceptanceFinding::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('project_id', $projectIds);
         $activeScopesCount = (int) (clone $scopesQuery)
             ->whereIn('status', ['draft', 'inspection', 'pending_customer', 'returned'])
             ->count();
