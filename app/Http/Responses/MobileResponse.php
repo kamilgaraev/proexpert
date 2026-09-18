@@ -35,6 +35,22 @@ class MobileResponse
     }
 
     /**
+     * Paginated list in the same envelope as AdminResponse: data = items array, meta sibling.
+     */
+    public static function paginated(
+        mixed $data,
+        array $meta,
+        ?string $message = null,
+        int $code = 200
+    ): JsonResponse {
+        if ($data instanceof ResourceCollection) {
+            $data = $data->resolve();
+        }
+
+        return self::success($data, $message, $code, $meta);
+    }
+
+    /**
      * Return an error response for Mobile API.
      */
     public static function error(

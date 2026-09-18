@@ -63,11 +63,13 @@ class SiteRequestController extends Controller
                 'search',
             ]);
             $this->assertProjectAccess($user, $organizationId, $filters['project_id'] ?? null);
-            $filters['project_ids'] = $this->projectAccess
-                ->query($user, $organizationId)
-                ->pluck('projects.id')
-                ->map(static fn ($id): int => (int) $id)
-                ->all();
+            $projectIds = $this->projectAccess->ids($user, $organizationId);
+
+            if ($projectIds === []) {
+                return MobileResponse::error(trans_message('site_requests::mobile.no_accessible_projects'), 403);
+            }
+
+            $filters['project_ids'] = $projectIds;
 
             if ($scope === 'approvals') {
                 if (! $this->canReviewRequests($user, $organizationId)) {
@@ -84,8 +86,8 @@ class SiteRequestController extends Controller
 
             $requests = $this->service->paginate($organizationId, (int) $user->id, $perPage, $filters);
 
-            return MobileResponse::success([
-                'data' => $requests->getCollection()
+            return MobileResponse::paginated(
+                $requests->getCollection()
                     ->map(fn (SiteRequest $siteRequest) => $this->makeSiteRequestListPayload(
                         $siteRequest,
                         $request,
@@ -94,11 +96,13 @@ class SiteRequestController extends Controller
                     ))
                     ->values()
                     ->all(),
-                'current_page' => $requests->currentPage(),
-                'last_page' => $requests->lastPage(),
-                'per_page' => $requests->perPage(),
-                'total' => $requests->total(),
-            ]);
+                [
+                    'current_page' => $requests->currentPage(),
+                    'per_page' => $requests->perPage(),
+                    'total' => $requests->total(),
+                    'last_page' => $requests->lastPage(),
+                ]
+            );
         } catch (\DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
