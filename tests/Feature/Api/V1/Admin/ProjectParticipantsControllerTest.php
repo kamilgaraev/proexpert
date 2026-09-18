@@ -90,6 +90,64 @@ class ProjectParticipantsControllerTest extends TestCase
         );
     }
 
+    public function test_confirmed_attach_bypasses_role_capabilities(): void
+    {
+        $designerOrganization = Organization::factory()->create([
+            'capabilities' => ['design'],
+            'primary_business_type' => 'design',
+        ]);
+
+        $response = $this->actingAs($this->user, 'api_admin')
+            ->postJson("/api/v1/admin/projects/{$this->project->id}/participants", [
+                'organization_id' => $designerOrganization->id,
+                'role' => 'general_contractor',
+                'confirmed_capabilities' => true,
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertSame(
+            'general_contractor',
+            \App\Models\ProjectOrganization::query()
+                ->where('project_id', $this->project->id)
+                ->where('organization_id', $designerOrganization->id)
+                ->value('role_new')
+        );
+    }
+
+    public function test_confirmed_role_change_bypasses_role_capabilities(): void
+    {
+        $contractorOrganization = Organization::factory()->create([
+            'capabilities' => ['smr'],
+            'primary_business_type' => 'contractor',
+        ]);
+
+        app(\App\Services\Project\ProjectParticipantService::class)->attach(
+            $this->project,
+            $contractorOrganization->id,
+            \App\Enums\ProjectOrganizationRole::CONTRACTOR,
+            $this->user,
+        );
+
+        $response = $this->actingAs($this->user, 'api_admin')
+            ->patchJson("/api/v1/admin/projects/{$this->project->id}/participants/{$contractorOrganization->id}/role", [
+                'role' => 'general_contractor',
+                'confirmed_capabilities' => true,
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertSame(
+            'general_contractor',
+            \App\Models\ProjectOrganization::query()
+                ->where('project_id', $this->project->id)
+                ->where('organization_id', $contractorOrganization->id)
+                ->value('role_new')
+        );
+    }
+
     public function test_role_change_of_inactive_participant_returns_actionable_422(): void
     {
         $contractorOrganization = Organization::factory()->create([
