@@ -50,6 +50,10 @@ class ProjectContextService
 
     public function getOrganizationRole(Project $project, Organization $organization): ?ProjectOrganizationRole
     {
+        if ($project->organization_id === $organization->id) {
+            return ProjectOrganizationRole::OWNER;
+        }
+
         $pivot = ProjectOrganization::query()
             ->useWritePdo()
             ->where('project_id', $project->id)
@@ -63,10 +67,6 @@ class ProjectContextService
             if ($role instanceof ProjectOrganizationRole) {
                 return $role;
             }
-        }
-
-        if ($project->organization_id === $organization->id) {
-            return ProjectOrganizationRole::OWNER;
         }
 
         return null;
@@ -329,6 +329,6 @@ class ProjectContextService
 
     private function getCacheKey(int $projectId, int $organizationId): string
     {
-        return "project:{$projectId}:org:{$organizationId}:context";
+        return "project:{$projectId}:org:{$organizationId}:context:v2";
     }
 }
