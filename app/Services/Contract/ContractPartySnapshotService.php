@@ -8,6 +8,7 @@ use App\DTOs\Contract\ContractPartyData;
 use App\Enums\Contract\ContractPartyRoleEnum;
 use App\Enums\Contract\ContractPartySideEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
+use App\Enums\ProjectOrganizationRole;
 use App\Models\Contract;
 use App\Models\Organization;
 use App\Models\Supplier;
@@ -58,7 +59,14 @@ class ContractPartySnapshotService
                     : $this->fromOrganization($owner, ContractPartyRoleEnum::GENERAL_CONTRACTOR),
             ],
             ContractSideTypeEnum::CONTRACT => [
-                $this->fromOrganization($owner, ContractPartyRoleEnum::GENERAL_CONTRACTOR),
+                $this->fromOrganization(
+                    $this->resolveSuperiorOrganization(
+                        $contract,
+                        $owner,
+                        ProjectOrganizationRole::GENERAL_CONTRACTOR
+                    ),
+                    ContractPartyRoleEnum::GENERAL_CONTRACTOR
+                ),
                 $this->fromContractor($contract, ContractPartyRoleEnum::CONTRACTOR),
             ],
             ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY => [
@@ -78,6 +86,19 @@ class ContractPartySnapshotService
                 $this->fromSupplier($contract, ContractPartyRoleEnum::SUPPLIER),
             ],
         };
+    }
+
+    private function resolveSuperiorOrganization(
+        Contract $contract,
+        Organization $owner,
+        ProjectOrganizationRole $role
+    ): Organization {
+        $project = $contract->project;
+        if ($project === null) {
+            return $owner;
+        }
+
+        return app(ProjectContractPartyResolver::class)->resolveSuperiorOrganization($project, $role, $owner);
     }
 
     private function fromProjectCustomer(Contract $contract, Organization $owner): ContractPartyData

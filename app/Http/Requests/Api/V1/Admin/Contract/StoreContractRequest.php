@@ -9,7 +9,9 @@ use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
+use App\Models\Project;
 use App\Rules\ParentContractValid;
+use App\Services\Contract\ProjectContractPartyResolver;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -97,7 +99,7 @@ class StoreContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::CONTRACT) {
-                if (! $contractorId && ! $isSelfExecution) {
+                if (! $contractorId && ! $isSelfExecution && ! $this->shouldAutofillContractorId($sideType)) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
                 }
 
@@ -107,7 +109,7 @@ class StoreContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::SUBCONTRACT) {
-                if (! $contractorId) {
+                if (! $contractorId && ! $this->shouldAutofillContractorId($sideType)) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
                 }
 
@@ -301,6 +303,30 @@ class StoreContractRequest extends FormRequest
         }
 
         return array_map('intval', array_filter($projectIds, 'is_numeric'));
+    }
+
+    private function shouldAutofillContractorId(?ContractSideTypeEnum $sideType): bool
+    {
+        if (! $sideType instanceof ContractSideTypeEnum) {
+            return false;
+        }
+
+        $projectId = $this->routeProjectId() ?? (is_numeric($this->input('project_id')) ? (int) $this->input('project_id') : null);
+        $organizationId = $this->currentOrganizationId();
+        if ($projectId === null || $organizationId < 1) {
+            return false;
+        }
+
+        $project = Project::query()->find($projectId);
+        if (! $project instanceof Project) {
+            return false;
+        }
+
+        return app(ProjectContractPartyResolver::class)->shouldAutofillSelfAsContractor(
+            $project,
+            $organizationId,
+            $sideType
+        );
     }
 
     private function availableContractorRule(int $organizationId): \Closure

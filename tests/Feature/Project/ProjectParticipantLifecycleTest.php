@@ -242,6 +242,56 @@ class ProjectParticipantLifecycleTest extends TestCase
         ]);
     }
 
+    public function test_invitation_list_hides_cancelled_and_allows_role_change(): void
+    {
+        $pendingInvitation = $this->invitationService->create(
+            $this->project,
+            $this->ownerOrganization->id,
+            $this->ownerUser,
+            [
+                'role' => ProjectOrganizationRole::CUSTOMER->value,
+                'organization_name' => 'ООО Будущий Заказчик',
+                'email' => 'pending-invite@example.com',
+            ]
+        );
+
+        $cancelledInvitation = $this->invitationService->create(
+            $this->project,
+            $this->ownerOrganization->id,
+            $this->ownerUser,
+            [
+                'role' => ProjectOrganizationRole::CUSTOMER->value,
+                'organization_name' => 'ГУП Отменённый',
+                'email' => 'cancelled-invite@example.com',
+            ]
+        );
+        $this->invitationService->cancel($this->project, $cancelledInvitation, $this->ownerUser);
+
+        $visible = $this->invitationService->list($this->project);
+
+        $this->assertTrue($visible->contains('id', $pendingInvitation->id));
+        $this->assertFalse($visible->contains('id', $cancelledInvitation->id));
+
+        $updated = $this->invitationService->updateRole(
+            $this->project,
+            $pendingInvitation,
+            ProjectOrganizationRole::CONTRACTOR->value
+        );
+
+        $this->assertSame(ProjectOrganizationRole::CONTRACTOR->value, $updated->role);
+
+        try {
+            $this->invitationService->updateRole(
+                $this->project,
+                $cancelledInvitation->fresh(),
+                ProjectOrganizationRole::CONTRACTOR->value
+            );
+            $this->fail('Ожидалась ошибка при смене роли отменённого приглашения.');
+        } catch (BusinessLogicException $exception) {
+            $this->assertSame(409, $exception->getCode());
+        }
+    }
+
     private function createOrganizationUser(Organization $organization, ?string $email = null): User
     {
         $user = User::factory()->create([
