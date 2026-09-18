@@ -6,12 +6,14 @@ namespace Tests\Feature\Project;
 
 use App\Enums\ProjectOrganizationRole;
 use App\Exceptions\BusinessLogicException;
+use App\Mail\ProjectParticipantInvitationMail;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectParticipantInvitation;
 use App\Models\User;
 use App\Services\Project\ProjectParticipantInvitationService;
 use App\Services\Project\ProjectParticipantService;
+use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 class ProjectParticipantLifecycleTest extends TestCase
@@ -290,6 +292,47 @@ class ProjectParticipantLifecycleTest extends TestCase
         } catch (BusinessLogicException $exception) {
             $this->assertSame(409, $exception->getCode());
         }
+    }
+
+    public function test_create_and_resend_send_invitation_email(): void
+    {
+        Mail::fake();
+        config()->set('app.customer_frontend_url', 'https://customer.test');
+
+        $invitation = $this->invitationService->create(
+            $this->project,
+            $this->ownerOrganization->id,
+            $this->ownerUser,
+            [
+                'role' => ProjectOrganizationRole::CUSTOMER->value,
+                'organization_name' => 'ООО Будущий Заказчик',
+                'email' => 'guest@example.com',
+                'message' => 'Ждём вас на объекте.',
+            ]
+        );
+
+        $originalToken = (string) $invitation->token;
+
+        Mail::assertSent(ProjectParticipantInvitationMail::class, function (ProjectParticipantInvitationMail $mail) use ($originalToken): bool {
+            $mail->assertHasSubject(trans_message('project_invitations.email.subject'));
+            $mail->assertSeeInHtml(trans_message('project_invitations.email.accept_button'));
+            $mail->assertSeeInHtml('Ждём вас на объекте.');
+
+            return $mail->hasTo('guest@example.com')
+                && $mail->acceptUrl === 'https://customer.test/invitations/'.urlencode($originalToken);
+        });
+
+        $this->invitationService->resend($this->project, $invitation, $this->ownerUser);
+
+        Mail::assertSent(ProjectParticipantInvitationMail::class, 2);
+        $resent = $invitation->fresh();
+        $this->assertNotSame($originalToken, $resent?->token);
+
+        Mail::assertSent(ProjectParticipantInvitationMail::class, function (ProjectParticipantInvitationMail $mail) use ($resent): bool {
+            return $mail->hasTo('guest@example.com')
+                && $resent !== null
+                && $mail->acceptUrl === 'https://customer.test/invitations/'.urlencode((string) $resent->token);
+        });
     }
 
     private function createOrganizationUser(Organization $organization, ?string $email = null): User

@@ -6,6 +6,7 @@ namespace App\Services\Project;
 
 use App\Enums\ProjectOrganizationRole;
 use App\Exceptions\BusinessLogicException;
+use App\Mail\ProjectParticipantInvitationMail;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectParticipantInvitation;
@@ -13,6 +14,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
 class ProjectParticipantInvitationService
@@ -95,7 +97,7 @@ class ProjectParticipantInvitationService
             throw new BusinessLogicException('Активное приглашение для этого участника уже существует.', 409);
         }
 
-        return ProjectParticipantInvitation::create([
+        $invitation = ProjectParticipantInvitation::create([
             'project_id' => $project->id,
             'organization_id' => $organizationId,
             'invited_by_user_id' => $user->id,
@@ -112,6 +114,10 @@ class ProjectParticipantInvitationService
             'metadata' => $payload['metadata'] ?? null,
             'expires_at' => now()->addDays(self::DEFAULT_TTL_DAYS),
         ]);
+
+        $this->sendInvitationEmail($invitation);
+
+        return $this->freshInvitation($invitation);
     }
 
     public function cancel(Project $project, ProjectParticipantInvitation $invitation, User $user): ProjectParticipantInvitation
@@ -188,6 +194,8 @@ class ProjectParticipantInvitationService
             'project_id' => $project->id,
             'user_id' => $user->id,
         ]);
+
+        $this->sendInvitationEmail($invitation);
 
         return $this->freshInvitation($invitation);
     }
@@ -528,5 +536,43 @@ class ProjectParticipantInvitationService
             'invitedBy:id,name',
             'cancelledBy:id,name',
         ]);
+    }
+
+    private function sendInvitationEmail(ProjectParticipantInvitation $invitation): void
+    {
+        $invitation->loadMissing([
+            'project:id,name',
+            'organization:id,name',
+            'invitedBy:id,name',
+            'invitedOrganization:id,name,email',
+        ]);
+
+        $email = $this->resolveInvitationRecipientEmail($invitation);
+
+        if ($email === null) {
+            Log::warning('project.participant_invitation.email_skipped', [
+                'invitation_id' => $invitation->id,
+                'project_id' => $invitation->project_id,
+            ]);
+
+            return;
+        }
+
+        $acceptUrl = rtrim((string) config('app.customer_frontend_url', config('app.url')), '/')
+            .'/invitations/'
+            .urlencode((string) $invitation->token);
+
+        Mail::to($email)->send(new ProjectParticipantInvitationMail($invitation, $acceptUrl));
+    }
+
+    private function resolveInvitationRecipientEmail(ProjectParticipantInvitation $invitation): ?string
+    {
+        foreach ([$invitation->email, $invitation->invitedOrganization?->email] as $candidate) {
+            if (is_string($candidate) && trim($candidate) !== '') {
+                return trim($candidate);
+            }
+        }
+
+        return null;
     }
 }
