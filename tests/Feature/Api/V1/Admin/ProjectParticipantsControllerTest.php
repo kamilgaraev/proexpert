@@ -35,6 +35,59 @@ class ProjectParticipantsControllerTest extends TestCase
         ]);
     }
 
+    public function test_owner_without_participant_record_is_listed_with_manage_rights(): void
+    {
+        $this->assertDatabaseMissing('project_organization', [
+            'project_id' => $this->project->id,
+            'organization_id' => $this->ownerOrganization->id,
+        ]);
+
+        $response = $this->actingAs($this->user, 'api_admin')
+            ->getJson("/api/v1/admin/projects/{$this->project->id}/participants");
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.can_manage', true);
+
+        $ownerParticipant = collect($response->json('data.participants'))
+            ->firstWhere('id', $this->ownerOrganization->id);
+
+        $this->assertNotNull($ownerParticipant);
+        $this->assertSame('owner', $ownerParticipant['role']['value']);
+        $this->assertTrue((bool) $ownerParticipant['is_owner']);
+    }
+
+    public function test_owner_keeps_manage_rights_with_customer_participant_record(): void
+    {
+        app(\App\Services\Project\ProjectParticipantService::class)->attach(
+            $this->project,
+            $this->ownerOrganization->id,
+            \App\Enums\ProjectOrganizationRole::CUSTOMER,
+            $this->user,
+            true,
+        );
+
+        $this->assertSame(
+            \App\Enums\ProjectOrganizationRole::OWNER,
+            app(\App\Services\Project\ProjectContextService::class)
+                ->getOrganizationRole($this->project, $this->ownerOrganization)
+        );
+
+        $response = $this->actingAs($this->user, 'api_admin')
+            ->getJson("/api/v1/admin/projects/{$this->project->id}/participants");
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.can_manage', true);
+
+        $ownerParticipant = collect($response->json('data.participants'))
+            ->firstWhere('id', $this->ownerOrganization->id);
+
+        $this->assertNotNull($ownerParticipant);
+        $this->assertSame('customer', $ownerParticipant['role']['value']);
+        $this->assertTrue((bool) $ownerParticipant['is_owner']);
+    }
+
     public function test_participants_list_exposes_capabilities_and_allowed_project_roles(): void
     {
         $designerOrganization = Organization::factory()->create([

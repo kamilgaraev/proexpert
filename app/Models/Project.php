@@ -16,31 +16,6 @@ use App\Traits\HasOnboardingDemo;
 class Project extends Model
 {
     use HasFactory, SoftDeletes, HasOnboardingDemo;
-    
-    /**
-     * Boot метод - события модели
-     */
-    protected static function boot()
-    {
-        parent::boot();
-        
-        // При создании проекта автоматически добавляем owner в project_organization
-        static::created(function ($project) {
-            if ($project->organization_id) {
-                \Illuminate\Support\Facades\DB::table('project_organization')->insert([
-                    'project_id' => $project->id,
-                    'organization_id' => $project->organization_id,
-                    'role' => 'owner',
-                    'role_new' => 'owner',
-                    'is_active' => true,
-                    'invited_at' => $project->created_at,
-                    'accepted_at' => $project->created_at,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
-        });
-    }
 
     protected $fillable = [
         'organization_id',
