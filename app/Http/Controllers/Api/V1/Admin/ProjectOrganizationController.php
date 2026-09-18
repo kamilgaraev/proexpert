@@ -76,6 +76,7 @@ class ProjectOrganizationController extends Controller
                     static fn (ProjectOrganizationRole $role): string => $role->value,
                     ProjectOrganizationRole::cases()
                 )),
+                'confirmed_capabilities' => 'sometimes|boolean',
             ]);
 
             if ($validator->fails()) {
@@ -86,7 +87,8 @@ class ProjectOrganizationController extends Controller
                 $project,
                 (int) $request->input('organization_id'),
                 ProjectOrganizationRole::from((string) $request->input('role')),
-                $request->user()
+                $request->user(),
+                $request->boolean('confirmed_capabilities')
             );
 
             return AdminResponse::success(null, trans_message('project.participant_added'));
@@ -172,6 +174,7 @@ class ProjectOrganizationController extends Controller
                     static fn (ProjectOrganizationRole $role): string => $role->value,
                     ProjectOrganizationRole::cases()
                 )),
+                'confirmed_capabilities' => 'sometimes|boolean',
             ]);
 
             if ($validator->fails()) {
@@ -182,7 +185,8 @@ class ProjectOrganizationController extends Controller
                 $project,
                 $organization,
                 ProjectOrganizationRole::from((string) $request->input('role')),
-                $request->user()
+                $request->user(),
+                $request->boolean('confirmed_capabilities')
             );
 
             return AdminResponse::success(null, trans_message('project.participant_role_updated'));

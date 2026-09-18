@@ -31,7 +31,8 @@ class ProjectParticipantService
         Project $project,
         int $organizationId,
         ProjectOrganizationRole $role,
-        ?User $user = null
+        ?User $user = null,
+        bool $confirmedCapabilities = false
     ): void {
         $organization = $this->findOrganization($organizationId);
         $existingParticipant = $this->findParticipantRecord($project->id, $organizationId, true, true);
@@ -41,7 +42,7 @@ class ProjectParticipantService
         }
 
         $this->enforceUniqueCustomer($project, $role, $organizationId);
-        $this->validateRoleCapability($organization, $role);
+        $this->validateRoleCapabilityUnlessConfirmed($organization, $role, $confirmedCapabilities);
 
         $now = now();
         $payload = [
@@ -100,7 +101,8 @@ class ProjectParticipantService
         Project $project,
         int $organizationId,
         ProjectOrganizationRole $newRole,
-        ?User $user = null
+        ?User $user = null,
+        bool $confirmedCapabilities = false
     ): void {
         $participantRecord = $this->findParticipantRecord($project->id, $organizationId, false, true);
 
@@ -108,7 +110,7 @@ class ProjectParticipantService
             if ($organizationId === (int) $project->organization_id) {
                 $participant = $this->findOrganization($organizationId);
                 $this->enforceUniqueCustomer($project, $newRole, $organizationId);
-                $this->validateRoleCapability($participant, $newRole);
+                $this->validateRoleCapabilityUnlessConfirmed($participant, $newRole, $confirmedCapabilities);
 
                 $now = now();
                 DB::table('project_organization')->insert([
@@ -153,7 +155,7 @@ class ProjectParticipantService
         }
 
         $this->enforceUniqueCustomer($project, $newRole, $organizationId);
-        $this->validateRoleCapability($participant, $newRole);
+        $this->validateRoleCapabilityUnlessConfirmed($participant, $newRole, $confirmedCapabilities);
 
         $updated = ProjectOrganization::query()
             ->whereKey($participantRecord->getKey())
@@ -370,6 +372,18 @@ class ProjectParticipantService
             'observer' => ProjectOrganizationRole::OBSERVER,
             default => null,
         };
+    }
+
+    private function validateRoleCapabilityUnlessConfirmed(
+        Organization $organization,
+        ProjectOrganizationRole $role,
+        bool $confirmedCapabilities
+    ): void {
+        if ($confirmedCapabilities) {
+            return;
+        }
+
+        $this->validateRoleCapability($organization, $role);
     }
 
     private function validateRoleCapability(Organization $organization, ProjectOrganizationRole $role): void
