@@ -9,7 +9,9 @@ use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
+use App\Models\Project;
 use App\Rules\ParentContractValid;
+use App\Services\Contract\ProjectContractPartyResolver;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Log;
@@ -110,7 +112,7 @@ class UpdateContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::CONTRACT) {
-                if (! $contractorId && ! $isSelfExecution) {
+                if (! $contractorId && ! $isSelfExecution && ! $this->shouldAutofillContractorId($sideType)) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
                 }
 
@@ -120,7 +122,7 @@ class UpdateContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::SUBCONTRACT) {
-                if (! $contractorId) {
+                if (! $contractorId && ! $this->shouldAutofillContractorId($sideType)) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
                 }
 
@@ -260,6 +262,33 @@ class UpdateContractRequest extends FormRequest
             $this->attributes->get('current_organization_id')
             ?? $this->user()?->current_organization_id
             ?? $contract->organization_id
+        );
+    }
+
+    private function shouldAutofillContractorId(?ContractSideTypeEnum $sideType): bool
+    {
+        if (! $sideType instanceof ContractSideTypeEnum) {
+            return false;
+        }
+
+        $contract = $this->resolveContract();
+        $projectId = $this->routeProjectId()
+            ?? (is_numeric($this->input('project_id')) ? (int) $this->input('project_id') : null)
+            ?? ($contract?->project_id !== null ? (int) $contract->project_id : null);
+        $organizationId = $this->currentOrganizationId();
+        if ($projectId === null || $organizationId < 1) {
+            return false;
+        }
+
+        $project = Project::query()->find($projectId);
+        if (! $project instanceof Project) {
+            return false;
+        }
+
+        return app(ProjectContractPartyResolver::class)->shouldAutofillSelfAsContractor(
+            $project,
+            $organizationId,
+            $sideType
         );
     }
 

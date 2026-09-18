@@ -462,12 +462,20 @@ class ContractSideMutationService
             }
 
             if (! $contractorId) {
+                $contractorId = $this->resolveAutofilledContractorId($organizationId, $contractDTO, $sideType);
+            }
+
+            if (! $contractorId) {
                 throw new Exception('Для договора с подрядчиком нужно выбрать подрядчика.');
             }
         }
 
         if ($sideType === ContractSideTypeEnum::SUBCONTRACT) {
             $supplierId = null;
+
+            if (! $contractorId) {
+                $contractorId = $this->resolveAutofilledContractorId($organizationId, $contractDTO, $sideType);
+            }
 
             if (! $contractorId) {
                 throw new Exception('Для договора с субподрядчиком нужно выбрать субподрядчика.');
@@ -571,9 +579,9 @@ class ContractSideMutationService
 
         $allowedRoles = match ($sideType) {
             ContractSideTypeEnum::GENERAL_CONTRACT => ['owner', 'customer', 'general_contractor', 'contractor'],
-            ContractSideTypeEnum::CONTRACT,
+            ContractSideTypeEnum::CONTRACT => ['owner', 'general_contractor', 'contractor'],
             ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY => ['owner', 'general_contractor'],
-            ContractSideTypeEnum::SUBCONTRACT,
+            ContractSideTypeEnum::SUBCONTRACT => ['owner', 'contractor', 'subcontractor'],
             ContractSideTypeEnum::CONTRACTOR_SUPPLY => ['owner', 'contractor'],
             ContractSideTypeEnum::SUBCONTRACTOR_SUPPLY => ['owner', 'subcontractor'],
         };
@@ -581,6 +589,32 @@ class ContractSideMutationService
         if (! in_array($role, $allowedRoles, true)) {
             throw new Exception('Текущая роль в проекте не позволяет создать договор с выбранными сторонами.');
         }
+    }
+
+    private function resolveAutofilledContractorId(
+        int $organizationId,
+        ContractDTO $contractDTO,
+        ContractSideTypeEnum $sideType
+    ): ?int {
+        $project = $this->resolvePrimaryProject($contractDTO);
+        if (! $project instanceof Project) {
+            return null;
+        }
+
+        if (! app(ProjectContractPartyResolver::class)->shouldAutofillSelfAsContractor(
+            $project,
+            $organizationId,
+            $sideType
+        )) {
+            return null;
+        }
+
+        $organization = Organization::query()->find($organizationId);
+        if (! $organization instanceof Organization) {
+            return null;
+        }
+
+        return $this->getOrCreateParticipantContractor($organizationId, $organization)->id;
     }
 
     private function resolveSelfExecutionContractorId(int $organizationId): int

@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\ProjectParticipantInvitation\StoreProjectParticipantInvitationRequest;
+use App\Http\Requests\Api\V1\Admin\ProjectParticipantInvitation\UpdateProjectParticipantInvitationRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\Organization;
 use App\Models\Project;
@@ -123,6 +124,39 @@ class ProjectParticipantInvitationController extends Controller
             ], trans_message('project.participant_added'));
         } catch (Throwable $exception) {
             Log::error('project.participant_invitations.resend.failed', [
+                'project_id' => $project->id,
+                'invitation_id' => $invitation->id ?? null,
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error($exception->getMessage(), $exception->getCode() ?: 400);
+        }
+    }
+
+    public function updateRole(
+        UpdateProjectParticipantInvitationRequest $request,
+        Project $project,
+        ProjectParticipantInvitation $invitation
+    ): JsonResponse {
+        try {
+            [$currentOrg, $projectContext] = $this->resolveAccessContext($request, $project);
+
+            if (!$projectContext->roleConfig->canInviteParticipants) {
+                return AdminResponse::error(trans_message('project.no_invite_permission'), 403);
+            }
+
+            $updatedInvitation = $this->invitationService->updateRole(
+                $project,
+                $invitation,
+                (string) $request->validated('role')
+            );
+
+            return AdminResponse::success([
+                'invitation' => $this->mapInvitation($updatedInvitation),
+            ], trans_message('project.invitation_role_updated'));
+        } catch (Throwable $exception) {
+            Log::error('project.participant_invitations.update_role.failed', [
                 'project_id' => $project->id,
                 'invitation_id' => $invitation->id ?? null,
                 'user_id' => $request->user()?->id,

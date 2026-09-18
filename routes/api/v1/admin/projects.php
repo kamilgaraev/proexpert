@@ -120,6 +120,9 @@ Route::post('/projects/{project}/participant-invitations/{invitation}/cancel', [
 Route::post('/projects/{project}/participant-invitations/{invitation}/resend', [ProjectParticipantInvitationController::class, 'resend'])
     ->middleware(['project.context', 'authorize:projects.organizations.manage'])
     ->name('projects.participant-invitations.resend');
+Route::patch('/projects/{project}/participant-invitations/{invitation}', [ProjectParticipantInvitationController::class, 'updateRole'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.participant-invitations.update-role');
 
 // Получить детализированные работы дочерних организаций
 Route::get('/projects/{id}/child-works/statistics', [ProjectChildWorksController::class, 'statistics'])

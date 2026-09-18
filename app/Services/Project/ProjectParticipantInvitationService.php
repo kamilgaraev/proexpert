@@ -35,6 +35,10 @@ class ProjectParticipantInvitationService
                 'cancelledBy:id,name',
             ])
             ->where('project_id', $project->id)
+            ->whereIn('status', [
+                ProjectParticipantInvitation::STATUS_PENDING,
+                ProjectParticipantInvitation::STATUS_EXPIRED,
+            ])
             ->latest()
             ->get();
     }
@@ -183,6 +187,39 @@ class ProjectParticipantInvitationService
             'invitation_id' => $invitation->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
+        ]);
+
+        return $this->freshInvitation($invitation);
+    }
+
+    public function updateRole(
+        Project $project,
+        ProjectParticipantInvitation $invitation,
+        string $roleValue
+    ): ProjectParticipantInvitation {
+        $this->assertInvitationBelongsToProject($project, $invitation);
+        $this->expirePendingInvitations(invitation: $invitation);
+        $invitation->refresh();
+
+        if (! $invitation->isPending()) {
+            throw new BusinessLogicException(trans_message('project.invitation_role_not_pending'), 409);
+        }
+
+        $role = ProjectOrganizationRole::from($roleValue);
+
+        if ($invitation->invitedOrganization instanceof Organization) {
+            $this->projectParticipantService->assertCanAssumeRole($invitation->invitedOrganization, $role);
+            $this->projectParticipantService->enforceUniqueCustomer(
+                $project,
+                $role,
+                $invitation->invitedOrganization->id
+            );
+        } elseif ($role === ProjectOrganizationRole::CUSTOMER) {
+            $this->projectParticipantService->enforceUniqueCustomer($project, $role);
+        }
+
+        $invitation->update([
+            'role' => $role->value,
         ]);
 
         return $this->freshInvitation($invitation);

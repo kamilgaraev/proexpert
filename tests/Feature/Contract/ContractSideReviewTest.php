@@ -292,4 +292,75 @@ class ContractSideReviewTest extends TestCase
         $this->assertSame($customer->id, $resolved->firstParty?->counterparty_id);
         $this->assertSame($generalContractorOrganization->id, $resolved->secondParty?->linked_organization_id);
     }
+
+    public function test_contractor_contract_uses_unique_registry_general_contractor_and_autofills_self(): void
+    {
+        $generalContractorOrganization = Organization::factory()->create([
+            'name' => 'ООО Генподрядчик',
+        ]);
+        $contractorOrganization = Organization::factory()->create([
+            'name' => 'ООО Подрядчик',
+        ]);
+
+        $project = Project::factory()->create([
+            'organization_id' => $generalContractorOrganization->id,
+        ]);
+
+        $participantService = app(ProjectParticipantService::class);
+        $participantService->attach(
+            $project,
+            $generalContractorOrganization->id,
+            ProjectOrganizationRole::GENERAL_CONTRACTOR,
+            null,
+            true
+        );
+        $participantService->attach(
+            $project,
+            $contractorOrganization->id,
+            ProjectOrganizationRole::CONTRACTOR,
+            null,
+            true
+        );
+
+        $contract = app(ContractSideMutationService::class)->create(
+            $contractorOrganization->id,
+            new ContractDTO(
+                project_id: $project->id,
+                contractor_id: null,
+                parent_contract_id: null,
+                number: 'SUB-GC-1',
+                date: now()->toDateString(),
+                subject: 'Субподряд с генподрядчиком',
+                work_type_category: null,
+                payment_terms: null,
+                base_amount: 100000.0,
+                total_amount: 100000.0,
+                gp_percentage: null,
+                gp_calculation_type: GpCalculationTypeEnum::PERCENTAGE,
+                gp_coefficient: null,
+                warranty_retention_calculation_type: null,
+                warranty_retention_percentage: null,
+                warranty_retention_coefficient: null,
+                subcontract_amount: null,
+                planned_advance_amount: null,
+                actual_advance_amount: null,
+                status: ContractStatusEnum::ACTIVE,
+                start_date: null,
+                end_date: null,
+                notes: null,
+                contract_side_type: ContractSideTypeEnum::CONTRACT,
+            )
+        );
+
+        $contract->load(['firstParty', 'secondParty', 'contractor']);
+
+        $this->assertSame($contractorOrganization->id, $contract->organization_id);
+        $this->assertNotNull($contract->contractor_id);
+        $this->assertSame($contractorOrganization->id, $contract->contractor?->source_organization_id);
+        $this->assertSame($generalContractorOrganization->id, $contract->firstParty?->linked_organization_id);
+        $this->assertSame(ContractPartyRoleEnum::GENERAL_CONTRACTOR, $contract->firstParty?->role);
+        $this->assertSame('ООО Генподрядчик', $contract->firstParty?->name);
+        $this->assertSame($contractorOrganization->id, $contract->secondParty?->linked_organization_id);
+        $this->assertSame(ContractPartyRoleEnum::CONTRACTOR, $contract->secondParty?->role);
+    }
 }
