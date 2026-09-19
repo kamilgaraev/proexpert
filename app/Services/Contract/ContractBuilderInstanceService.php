@@ -23,6 +23,12 @@ final class ContractBuilderInstanceService
 
     public function state(User $actor, int $organizationId, int $contractId): array
     {
+        $this->authorize($actor, $organizationId, 'contracts.view');
+        $legacy = Contract::whereKey($contractId)->where('organization_id', $organizationId)
+            ->whereDoesntHave('organizationViews')->exists();
+        if ($legacy) {
+            return ['requires_enrollment' => true, 'can_create' => false, 'can_adopt' => false, 'can_edit_draft' => false, 'revision' => null];
+        }
         $view = $this->views->find($actor, $organizationId, $contractId);
         $instance = DB::table('contract_builder_instances')->where('contract_id', $contractId)->first();
         if ($instance !== null) {
