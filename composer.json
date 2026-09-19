@@ -25,6 +25,7 @@
         "openai-php/client": "^0.17.1",
         "opis/json-schema": "^2.6",
         "phpoffice/phpspreadsheet": "^3.9",
+        "phpoffice/phpword": "^1.4",
         "predis/predis": "^3.2",
         "resend/resend-php": "^0.15.1",
         "sentry/sentry-laravel": "^4.18",

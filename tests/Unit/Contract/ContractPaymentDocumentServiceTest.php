@@ -27,6 +27,7 @@ final class ContractPaymentDocumentServiceTest extends TestCase
             'project_id' => 9,
             'contractor_id' => 11,
             'number' => 'C-17',
+            'currency' => 'USD',
         ]);
         $document = new PaymentDocument;
         $document->forceFill([
@@ -40,6 +41,7 @@ final class ContractPaymentDocumentServiceTest extends TestCase
             ->once()
             ->withArgs(static function (Contract $actualContract, $invoiceType, array $data) use ($contract): bool {
                 return $actualContract === $contract
+                    && $data['currency'] === 'USD'
                     && $data['status'] === PaymentDocumentStatus::DRAFT
                     && $data['amount'] === '9999999999999.99'
                     && $data['origin_key'] === 'contract-payment:17:retry-17'

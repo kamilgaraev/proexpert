@@ -88,6 +88,8 @@ class ContractSideMutationService
 
             $this->syncProjects($contract, $contractDTO, $projectIds, $targetOrganizationId);
             $this->contractPartySnapshotService->syncParties($contract->refresh(), true);
+            $this->assertRequestedDirection($contract, $contractDTO);
+            app(ContractOrganizationViewService::class)->synchronizeNewContract($contract);
 
             if (is_array($advancePayments)) {
                 foreach ($advancePayments as $advance) {
@@ -151,15 +153,8 @@ class ContractSideMutationService
     {
         $contract = $this->contractAccessService->findAccessible($contractId, $organizationId);
 
-        if (! $contract) {
+        if (! $contract || (int) $contract->organization_id !== $organizationId) {
             throw new Exception('Contract not found.');
-        }
-
-        $sideChanged = $contractDTO->contract_side_type !== null
-            && $contract->contract_side_type !== $contractDTO->contract_side_type;
-
-        if ($sideChanged && ($contract->performanceActs()->exists() || $contract->payments()->exists())) {
-            throw new Exception('Нельзя менять стороны договора после появления актов или платежей.');
         }
 
         $contractDTO = $this->resolveContractParties($organizationId, $contractDTO, null);
@@ -190,9 +185,18 @@ class ContractSideMutationService
 
             $contract = $contract->newQuery()->whereKey($contract->id)
                 ->where('organization_id', $contract->organization_id)->lockForUpdate()->firstOrFail();
+            if (DB::table('contract_builder_instances')->where('contract_id', $contract->id)->exists()) {
+                throw new \App\Exceptions\ContractBuilderException('contracts.builder_revision_required', 409);
+            }
             $previous = clone $contract;
             $previousTotalAmount = (float) ($contract->total_amount ?? 0);
             $shouldRefreshParties = $this->shouldRefreshContractParties($contract, $contractDTO);
+            $hasExecution = $contract->performanceActs()->exists() || $contract->payments()->exists();
+            $previousParties = $hasExecution ? $this->savedPartyIdentity($contract) : [];
+            if ($hasExecution && ($this->partyInputsChanged($contract, $contractDTO)
+                || (int) $contract->organization_id !== $targetOrganizationId)) {
+                throw new Exception(trans_message('contracts.parties_locked_by_execution'));
+            }
             $this->contractMutations->update(
                 $contract,
                 $updateData,
@@ -202,6 +206,14 @@ class ContractSideMutationService
             );
             $this->syncProjects($contract, $contractDTO, $projectIds, $targetOrganizationId);
             $this->contractPartySnapshotService->syncParties($contract->refresh(), $shouldRefreshParties);
+            $this->assertRequestedDirection($contract, $contractDTO);
+
+            if ($hasExecution && $previousParties !== $this->savedPartyIdentity($contract)) {
+                throw new Exception(trans_message('contracts.parties_locked_by_execution'));
+            }
+            if (\App\Models\ContractOrganizationView::where('contract_id', $contract->id)->exists()) {
+                app(ContractOrganizationViewService::class)->synchronizeNewContract($contract);
+            }
 
             DB::commit();
 
@@ -321,6 +333,7 @@ class ContractSideMutationService
             contract_category: $contract->contract_category,
             contract_side_type: $sideType,
             currency: (string) ($contract->currency ?? 'RUB'),
+            superior_organization_id: $contract->superior_organization_id,
         );
 
         $resolvedDto = $this->resolveContractParties($organizationId, $dto, null);
@@ -396,14 +409,39 @@ class ContractSideMutationService
             return true;
         }
 
+        return $this->partyInputsChanged($contract, $contractDTO);
+    }
+
+    private function partyInputsChanged(Contract $contract, ContractDTO $contractDTO): bool
+    {
         $currentSideType = $contract->contract_side_type instanceof ContractSideTypeEnum
             ? $contract->contract_side_type
             : ($contract->contract_side_type ? ContractSideTypeEnum::tryFrom((string) $contract->contract_side_type) : null);
 
         return $currentSideType !== $contractDTO->contract_side_type
+            || (bool) $contract->is_self_execution !== $contractDTO->is_self_execution
+            || (int) ($contract->superior_organization_id ?? 0) !== (int) ($contractDTO->superior_organization_id ?? 0)
             || (int) ($contract->project_id ?? 0) !== (int) ($contractDTO->project_id ?? 0)
             || (int) ($contract->contractor_id ?? 0) !== (int) ($contractDTO->contractor_id ?? 0)
             || (int) ($contract->supplier_id ?? 0) !== (int) ($contractDTO->supplier_id ?? 0);
+    }
+
+    private function assertRequestedDirection(Contract $contract, ContractDTO $contractDTO): void
+    {
+        $sides = app(ContractSideResolverService::class)->resolve($contract, (int) $contract->organization_id);
+        if (($contractDTO->direction !== null && $contractDTO->direction !== $sides['direction'])
+            || ($contractDTO->superior_organization_id !== null
+                && (!$sides['is_income'] || (int) ($sides['first_party']['organization_id'] ?? 0) !== $contractDTO->superior_organization_id))) {
+            throw new Exception(trans_message('contracts.direction_mismatch'));
+        }
+    }
+
+    private function savedPartyIdentity(Contract $contract): array
+    {
+        return $contract->parties()->orderBy('side')->get([
+            'side', 'role', 'counterparty_id', 'linked_organization_id',
+            'name', 'legal_name', 'inn', 'kpp', 'ogrn',
+        ])->toArray();
     }
 
     private function assertFixedAmountContractIsValid(ContractDTO $contractDTO): void
@@ -532,6 +570,8 @@ class ContractSideMutationService
             contract_category: $contractDTO->contract_category,
             contract_side_type: $sideType,
             currency: $contractDTO->currency,
+            superior_organization_id: $contractDTO->superior_organization_id,
+            direction: $contractDTO->direction,
         );
     }
 
@@ -579,7 +619,8 @@ class ContractSideMutationService
 
         $allowedRoles = match ($sideType) {
             ContractSideTypeEnum::GENERAL_CONTRACT => ['owner', 'customer', 'general_contractor', 'contractor'],
-            ContractSideTypeEnum::CONTRACT => ['owner', 'general_contractor', 'contractor'],
+            ContractSideTypeEnum::CONTRACT => Project::query()->whereKey($projectContext->projectId)->value('contracting_scheme') === 'direct'
+                ? ['owner', 'customer', 'contractor'] : ['owner', 'general_contractor', 'contractor'],
             ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY => ['owner', 'general_contractor'],
             ContractSideTypeEnum::SUBCONTRACT => ['owner', 'contractor', 'subcontractor'],
             ContractSideTypeEnum::CONTRACTOR_SUPPLY => ['owner', 'contractor'],
@@ -604,7 +645,9 @@ class ContractSideMutationService
         if (! app(ProjectContractPartyResolver::class)->shouldAutofillSelfAsContractor(
             $project,
             $organizationId,
-            $sideType
+            $sideType,
+            $contractDTO->superior_organization_id,
+            $contractDTO->direction,
         )) {
             return null;
         }

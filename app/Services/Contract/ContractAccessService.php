@@ -28,22 +28,12 @@ class ContractAccessService
         ]);
 
         $isOwnerOrganization = (int) $contract->organization_id === (int) $organizationId;
-        $isContractorOrganization = ! $contract->is_self_execution
-            && $contract->contractor !== null
-            && (int) ($contract->contractor->source_organization_id ?? 0) === (int) $organizationId;
-
-        if (! $isOwnerOrganization && ! $isContractorOrganization) {
+        if (! $this->canAccess($contract, $organizationId, $projectId)) {
             return null;
         }
 
-        if ($projectId !== null) {
-            $belongsToProject = $contract->is_multi_project
-                ? $contract->projects()->where('projects.id', $projectId)->exists()
-                : (int) $contract->project_id === (int) $projectId;
-
-            if (! $belongsToProject) {
-                return null;
-            }
+        if (!$isOwnerOrganization) {
+            return $contract->load(['firstParty', 'secondParty']);
         }
 
         $contract->load([
@@ -88,8 +78,14 @@ class ContractAccessService
     {
         return $query->where(function (Builder $scope) use ($organizationId): void {
             $scope->where('contracts.organization_id', $organizationId)
-                ->orWhereHas('contractor', function (Builder $contractorQuery) use ($organizationId): void {
-                    $contractorQuery->where('source_organization_id', $organizationId);
+                ->orWhereHas('organizationViews', function (Builder $view) use ($organizationId): void {
+                    $view->where('organization_id', $organizationId)->whereNull('access_revoked_at');
+                })
+                ->orWhere(function (Builder $legacy) use ($organizationId): void {
+                    $legacy->whereDoesntHave('organizationViews')
+                        ->whereHas('contractor', function (Builder $contractorQuery) use ($organizationId): void {
+                            $contractorQuery->where('source_organization_id', $organizationId);
+                        });
                 });
         });
     }
@@ -99,6 +95,11 @@ class ContractAccessService
         $contract->loadMissing('contractor');
 
         $isOwnerOrganization = (int) $contract->organization_id === (int) $organizationId;
+        if (!$isOwnerOrganization && $contract->organizationViews()->exists()) {
+            return $contract->organizationViews()->where('organization_id', $organizationId)
+                ->whereNull('access_revoked_at')->exists()
+                && ($projectId === null || $this->belongsToProject($contract, $projectId));
+        }
         $isContractorOrganization = ! $contract->is_self_execution
             && $contract->contractor !== null
             && (int) ($contract->contractor->source_organization_id ?? 0) === (int) $organizationId;

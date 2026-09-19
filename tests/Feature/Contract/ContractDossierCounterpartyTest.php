@@ -49,6 +49,7 @@ final class ContractDossierCounterpartyTest extends TestCase
             $table->unsignedBigInteger('contract_id');
             $table->string('side');
             $table->string('name');
+            $table->unsignedBigInteger('linked_organization_id')->nullable();
         });
         $database->schema()->create('legal_archive_documents', static function (Blueprint $table): void {
             $table->id();
@@ -79,6 +80,7 @@ final class ContractDossierCounterpartyTest extends TestCase
                         $database->table('contract_parties')->insert([
                             'contract_id' => $contract->id, 'side' => $side,
                             'name' => $side === $externalSide ? $name : 'Наша организация',
+                            'linked_organization_id' => $side === $externalSide ? null : 7,
                         ]);
                     }
 

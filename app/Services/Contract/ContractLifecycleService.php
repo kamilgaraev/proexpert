@@ -28,6 +28,27 @@ final class ContractLifecycleService
     public function transition(Contract $contract, string $action, User $actor, ?string $reason): Contract
     {
         $applyTransition = function (Contract $contract) use ($actor, $action, $reason): Contract {
+            if ($contract->exists && $action === 'activate'
+                && DB::table('contract_builder_instances')->where('contract_id', $contract->id)->exists()) {
+                throw new BusinessLogicException(trans_message('contracts.builder_revision_required'), 409);
+            }
+            if ($contract->exists && $contract->organizationViews()->exists()) {
+                $organizationId = (int) $actor->current_organization_id;
+                if ($action === 'archive') {
+                    $views = app(ContractOrganizationViewService::class);
+                    $view = $views->find($actor, $organizationId, (int) $contract->id);
+                    if ($view->visibility !== 'archived') {
+                        $views->transition($actor, $organizationId, (int) $contract->id, 'archive', $view->version);
+                    } else {
+                        $views->transition($actor, $organizationId, (int) $contract->id, 'archive', $view->version - 1);
+                    }
+
+                    return $contract->refresh();
+                }
+                if ((int) $contract->organization_id !== $organizationId) {
+                    throw new BusinessLogicException(trans_message('contracts.shared_lifecycle_owner_required'), 403);
+                }
+            }
             $currentStatus = $contract->status instanceof ContractStatusEnum
                 ? $contract->status->value
                 : (string) $contract->status;

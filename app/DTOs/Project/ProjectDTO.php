@@ -24,12 +24,14 @@ class ProjectDTO
         public readonly ?string $external_code,
         public readonly ?int $cost_category_id,
         public readonly ?array $accounting_data,
-        public readonly ?bool $use_in_accounting_reports
+        public readonly ?bool $use_in_accounting_reports,
+        public readonly ?string $contracting_scheme = null,
     ) {}
 
     public function toArray(): array
     {
         return [
+            ...($this->contracting_scheme !== null ? ['contracting_scheme' => $this->contracting_scheme] : []),
             'name' => $this->name,
             'address' => $this->address,
             'latitude' => $this->latitude,

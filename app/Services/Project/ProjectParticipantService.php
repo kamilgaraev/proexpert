@@ -34,6 +34,19 @@ class ProjectParticipantService
         ?User $user = null,
         bool $confirmedCapabilities = false
     ): void {
+        DB::transaction(function () use ($project, $organizationId, $role, $user, $confirmedCapabilities): void {
+            Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
+            $this->attachLocked($project, $organizationId, $role, $user, $confirmedCapabilities);
+        });
+    }
+
+    private function attachLocked(
+        Project $project,
+        int $organizationId,
+        ProjectOrganizationRole $role,
+        ?User $user = null,
+        bool $confirmedCapabilities = false
+    ): void {
         $organization = $this->findOrganization($organizationId);
         $existingParticipant = $this->findParticipantRecord($project->id, $organizationId, true, true);
 
@@ -98,6 +111,19 @@ class ProjectParticipantService
     }
 
     public function updateRole(
+        Project $project,
+        int $organizationId,
+        ProjectOrganizationRole $newRole,
+        ?User $user = null,
+        bool $confirmedCapabilities = false
+    ): void {
+        DB::transaction(function () use ($project, $organizationId, $newRole, $user, $confirmedCapabilities): void {
+            Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
+            $this->updateRoleLocked($project, $organizationId, $newRole, $user, $confirmedCapabilities);
+        });
+    }
+
+    private function updateRoleLocked(
         Project $project,
         int $organizationId,
         ProjectOrganizationRole $newRole,
@@ -189,6 +215,14 @@ class ProjectParticipantService
     }
 
     public function setActiveState(Project $project, int $organizationId, bool $isActive): void
+    {
+        DB::transaction(function () use ($project, $organizationId, $isActive): void {
+            Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
+            $this->setActiveStateLocked($project, $organizationId, $isActive);
+        });
+    }
+
+    private function setActiveStateLocked(Project $project, int $organizationId, bool $isActive): void
     {
         if ($organizationId === $project->organization_id) {
             throw new BusinessLogicException(trans_message('project.owner_active_state_forbidden'), 400);
@@ -287,6 +321,19 @@ class ProjectParticipantService
         ProjectOrganizationRole $role,
         ?int $organizationId = null
     ): void {
+        if ($role === ProjectOrganizationRole::GENERAL_CONTRACTOR) {
+            $conflict = ProjectOrganization::query()
+                ->where('project_id', $project->id)
+                ->where('is_active', true)
+                ->when($organizationId !== null, fn ($query) => $query->where('organization_id', '!=', $organizationId))
+                ->whereRaw("COALESCE(NULLIF(role_new, ''), role) = ?", [$role->value])
+                ->exists();
+            if ($conflict) {
+                throw new BusinessLogicException(trans_message('project.unique_general_contractor_conflict'), 409);
+            }
+
+            return;
+        }
         if ($role !== ProjectOrganizationRole::CUSTOMER) {
             return;
         }

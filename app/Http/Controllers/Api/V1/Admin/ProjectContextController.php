@@ -28,7 +28,7 @@ class ProjectContextController extends Controller
         }
         
         return AdminResponse::success([
-            'context' => $projectContext->toArray(),
+            'context' => $projectContext->toArray() + ['contracting_scheme' => $project->contracting_scheme ?? 'general_contractor'],
             'project' => [
                 'id' => $project->id,
                 'name' => $project->name,

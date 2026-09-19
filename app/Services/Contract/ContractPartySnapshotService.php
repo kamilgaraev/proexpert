@@ -12,7 +12,7 @@ use App\Enums\ProjectOrganizationRole;
 use App\Models\Contract;
 use App\Models\Organization;
 use App\Models\Supplier;
-use Exception;
+use DomainException as Exception;
 
 class ContractPartySnapshotService
 {
@@ -39,11 +39,16 @@ class ContractPartySnapshotService
 
         [$firstParty, $secondParty] = $this->resolveParties($contract, $sideType);
 
+        if (!$contract->is_self_execution && $firstParty->linkedOrganizationId !== null
+            && $firstParty->linkedOrganizationId === $secondParty->linkedOrganizationId) {
+            throw new Exception(trans_message('contracts.direction_mismatch'));
+        }
+
         $this->persistParty($contract, ContractPartySideEnum::FIRST, $firstParty);
         $this->persistParty($contract, ContractPartySideEnum::SECOND, $secondParty);
     }
 
-    private function resolveParties(Contract $contract, ContractSideTypeEnum $sideType): array
+    public function resolveParties(Contract $contract, ContractSideTypeEnum $sideType): array
     {
         $owner = $contract->organization;
 
@@ -63,9 +68,11 @@ class ContractPartySnapshotService
                     $this->resolveSuperiorOrganization(
                         $contract,
                         $owner,
-                        ProjectOrganizationRole::GENERAL_CONTRACTOR
+                        $contract->project?->contracting_scheme === 'direct'
+                            ? ProjectOrganizationRole::CUSTOMER : ProjectOrganizationRole::GENERAL_CONTRACTOR
                     ),
-                    ContractPartyRoleEnum::GENERAL_CONTRACTOR
+                    $contract->project?->contracting_scheme === 'direct'
+                        ? ContractPartyRoleEnum::CUSTOMER : ContractPartyRoleEnum::GENERAL_CONTRACTOR
                 ),
                 $this->fromContractor($contract, ContractPartyRoleEnum::CONTRACTOR),
             ],
@@ -74,7 +81,10 @@ class ContractPartySnapshotService
                 $this->fromSupplier($contract, ContractPartyRoleEnum::SUPPLIER),
             ],
             ContractSideTypeEnum::SUBCONTRACT => [
-                $this->fromOrganization($owner, ContractPartyRoleEnum::CONTRACTOR),
+                $this->fromOrganization(
+                    $this->resolveSuperiorOrganization($contract, $owner, ProjectOrganizationRole::CONTRACTOR),
+                    ContractPartyRoleEnum::CONTRACTOR
+                ),
                 $this->fromContractor($contract, ContractPartyRoleEnum::SUBCONTRACTOR),
             ],
             ContractSideTypeEnum::CONTRACTOR_SUPPLY => [
@@ -93,12 +103,24 @@ class ContractPartySnapshotService
         Organization $owner,
         ProjectOrganizationRole $role
     ): Organization {
-        $project = $contract->project;
-        if ($project === null) {
+        if ((int) $contract->contractor?->source_organization_id !== (int) $owner->id || $contract->is_self_execution) {
             return $owner;
         }
+        $project = $contract->project;
+        if ($project === null) {
+            throw new Exception(trans_message('contracts.superior_required'));
+        }
 
-        return app(ProjectContractPartyResolver::class)->resolveSuperiorOrganization($project, $role, $owner);
+        $superior = app(ProjectContractPartyResolver::class)->selectedActiveParticipant(
+            $project,
+            $role,
+            $contract->superior_organization_id !== null ? (int) $contract->superior_organization_id : null,
+        );
+        if ($superior === null || (int) $superior->id === (int) $owner->id) {
+            throw new Exception(trans_message('contracts.superior_required'));
+        }
+
+        return $superior;
     }
 
     private function fromProjectCustomer(Contract $contract, Organization $owner): ContractPartyData

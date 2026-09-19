@@ -35,6 +35,7 @@ class UpdateProjectRequest extends FormRequest
     {
         return [
             'name' => ['sometimes', 'required', 'string', 'max:255'],
+            'contracting_scheme' => ['sometimes', Rule::in(['general_contractor', 'direct'])],
             'address' => ['nullable', 'string', 'max:1000'],
             'latitude' => ['nullable', 'numeric', 'between:-90,90'],
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
@@ -131,7 +132,8 @@ class UpdateProjectRequest extends FormRequest
                 ? ($validated['cost_category_id'] !== null ? (int) $validated['cost_category_id'] : null)
                 : $currentProject->cost_category_id,
             accounting_data: $validated['accounting_data'] ?? $currentProject->accounting_data,
-            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? $currentProject->use_in_accounting_reports
+            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? $currentProject->use_in_accounting_reports,
+            contracting_scheme: $validated['contracting_scheme'] ?? $currentProject->contracting_scheme ?? 'general_contractor',
         );
     }
 

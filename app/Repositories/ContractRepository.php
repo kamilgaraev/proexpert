@@ -26,7 +26,10 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
     {
         $query = $this->model->query();
 
-        $this->applyVisibilityScope($query, $organizationId, $filters);
+        app(\App\Services\Contract\ContractOrganizationListScope::class)->apply(
+            $query, $organizationId, $filters,
+            fn (Builder $legacy) => $this->applyVisibilityScope($legacy, $organizationId, $filters),
+        );
 
         // Основные фильтры
         if (!empty($filters['contractor_id'])) {
@@ -84,13 +87,6 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
             });
         }
         
-        if (!empty($filters['status'])) {
-            if (is_array($filters['status'])) {
-                $query->whereIn('contracts.status', $filters['status']);
-            } else {
-                $query->where('contracts.status', $filters['status']);
-            }
-        }
         
         if (!empty($filters['number'])) {
             $query->where('contracts.number', 'ilike', '%' . $filters['number'] . '%');

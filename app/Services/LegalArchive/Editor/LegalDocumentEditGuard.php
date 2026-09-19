@@ -59,6 +59,20 @@ final readonly class LegalDocumentEditGuard
     private function assertMutable(LegalArchiveDocument $document, ?string $editorSessionId, bool $ignoreEditorSessions): void
     {
         $this->assertDocumentStateMutable($document);
+        if ($document->current_primary_version_id !== null && $this->has('contract_revision_legal_bindings')
+            && $this->connection->table('contract_revision_legal_bindings')->where('organization_id', $document->organization_id)
+                ->where(function ($query) use ($document): void {
+                    $query->where('document_id', $document->id);
+                    $bindingId = $document->metadata['contract_revision_binding_id'] ?? null;
+                    if (is_int($bindingId) && $bindingId > 0) {
+                        $query->orWhere(function ($pending) use ($bindingId, $document): void {
+                            $pending->where('id', $bindingId)->where('revision_id', $document->metadata['contract_revision_id'] ?? 0)
+                                ->where('content_hash', $document->metadata['contract_content_hash'] ?? '');
+                        });
+                    }
+                })->exists()) {
+            throw new DomainException('legal_document_editing_frozen');
+        }
         if ($this->has('legal_workflow_instances')
             && $this->connection->table('legal_workflow_instances')->where('document_id', $document->id)->where('status', 'in_progress')->exists()) {
             throw new DomainException('legal_document_active_workflow_exists');

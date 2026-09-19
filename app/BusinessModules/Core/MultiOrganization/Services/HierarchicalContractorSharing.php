@@ -11,6 +11,30 @@ use Illuminate\Support\Facades\DB;
 
 class HierarchicalContractorSharing implements ContractorSharingInterface
 {
+    public function availableQuery(int $organizationId): \Illuminate\Database\Eloquent\Builder
+    {
+        $organization = Organization::find($organizationId);
+        if ($organization === null) {
+            return Contractor::query()->whereRaw('1 = 0');
+        }
+        $owners = Organization::query()->select('id')->whereKey($organizationId);
+        if ($organization->parent_organization_id !== null) {
+            $owners->orWhere('id', $organization->parent_organization_id);
+        }
+        if ($organization->is_holding) {
+            $owners->orWhere(function ($query) use ($organizationId): void {
+                $query->where('parent_organization_id', $organizationId)->where('is_active', true);
+            });
+        }
+
+        return Contractor::query()->whereIn('organization_id', $owners)
+            ->where(function ($query) use ($organizationId): void {
+                $query->where('organization_id', $organizationId)
+                    ->orWhereNull('contractor_type')
+                    ->orWhere('contractor_type', '!=', ContractorType::SELF_EXECUTION->value);
+            });
+    }
+
     /**
      * Получить всех доступных подрядчиков для организации
      * 

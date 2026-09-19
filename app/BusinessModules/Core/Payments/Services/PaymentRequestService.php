@@ -65,11 +65,11 @@ class PaymentRequestService
                 
                 // Финансы
                 'amount' => $data['amount'],
-                'currency' => $data['currency'] ?? 'RUB',
+                'currency' => $data['currency'] ?? null,
                 'vat_rate' => $data['vat_rate'] ?? 20,
                 
                 // Источник
-                'source_type' => $data['source_type'] ?? Contract::class,
+                'source_type' => $data['source_type'] ?? ($contract instanceof Contract ? Contract::class : null),
                 'source_id' => $data['source_id'] ?? $contract?->id,
                 
                 // Детали
@@ -414,8 +414,8 @@ class PaymentRequestService
 
         if ($contract) {
             $parts[] = trans_message('payments.purpose.contract_payment', [
-                'number' => (string) $contract->contract_number,
-                'date' => $contract->contract_date->format('d.m.Y'),
+                'number' => (string) $contract->number,
+                'date' => $contract->date?->format('d.m.Y') ?? '',
             ]);
         }
 

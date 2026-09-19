@@ -29,6 +29,7 @@ class ContractReadService
     public function analytics(int $contractId, int $organizationId, ?int $projectId = null): array
     {
         $contract = $this->contractAccessService->findAccessibleOrFail($contractId, $organizationId, $projectId);
+        $this->assertOwnAccounting($contract, $organizationId);
 
         return [
             'contract_id' => $contract->id,
@@ -55,6 +56,7 @@ class ContractReadService
     ): LengthAwarePaginator {
         $perPage = max(1, min(100, $perPage));
         $contract = $this->contractAccessService->findAccessibleOrFail($contractId, $organizationId, $projectId);
+        $this->assertOwnAccounting($contract, $organizationId);
 
         return $contract->completedWorks()
             ->with(['project', 'workType', 'user', 'materials.measurementUnit'])
@@ -64,6 +66,14 @@ class ContractReadService
 
     public function fullDetails(int $contractId, int $organizationId, ?int $projectId = null): array
     {
+        $accessible = $this->contractAccessService->findAccessibleOrFail($contractId, $organizationId, $projectId);
+        if ((int) $accessible->organization_id !== $organizationId) {
+            return [
+                'contract' => new \App\Http\Resources\Api\V1\Admin\Contract\SharedContractResource($accessible, $organizationId), 'analytics' => null, 'works_statistics' => null,
+                'recent_works' => [], 'performance_acts' => [], 'payments' => [], 'child_contracts' => [],
+                'agreements' => [], 'specifications' => [],
+            ];
+        }
         $fullDetails = $this->contractService->getFullContractDetails($contractId, $organizationId, $projectId);
         $contract = $fullDetails['contract'];
 
@@ -88,5 +98,12 @@ class ContractReadService
                 ? SpecificationResource::collection($contract->specifications)
                 : [],
         ];
+    }
+
+    private function assertOwnAccounting(Contract $contract, int $organizationId): void
+    {
+        if ((int) $contract->organization_id !== $organizationId) {
+            throw (new \Illuminate\Database\Eloquent\ModelNotFoundException)->setModel(Contract::class, [$contract->id]);
+        }
     }
 }

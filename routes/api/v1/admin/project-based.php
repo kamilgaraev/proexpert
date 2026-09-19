@@ -119,11 +119,11 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
             Route::get('/', [ContractSpecificationController::class, 'index'])
                 ->middleware('authorize:specifications.view,project,project');
             Route::post('/', [ContractSpecificationController::class, 'store'])
-                ->middleware('authorize:specifications.create,project,project');
+                ->middleware(['authorize:specifications.create,project,project', \App\Http\Middleware\GuardLegacyContractSpecification::class]);
             Route::post('/attach', [ContractSpecificationController::class, 'attach'])
-                ->middleware('authorize:specifications.edit,project,project');
+                ->middleware(['authorize:specifications.edit,project,project', \App\Http\Middleware\GuardLegacyContractSpecification::class]);
             Route::delete('/{specification}', [ContractSpecificationController::class, 'destroy'])
-                ->middleware('authorize:specifications.edit,project,project');
+                ->middleware(['authorize:specifications.edit,project,project', \App\Http\Middleware\GuardLegacyContractSpecification::class]);
         });
 
         // Contract State Events (Event Sourcing)

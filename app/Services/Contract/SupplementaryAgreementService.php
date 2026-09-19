@@ -284,6 +284,8 @@ class SupplementaryAgreementService
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            app(ContractBuilderMutationGuard::class)->assertLegacy($contract);
+
             $contractStatus = $contract->status instanceof ContractStatusEnum
                 ? $contract->status->value
                 : (string) $contract->status;
@@ -655,7 +657,8 @@ class SupplementaryAgreementService
         DB::transaction(function () use ($agreement, $newAgreement) {
             // Статусы убраны, аннулирование теперь отслеживается только через Event Sourcing
 
-            $contract = $agreement->contract;
+            $contract = Contract::whereKey($agreement->contract_id)->lockForUpdate()->firstOrFail();
+            app(ContractBuilderMutationGuard::class)->assertLegacy($contract);
 
             // Если договор использует Event Sourcing, создаем событие аннулирования
             if ($contract->usesEventSourcing()) {

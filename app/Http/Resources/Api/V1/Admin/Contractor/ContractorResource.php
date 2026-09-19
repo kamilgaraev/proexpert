@@ -17,6 +17,7 @@ class ContractorResource extends ModelJsonResource
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
+            'source_organization_id' => $this->source_organization_id,
             'name' => $this->name,
             'contact_person' => $this->contact_person,
             'phone' => $this->phone,

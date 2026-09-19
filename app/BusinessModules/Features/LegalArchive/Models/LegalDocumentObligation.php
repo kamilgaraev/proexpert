@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 final class LegalDocumentObligation extends Model
 {
-    protected $fillable = ['organization_id', 'document_id', 'document_version_id', 'project_id', 'responsible_user_id', 'title', 'responsible_party', 'due_at', 'amount', 'volume', 'unit', 'status', 'completed_at', 'evidence', 'metadata'];
+    protected $fillable = ['organization_id', 'document_id', 'document_version_id', 'source_key', 'project_id', 'responsible_user_id', 'title', 'responsible_party', 'due_at', 'amount', 'volume', 'unit', 'status', 'completed_at', 'evidence', 'metadata'];
     protected $casts = ['due_at' => 'datetime', 'completed_at' => 'datetime', 'amount' => 'decimal:2', 'volume' => 'decimal:3', 'evidence' => 'array', 'metadata' => 'array'];
     public function document(): BelongsTo { return $this->belongsTo(LegalArchiveDocument::class, 'document_id'); }
     public function version(): BelongsTo { return $this->belongsTo(LegalArchiveDocumentVersion::class, 'document_version_id'); }

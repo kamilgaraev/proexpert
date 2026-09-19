@@ -34,6 +34,7 @@ class Contract extends Model
         'contractor_id',
         'supplier_id',
         'contract_side_type',
+        'superior_organization_id',
         'requires_contract_side_review',
         'contract_side_review_reason',
         'contract_category',
@@ -180,6 +181,11 @@ class Contract extends Model
         return $this->hasMany(PaymentDocument::class, 'invoiceable_id')
             ->where('invoiceable_type', self::class)
             ->where('status', '!=', 'cancelled');
+    }
+
+    public function organizationViews(): HasMany
+    {
+        return $this->hasMany(ContractOrganizationView::class);
     }
 
     /**

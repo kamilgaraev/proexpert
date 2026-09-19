@@ -77,93 +77,8 @@ class ContractService
 
     public function deleteContract(int $contractId, int $organizationId): bool
     {
-        $contract = $this->getContractById($contractId, $organizationId);
-        if (! $contract) {
-            throw new Exception('Contract not found or does not belong to organization.');
-        }
-
-        // SECURITY: Попытка удаления договора - критично для аудита
-        // Получаем количество платежей из таблицы payment_documents
-        $paymentsCount = DB::table('payment_documents')
-            ->where('invoiceable_type', 'App\\Models\\Contract')
-            ->where('invoiceable_id', $contractId)
-            ->whereNull('deleted_at')
-            ->count();
-
-        $this->logging->security('contract.deletion.attempt', [
-            'organization_id' => $organizationId,
-            'contract_id' => $contractId,
-            'contract_number' => $contract->number,
-            'contract_amount' => $contract->total_amount,
-            'contract_status' => $contract->status->value ?? $contract->status,
-            'has_performance_acts' => $contract->performanceActs->count() > 0,
-            'has_payments' => $paymentsCount > 0,
-            'user_id' => Auth::id(),
-            'user_ip' => request()->ip(),
-        ], 'warning');
-
-        // BUSINESS: Начало удаления договора
-        $this->logging->business('contract.deletion.started', [
-            'organization_id' => $organizationId,
-            'contract_id' => $contractId,
-            'contract_number' => $contract->number,
-            'contract_amount' => $contract->total_amount,
-            'related_acts_count' => $contract->performanceActs->count(),
-            'related_payments_count' => $paymentsCount,
-            'user_id' => Auth::id(),
-        ]);
-
-        try {
-            // Возможно, стоит проверить наличие связанных актов/платежей перед удалением
-            // или настроить каскадное удаление/soft deletes на уровне БД
-            $deleted = $this->contractMutations->delete($contract, Auth::id(), [
-                'source_event_id' => 'contract:'.$contractId.':delete',
-            ]);
-
-            if ($deleted) {
-                // BUSINESS: Договор успешно удалён
-                $this->logging->business('contract.deleted', [
-                    'organization_id' => $organizationId,
-                    'contract_id' => $contractId,
-                    'contract_number' => $contract->number,
-                    'contract_amount' => $contract->total_amount,
-                    'user_id' => Auth::id(),
-                ]);
-
-                // AUDIT: Удаление договора - критично для compliance
-                $this->logging->audit('contract.deleted', [
-                    'organization_id' => $organizationId,
-                    'project_id' => $contract->project_id,
-                    'contract_id' => $contractId,
-                    'contract_number' => $contract->number,
-                    'transaction_type' => 'contract_deleted',
-                    'performed_by' => Auth::id() ?? 'system',
-                    'contract_details' => [
-                        'total_amount' => $contract->total_amount,
-                        'contractor_id' => $contract->contractor_id,
-                        'status' => $contract->status->value ?? $contract->status,
-                        'start_date' => $contract->start_date,
-                        'end_date' => $contract->end_date,
-                    ],
-                ]);
-            }
-
-            return $deleted;
-
-        } catch (Exception $e) {
-            // BUSINESS: Неудачное удаление договора
-            $this->logging->business('contract.deletion.failed', [
-                'organization_id' => $organizationId,
-                'contract_id' => $contractId,
-                'contract_number' => $contract->number,
-                'error_message' => $e->getMessage(),
-                'user_id' => Auth::id(),
-            ], 'error');
-
-            throw $e;
-        }
+        throw new \App\Exceptions\BusinessLogicException(trans_message('contracts.archive_instead_of_delete'), 409);
     }
-
     /**
      * Получить полную детальную информацию по контракту
      */
@@ -171,7 +86,7 @@ class ContractService
     {
         $contract = $this->getContractById($contractId, $organizationId, $projectId);
 
-        if (! $contract) {
+        if (! $contract || (int) $contract->organization_id !== $organizationId) {
             throw new Exception('Contract not found or does not belong to organization.');
         }
 
@@ -508,49 +423,20 @@ class ContractService
     public function getContractsSummary(int $organizationId, array $filters = []): array
     {
         $query = Contract::query();
-        $relatedPartyOrganizationId = isset($filters['related_party_organization_id'])
-            ? (int) $filters['related_party_organization_id']
-            : null;
-
-        $applyVisibilityScope = static function ($queryBuilder) use ($organizationId, $relatedPartyOrganizationId, $filters) {
-            if ($relatedPartyOrganizationId) {
-                return $queryBuilder->where(function ($scopedQuery) use ($organizationId, $relatedPartyOrganizationId) {
-                    $scopedQuery->where('contracts.organization_id', $organizationId)
-                        ->orWhereHas('contractor', function ($contractorQuery) use ($relatedPartyOrganizationId) {
-                            $contractorQuery->where('source_organization_id', $relatedPartyOrganizationId);
-                        });
-                });
-            }
-
-            if (empty($filters['contractor_context'])) {
-                return $queryBuilder->where('contracts.organization_id', $organizationId);
-            }
-
-            return $queryBuilder;
-        };
-
-        $applyTableVisibilityScope = static function ($queryBuilder, string $contractsAlias = 'contracts') use ($organizationId, $relatedPartyOrganizationId, $filters) {
-            if ($relatedPartyOrganizationId) {
-                return $queryBuilder->where(function ($scopedQuery) use ($organizationId, $relatedPartyOrganizationId, $contractsAlias) {
-                    $scopedQuery->where($contractsAlias.'.organization_id', $organizationId)
-                        ->orWhereExists(function ($subQuery) use ($relatedPartyOrganizationId, $contractsAlias) {
-                            $subQuery->select(DB::raw(1))
-                                ->from('contractors')
-                                ->whereColumn('contractors.id', $contractsAlias.'.contractor_id')
-                                ->where('contractors.source_organization_id', $relatedPartyOrganizationId);
-                        });
-                });
-            }
-
-            if (empty($filters['contractor_context'])) {
-                return $queryBuilder->where($contractsAlias.'.organization_id', $organizationId);
-            }
-
-            return $queryBuilder;
-        };
-
-        $applyVisibilityScope($query);
-
+        app(ContractOrganizationListScope::class)->apply(
+            $query, $organizationId, $filters,
+            static function ($legacy) use ($organizationId, $filters): void {
+                $relatedId = (int) ($filters['related_party_organization_id'] ?? 0);
+                if ($relatedId > 0) {
+                    $legacy->where(function ($scope) use ($organizationId, $relatedId): void {
+                        $scope->where('contracts.organization_id', $organizationId)
+                            ->orWhereHas('contractor', fn ($contractor) => $contractor->where('source_organization_id', $relatedId));
+                    });
+                } elseif (empty($filters['contractor_context'])) {
+                    $legacy->where('contracts.organization_id', $organizationId);
+                }
+            },
+        );
         if (! empty($filters['project_id'])) {
             $query->where('project_id', $filters['project_id']);
         }
@@ -567,10 +453,6 @@ class ContractService
             $query->where('requires_contract_side_review', (bool) $filters['requires_contract_side_review']);
         }
 
-        if (! empty($filters['status'])) {
-            $query->where('status', $filters['status']);
-        }
-
         if (! empty($filters['work_type_category'])) {
             $query->where('work_type_category', $filters['work_type_category']);
         }
@@ -580,7 +462,9 @@ class ContractService
             ->pluck('count', 'status')
             ->toArray();
 
-        $financialData = (clone $query)->select(
+        $accountingQuery = (clone $query)->where('contracts.organization_id', $organizationId);
+        $accountingContractIds = (clone $accountingQuery)->select('contracts.id');
+        $financialData = (clone $accountingQuery)->select(
             DB::raw('SUM(CASE 
                 WHEN is_fixed_amount = true THEN COALESCE(base_amount, 0)
                 ELSE COALESCE(total_amount, 0)
@@ -610,9 +494,8 @@ class ContractService
             // Фильтруем акты по project_id напрямую для корректной работы с мультипроектными контрактами
             ->when(! empty($filters['project_id']), fn ($q) => $q->where('contract_performance_acts.project_id', $filters['project_id']))
             ->when(! empty($filters['contractor_id']), fn ($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
-            ->when(! empty($filters['status']), fn ($q) => $q->where('contracts.status', $filters['status']))
             ->when(! empty($filters['work_type_category']), fn ($q) => $q->where('contracts.work_type_category', $filters['work_type_category']));
-        $applyTableVisibilityScope($performedAmountQuery);
+        $performedAmountQuery->whereIn('contracts.id', clone $accountingContractIds);
         $totalPerformedAmount = (float) ($performedAmountQuery->sum('contract_performance_acts.amount') ?: 0);
 
         // Используем таблицу payment_documents вместо устаревшей invoices
@@ -625,9 +508,9 @@ class ContractService
             ->whereNull('payment_documents.deleted_at')
             ->when(! empty($filters['project_id']), fn ($q) => $q->where('contracts.project_id', $filters['project_id']))
             ->when(! empty($filters['contractor_id']), fn ($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
-            ->when(! empty($filters['status']), fn ($q) => $q->where('contracts.status', $filters['status']))
             ->when(! empty($filters['work_type_category']), fn ($q) => $q->where('contracts.work_type_category', $filters['work_type_category']));
-        $applyTableVisibilityScope($paidAmountQuery);
+        $paidAmountQuery->whereIn('contracts.id', (clone $query)->select('contracts.id'))
+            ->where('payment_documents.organization_id', $organizationId);
         $totalPaidAmount = (float) ($paidAmountQuery->sum('payment_documents.paid_amount') ?: 0);
 
         $overdueContracts = (clone $query)
@@ -645,12 +528,11 @@ class ContractService
             ->whereNull('c.deleted_at')
             ->when(! empty($filters['project_id']), fn ($q) => $q->where('c.project_id', $filters['project_id']))
             ->when(! empty($filters['contractor_id']), fn ($q) => $q->where('c.contractor_id', $filters['contractor_id']))
-            ->when(! empty($filters['status']), fn ($q) => $q->where('c.status', $filters['status']))
             ->when(! empty($filters['work_type_category']), fn ($q) => $q->where('c.work_type_category', $filters['work_type_category']))
             ->groupBy('c.id', 'c.total_amount')
             ->havingRaw('(c.total_amount - COALESCE(SUM(cw.total_amount), 0)) <= (c.total_amount * 0.1)')
             ->havingRaw('(c.total_amount - COALESCE(SUM(cw.total_amount), 0)) > 0');
-        $applyTableVisibilityScope($nearingLimitSubquery, 'c');
+        $nearingLimitSubquery->whereIn('c.id', clone $accountingContractIds);
 
         $nearingLimitContracts = DB::table(DB::raw("({$nearingLimitSubquery->toSql()}) as subquery"))
             ->mergeBindings($nearingLimitSubquery)

@@ -32,6 +32,13 @@ class ProjectContractPartyResolver
 
     public function uniqueActiveParticipant(Project $project, ProjectOrganizationRole $role): ?Organization
     {
+        $participants = $this->activeParticipants($project, $role);
+
+        return $participants->count() === 1 ? $participants->first() : null;
+    }
+
+    public function activeParticipants(Project $project, ProjectOrganizationRole $role): \Illuminate\Database\Eloquent\Collection
+    {
         $organizationIds = ProjectOrganization::query()
             ->useWritePdo()
             ->where('project_id', $project->id)
@@ -46,13 +53,7 @@ class ProjectContractPartyResolver
             ->unique()
             ->values();
 
-        if ($organizationIds->count() !== 1) {
-            return null;
-        }
-
-        $organization = Organization::query()->find($organizationIds->first());
-
-        return $organization instanceof Organization ? $organization : null;
+        return Organization::query()->whereIn('id', $organizationIds)->orderBy('id')->get();
     }
 
     public function resolveSuperiorOrganization(
@@ -78,23 +79,51 @@ class ProjectContractPartyResolver
     public function shouldAutofillSelfAsContractor(
         Project $project,
         int $organizationId,
-        ContractSideTypeEnum $sideType
+        ContractSideTypeEnum $sideType,
+        ?int $superiorOrganizationId = null,
+        ?string $direction = null,
     ): bool {
+        if ($direction === 'expense') {
+            return false;
+        }
         $assignedRole = $this->assignedRole($project, $organizationId);
 
         if ($sideType === ContractSideTypeEnum::CONTRACT && $assignedRole === ProjectOrganizationRole::CONTRACTOR) {
-            $generalContractor = $this->uniqueActiveParticipant($project, ProjectOrganizationRole::GENERAL_CONTRACTOR)
-                ?? Organization::query()->find($project->organization_id);
+            $generalContractor = $this->selectedActiveParticipant($project, $this->superiorRole($project, $sideType), $superiorOrganizationId);
 
             return $generalContractor instanceof Organization && (int) $generalContractor->id !== $organizationId;
         }
 
         if ($sideType === ContractSideTypeEnum::SUBCONTRACT && $assignedRole === ProjectOrganizationRole::SUBCONTRACTOR) {
-            $contractor = $this->uniqueActiveParticipant($project, ProjectOrganizationRole::CONTRACTOR);
+            $contractor = $this->selectedActiveParticipant($project, ProjectOrganizationRole::CONTRACTOR, $superiorOrganizationId);
 
             return $contractor instanceof Organization && (int) $contractor->id !== $organizationId;
         }
 
         return false;
+    }
+
+    public function selectedActiveParticipant(Project $project, ProjectOrganizationRole $role, ?int $organizationId): ?Organization
+    {
+        if ($organizationId === null || in_array($role, [ProjectOrganizationRole::GENERAL_CONTRACTOR, ProjectOrganizationRole::CUSTOMER], true)) {
+            $participant = $this->uniqueActiveParticipant($project, $role);
+
+            return $participant !== null && ($organizationId === null || (int) $participant->id === $organizationId)
+                ? $participant : null;
+        }
+
+        return $this->assignedRole($project, $organizationId) === $role
+            ? Organization::query()->find($organizationId)
+            : null;
+    }
+
+    public function superiorRole(Project $project, ContractSideTypeEnum $type): ProjectOrganizationRole
+    {
+        return match ($type) {
+            ContractSideTypeEnum::GENERAL_CONTRACT => ProjectOrganizationRole::CUSTOMER,
+            ContractSideTypeEnum::SUBCONTRACT => ProjectOrganizationRole::CONTRACTOR,
+            default => $project->contracting_scheme === 'direct'
+                ? ProjectOrganizationRole::CUSTOMER : ProjectOrganizationRole::GENERAL_CONTRACTOR,
+        };
     }
 }

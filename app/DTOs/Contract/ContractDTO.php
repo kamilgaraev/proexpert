@@ -44,6 +44,8 @@ class ContractDTO
         public readonly ?ContractSideTypeEnum $contract_side_type = null,
         public readonly ?string $delivery_terms = null,
         public readonly string $currency = 'RUB',
+        public readonly ?int $superior_organization_id = null,
+        public readonly ?string $direction = null,
     ) {}
 
     public function toArray(): array
@@ -81,6 +83,7 @@ class ContractDTO
             'supplier_id' => $this->supplier_id,
             'contract_category' => $this->contract_category,
             'contract_side_type' => $this->contract_side_type?->value,
+            'superior_organization_id' => $this->superior_organization_id,
         ];
     }
 

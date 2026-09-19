@@ -33,6 +33,7 @@ class SpecificationService
             if ($contract === null) {
                 return null;
             }
+            app(ContractBuilderMutationGuard::class)->assertLegacy($contract);
 
             $specification = $this->repository->create($dto->toArray());
             $contract->specifications()->updateExistingPivot(
@@ -50,22 +51,84 @@ class SpecificationService
 
     public function update(int $id, SpecificationDTO $dto): bool
     {
-        return $this->repository->update($id, $dto->toArray());
+        return DB::transaction(function () use ($id, $dto): bool {
+            $this->assertMutable($id);
+
+            return $this->repository->update($id, $dto->toArray());
+        });
+    }
+
+    public function applyRevisionPlan(Contract $contract, int $revisionId, string $date, array $rows): Specification
+    {
+        return DB::transaction(function () use ($contract, $revisionId, $date, $rows): Specification {
+            $locked = Contract::whereKey($contract->id)->lockForUpdate()->firstOrFail();
+            if (!DB::table('contract_builder_revisions as r')->join('contract_builder_instances as i', 'i.id', '=', 'r.instance_id')
+                ->where('r.id', $revisionId)->where('i.contract_id', $locked->id)->exists()) {
+                throw new \App\Exceptions\ContractBuilderException('contracts.activation_conflict', 409);
+            }
+            $existing = Specification::where('builder_revision_id', $revisionId)->first();
+            if ($existing !== null) {
+                if (!$locked->specifications()->whereKey($existing->id)->exists()) {
+                    throw new \App\Exceptions\ContractBuilderException('contracts.activation_conflict', 409);
+                }
+                return $existing;
+            }
+            $total = \Brick\Math\BigDecimal::of('0');
+            foreach ($rows as $row) {
+                $total = $total->plus($row['amount']);
+            }
+            $specification = new Specification;
+            $specification->forceFill([
+                'builder_revision_id' => $revisionId, 'number' => 'REV-'.$contract->id.'-'.$revisionId,
+                'spec_date' => $date, 'total_amount' => (string) $total, 'scope_items' => $rows, 'status' => 'approved',
+            ])->save();
+            $locked->specifications()->updateExistingPivot($locked->specifications()->pluck('specifications.id')->all(), ['is_active' => false]);
+            $locked->specifications()->attach($specification->id, ['attached_at' => now(), 'is_active' => true]);
+
+            return $specification;
+        });
     }
 
     public function updateForOrganization(int $id, int $organizationId, array $data): ?Specification
     {
-        return $this->repository->updateForOrganization($id, $organizationId, $data);
+        return DB::transaction(function () use ($id, $organizationId, $data): ?Specification {
+            if ($this->repository->findForOrganization($id, $organizationId) === null) {
+                return null;
+            }
+            $this->assertMutable($id);
+
+            return $this->repository->updateForOrganization($id, $organizationId, $data);
+        });
     }
 
     public function delete(int $id): bool
     {
-        return $this->repository->delete($id);
+        return DB::transaction(function () use ($id): bool {
+            $this->assertMutable($id);
+
+            return $this->repository->delete($id);
+        });
     }
 
     public function deleteForOrganization(int $id, int $organizationId): bool
     {
-        return $this->repository->deleteForOrganization($id, $organizationId);
+        return DB::transaction(function () use ($id, $organizationId): bool {
+            if ($this->repository->findForOrganization($id, $organizationId) === null) {
+                return false;
+            }
+            $this->assertMutable($id);
+
+            return $this->repository->deleteForOrganization($id, $organizationId);
+        });
+    }
+
+    private function assertMutable(int $specificationId): void
+    {
+        $contracts = Contract::whereIn('id', DB::table('contract_specification')->where('specification_id', $specificationId)->select('contract_id'))
+            ->orderBy('id')->lockForUpdate()->get();
+        foreach ($contracts as $contract) {
+            app(ContractBuilderMutationGuard::class)->assertLegacy($contract);
+        }
     }
 
     public function getById(int $id): ?Specification

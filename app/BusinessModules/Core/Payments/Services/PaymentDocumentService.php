@@ -42,13 +42,9 @@ class PaymentDocumentService
      */
     public function create(array $data): PaymentDocument
     {
-        $data = $this->normalizeDocumentData($data);
         $budgetOverrideReason = $data['budget_override_reason'] ?? null;
         unset($data['budget_override_reason']);
-
-        if (isset($data['organization_id'])) {
-            $data = $this->budgetLimitService->normalizeDocumentData($data, (int) $data['organization_id']);
-        }
+        $requestedData = $data;
 
         $attempts = 0;
         $maxAttempts = 3;
@@ -58,6 +54,11 @@ class PaymentDocumentService
             DB::beginTransaction();
 
             try {
+                $data = app(ContractPaymentPreparationService::class)->prepare((int) ($requestedData['organization_id'] ?? 0), $requestedData);
+                $data = $this->normalizeDocumentData($data);
+                if (isset($data['organization_id'])) {
+                    $data = $this->budgetLimitService->normalizeDocumentData($data, (int) $data['organization_id']);
+                }
                 $data = $this->canonicalizeActInvoiceData($data);
                 if (isset($data['origin_key'])) {
                     $existingDocument = PaymentDocument::query()
@@ -1136,6 +1137,7 @@ class PaymentDocumentService
             'invoiceable_type' => \App\Models\ContractPerformanceAct::class,
             'invoiceable_id' => $act->id,
             'amount' => $amount ?? $act->amount ?? 0,
+            'currency' => $act->currency ?: ($contract->currency ?: config('payments.defaults.currency', 'RUB')),
             'description' => "Счёт по акту №{$act->act_document_number}",
             'status' => PaymentDocumentStatus::SUBMITTED,
             'issued_at' => now(),
@@ -1143,21 +1145,10 @@ class PaymentDocumentService
             'idempotency_key' => $idempotencyKey ?? 'full',
         ];
 
-        // Определить контрагента
-        if ($direction === InvoiceDirection::OUTGOING) {
-            // Мы должны оплатить подрядчику
-            $data['contractor_id'] = $contract->contractor_id;
-            $data['payee_contractor_id'] = $contract->contractor_id;
-            $data['payer_organization_id'] = $contract->organization_id;
-        } else {
-            // Нам должны оплатить
-            $data['counterparty_organization_id'] = $contract->contractor_id ?
-                \App\Models\Contractor::find($contract->contractor_id)?->source_organization_id : null;
-            $data['payer_organization_id'] = $data['counterparty_organization_id'];
-            $data['payee_organization_id'] = $contract->organization_id;
-        }
-
-        return $this->create($data);
+        return $this->create(array_merge(
+            $data,
+            app(\App\Services\Contract\ContractPaymentPartyResolver::class)->resolve($contract, $data),
+        ));
     }
 
     private function canonicalizeActInvoiceData(array $data): array
@@ -1180,11 +1171,15 @@ class PaymentDocumentService
         $contract = $act->contract;
         if (! $contract instanceof Contract
             || (int) ($data['organization_id'] ?? 0) !== (int) $contract->organization_id
+            || (int) ($data['contract_id'] ?? 0) !== (int) $contract->id
             || (isset($data['project_id']) && (int) $data['project_id'] !== (int) $act->project_id)) {
             throw new \DomainException(trans_message('payments.validation.invoice_basis_scope_mismatch'));
         }
 
-        $direction = (string) ($data['direction'] ?? InvoiceDirection::INCOMING->value);
+        $parties = app(\App\Services\Contract\ContractPaymentPartyResolver::class)->resolve($contract, $data);
+        $data = array_merge($data, $parties);
+        $direction = $parties['direction']->value;
+        $data['direction'] = $direction;
         $idempotencyKey = trim((string) ($data['idempotency_key'] ?? ''));
         if ($idempotencyKey === '' || mb_strlen($idempotencyKey) > 128) {
             throw new \DomainException(trans_message('payments.validation.invoice_idempotency_key_required'));
@@ -1198,10 +1193,22 @@ class PaymentDocumentService
         );
         $requestedAmount = BigDecimal::of((string) ($data['amount'] ?? $act->amount))
             ->toScale(2, RoundingMode::HalfUp);
-        $existing = PaymentDocument::query()
+        $existingDocuments = PaymentDocument::query()
             ->where('organization_id', $contract->organization_id)
-            ->where('origin_key', $originKey)
-            ->first();
+            ->where('invoiceable_type', \App\Models\ContractPerformanceAct::class)
+            ->where('invoiceable_id', $act->id)
+            ->whereIn('origin_key', array_map(
+                static fn (InvoiceDirection $candidate): string => sprintf(
+                    'performance-act:%d:%s:%s', $act->id, $candidate->value, hash('sha256', $idempotencyKey)
+                ),
+                InvoiceDirection::cases(),
+            ))
+            ->limit(2)
+            ->get();
+        if ($existingDocuments->count() > 1) {
+            throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+        }
+        $existing = $existingDocuments->first();
 
         if ($existing instanceof PaymentDocument) {
             if (! BigDecimal::of((string) $existing->amount)->isEqualTo($requestedAmount)) {
@@ -1215,7 +1222,7 @@ class PaymentDocumentService
                 'vat_rate' => $existing->vat_rate,
                 'amount_without_vat' => $existing->amount_without_vat,
                 'vat_amount' => $existing->vat_amount,
-                'origin_key' => $originKey,
+                'origin_key' => $existing->origin_key,
             ]);
         }
 
@@ -1227,7 +1234,6 @@ class PaymentDocumentService
             ->where('organization_id', $contract->organization_id)
             ->where('invoiceable_type', \App\Models\ContractPerformanceAct::class)
             ->where('invoiceable_id', $act->id)
-            ->where('direction', $direction)
             ->whereIn('status', [
                 PaymentDocumentStatus::SUBMITTED->value,
                 PaymentDocumentStatus::PENDING_APPROVAL->value,
@@ -1279,7 +1285,7 @@ class PaymentDocumentService
             'project_id' => $act->project_id,
             'invoice_type' => InvoiceType::ACT->value,
             'amount' => (string) $requestedAmount,
-            'currency' => $act->currency ?: 'RUB',
+            'currency' => $act->currency ?: ($contract->currency ?: config('payments.defaults.currency', 'RUB')),
             'vat_rate' => $act->vat_rate ?? 0,
             'amount_without_vat' => (string) $amountWithoutVat,
             'vat_amount' => (string) $vatAmount,
@@ -1294,12 +1300,12 @@ class PaymentDocumentService
      */
     public function createFromContract(Contract $contract, InvoiceType $type, array $additionalData = []): PaymentDocument
     {
+        $parties = app(\App\Services\Contract\ContractPaymentPartyResolver::class)->resolve($contract, $additionalData);
         $data = array_merge([
             'organization_id' => $contract->organization_id,
             'project_id' => $contract->project_id,
             'document_type' => PaymentDocumentType::INVOICE,
             'document_date' => now(),
-            'currency' => config('payments.defaults.currency', 'RUB'),
             'direction' => InvoiceDirection::OUTGOING,
             'invoice_type' => $type,
             'invoiceable_type' => Contract::class,
@@ -1311,7 +1317,13 @@ class PaymentDocumentService
             'status' => PaymentDocumentStatus::SUBMITTED,
             'issued_at' => now(),
             'vat_rate' => 20,
-        ], $additionalData);
+        ], $additionalData, $parties, [
+            'currency' => ($additionalData['currency'] ?? '') ?: ($contract->currency ?: config('payments.defaults.currency', 'RUB')),
+            'organization_id' => $contract->organization_id,
+            'project_id' => $contract->project_id,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+        ]);
 
         $document = $this->create($data);
 

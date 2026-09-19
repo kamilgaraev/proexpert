@@ -6,6 +6,19 @@
          cacheDirectory=".phpunit.cache/postgres"
 >
     <testsuites>
+        <testsuite name="ContractFoundation">
+            <file>tests/Feature/Contract/ContractLibraryApiTest.php</file>
+            <file>tests/Feature/Contract/ContractLibraryPersistenceTest.php</file>
+            <file>tests/Feature/Contract/ContractOrganizationViewTest.php</file>
+            <file>tests/Feature/Contract/ContractOrganizationEnrollmentTest.php</file>
+            <file>tests/Feature/Contract/ContractParticipantConcurrencyTest.php</file>
+            <file>tests/Feature/Contract/ContractFoundationRegressionTest.php</file>
+            <file>tests/Feature/Contract/ContractMutationAtomicityTest.php</file>
+            <file>tests/Feature/Contract/ContractDossierCounterpartyTest.php</file>
+            <file>tests/Feature/LegalArchive/LegalDocumentObligationTest.php</file>
+            <file>tests/Unit/Contract/ContractPerspectiveTest.php</file>
+            <file>tests/Unit/Contract/ContractPaymentDocumentServiceTest.php</file>
+        </testsuite>
         <testsuite name="ProjectParticipants">
             <file>tests/Feature/Project/ProjectParticipantContractSourceTest.php</file>
             <file>tests/Feature/Project/ProjectParticipantLifecycleTest.php</file>
