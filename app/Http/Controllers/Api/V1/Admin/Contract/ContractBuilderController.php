@@ -19,6 +19,7 @@ final class ContractBuilderController extends Controller
         $state = $service->state($request->user(), (int) $request->attributes->get('current_organization_id'), $contract);
 
         return AdminResponse::success([
+            'requires_enrollment' => $state['requires_enrollment'] ?? false,
             'can_create' => $state['can_create'],
             'can_adopt' => $state['can_adopt'] ?? false,
             'can_edit_draft' => $state['can_edit_draft'],
