@@ -28,6 +28,7 @@ class Project extends Model
         'description',
         'customer',
         'customer_counterparty_id',
+        'contracting_scheme',
         'designer',
         'budget_amount',
         'site_area_m2',

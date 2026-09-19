@@ -5,6 +5,71 @@ use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractTypeProfileController;
 use Illuminate\Support\Facades\Route;
 
+Route::prefix('contract-library')->name('contracts.library.')->group(function (): void {
+    Route::get('entities', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractEntityController::class, 'index'])
+        ->middleware('authorize:contracts.view')->name('entities');
+    $controller = \App\Http\Controllers\Api\V1\Admin\Contract\ContractLibraryController::class;
+    Route::get('', [$controller, 'index'])->middleware('authorize:contracts.library.view')->name('index');
+    Route::post('definitions/read', [$controller, 'definitions'])->middleware('authorize:contracts.library.view')->name('definitions');
+    Route::post('{item}/versions/{version}/calculate', [$controller, 'calculate'])->whereUuid('item')->whereNumber('version')
+        ->middleware('authorize:contracts.library.view')->name('calculate');
+    Route::get('{item}/versions/{version}/resolved', [$controller, 'resolved'])->whereUuid('item')->whereNumber('version')
+        ->middleware('authorize:contracts.library.view')->name('resolved');
+    Route::post('', [$controller, 'store'])->middleware('authorize:contracts.library.create')->name('store');
+    Route::get('{item}/versions/{version}', [$controller, 'show'])->whereUuid('item')->whereNumber('version')
+        ->middleware('authorize:contracts.library.view')->name('show');
+    Route::post('{item}/versions', [$controller, 'revise'])->whereUuid('item')
+        ->middleware('authorize:contracts.library.create')->name('revise');
+    Route::post('{item}/versions/{version}/publish', [$controller, 'publish'])->whereUuid('item')->whereNumber('version')
+        ->middleware('authorize:contracts.library.publish')->name('publish');
+    Route::patch('{item}/archive', [$controller, 'archive'])->whereUuid('item')
+        ->middleware('authorize:contracts.library.archive')->name('archive');
+});
+Route::prefix('contracts/{contract}/builder')->whereNumber('contract')->name('contracts.builder.')->group(function (): void {
+    $controller = \App\Http\Controllers\Api\V1\Admin\Contract\ContractBuilderController::class;
+    Route::get('', [$controller, 'state'])->middleware('authorize:contracts.view')->name('state');
+    Route::post('', [$controller, 'store'])->middleware('authorize:contracts.edit')->name('store');
+    $adoption = \App\Http\Controllers\Api\V1\Admin\Contract\ContractBuilderAdoptionController::class;
+    Route::get('adoption-preview', [$adoption, 'preview'])->middleware('authorize:contracts.revisions.adopt')->name('adoption.preview');
+    Route::post('adopt', [$adoption, 'store'])->middleware('authorize:contracts.revisions.adopt')->name('adoption.store');
+    $proposals = \App\Http\Controllers\Api\V1\Admin\Contract\ContractProposalController::class;
+    Route::get('proposals', [$proposals, 'index'])->middleware('authorize:contracts.view')->name('proposals.index');
+    Route::post('proposals', [$proposals, 'store'])->middleware('authorize:contracts.edit')->name('proposals.store');
+    Route::get('proposals/{proposal}', [$proposals, 'show'])->whereNumber('proposal')->middleware('authorize:contracts.view')->name('proposals.show');
+    Route::get('proposals/{proposal}/preview', [$proposals, 'preview'])->whereNumber('proposal')->middleware('authorize:contracts.view')->name('proposals.preview');
+    Route::post('proposals/{proposal}/decision', [$proposals, 'decide'])->whereNumber('proposal')->middleware('authorize:contracts.revisions.accept')->name('proposals.decide');
+    Route::post('proposals/{proposal}/external-decision', [$proposals, 'externalDecision'])->whereNumber('proposal')->middleware('authorize:contracts.revisions.record_external')->name('proposals.external-decision');
+    $assets = \App\Http\Controllers\Api\V1\Admin\Contract\ContractBuilderAssetController::class;
+    Route::post('assets', [$assets, 'store'])->middleware('authorize:contracts.view')->name('assets.store');
+    Route::get('assets/{asset}/download', [$assets, 'download'])->whereNumber('asset')->middleware('authorize:contracts.view')->name('assets.download');
+    $draftController = \App\Http\Controllers\Api\V1\Admin\Contract\ContractBuilderDraftController::class;
+    Route::get('draft', [$draftController, 'show'])->middleware('authorize:contracts.view')->name('draft.show');
+    Route::put('draft', [$draftController, 'store'])->middleware('authorize:contracts.edit')->name('draft.store');
+    Route::get('draft/preview', [$draftController, 'preview'])->middleware('authorize:contracts.view')->name('draft.preview');
+    Route::get('draft/source-changes', [$draftController, 'sourceChanges'])->middleware('authorize:contracts.edit')->name('draft.source-changes');
+    Route::get('revisions/{revision}', [$controller, 'show'])->whereNumber('revision')->middleware('authorize:contracts.view')->name('show');
+    $confirmations = \App\Http\Controllers\Api\V1\Admin\Contract\ContractRevisionConfirmationController::class;
+    Route::get('revisions/{revision}/confirmations', [$confirmations, 'show'])->whereNumber('revision')->middleware('authorize:contracts.view')->name('confirmations.show');
+    Route::post('revisions/{revision}/confirmations', [$confirmations, 'store'])->whereNumber('revision')->middleware('authorize:contracts.revisions.confirm')->name('confirmations.store');
+    Route::post('revisions/{revision}/external-confirmation', [$confirmations, 'external'])->whereNumber('revision')->middleware('authorize:contracts.revisions.record_external')->name('confirmations.external');
+    $archive = \App\Http\Controllers\Api\V1\Admin\Contract\ContractRevisionArchiveController::class;
+    $activation = \App\Http\Controllers\Api\V1\Admin\Contract\ContractRevisionActivationController::class;
+    Route::get('activations', [$activation, 'index'])->middleware('authorize:contracts.view')->name('activations.index');
+    Route::get('activations/{activation}', [$activation, 'show'])->whereNumber('activation')->middleware('authorize:contracts.view')->name('activations.show');
+    Route::post('activations/{activation}/retry', [$activation, 'retry'])->whereNumber('activation')->middleware('authorize:contracts.revisions.activate')->name('activations.retry');
+    Route::post('activations/{activation}/cancel', [$activation, 'cancel'])->whereNumber('activation')->middleware('authorize:contracts.revisions.activate')->name('activations.cancel');
+    Route::get('revisions/{revision}/activation-preview', [$activation, 'preview'])->whereNumber('revision')->middleware('authorize:contracts.view')->name('activations.preview');
+    Route::post('revisions/{revision}/activate', [$activation, 'store'])->whereNumber('revision')->middleware('authorize:contracts.revisions.activate')->name('activations.store');
+    $paymentPlan = \App\BusinessModules\Core\Payments\Http\Controllers\ContractRevisionPaymentPlanController::class;
+    Route::get('payment-plans', [$paymentPlan, 'index'])->middleware('authorize:payments.schedule.view')->name('payment-plans.index');
+    Route::post('activations/{activation}/payment-plan', [$paymentPlan, 'store'])->whereNumber('activation')->middleware('authorize:payments.schedule.create')->name('payment-plans.store');
+    Route::get('revisions/{revision}/legal-archive', [$archive, 'show'])->whereNumber('revision')->middleware('authorize:contracts.view')->name('legal-archive.show');
+    Route::post('revisions/{revision}/legal-archive', [$archive, 'store'])->whereNumber('revision')->middleware('authorize:contracts.edit')->name('legal-archive.store');
+    Route::get('revisions/{revision}/preview', [$controller, 'preview'])->whereNumber('revision')->middleware('authorize:contracts.view')->name('preview');
+    Route::post('revisions/{revision}/export', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractBuilderExportController::class, 'store'])
+        ->whereNumber('revision')->middleware('authorize:contracts.view')->name('export');
+});
+
 // ContractPaymentController удален - используйте модуль Payments
 
 // Маршруты для Контрактов
@@ -18,9 +83,26 @@ Route::post('contracts', [ContractController::class, 'store'])
 Route::get('contracts/type-profiles', [ContractTypeProfileController::class, 'index'])
     ->middleware('authorize:contracts.create')
     ->name('contracts.type-profiles');
+Route::get('contracts/party-preview', \App\Http\Controllers\Api\V1\Admin\Contract\ContractPartyPreviewController::class)
+    ->middleware('authorize:contracts.create')
+    ->name('contracts.party-preview');
+Route::get('contracts/organization-views', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractOrganizationViewController::class, 'index'])
+    ->middleware('authorize:contracts.view')->name('contracts.organization-view.index');
 Route::get('contracts/{contract}', [ContractController::class, 'show'])
     ->middleware('authorize:contracts.view')
     ->name('contracts.show');
+Route::get('contracts/{contract}/organization-view', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractOrganizationViewController::class, 'show'])
+    ->middleware('authorize:contracts.view')->name('contracts.organization-view.show');
+Route::get('contracts/{contract}/organization-view/history', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractOrganizationViewController::class, 'history'])
+    ->middleware('authorize:contracts.view')->name('contracts.organization-view.history');
+Route::get('contracts/{contract}/organization-view/enrollment-preview', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractOrganizationEnrollmentController::class, 'preview'])
+    ->middleware('authorize:contracts.edit')->name('contracts.organization-view.enrollment-preview');
+Route::post('contracts/{contract}/organization-view/enroll', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractOrganizationEnrollmentController::class, 'enable'])
+    ->middleware('authorize:contracts.edit')->name('contracts.organization-view.enroll');
+Route::patch('contracts/{contract}/organization-view', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractOrganizationViewController::class, 'update'])
+    ->middleware('authorize:contracts.edit')->name('contracts.organization-view.update');
+Route::post('contracts/{contract}/organization-view/transition', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractOrganizationViewController::class, 'transition'])
+    ->middleware('authorize:contracts.view')->name('contracts.organization-view.transition');
 Route::match(['put', 'patch'], 'contracts/{contract}', [ContractController::class, 'update'])
     ->middleware('authorize:contracts.edit')
     ->name('contracts.update');

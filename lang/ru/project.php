@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'unique_general_contractor_conflict' => 'В проекте уже есть действующий генподрядчик. Сначала завершите его участие в этой роли.',
     'access_denied' => 'Доступ к проекту запрещен.',
     'available_organizations_error' => 'Не удалось получить список доступных организаций.',
     'child_works_access_denied' => 'Доступ к дочерним работам проекта запрещен.',

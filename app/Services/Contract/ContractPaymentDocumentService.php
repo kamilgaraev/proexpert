@@ -61,7 +61,7 @@ class ContractPaymentDocumentService
                 [
                     'amount' => $amount,
                     'status' => PaymentDocumentStatus::DRAFT,
-                    'currency' => $data['currency'] ?? config('payments.defaults.currency', 'RUB'),
+                    'currency' => $data['currency'] ?? $contract->currency ?? config('payments.defaults.currency', 'RUB'),
                     'document_date' => $paymentDate,
                     'due_date' => $paymentDate,
                     'description' => $data['description'] ?? null,

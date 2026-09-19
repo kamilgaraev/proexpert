@@ -376,18 +376,168 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
                 'is_approved' => true,
             ])->save();
         });
+        $locks = [];
+        \Illuminate\Support\Facades\DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$locks): void {
+            if (str_contains(strtolower($query->sql), 'for update')) {
+                foreach (['contracts', 'contract_performance_acts'] as $table) {
+                    if (str_contains($query->sql, '"'.$table.'"')) {
+                        $locks[] = $table;
+                    }
+                }
+            }
+        });
         $first = $this->service->createFromAct($act->fresh(), InvoiceDirection::INCOMING);
+        self::assertSame(['contracts', 'contract_performance_acts'], array_slice($locks, 0, 2));
         $second = $this->service->createFromAct($act->fresh(), InvoiceDirection::INCOMING);
+        try {
+            $this->service->create([
+                'organization_id' => $this->organization->id, 'contract_id' => $contract->id + 10000,
+                'invoiceable_type' => ContractPerformanceAct::class, 'invoiceable_id' => $act->id,
+                'amount' => '1.00', 'document_type' => 'invoice',
+            ]);
+            self::fail('Act from a different contract was accepted');
+        } catch (\DomainException $exception) {
+            self::assertSame(trans_message('payments.validation.invoice_basis_scope_mismatch'), $exception->getMessage());
+        }
 
         self::assertSame($first->id, $second->id);
         self::assertSame('1250.55', $first->amount);
         self::assertSame('20.00', $first->vat_rate);
         self::assertSame('208.43', $first->vat_amount);
         self::assertSame('1042.12', $first->amount_without_vat);
+        foreach ([['first', 'contractor', $this->organization], ['second', 'subcontractor', $this->counterparty]] as [$side, $role, $organization]) {
+            \App\Models\ContractParty::create([
+                'contract_id' => $contract->id, 'side' => $side, 'role' => $role,
+                'linked_organization_id' => $organization->id, 'name' => $organization->name, 'snapshot' => [],
+            ]);
+        }
+        $historical = $this->service->createFromAct($act->fresh(), InvoiceDirection::INCOMING);
+        self::assertSame($first->id, $historical->id);
+        self::assertSame(InvoiceDirection::INCOMING, $historical->direction);
+        self::assertSame($this->counterparty->id, $historical->payer_organization_id);
+        self::assertSame($this->organization->id, $historical->payee_organization_id);
+        try {
+            $this->service->createFromAct($act->fresh(), InvoiceDirection::OUTGOING, '1.00', 'new-key');
+            self::fail('An exhausted act was invoiced again after its direction changed');
+        } catch (\DomainException $exception) {
+            self::assertSame(trans_message('payments.validation.invoice_amount_exceeds_act_balance'), $exception->getMessage());
+        }
         self::assertSame(1, PaymentDocument::query()
             ->where('invoiceable_type', ContractPerformanceAct::class)
             ->where('invoiceable_id', $act->id)
             ->count());
+        $conflict = $first->replicate();
+        $conflict->document_number = $first->document_number.'-conflict';
+        $conflict->direction = InvoiceDirection::OUTGOING;
+        $conflict->origin_key = sprintf('performance-act:%d:outgoing:%s', $act->id, hash('sha256', 'full'));
+        $conflict->save();
+        try {
+            $this->service->createFromAct($act->fresh(), InvoiceDirection::OUTGOING);
+            self::fail('Conflicting historical invoices were silently accepted');
+        } catch (\DomainException $exception) {
+            self::assertSame(trans_message('payments.validation.idempotency_conflict'), $exception->getMessage());
+        }
+        self::assertSame(2, PaymentDocument::query()->where('invoiceable_type', ContractPerformanceAct::class)
+            ->where('invoiceable_id', $act->id)->count());
+    }
+
+    public function test_contract_workflow_uses_saved_parties_and_contract_currency(): void
+    {
+        $executor = Contractor::query()->create([
+            'organization_id' => $this->organization->id, 'name' => 'Own executor',
+            'source_organization_id' => $this->organization->id,
+        ]);
+        $contract = Contract::query()->create([
+            'contractor_id' => $executor->id,
+            'organization_id' => $this->organization->id, 'project_id' => $this->project->id,
+            'number' => 'WORKFLOW-PARTIES', 'date' => now()->toDateString(),
+            'subject' => 'Works', 'total_amount' => 5000, 'status' => 'active',
+            'contract_side_type' => 'subcontract', 'currency' => 'USD',
+        ]);
+        foreach ([['first', 'contractor', $this->counterparty], ['second', 'subcontractor', $this->organization]] as [$side, $role, $organization]) {
+            \App\Models\ContractParty::create([
+                'contract_id' => $contract->id, 'side' => $side, 'role' => $role,
+                'linked_organization_id' => $organization->id, 'name' => $organization->name, 'snapshot' => [],
+            ]);
+        }
+        $actor = User::factory()->create(['current_organization_id' => $this->organization->id]);
+        $workflow = app(\App\BusinessModules\Core\Payments\Services\PaymentDocumentWorkflowService::class);
+        $lockLevel = 0;
+        \Illuminate\Support\Facades\DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$lockLevel): void {
+            if (str_contains($query->sql, '"contracts"') && str_contains(strtolower($query->sql), 'for update')) {
+                $lockLevel = $query->connection->transactionLevel();
+            }
+        });
+        foreach ([
+            [['contract_id' => $contract->id], null],
+            [['source_type' => Contract::class, 'source_id' => $contract->id], ''],
+            [['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id], 'EUR'],
+        ] as [$reference, $currency]) {
+            $payload = [
+                ...$reference, 'project_id' => $this->project->id,
+                'document_type' => PaymentDocumentType::INVOICE->value,
+                'document_date' => now()->toDateString(), 'invoice_type' => InvoiceType::ADVANCE->value,
+                'amount' => '100.00', 'currency' => $currency, 'status' => PaymentDocumentStatus::DRAFT->value,
+                'direction' => InvoiceDirection::OUTGOING->value,
+                'payer_organization_id' => $this->organization->id,
+                'payee_organization_id' => $this->counterparty->id,
+            ];
+            $initialLevel = \Illuminate\Support\Facades\DB::transactionLevel();
+            $lockLevel = 0;
+            $result = $workflow->create($this->organization->id, $actor->id, $payload);
+            self::assertGreaterThan($initialLevel, $lockLevel);
+            $lockLevel = 0;
+            $direct = $this->service->create([...$payload, 'organization_id' => $this->organization->id]);
+            self::assertGreaterThan($initialLevel, $lockLevel);
+            foreach ([$result['document'], $direct] as $created) {
+                $document = $created->fresh();
+                self::assertSame(InvoiceDirection::INCOMING, $document->direction);
+                self::assertSame($this->counterparty->id, $document->payer_organization_id);
+                self::assertSame($this->organization->id, $document->payee_organization_id);
+                self::assertSame($currency ?: 'USD', $document->currency);
+                self::assertSame($contract->id, $document->invoiceable_id);
+            }
+        }
+        $foreign = $contract->replicate();
+        $foreign->organization_id = $this->counterparty->id;
+        $foreign->number = 'FOREIGN-WORKFLOW';
+        $foreign->save();
+        ContractPerformanceAct::query()->create([
+            'id' => $contract->id, 'contract_id' => $contract->id, 'project_id' => $this->project->id,
+            'act_document_number' => 'REQUEST-BASIS', 'act_date' => now()->toDateString(),
+            'period_start' => now()->startOfMonth()->toDateString(), 'period_end' => now()->endOfMonth()->toDateString(),
+            'amount' => '500.00', 'currency' => 'USD',
+            'status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true,
+        ]);
+        foreach ([
+            ['contract_id' => $foreign->id],
+            ['source_type' => Contract::class, 'source_id' => $foreign->id],
+            ['invoiceable_type' => Contract::class, 'invoiceable_id' => $foreign->id],
+            ['contract_id' => $contract->id, 'invoiceable_type' => Contract::class, 'invoiceable_id' => $foreign->id],
+            ['contract_id' => $contract->id, 'project_id' => $this->project->id + 10000],
+            ['source_type' => Contract::class],
+            ['contract_id' => $contract->id, 'invoiceable_type' => ContractPerformanceAct::class],
+        ] as $invalidReference) {
+            try {
+                $workflow->create($this->organization->id, $actor->id, [
+                    ...$invalidReference, 'amount' => '100.00',
+                    'document_type' => PaymentDocumentType::INVOICE->value,
+                ]);
+                self::fail('Invalid contract reference was accepted');
+            } catch (\DomainException $exception) {
+                self::assertSame(trans_message('payments.validation.invoice_basis_scope_mismatch'), $exception->getMessage());
+            }
+        }
+        self::assertSame(6, PaymentDocument::query()->where('organization_id', $this->organization->id)->count());
+        $request = app(\App\BusinessModules\Core\Payments\Services\PaymentRequestService::class)->createFromContractor([
+            'organization_id' => $this->organization->id, 'contract_id' => $contract->id,
+            'contractor_id' => $executor->id, 'amount' => '100.00',
+        ]);
+        self::assertSame('USD', $request->currency);
+        self::assertStringContainsString('WORKFLOW-PARTIES', $request->payment_purpose);
+        self::assertStringContainsString($contract->date->format('d.m.Y'), $request->payment_purpose);
+        self::assertSame($this->counterparty->id, $request->payer_organization_id);
+        self::assertSame($this->organization->id, $request->payee_organization_id);
     }
 
     public function test_act_can_be_invoiced_in_idempotent_partial_allocations(): void

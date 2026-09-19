@@ -36,6 +36,9 @@ class StorePaymentDocumentRequest extends FormRequest
             );
         $isActInvoice = $this->input('invoiceable_type') === ContractPerformanceAct::class
             && $this->input('invoiceable_id');
+        $hasContractBasis = $this->filled('contract_id')
+            || $this->input('source_type') === Contract::class
+            || in_array($this->input('invoiceable_type'), [Contract::class, ContractPerformanceAct::class], true);
 
         return [
             'document_type' => 'required|string|in:payment_request,invoice,payment_order,incoming_payment,expense,offset_act',
@@ -44,7 +47,9 @@ class StorePaymentDocumentRequest extends FormRequest
             'project_id' => [
                 'nullable',
                 'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+                $hasContractBasis
+                    ? \App\Rules\AvailableContractProject::forOrganization($organizationId)
+                    : Rule::exists('projects', 'id')->where('organization_id', $organizationId),
             ],
             'payer_organization_id' => [
                 'nullable',

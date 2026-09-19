@@ -132,6 +132,48 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_contract_invoice_http_uses_saved_parties_and_currency_on_participant_project(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $customer = \App\Models\Organization::factory()->create();
+        $project = \App\Models\Project::factory()->create(['organization_id' => $customer->id]);
+        $project->organizations()->attach($context->organization->id, ['role' => 'contractor', 'role_new' => 'contractor', 'is_active' => true]);
+        $executor = $this->createContractor($context);
+        $executor->update(['source_organization_id' => $context->organization->id]);
+        $contract = \App\Models\Contract::create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id, 'contractor_id' => $executor->id,
+            'number' => 'HTTP-PAYMENT', 'date' => '2026-09-19', 'status' => 'active',
+            'contract_side_type' => 'subcontract', 'base_amount' => 1000, 'total_amount' => 1000, 'currency' => 'USD',
+        ]);
+        foreach ([['first', 'contractor', $customer], ['second', 'subcontractor', $context->organization]] as [$side, $role, $organization]) {
+            \App\Models\ContractParty::create([
+                'contract_id' => $contract->id, 'side' => $side, 'role' => $role,
+                'linked_organization_id' => $organization->id, 'name' => $organization->name, 'snapshot' => [],
+            ]);
+        }
+        $payload = [
+            'contract_id' => $contract->id, 'project_id' => $project->id,
+            'document_type' => 'invoice', 'invoice_type' => 'advance', 'amount' => 100,
+            'document_date' => '2026-09-19',
+            'currency' => null, 'direction' => 'outgoing',
+            'payer_organization_id' => $context->organization->id, 'payee_organization_id' => $customer->id,
+        ];
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', $payload);
+        self::assertSame(201, $response->status(), $response->getContent());
+        $payment = PaymentDocument::findOrFail($response->json('data.id'));
+        self::assertSame('USD', $payment->currency);
+        self::assertSame(InvoiceDirection::INCOMING, $payment->direction);
+        self::assertSame($customer->id, $payment->payer_organization_id);
+        self::assertSame($context->organization->id, $payment->payee_organization_id);
+        self::assertSame($project->id, $payment->project_id);
+        $project->organizations()->updateExistingPivot($context->organization->id, ['is_active' => false]);
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', $payload)
+            ->assertUnprocessable()->assertJsonValidationErrors('project_id');
+        self::assertSame(1, PaymentDocument::query()->where('invoiceable_type', \App\Models\Contract::class)
+            ->where('invoiceable_id', $contract->id)->count());
+    }
+
     private function createPaymentRequest(
         AdminApiTestContext $context,
         Contractor $contractor,

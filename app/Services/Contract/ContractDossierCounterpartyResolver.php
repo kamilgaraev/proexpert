@@ -9,8 +9,19 @@ use App\Models\Contract;
 
 final class ContractDossierCounterpartyResolver
 {
-    public function name(Contract $contract): ?string
+    public function name(Contract $contract, ?int $organizationId = null): ?string
     {
+        $organizationId ??= (int) $contract->organization_id;
+        $sides = app(ContractSideResolverService::class)->resolve($contract, $organizationId);
+        $counterparty = $sides[$sides['is_income'] ? 'first_party' : 'second_party'] ?? null;
+        if ((int) ($counterparty['organization_id'] ?? $counterparty['linked_organization_id'] ?? 0) === $organizationId) {
+            return null;
+        }
+        $resolvedName = trim((string) ($counterparty['name'] ?? ''));
+        if ($resolvedName !== '') {
+            return $resolvedName;
+        }
+
         $type = $contract->contract_side_type;
         if ($type instanceof ContractSideTypeEnum) {
             $party = $type === ContractSideTypeEnum::GENERAL_CONTRACT

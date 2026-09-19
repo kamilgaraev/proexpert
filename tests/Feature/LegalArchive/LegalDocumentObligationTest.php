@@ -14,7 +14,7 @@ final class LegalDocumentObligationTest extends TestCase
         $lifecycle = (string) file_get_contents(dirname(__DIR__, 3).'/app/Services/LegalArchive/LegalArchiveLifecycleService.php');
 
         self::assertStringContainsString('syncFromEffectiveDocument', $source);
-        self::assertStringContainsString('updateOrCreate', $source);
+        self::assertStringContainsString('firstOrCreate', $source);
         self::assertStringContainsString('syncFromEffectiveDocument($locked)', $lifecycle);
     }
 

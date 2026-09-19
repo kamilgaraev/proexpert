@@ -19,16 +19,9 @@ class ContractSideResolverService
     ) {
     }
 
-    public function resolve(Contract $contract): array
+    public function resolve(Contract $contract, ?int $organizationId = null): array
     {
-        $contract->loadMissing([
-            'organization',
-            'project.organizations',
-            'contractor.sourceOrganization',
-            'supplier',
-            'firstParty',
-            'secondParty',
-        ]);
+        $contract->loadMissing(['firstParty', 'secondParty']);
 
         $sideType = $contract->contract_side_type instanceof ContractSideTypeEnum
             ? $contract->contract_side_type
@@ -37,7 +30,7 @@ class ContractSideResolverService
         if ($contract->firstParty instanceof ContractParty && $contract->secondParty instanceof ContractParty) {
             $firstSnapshot = $this->mapContractPartySnapshot($contract->firstParty);
             $secondSnapshot = $this->mapContractPartySnapshot($contract->secondParty);
-            $currentOrgId = auth()->user()?->current_organization_id ?? $contract->organization_id;
+            $currentOrgId = $organizationId ?? auth()->user()?->current_organization_id ?? $contract->organization_id;
             $isSecondParty = $currentOrgId && (
                 ($secondSnapshot['linked_organization_id'] ?? null) == $currentOrgId ||
                 ($secondSnapshot['organization_id'] ?? null) == $currentOrgId
@@ -68,6 +61,7 @@ class ContractSideResolverService
             ];
         }
 
+        $contract->loadMissing(['organization', 'project.organizations', 'contractor.sourceOrganization', 'supplier']);
         $ownerParty = $this->mapOrganizationParty($contract->organization);
         $projectCustomerParty = $contract->project instanceof Project
             ? $this->mapResolvedCustomerParty($contract->project)
@@ -128,7 +122,7 @@ class ContractSideResolverService
             ? $secondParty
             : null;
 
-        $currentOrgId = auth()->user()?->current_organization_id ?? $contract->organization_id;
+        $currentOrgId = $organizationId ?? auth()->user()?->current_organization_id ?? $contract->organization_id;
         $isSecond = $currentOrgId && (
             ($secondParty['organization_id'] ?? null) == $currentOrgId ||
             ($secondParty['linked_organization_id'] ?? null) == $currentOrgId
@@ -229,6 +223,7 @@ class ContractSideResolverService
 
         return [
             'id' => $organization->id,
+            'organization_id' => $organization->id,
             'name' => $organization->name,
             'entity_type' => 'organization',
         ];

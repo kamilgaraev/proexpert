@@ -169,19 +169,19 @@ class UpdateContractRequest extends FormRequest
             'sometimes',
             'nullable',
             'integer',
-            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            \App\Rules\AvailableContractProject::forOrganization($organizationId),
         ];
         $projectIdsRules = ['sometimes', 'nullable', 'array', 'min:1'];
         $projectIdsItemRules = [
             'integer',
-            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            \App\Rules\AvailableContractProject::forOrganization($organizationId),
         ];
 
         if ($routeProjectId !== null && $this->scopeUpdateRequested) {
             $projectIdRules = [
                 $isMultiProject ? 'nullable' : 'required',
                 'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+                \App\Rules\AvailableContractProject::forOrganization($organizationId),
                 Rule::in([$routeProjectId]),
             ];
             $projectIdsItemRules[] = 'distinct';
@@ -228,6 +228,8 @@ class UpdateContractRequest extends FormRequest
             'base_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'currency' => ['sometimes', 'string', 'size:3', 'regex:/^[A-Za-z]{3}$/'],
+            'superior_organization_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'direction' => ['sometimes', 'nullable', Rule::in(['income', 'expense'])],
             'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['sometimes', 'nullable', new Enum(GpCalculationTypeEnum::class)],
             'gp_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0'],
@@ -250,6 +252,8 @@ class UpdateContractRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'project_id.exists' => trans_message('contracts.project_unavailable'),
+            'project_ids.*.exists' => trans_message('contracts.project_unavailable'),
             'status.prohibited' => trans_message('contracts.status_transition_only'),
         ];
     }
@@ -288,7 +292,9 @@ class UpdateContractRequest extends FormRequest
         return app(ProjectContractPartyResolver::class)->shouldAutofillSelfAsContractor(
             $project,
             $organizationId,
-            $sideType
+            $sideType,
+            is_numeric($this->input('superior_organization_id', $contract?->superior_organization_id)) ? (int) $this->input('superior_organization_id', $contract?->superior_organization_id) : null,
+            $this->input('direction'),
         );
     }
 
@@ -325,6 +331,8 @@ class UpdateContractRequest extends FormRequest
         ]);
 
         $allowedFields = [
+            'superior_organization_id',
+            'direction',
             'project_id',
             'contract_side_type',
             'contractor_id',
@@ -443,6 +451,8 @@ class UpdateContractRequest extends FormRequest
                 ? ($validatedData['contract_side_type'] ? ContractSideTypeEnum::tryFromLegacy($validatedData['contract_side_type']) : null)
                 : $contract->contract_side_type,
             currency: mb_strtoupper((string) ($validatedData['currency'] ?? $contract->currency ?? 'RUB')),
+            superior_organization_id: array_key_exists('superior_organization_id', $validatedData) ? $validatedData['superior_organization_id'] : $contract->superior_organization_id,
+            direction: $validatedData['direction'] ?? null,
         );
     }
 

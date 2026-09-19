@@ -7,7 +7,7 @@ namespace App\BusinessModules\Core\Payments\Services;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Exceptions\PaymentDocumentDeviationBlockedException;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\Models\Contract;
+
 use App\Models\User;
 use DateTime;
 use Illuminate\Support\Facades\DB;
@@ -30,7 +30,7 @@ final class PaymentDocumentWorkflowService
     {
         $data['organization_id'] = $organizationId;
         $data['created_by_user_id'] = $userId;
-        $data = $this->prepareContractPaymentData($organizationId, $data);
+
 
         $warnings = [];
 
@@ -213,132 +213,6 @@ final class PaymentDocumentWorkflowService
             ]),
             default => null,
         };
-    }
-
-    /**
-     * @param  array<string, mixed>  $data
-     * @return array<string, mixed>
-     */
-    private function prepareContractPaymentData(int $organizationId, array $data): array
-    {
-        if (isset($data['contract_id'])) {
-            $data['source_id'] ??= $data['contract_id'];
-            $data['source_type'] ??= Contract::class;
-            $data['invoiceable_id'] ??= $data['contract_id'];
-            $data['invoiceable_type'] ??= Contract::class;
-        }
-
-        $contractId = $data['invoiceable_id']
-            ?? $data['source_id']
-            ?? $data['contract_id']
-            ?? null;
-        $isContractRelated = ($data['invoiceable_type'] ?? null) === Contract::class
-            || ($data['source_type'] ?? null) === Contract::class
-            || isset($data['contract_id']);
-
-        $contract = null;
-        if ($isContractRelated && $contractId) {
-            $contract = Contract::query()
-                ->whereKey($contractId)
-                ->where('organization_id', $organizationId)
-                ->first();
-
-            if ($contract instanceof Contract) {
-                $data = $this->applyContractPaymentParties($data, $contract);
-            }
-        }
-
-        if (($data['invoice_type'] ?? null) !== 'advance' || ! $isContractRelated || ! $contractId || ! empty($data['amount'])) {
-            return $data;
-        }
-
-        if (! $contract instanceof Contract) {
-            Log::warning('payment_document.store.contract_not_found', [
-                'contract_id' => $contractId,
-                'organization_id' => $organizationId,
-            ]);
-
-            throw new \DomainException(sprintf(
-                trans_message('payments.validation.contract_not_found_by_id'),
-                $contractId
-            ));
-        }
-
-        $amount = $this->resolveContractAdvanceAmount($contract);
-
-        if ($amount === null) {
-            Log::warning('payment_document.store.cannot_calculate_advance', [
-                'contract_id' => $contractId,
-                'planned_advance_amount' => $contract->planned_advance_amount,
-                'total_amount_with_gp' => $contract->total_amount_with_gp,
-                'total_amount' => $contract->total_amount,
-                'base_amount' => $contract->base_amount,
-                'is_fixed_amount' => $contract->is_fixed_amount,
-            ]);
-
-            throw new \DomainException(sprintf(
-                trans_message('payments.validation.advance_amount_auto_detect_failed'),
-                $contract->number ?? $contractId
-            ));
-        }
-
-        $data['amount'] = $amount;
-
-        return $data;
-    }
-
-    /**
-     * @param  array<string, mixed>  $data
-     * @return array<string, mixed>
-     */
-    private function applyContractPaymentParties(array $data, Contract $contract): array
-    {
-        $direction = (string) ($data['direction'] ?? 'outgoing');
-        $hasPayer = isset($data['payer_organization_id']) || isset($data['payer_contractor_id']);
-        $hasPayee = isset($data['payee_organization_id']) || isset($data['payee_contractor_id']);
-
-        if ($direction === 'incoming') {
-            if (! $hasPayer && $contract->contractor_id) {
-                $data['payer_contractor_id'] = $contract->contractor_id;
-            }
-
-            if (! $hasPayee) {
-                $data['payee_organization_id'] = $contract->organization_id;
-            }
-
-            return $data;
-        }
-
-        if (! $hasPayer) {
-            $data['payer_organization_id'] = $contract->organization_id;
-        }
-
-        if (! $hasPayee && $contract->contractor_id) {
-            $data['payee_contractor_id'] = $contract->contractor_id;
-        }
-
-        return $data;
-    }
-
-    private function resolveContractAdvanceAmount(Contract $contract): ?float
-    {
-        if ($contract->planned_advance_amount && $contract->planned_advance_amount > 0) {
-            return (float) $contract->planned_advance_amount;
-        }
-
-        if ($contract->is_fixed_amount && $contract->total_amount_with_gp !== null && $contract->total_amount_with_gp > 0) {
-            return (float) $contract->total_amount_with_gp;
-        }
-
-        if ($contract->total_amount && $contract->total_amount > 0) {
-            return (float) $contract->total_amount;
-        }
-
-        if ($contract->base_amount && $contract->base_amount > 0) {
-            return (float) $contract->base_amount;
-        }
-
-        return null;
     }
 
     private function nullableString(mixed $value): ?string

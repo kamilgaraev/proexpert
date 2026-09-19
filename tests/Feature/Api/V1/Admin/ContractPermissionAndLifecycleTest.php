@@ -48,7 +48,13 @@ final class ContractPermissionAndLifecycleTest extends TestCase
         User::factory()->create(['id' => 42, 'current_organization_id' => 7]);
     }
 
-    public function test_creation_accepts_active_shared_projects_and_explains_unavailable_projects(): void
+    public static function contractProjectRequests(): array
+    {
+        return [[StoreContractRequest::class], [UpdateContractRequest::class]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('contractProjectRequests')]
+    public function test_creation_and_update_accept_active_shared_projects_and_explain_unavailable_projects(string $requestClass): void
     {
         foreach ([11 => 7, 12 => 8, 13 => 8, 14 => 8] as $id => $organizationId) {
             \App\Models\Project::factory()->createQuietly(['id' => $id, 'organization_id' => $organizationId]);
@@ -57,11 +63,12 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             ['project_id' => 12, 'organization_id' => 7, 'is_active' => true],
             ['project_id' => 13, 'organization_id' => 7, 'is_active' => false],
         ]);
+        $this->persistContract(22, 11);
         $this->mock(\App\Modules\Core\AccessController::class, static function (MockInterface $mock): void {
             $mock->shouldReceive('hasModuleAccess')->andReturn(false);
         });
         foreach ([11 => true, 12 => true, 13 => false, 14 => false, 999 => false] as $projectId => $valid) {
-            $request = $this->requestWithProjectRoute(StoreContractRequest::class, $this->user(7), $projectId);
+            $request = $this->requestWithProjectRoute($requestClass, $this->user(7), $projectId);
             $rules = $request->rules();
             $validator = \Illuminate\Support\Facades\Validator::make(
                 ['project_id' => $projectId],

@@ -8,6 +8,11 @@ use Illuminate\Support\Collection;
 
 class SingleContractorAccess implements ContractorSharingInterface
 {
+    public function availableQuery(int $organizationId): \Illuminate\Database\Eloquent\Builder
+    {
+        return Contractor::query()->where('organization_id', $organizationId);
+    }
+
     public function getAvailableContractors(int $organizationId): Collection
     {
         return Contractor::where('organization_id', $organizationId)->get();

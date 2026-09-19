@@ -295,6 +295,7 @@ final class ProcurementChainControllerTest extends TestCase
             'contractor_id' => $contractor->id,
             'contract_category' => 'procurement',
             'number' => 'SUP-CHAIN-'.uniqid(),
+            'currency' => 'USD',
             'date' => now()->toDateString(),
             'subject' => 'Concrete supply',
             'work_type_category' => ContractWorkTypeCategoryEnum::SUPPLY,
@@ -306,6 +307,7 @@ final class ProcurementChainControllerTest extends TestCase
         $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED, [
             'contract_id' => $contract->id,
             'total_amount' => 500,
+            'currency' => '',
             'supplier_snapshot' => [
                 'display_name' => 'Concrete Supplier',
                 'tax_id' => '7700000001',
@@ -326,6 +328,7 @@ final class ProcurementChainControllerTest extends TestCase
             'source_id' => $contract->id,
             'invoice_type' => InvoiceType::MATERIAL_PURCHASE->value,
             'amount' => 500,
+            'currency' => 'USD',
         ]);
     }
 

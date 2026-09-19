@@ -190,7 +190,7 @@ final class PurchaseOrderPaymentDocumentService
             'payee_contractor_id' => $contractor->id,
             'contractor_id' => $contractor->id,
             'amount' => round((float) $order->total_amount, 2),
-            'currency' => $order->currency ?: 'RUB',
+            'currency' => $order->currency ?: ($contract?->currency ?: config('payments.defaults.currency', 'RUB')),
             'due_date' => $order->delivery_date?->toDateString() ?? now()->addDays(7)->toDateString(),
             'description' => trans_message('procurement.chain.payment_document.description_prefix').' '.$order->order_number,
             'payment_purpose' => trans_message('procurement.chain.payment_document.payment_purpose_prefix').' '.$order->order_number,

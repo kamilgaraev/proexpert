@@ -36,6 +36,174 @@ class ContractCoreExperienceControllerTest extends TestCase
         $this->enableImmutableAuditWriter();
     }
 
+    public function test_income_subcontract_http_keeps_selected_superior_and_real_executor_identity(): void
+    {
+        $context = AdminApiTestContext::create();
+        $first = Organization::factory()->verified()->create();
+        $second = Organization::factory()->verified()->create();
+        $project = Project::factory()->create(['organization_id' => $first->id]);
+        $this->attachProjectParticipant($project, $context->organization, ProjectOrganizationRole::SUBCONTRACTOR);
+        $this->attachProjectParticipant($project, $first, ProjectOrganizationRole::CONTRACTOR);
+        $this->attachProjectParticipant($project, $second, ProjectOrganizationRole::CONTRACTOR);
+        $self = $this->createContractor($context->organization, 'Own organization', $context->organization);
+        $wrong = $this->createContractor($context->organization, 'Other organization in own directory', $first);
+        $this->allowAdminAccess();
+        $url = "/api/v1/admin/projects/{$project->id}/contracts";
+        $payload = [
+            'project_id' => $project->id, 'contract_side_type' => 'subcontract', 'direction' => 'income',
+            'contractor_id' => $self->id, 'number' => 'HTTP-INCOME-1', 'date' => '2026-09-19',
+            'subject' => 'Работы субподряда', 'base_amount' => 1000, 'total_amount' => 1000,
+            'is_fixed_amount' => true, 'status' => 'draft', 'idempotency_key' => 'http-income-1',
+        ];
+        $ambiguous = $this->withHeaders($context->authHeaders())->postJson($url, $payload);
+        self::assertTrue($ambiguous->isClientError(), $ambiguous->getContent());
+        self::assertSame(0, Contract::where('organization_id', $context->organization->id)->count());
+        $invalidIdentity = $this->withHeaders($context->authHeaders())->postJson($url, [
+            ...$payload, 'superior_organization_id' => $second->id, 'contractor_id' => $wrong->id,
+        ]);
+        self::assertTrue($invalidIdentity->isClientError(), $invalidIdentity->getContent());
+        self::assertSame(0, Contract::where('organization_id', $context->organization->id)->count());
+        foreach ([$first, $second] as $index => $superior) {
+            $request = [...$payload, 'number' => 'HTTP-INCOME-'.($index + 1), 'idempotency_key' => 'http-income-'.($index + 1), 'superior_organization_id' => $superior->id];
+            if ($index === 1) {
+                unset($request['contractor_id']);
+            }
+            $response = $this->withHeaders($context->authHeaders())->postJson($url, $request)->assertCreated();
+            $contract = Contract::findOrFail($response->json('data.id'));
+            self::assertSame($superior->id, $contract->firstParty()->firstOrFail()->linked_organization_id);
+            self::assertSame($context->organization->id, $contract->secondParty()->firstOrFail()->linked_organization_id);
+            self::assertSame($context->organization->id, $contract->contractor->source_organization_id);
+            self::assertNotNull($contract->legal_archive_document_id);
+            $this->withHeaders($context->authHeaders())->postJson($url, $request)->assertOk()->assertJsonPath('data.id', $contract->id);
+        }
+        self::assertSame(2, Contract::where('organization_id', $context->organization->id)->count());
+        self::assertSame(2, $project->organizations()->wherePivot('is_active', true)->wherePivot('role_new', ProjectOrganizationRole::CONTRACTOR->value)->count());
+    }
+
+    public function test_prepared_project_requires_general_contractor_only_when_creating_income_contract(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id, 'contracting_scheme' => 'general_contractor',
+        ]);
+        $this->attachProjectParticipant($project, $context->organization, ProjectOrganizationRole::CONTRACTOR);
+        $self = $this->createContractor($context->organization, 'Own executor', $context->organization);
+        $input = ['project_id' => $project->id, 'contract_side_type' => 'contract', 'direction' => 'income'];
+        $previewUrl = '/api/v1/admin/contracts/party-preview?'.http_build_query($input);
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/projects/'.$project->id)->assertOk();
+        $this->withHeaders($context->authHeaders())->getJson($previewUrl)->assertOk()
+            ->assertJsonPath('data.first_party', null)
+            ->assertJsonPath('data.reason', trans_message('contracts.superior_missing', ['role' => 'Генподрядчик']));
+        $payload = [
+            ...$input, 'contractor_id' => $self->id, 'number' => 'PREPARED-INCOME', 'date' => '2026-09-19',
+            'subject' => 'Работы', 'base_amount' => 1000, 'total_amount' => 1000,
+            'is_fixed_amount' => true, 'status' => 'draft', 'idempotency_key' => 'prepared-income',
+        ];
+        $url = '/api/v1/admin/projects/'.$project->id.'/contracts';
+        $rejected = $this->withHeaders($context->authHeaders())->postJson($url, $payload);
+        self::assertTrue($rejected->isClientError(), $rejected->getContent());
+        self::assertSame(0, Contract::where('project_id', $project->id)->count());
+        $superior = Organization::factory()->verified()->create();
+        app(\App\Services\Project\ProjectParticipantService::class)->attach($project, $superior->id, ProjectOrganizationRole::GENERAL_CONTRACTOR);
+        $this->withHeaders($context->authHeaders())->getJson($previewUrl)->assertOk()
+            ->assertJsonPath('data.reason', null)
+            ->assertJsonPath('data.first_party.linked_organization_id', $superior->id)
+            ->assertJsonPath('data.second_party.linked_organization_id', $context->organization->id);
+        $created = $this->withHeaders($context->authHeaders())->postJson($url, $payload)->assertCreated();
+        $contract = Contract::findOrFail($created->json('data.id'));
+        self::assertSame($superior->id, $contract->firstParty()->firstOrFail()->linked_organization_id);
+        self::assertSame($context->organization->id, $contract->secondParty()->firstOrFail()->linked_organization_id);
+    }
+
+    public function test_shared_contract_http_keeps_notes_private_without_granting_project_access(): void
+    {
+        $owner = AdminApiTestContext::create();
+        $executor = AdminApiTestContext::create();
+        $outsider = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $project = Project::factory()->create(['organization_id' => $owner->organization->id]);
+        $contractor = $this->createContractor($owner->organization, 'Connected executor', $executor->organization);
+        $contract = $this->createContract($owner->organization, $project, $contractor, ['notes' => 'Legacy owner secret']);
+        app(\App\Services\Contract\ContractPartySnapshotService::class)->syncParties($contract);
+        app(\App\Services\Contract\ContractOrganizationViewService::class)->synchronizeNewContract($contract);
+        $viewUrl = '/api/v1/admin/contracts/'.$contract->id.'/organization-view';
+        $this->withHeaders($owner->authHeaders())->patchJson($viewUrl, ['private_notes' => 'Owner budget memo', 'version' => 1])
+            ->assertOk()->assertJsonPath('data.private_notes', 'Owner budget memo');
+        $otherView = $this->withHeaders($executor->authHeaders())->getJson($viewUrl)->assertOk();
+        $otherView->assertJsonPath('data.private_notes', null)->assertJsonPath('data.version', 1);
+        $this->withHeaders($executor->authHeaders())->patchJson($viewUrl, [
+            'private_notes' => 'Executor memo', 'version' => 1, 'organization_id' => $owner->organization->id,
+        ])->assertOk()->assertJsonPath('data.organization_id', $executor->organization->id);
+        $ownerView = $this->withHeaders($owner->authHeaders())->getJson($viewUrl)->assertOk();
+        $ownerView->assertJsonPath('data.private_notes', 'Owner budget memo');
+        self::assertSame($ownerView->json('data.legal_contract'), $otherView->json('data.legal_contract'));
+        $shared = $this->withHeaders($executor->authHeaders())->getJson('/api/v1/admin/contracts/'.$contract->id)->assertOk();
+        self::assertArrayNotHasKey('notes', $shared->json('data'));
+        self::assertArrayNotHasKey('payments', $shared->json('data'));
+        $projectResponse = $this->withHeaders($executor->authHeaders())->getJson('/api/v1/admin/projects/'.$project->id);
+        self::assertTrue(in_array($projectResponse->status(), [403, 404], true), $projectResponse->getContent());
+        $this->withHeaders($outsider->authHeaders())->getJson($viewUrl)->assertNotFound();
+        self::assertSame(1, Contract::whereKey($contract->id)->count());
+        self::assertSame(0, PaymentDocument::where('invoiceable_type', Contract::class)->where('invoiceable_id', $contract->id)->count());
+        self::assertFalse($project->organizations()->where('organizations.id', $executor->organization->id)->exists());
+    }
+
+    public function test_shared_directory_http_uses_linked_executor_and_rejects_unavailable_record(): void
+    {
+        $context = AdminApiTestContext::create();
+        $directory = Organization::factory()->verified()->create();
+        $executor = Organization::factory()->verified()->create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $shared = $this->createContractor($directory, 'Shared executor', $executor);
+        $denied = $this->createContractor($directory, 'Unavailable executor');
+        $sharing = \Mockery::mock(\App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface::class);
+        $sharing->shouldReceive('canUseContractor')->with($shared->id, $context->organization->id)->andReturn(true);
+        $sharing->shouldReceive('canUseContractor')->with($denied->id, $context->organization->id)->andReturn(false);
+        $this->app->instance(\App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface::class, $sharing);
+        $this->allowAdminAccess();
+        $url = "/api/v1/admin/projects/{$project->id}/contracts";
+        $payload = [
+            'project_id' => $project->id, 'contract_side_type' => 'subcontract', 'direction' => 'expense',
+            'contractor_id' => $denied->id, 'number' => 'HTTP-SHARED', 'date' => '2026-09-19',
+            'subject' => 'Shared directory contract', 'base_amount' => 1000, 'total_amount' => 1000,
+            'is_fixed_amount' => true, 'status' => 'draft', 'idempotency_key' => 'http-shared',
+        ];
+        $this->withHeaders($context->authHeaders())->postJson($url, $payload)
+            ->assertUnprocessable()->assertJsonValidationErrors('contractor_id');
+        self::assertSame(0, Contract::where('organization_id', $context->organization->id)->count());
+        $response = $this->withHeaders($context->authHeaders())->postJson($url, [
+            ...$payload, 'contractor_id' => $shared->id,
+        ])->assertCreated();
+        $contract = Contract::findOrFail($response->json('data.id'));
+        self::assertSame($context->organization->id, $contract->firstParty()->firstOrFail()->linked_organization_id);
+        self::assertSame($executor->id, $contract->secondParty()->firstOrFail()->linked_organization_id);
+        self::assertSame($shared->id, $contract->contractor_id);
+        self::assertNotNull($contract->legal_archive_document_id);
+    }
+
+    public function test_external_executor_http_keeps_external_party_without_linking_directory_owner(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $external = $this->createContractor($context->organization, 'External executor');
+        $this->allowAdminAccess();
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/contracts", [
+                'project_id' => $project->id, 'contract_side_type' => 'subcontract', 'direction' => 'expense',
+                'contractor_id' => $external->id, 'number' => 'HTTP-EXTERNAL', 'date' => '2026-09-19',
+                'subject' => 'External executor contract', 'base_amount' => 1000, 'total_amount' => 1000,
+                'is_fixed_amount' => true, 'status' => 'draft', 'idempotency_key' => 'http-external',
+            ])->assertCreated();
+        $contract = Contract::findOrFail($response->json('data.id'));
+        self::assertSame($context->organization->id, $contract->firstParty()->firstOrFail()->linked_organization_id);
+        $party = $contract->secondParty()->firstOrFail();
+        self::assertNull($party->linked_organization_id);
+        self::assertSame($external->name, $party->name);
+        self::assertSame($external->id, $contract->contractor_id);
+        self::assertNotNull($contract->legal_archive_document_id);
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('contractSideInputs')]
     public function test_owner_can_create_update_list_and_archive_contract_inside_project(string $sideInput): void
     {
@@ -449,7 +617,7 @@ class ContractCoreExperienceControllerTest extends TestCase
         ProjectOrganizationRole $role
     ): void {
         $project->organizations()->attach($organization->id, [
-            'role' => $role->value,
+            'role' => $role === ProjectOrganizationRole::SUBCONTRACTOR ? 'child_contractor' : $role->value,
             'role_new' => $role->value,
             'is_active' => true,
             'invited_at' => now(),

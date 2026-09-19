@@ -33,6 +33,7 @@ class StoreProjectRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:255'],
+            'contracting_scheme' => ['sometimes', Rule::in(['general_contractor', 'direct'])],
             'address' => ['nullable', 'string', 'max:1000'],
             'latitude' => ['nullable', 'numeric', 'between:-90,90'],
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
@@ -108,7 +109,8 @@ class StoreProjectRequest extends FormRequest
             external_code: $validated['external_code'] ?? null,
             cost_category_id: isset($validated['cost_category_id']) ? (int) $validated['cost_category_id'] : null,
             accounting_data: $validated['accounting_data'] ?? null,
-            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? false
+            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? false,
+            contracting_scheme: $validated['contracting_scheme'] ?? 'general_contractor',
         );
     }
 

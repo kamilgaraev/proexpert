@@ -25,6 +25,10 @@ class ContractResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $organizationId = $request->attributes->get('current_organization_id') ?? $request->user()?->current_organization_id;
+        if ($organizationId !== null && (int) $organizationId !== (int) $this->organization_id) {
+            return (new SharedContractResource($this->resource, (int) $organizationId))->toArray($request);
+        }
         $contractSide = $this->resolveContractSide();
         $workTypeCategory = $this->resolveWorkTypeCategory();
         $workTypeCategoryValue = $this->resolveWorkTypeCategoryValue();
@@ -171,6 +175,7 @@ class ContractResource extends JsonResource
                 'name' => $this->supplier->name,
             ]),
             'contract_side_type' => $this->contract_side_type?->value,
+            'superior_organization_id' => $this->superior_organization_id,
             'direction' => $contractSide['direction'] ?? 'expense',
             'direction_label' => $contractSide['direction_label'] ?? 'Расходный',
             'is_income' => (bool) ($contractSide['is_income'] ?? false),

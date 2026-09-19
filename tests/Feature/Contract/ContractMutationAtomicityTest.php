@@ -112,11 +112,100 @@ class ContractMutationAtomicityTest extends TestCase
         return app(ContractSideMutationService::class);
     }
 
-    private function contractDto(): ContractDTO
+    public static function executionCases(): array
+    {
+        return [['contractor', 'act'], ['contractor', 'payment'], ['supplier', 'act'], ['supplier', 'payment']];
+    }
+
+    public function test_indirect_party_change_is_rolled_back_after_execution(): void
+    {
+        $project = \App\Models\Project::factory()->create(['organization_id' => $this->organizationId]);
+        $contract = $this->mutationService()->create($this->organizationId, $this->contractDto($project->id));
+        $originalParty = $contract->secondParty()->firstOrFail()->toArray();
+        $contract->performanceActs()->create([
+            'project_id' => $project->id, 'act_document_number' => 'ACT-INDIRECT',
+            'act_date' => '2026-09-19', 'amount' => 100, 'status' => 'draft',
+        ]);
+        $snapshots = Mockery::mock(\App\Services\Contract\ContractPartySnapshotService::class);
+        $snapshots->shouldReceive('syncParties')->once()->andReturnUsing(static function (Contract $updated): void {
+            $updated->secondParty()->update(['inn' => '7709999999']);
+        });
+        $this->app->instance(\App\Services\Contract\ContractPartySnapshotService::class, $snapshots);
+        try {
+            $this->mutationService()->update($contract->id, $this->organizationId, $this->contractDto($project->id));
+            self::fail('Indirect changes to executed parties must roll back');
+        } catch (\Exception $exception) {
+            self::assertSame(trans_message('contracts.parties_locked_by_execution'), $exception->getMessage());
+            self::assertSame($originalParty, $contract->secondParty()->firstOrFail()->toArray());
+        }
+    }
+
+    public function test_ordinary_update_preserves_executed_party_after_directory_change(): void
+    {
+        $project = \App\Models\Project::factory()->create(['organization_id' => $this->organizationId]);
+        $contract = $this->mutationService()->create($this->organizationId, $this->contractDto($project->id));
+        $originalParty = $contract->secondParty()->firstOrFail()->toArray();
+        $contract->performanceActs()->create([
+            'project_id' => $project->id, 'act_document_number' => 'ACT-PRESERVE',
+            'act_date' => '2026-09-19', 'amount' => 100, 'status' => 'draft',
+        ]);
+        \App\Models\Contractor::whereKey($this->contractorId)->update(['name' => 'Новое имя в справочнике']);
+        $this->mutationService()->update($contract->id, $this->organizationId, $this->contractDto($project->id));
+        self::assertSame($originalParty, $contract->secondParty()->firstOrFail()->toArray());
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('executionCases')]
+    public function test_replacing_executor_with_same_contract_type_is_rejected_after_execution(string $executor, string $execution): void
+    {
+        $project = \App\Models\Project::factory()->create(['organization_id' => $this->organizationId]);
+        $service = $this->mutationService();
+        $supplierId = $executor === 'supplier' ? \App\Models\Supplier::create([
+            'organization_id' => $this->organizationId, 'name' => 'Поставщик',
+        ])->id : null;
+        $contract = $service->create($this->organizationId, $this->contractDto($project->id, $supplierId));
+        $originalExecutorId = $contract->getAttribute($executor . '_id');
+        $originalParty = $contract->secondParty()->firstOrFail()->toArray();
+        if ($execution === 'act') {
+            $contract->performanceActs()->create([
+            'project_id' => $project->id,
+            'act_document_number' => 'ACT-LOCK-1',
+            'act_date' => '2026-09-19',
+            'amount' => 100,
+            'status' => 'draft',
+            ]);
+        } else {
+            $contract->payments()->create([
+                'organization_id' => $this->organizationId, 'project_id' => $project->id,
+                'invoiceable_type' => Contract::class, 'document_number' => 'PAY-LOCK-1',
+                'document_date' => '2026-09-19', 'document_type' => 'invoice',
+                'direction' => 'outgoing', 'invoice_type' => 'act',
+                'amount' => 100, 'currency' => 'RUB', 'status' => 'draft',
+            ]);
+        }
+        $this->contractorId = \App\Models\Contractor::create([
+            'organization_id' => $this->organizationId, 'name' => 'Другой подрядчик', 'contractor_type' => 'manual',
+        ])->id;
+        if ($supplierId !== null) {
+            $supplierId = \App\Models\Supplier::create([
+                'organization_id' => $this->organizationId, 'name' => 'Другой поставщик',
+            ])->id;
+        }
+
+        try {
+            $service->update($contract->id, $this->organizationId, $this->contractDto($project->id, $supplierId));
+            self::fail('Executed contract parties must not change');
+        } catch (\Exception $exception) {
+            self::assertSame(trans_message('contracts.parties_locked_by_execution'), $exception->getMessage());
+            self::assertSame($originalExecutorId, $contract->fresh()->getAttribute($executor . '_id'));
+            self::assertSame($originalParty, $contract->secondParty()->firstOrFail()->toArray());
+        }
+    }
+
+    private function contractDto(?int $projectId = null, ?int $supplierId = null): ContractDTO
     {
         return new ContractDTO(
-            project_id: null,
-            contractor_id: $this->contractorId,
+            project_id: $projectId,
+            contractor_id: $supplierId === null ? $this->contractorId : null,
             parent_contract_id: null,
             number: 'ATOMIC-100',
             date: now()->toDateString(),
@@ -138,7 +227,8 @@ class ContractMutationAtomicityTest extends TestCase
             start_date: null,
             end_date: null,
             notes: null,
-            contract_side_type: ContractSideTypeEnum::CONTRACT,
+            supplier_id: $supplierId,
+            contract_side_type: $supplierId === null ? ContractSideTypeEnum::CONTRACT : ContractSideTypeEnum::GENERAL_CONTRACTOR_SUPPLY,
         );
     }
 }

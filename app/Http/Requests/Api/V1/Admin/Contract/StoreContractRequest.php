@@ -203,6 +203,8 @@ class StoreContractRequest extends FormRequest
             'base_amount' => ['required_if:is_fixed_amount,true,1', 'nullable', 'numeric', 'min:0'],
             'total_amount' => ['nullable', 'numeric', 'min:0'],
             'currency' => ['nullable', 'string', 'size:3', 'regex:/^[A-Za-z]{3}$/'],
+            'superior_organization_id' => ['nullable', 'integer', 'min:1'],
+            'direction' => ['nullable', Rule::in(['income', 'expense'])],
             'gp_percentage' => ['nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['nullable', new Enum(GpCalculationTypeEnum::class)],
             'gp_coefficient' => ['nullable', 'numeric', 'min:0'],
@@ -257,17 +259,7 @@ class StoreContractRequest extends FormRequest
 
     private function availableProjectRule(int $organizationId): \Illuminate\Validation\Rules\Exists
     {
-        return Rule::exists('projects', 'id')->where(function ($query) use ($organizationId): void {
-            $query->where(function ($scope) use ($organizationId): void {
-                $scope->where('organization_id', $organizationId)
-                    ->orWhereIn('id', function ($participants) use ($organizationId): void {
-                        $participants->select('project_id')
-                            ->from('project_organization')
-                            ->where('organization_id', $organizationId)
-                            ->where('is_active', true);
-                    });
-            });
-        });
+        return \App\Rules\AvailableContractProject::forOrganization($organizationId);
     }
 
     protected function prepareForValidation(): void
@@ -325,7 +317,9 @@ class StoreContractRequest extends FormRequest
         return app(ProjectContractPartyResolver::class)->shouldAutofillSelfAsContractor(
             $project,
             $organizationId,
-            $sideType
+            $sideType,
+            is_numeric($this->input('superior_organization_id')) ? (int) $this->input('superior_organization_id') : null,
+            $this->input('direction'),
         );
     }
 
@@ -392,6 +386,8 @@ class StoreContractRequest extends FormRequest
                 ? ContractSideTypeEnum::tryFromLegacy($this->validated('contract_side_type'))
                 : null,
             currency: mb_strtoupper((string) ($this->validated('currency') ?? config('payments.defaults.currency', 'RUB'))),
+            superior_organization_id: $this->validated('superior_organization_id') !== null ? (int) $this->validated('superior_organization_id') : null,
+            direction: $this->validated('direction'),
         );
     }
 }

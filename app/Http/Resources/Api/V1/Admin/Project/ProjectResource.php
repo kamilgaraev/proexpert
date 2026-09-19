@@ -31,6 +31,7 @@ class ProjectResource extends JsonResource
             'description' => $this->resource->description,
             'customer' => $resolvedCustomer['name'] ?? $this->resource->customer,
             'customer_counterparty_id' => $this->resource->customer_counterparty_id,
+            'contracting_scheme' => $this->resource->contracting_scheme ?? 'general_contractor',
             'customer_counterparty' => $this->whenLoaded('customerCounterparty', fn () => [
                 'id' => $this->resource->customerCounterparty?->id,
                 'name' => $this->resource->customerCounterparty?->name,

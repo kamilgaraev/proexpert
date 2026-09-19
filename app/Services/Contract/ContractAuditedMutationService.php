@@ -66,6 +66,10 @@ final readonly class ContractAuditedMutationService
             $afterPersist,
         ): Contract {
             $contract->setConnection($this->connection->getName());
+            if ($contract->exists) {
+                $locked = $contract->newQuery()->whereKey($contract->id)->lockForUpdate()->firstOrFail();
+                app(ContractBuilderMutationGuard::class)->assertUpdate($locked, array_merge($contract->getDirty(), $attributes), $event);
+            }
             $contract->update($attributes);
             $additionalContext = $afterPersist?->__invoke($contract) ?? [];
             $auditContext = array_merge($context, is_array($additionalContext) ? $additionalContext : []);
@@ -112,6 +116,9 @@ final readonly class ContractAuditedMutationService
         if ($contract->completion_percentage >= 100 && $oldStatus === ContractStatusEnum::ACTIVE) {
             $targetStatus = ContractStatusEnum::COMPLETED;
         } elseif ($contract->completion_percentage > 0 && $oldStatus === ContractStatusEnum::DRAFT) {
+            if ($this->connection->table('contract_builder_instances')->where('contract_id', $contract->id)->exists()) {
+                return false;
+            }
             $targetStatus = ContractStatusEnum::ACTIVE;
         }
         if (! $targetStatus instanceof ContractStatusEnum) {

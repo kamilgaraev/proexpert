@@ -95,6 +95,7 @@ class ProjectCoreExperienceControllerTest extends TestCase
 
         $createPayload = [
             'name' => 'Pilot Build',
+            'contracting_scheme' => 'direct',
             'address' => 'Moscow, Pilot street 1',
             'latitude' => 55.7558,
             'longitude' => 37.6173,
@@ -119,6 +120,7 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $createResponse->assertCreated();
         $createResponse->assertJsonPath('success', true);
         $createResponse->assertJsonPath('data.name', 'Pilot Build');
+        $createResponse->assertJsonPath('data.contracting_scheme', 'direct');
         $createResponse->assertJsonPath('data.start_date', '2026-06-01');
         $createResponse->assertJsonPath('data.end_date', '2026-08-31');
         $createResponse->assertJsonPath('data.status', 'active');
@@ -129,6 +131,7 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $project = Project::query()->findOrFail($projectId);
 
         $this->assertSame($context->organization->id, $project->organization_id);
+        $this->assertSame('direct', $project->contracting_scheme);
         $this->assertSame('2026-06-01', $project->start_date?->toDateString());
         $this->assertSame('2026-08-31', $project->end_date?->toDateString());
         $this->assertSame('active', $project->status);
@@ -145,6 +148,7 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $updateResponse = $this->withHeaders($context->authHeaders())
             ->patchJson("/api/v1/admin/projects/{$project->id}", [
                 'budget_amount' => 2222222.22,
+                'contracting_scheme' => 'general_contractor',
                 'site_area_m2' => 111.11,
                 'contract_number' => 'CNT-002',
                 'start_date' => '2026-07-01',
@@ -160,8 +164,10 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $updateResponse->assertJsonPath('data.end_date', '2026-09-15');
         $updateResponse->assertJsonPath('data.status', 'paused');
         $updateResponse->assertJsonPath('data.contract_number', 'CNT-002');
+        $updateResponse->assertJsonPath('data.contracting_scheme', 'general_contractor');
 
         $project = $project->fresh();
+        $this->assertSame('general_contractor', $project->contracting_scheme);
         $this->assertSame('2026-07-01', $project->start_date?->toDateString());
         $this->assertSame('2026-09-15', $project->end_date?->toDateString());
         $this->assertSame('paused', $project->status);

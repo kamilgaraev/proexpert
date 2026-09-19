@@ -35,9 +35,11 @@ class ContractStateEventService
     public function createContractCreatedEvent(
         Contract $contract,
         ?int $specificationId = null,
-        ?int $actorId = null
+        ?int $actorId = null,
+        ?Carbon $effectiveFrom = null,
+        array $metadata = [],
     ): ContractStateEvent {
-        return DB::transaction(function () use ($contract, $specificationId, $actorId) {
+        return DB::transaction(function () use ($contract, $specificationId, $actorId, $effectiveFrom, $metadata) {
             $data = [
                 'contract_id' => $contract->id,
                 'event_type' => ContractStateEventTypeEnum::CREATED,
@@ -45,12 +47,12 @@ class ContractStateEventService
                 'triggered_by_id' => $contract->id,
                 'specification_id' => $specificationId,
                 'amount_delta' => $contract->total_amount ?? 0,
-                'effective_from' => $contract->date ?? now(),
-                'metadata' => [
+                'effective_from' => $effectiveFrom ?? $contract->date ?? now(),
+                'metadata' => array_merge([
                     'total_amount' => $contract->total_amount,
                     'contract_number' => $contract->number,
                     'contractor_id' => $contract->contractor_id,
-                ],
+                ], $metadata),
                 'created_by_user_id' => $actorId ?? Auth::id(),
             ];
 
