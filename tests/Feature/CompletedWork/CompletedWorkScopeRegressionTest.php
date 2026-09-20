@@ -16,7 +16,7 @@ final class CompletedWorkScopeRegressionTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_body_project_from_another_organization_is_rejected_without_a_write(): void
+    public function test_body_project_different_from_route_is_rejected_without_a_write(): void
     {
         $context = AdminApiTestContext::create();
         $projectA = Project::factory()->create(['organization_id' => $context->organization->id]);
@@ -32,7 +32,7 @@ final class CompletedWorkScopeRegressionTest extends TestCase
             ],
         );
 
-        $response->assertStatus(422);
+        $response->assertStatus(404);
         $this->assertDatabaseMissing('completed_works', ['project_id' => $projectB->id]);
     }
 
@@ -45,11 +45,18 @@ final class CompletedWorkScopeRegressionTest extends TestCase
             'project_id' => $projectB->id,
             'organization_id' => $projectB->organization_id,
             'name' => 'Чужой график',
+            'created_by_user_id' => $context->user->id,
+            'planned_start_date' => '2026-09-01',
+            'planned_end_date' => '2026-09-30',
         ]);
         $taskB = ScheduleTask::query()->create([
             'schedule_id' => $scheduleB->id,
             'organization_id' => $projectB->organization_id,
             'name' => 'Чужая задача',
+            'created_by_user_id' => $context->user->id,
+            'planned_start_date' => '2026-09-01',
+            'planned_end_date' => '2026-09-30',
+            'planned_duration_days' => 30,
             'quantity' => 10,
             'completed_quantity' => 7,
         ]);

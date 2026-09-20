@@ -17,6 +17,7 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
+use App\Models\PerformanceActLine;
 use App\Models\User;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Rules\ProjectAccessibleRule;
@@ -24,6 +25,7 @@ use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Logging\LoggingService;
 use App\Services\Project\ProjectContextService;
 use App\Services\RateCoefficient\RateCoefficientService;
+use App\Services\Acting\ActingQuantityStatus;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -244,22 +246,30 @@ class CompletedWorkService
         });
     }
 
+    public function createMany(array $dtos, User $actor, ?ProjectContext $projectContext = null): array
+    {
+        return DB::transaction(function () use ($dtos, $actor, $projectContext): array {
+            $this->scopeResolver->assertBulk($dtos, $actor, $projectContext);
+            foreach ($dtos as $dto) {
+                $this->assertCreateSourcePolicy($dto);
+            }
+
+            return array_map(fn (CompletedWorkDTO $dto): CompletedWork => $this->create($dto, $projectContext, $actor), $dtos);
+        });
+    }
+
     public function update(int $id, CompletedWorkDTO $dto, ?User $actor = null, ?ProjectContext $projectContext = null): CompletedWork
     {
         $actor ??= request()->user();
         return DB::transaction(function () use ($id, $dto, $actor, $projectContext) {
-            $existingWork = $this->getById($id, $dto->organization_id);
+            $existingWork = $this->lockedWork($id, $dto->organization_id);
 
             $this->scopeResolver->assertUpdate($existingWork, $dto, $actor, $projectContext);
+            $this->assertOrdinaryMutationAllowed($existingWork);
 
             $this->assertUpdateSourcePolicy($existingWork, $dto);
 
-            $financialInputsChanged = $this->financialInputsChanged($existingWork, $dto);
-            $data = $this->prepareFinancialData($dto, $financialInputsChanged);
-            if (! $financialInputsChanged) {
-                $data['price'] = $existingWork->price;
-                $data['total_amount'] = $existingWork->total_amount;
-            }
+            $data = $this->prepareUpdatedFinancialData($existingWork, $dto);
             $newContractId = $dto->contract_id;
             $contractChanged = (int) ($newContractId ?? 0) !== (int) ($existingWork->contract_id ?? 0);
             $contractorChanged = (int) ($dto->contractor_id ?? 0) !== (int) ($existingWork->contractor_id ?? 0);
@@ -306,21 +316,84 @@ class CompletedWorkService
     public function delete(int $id, int $organizationId, ?User $actor = null, ?ProjectContext $projectContext = null): bool
     {
         $actor ??= request()->user();
-        $work = $this->getById($id, $organizationId);
-        $this->scopeResolver->assertDelete($work, $actor, $projectContext);
+        return DB::transaction(function () use ($id, $organizationId, $actor, $projectContext): bool {
+            $work = $this->lockedWork($id, $organizationId);
+            $this->scopeResolver->assertDelete($work, $actor, $projectContext);
+            $this->assertOrdinaryMutationAllowed($work);
 
-        $success = $this->completedWorkRepository->delete($id);
-        if (! $success) {
-            throw new BusinessLogicException('Не удалось удалить запись о выполненной работе.', 500);
-        }
+            if (! $this->completedWorkRepository->delete($id)) {
+                throw new BusinessLogicException('Не удалось удалить запись о выполненной работе.', 500);
+            }
 
-        return true;
+            return true;
+        });
     }
 
-    private function prepareFinancialData(CompletedWorkDTO $dto, bool $applyCoefficients = true): array
+    private function lockedWork(int $id, int $organizationId): CompletedWork
     {
-        $data = $dto->toArray();
+        return CompletedWork::query()->where('organization_id', $organizationId)->lockForUpdate()->find($id)
+            ?? throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
+    }
+
+    private function assertOrdinaryMutationAllowed(CompletedWork $work): void
+    {
+        $activeAct = static fn ($query) => $query->where(function ($query): void {
+            $query->whereNull('status')->orWhereNotIn('status', ActingQuantityStatus::releasedStatuses());
+        });
+        if ($work->status === CompletedWork::STATUS_CONFIRMED
+            || $work->work_origin_type === CompletedWork::ORIGIN_JOURNAL
+            || $work->performanceActs()->where($activeAct)->exists()
+            || PerformanceActLine::query()->where('completed_work_id', $work->id)
+                ->whereHas('performanceAct', $activeAct)->exists()) {
+            throw new BusinessLogicException(trans_message('completed_work.correction_required'), 422);
+        }
+    }
+
+    private function prepareUpdatedFinancialData(CompletedWork $work, CompletedWorkDTO $dto): array
+    {
+        $samePrice = ! $this->nullableFloatChanged($dto->price, $work->price);
+        $sameTotal = $dto->total_amount === null
+            || ! $this->nullableFloatChanged($dto->total_amount, $work->total_amount)
+            || ($samePrice && abs($dto->total_amount - round((float) $dto->price * $dto->quantity, 2)) < 0.0000001);
+        $sameQuantity = abs($dto->quantity - (float) $work->quantity) < 0.0000001;
+        $calculation = $work->additional_info['financial_calculation'] ?? null;
+
+        if ($samePrice && $sameTotal && $sameQuantity) {
+            $data = $this->prepareFinancialData($dto, false);
+            $data['price'] = $work->price;
+            $data['total_amount'] = $work->total_amount;
+            if ($calculation !== null) {
+                $data['additional_info']['financial_calculation'] = $calculation;
+            }
+
+            return $data;
+        }
+
+        if ($samePrice && $sameTotal) {
+            $basePrice = $calculation['base_unit_price'] ?? null;
+            if ($basePrice === null && isset($calculation['base_total_amount']) && (float) $work->quantity > 0) {
+                $basePrice = (float) $calculation['base_total_amount'] / (float) $work->quantity;
+            }
+
+            return $this->prepareFinancialData($dto, $basePrice !== null, [
+                'price' => $basePrice ?? $dto->price,
+                'total_amount' => null,
+            ]);
+        }
+
+        return $this->prepareFinancialData($dto);
+    }
+
+    private function prepareFinancialData(CompletedWorkDTO $dto, bool $applyCoefficients = true, array $financialOverrides = []): array
+    {
+        if ($dto->completed_quantity !== null && abs($dto->completed_quantity - $dto->quantity) > 0.0000001) {
+            throw new BusinessLogicException(trans_message('completed_work.quantity_conflict'), 422);
+        }
+        $data = array_replace($dto->toArray(), $financialOverrides);
+        $data['completed_quantity'] = $dto->quantity;
         unset($data['materials']);
+        $data['additional_info'] = $data['additional_info'] ?? [];
+        unset($data['additional_info']['financial_calculation']);
 
         if ($data['price'] === null && $data['total_amount'] !== null && $data['quantity'] > 0) {
             $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
@@ -349,6 +422,8 @@ class CompletedWorkService
         }
 
         if ($applyCoefficients && $data['total_amount'] !== null) {
+            $baseTotalAmount = (float) $data['total_amount'];
+            $baseUnitPrice = $data['price'];
             $coeff = $this->rateCoefficientService->calculateAdjustedValueDetailed(
                 $dto->organization_id,
                 (float) $data['total_amount'],
@@ -357,6 +432,12 @@ class CompletedWorkService
                 ['project_id' => $dto->project_id, 'work_type_id' => $dto->work_type_id]
             );
             $data['total_amount'] = $coeff['final'];
+            $data['additional_info']['financial_calculation'] = [
+                'base_total_amount' => $baseTotalAmount,
+                'base_unit_price' => $baseUnitPrice,
+                'adjusted_total_amount' => (float) $coeff['final'],
+                'applications' => $coeff['applications'] ?? [],
+            ];
             if ($data['quantity'] > 0) {
                 $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
             }
@@ -367,8 +448,7 @@ class CompletedWorkService
 
     private function financialInputsChanged(CompletedWork $existingWork, CompletedWorkDTO $dto): bool
     {
-        return $dto->materials !== null
-            || abs((float) $dto->quantity - (float) $existingWork->quantity) > 0.0000001
+        return abs((float) $dto->quantity - (float) $existingWork->quantity) > 0.0000001
             || $this->nullableFloatChanged($dto->price, $existingWork->price)
             || $this->nullableFloatChanged($dto->total_amount, $existingWork->total_amount);
     }

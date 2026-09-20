@@ -52,7 +52,7 @@ final class ContractEstimateOperationalProgress
                 ->where('project_id', $contract->project_id)
                 ->where('contract_id', $contract->id)
                 ->whereIn('estimate_item_id', $itemIds)
-                ->selectRaw('estimate_item_id, SUM(completed_quantity) AS actual_quantity')
+                ->selectRaw('estimate_item_id, SUM(COALESCE(completed_quantity, quantity, 0)) AS actual_quantity')
                 ->groupBy('estimate_item_id')->pluck('actual_quantity', 'estimate_item_id')->all();
         }
         if ($itemIds !== [] && $canViewActs) {

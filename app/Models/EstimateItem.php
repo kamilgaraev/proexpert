@@ -225,7 +225,7 @@ class EstimateItem extends Model
             });
         }
 
-        $completedWorksSum = (float) $completedWorksQuery->sum('completed_quantity');
+        $completedWorksSum = (float) $completedWorksQuery->sum(\Illuminate\Support\Facades\DB::raw('COALESCE(completed_quantity, quantity, 0)'));
 
         if ($contractId !== null || $completedWorksSum > 0 || $this->completedWorks()->exists()) {
             return $completedWorksSum;

@@ -106,7 +106,7 @@ class JournalEstimateIntegrationService
             ->whereIn('estimate_item_id', $itemIds)
             ->effectiveForSchedule()
             ->select('estimate_item_id')
-            ->selectRaw('COALESCE(SUM(completed_quantity), 0) as actual_volume')
+            ->selectRaw('COALESCE(SUM(COALESCE(completed_quantity, quantity, 0)), 0) as actual_volume')
             ->groupBy('estimate_item_id')
             ->pluck('actual_volume', 'estimate_item_id')
             ->mapWithKeys(static fn ($actualVolume, $itemId): array => [(int) $itemId => (float) $actualVolume]);

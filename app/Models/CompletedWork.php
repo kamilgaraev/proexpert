@@ -69,7 +69,7 @@ class CompletedWork extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'decimal:3',
+        'quantity' => 'decimal:4',
         'completed_quantity' => 'decimal:4',
         'price' => 'decimal:2',
         'total_amount' => 'decimal:2',

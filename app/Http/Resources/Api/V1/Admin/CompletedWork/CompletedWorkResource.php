@@ -23,19 +23,19 @@ class CompletedWorkResource extends JsonResource
     public function toArray($request): array
     {
         $scheduleTask = $this->scheduleTask;
-        $shouldSyncFromTask = $this->shouldSyncFromTask($scheduleTask);
         $contract = $this->resolveContract($scheduleTask);
         $contractor = $this->resolveContractor($contract, $scheduleTask);
         $workType = $this->resolveWorkType($scheduleTask);
         $taskQuantity = $this->resolveTaskQuantity($scheduleTask);
         $taskCompletedQuantity = $this->resolveTaskCompletedQuantity($scheduleTask, $taskQuantity);
-        $completedQuantity = $this->resolveCompletedQuantity($scheduleTask, $shouldSyncFromTask);
+        $completedQuantity = $this->resolveCompletedQuantity();
         $price = $this->resolvePrice($scheduleTask);
-        $totalAmount = $this->resolveTotalAmount($shouldSyncFromTask, $completedQuantity, $price);
+        $totalAmount = $this->resolveTotalAmount($completedQuantity, $price);
         $measurementUnit = $this->resolveMeasurementUnit($scheduleTask);
 
         return [
             'id' => $this->id,
+            'version' => \App\Services\CompletedWork\CompletedWorkRevisionToken::forWork($this->resource),
             'organization_id' => $this->organization_id,
             'project_id' => $this->project_id,
             'contract_id' => $contract?->id ?? $this->contract_id,
@@ -134,23 +134,14 @@ class CompletedWorkResource extends JsonResource
         return $scheduleTask?->estimateItem?->workType;
     }
 
-    private function resolveCompletedQuantity(?ScheduleTask $scheduleTask, bool $shouldSyncFromTask): ?float
+    private function resolveCompletedQuantity(): float
     {
-        if ($shouldSyncFromTask) {
-            return $this->resolveTaskCompletedQuantity($scheduleTask);
-        }
-
-        if ($this->completed_quantity !== null) {
-            return (float) $this->completed_quantity;
-        }
-
-        return $this->resolveTaskCompletedQuantity($scheduleTask)
-            ?? $this->effectiveCompletedQuantity();
+        return $this->effectiveCompletedQuantity();
     }
 
     private function resolvePrice(?ScheduleTask $scheduleTask): ?float
     {
-        if ($this->price !== null && (float) $this->price > 0) {
+        if ($this->price !== null) {
             return (float) $this->price;
         }
 
@@ -190,13 +181,9 @@ class CompletedWorkResource extends JsonResource
             : null;
     }
 
-    private function resolveTotalAmount(bool $shouldSyncFromTask, ?float $completedQuantity, ?float $price): ?float
+    private function resolveTotalAmount(?float $completedQuantity, ?float $price): ?float
     {
-        if ($shouldSyncFromTask && $price !== null && $completedQuantity !== null) {
-            return round($price * $completedQuantity, 2);
-        }
-
-        if ($this->total_amount !== null && (float) $this->total_amount > 0) {
+        if ($this->total_amount !== null) {
             return (float) $this->total_amount;
         }
 
@@ -253,24 +240,6 @@ class CompletedWorkResource extends JsonResource
     {
         return $scheduleTask?->estimateItem?->contractLinks?->sortBy('id')->first()
             ?? $this->estimateItem?->contractLinks?->sortBy('id')->first();
-    }
-
-    private function shouldSyncFromTask(?ScheduleTask $scheduleTask): bool
-    {
-        if (! $scheduleTask || ! in_array($this->status, ['draft', 'pending', 'in_review'], true)) {
-            return false;
-        }
-
-        if (($this->work_origin_type ?? null) === CompletedWork::ORIGIN_JOURNAL) {
-            return false;
-        }
-
-        $taskCompletedQuantity = $this->resolveTaskCompletedQuantity($scheduleTask);
-        if ($taskCompletedQuantity === null) {
-            return false;
-        }
-
-        return $this->completed_quantity === null || abs((float) $this->completed_quantity - $taskCompletedQuantity) > 0.0001;
     }
 
     private function resolveStoredAmountQuantity(): float
