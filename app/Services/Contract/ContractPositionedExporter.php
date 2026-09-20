@@ -80,7 +80,8 @@ final class ContractPositionedExporter
                     continue;
                 }
                 $style = ['width' => $item['width'] + ($item['type'] === 'text' ? 4 : 0), 'height' => $item['height'] + ($item['type'] === 'text' ? 4 : 0),
-                    'left' => $item['x'], 'top' => $item['y'], 'unit' => 'pt', 'pos' => 'absolute', 'hPosRelTo' => 'page', 'vPosRelTo' => 'page',
+                    'left' => $item['x'], 'top' => $item['y'], 'unit' => 'pt', 'pos' => 'absolute',
+                    'hPos' => 'absolute', 'vPos' => 'absolute', 'hPosRelTo' => 'page', 'vPosRelTo' => 'page',
                     'wrap' => 'infront', 'innerMargin' => 0, 'borderSize' => $item['type'] === 'rect' ? 1 : 0, 'borderColor' => $item['type'] === 'rect' ? 'AAB3BF' : null];
                 $box = $section->addTextBox($style);
                 if ($item['type'] !== 'text') {
