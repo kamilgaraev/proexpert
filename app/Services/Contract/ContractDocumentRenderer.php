@@ -185,15 +185,31 @@ final class ContractDocumentRenderer
         }
 
         return match ($definition['type']) {
-            'text', 'number' => (string) $value,
-            'money' => $value['amount']."\u{00A0}".$value['currency'],
-            'percentage' => $value.'%',
+            'text' => (string) $value,
+            'number' => $this->decimal((string) $value),
+            'money' => $this->decimal($value['amount'], true)."\u{00A0}".($value['currency'] === 'RUB' ? '₽' : $value['currency']),
+            'percentage' => $this->decimal((string) $value)."\u{00A0}%",
             'boolean' => trans_message($value ? 'contracts.variable_true' : 'contracts.variable_false'),
             'date' => implode('.', array_reverse(explode('-', $value))),
             'choice' => array_column($definition['options'], 'label', 'id')[$value],
             'entity' => $entitySnapshots[$value['type'].':'.$value['id']]['label'],
             default => $this->invalid(),
         };
+    }
+
+    private function decimal(string $value, bool $money = false): string
+    {
+        if (! preg_match('/^(-?)(\d+)(?:\.(\d+))?$/D', $value, $parts)) {
+            return $value;
+        }
+
+        $fraction = rtrim($parts[3] ?? '', '0');
+        if ($money) {
+            $fraction = str_pad($fraction, 2, '0');
+        }
+        $integer = preg_replace('/\B(?=(\d{3})+(?!\d))/', "\u{00A0}", $parts[2]);
+
+        return $parts[1].$integer.($fraction !== '' ? ','.$fraction : '');
     }
 
     private function escape(string $text): string
