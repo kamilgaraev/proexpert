@@ -15,7 +15,7 @@ final class SaveContractLibraryItemRequest extends FormRequest
 
     public function rules(): array
     {
-        $revision = $this->route('item') !== null;
+        $revision = $this->route('libraryItem') !== null;
 
         return [
             'kind' => [$revision ? 'prohibited' : 'required', 'string', 'in:template,block,variable'],
