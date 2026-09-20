@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\ActReport;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\BusinessModules\Core\Payments\Services\FinancialBalanceQuery;
@@ -445,6 +446,21 @@ class ActReportWorkflowService
                 ->lockForUpdate()
                 ->get();
             foreach ($invoices as $invoice) {
+                $netPayments = [];
+                foreach ($invoice->transactions()->orderBy('id')->lockForUpdate()->get() as $transaction) {
+                    if (in_array($transaction->status, [PaymentTransactionStatus::PENDING, PaymentTransactionStatus::PROCESSING], true)) {
+                        throw new BusinessLogicException(trans_message('act_reports.pending_payment_blocks_annulment'), 409);
+                    }
+                    if (in_array($transaction->status, [PaymentTransactionStatus::COMPLETED, PaymentTransactionStatus::REFUNDED], true)) {
+                        $currency = (string) $transaction->currency;
+                        $netPayments[$currency] = ($netPayments[$currency] ?? BigDecimal::zero())->plus((string) $transaction->amount);
+                    }
+                }
+                foreach ($netPayments as $netPayment) {
+                    if ($netPayment->isPositive()) {
+                        throw new BusinessLogicException(trans_message('act_reports.paid_invoice_blocks_annulment'), 409);
+                    }
+                }
                 if (BigDecimal::of((string) $invoice->paid_amount)->isPositive()
                     || in_array($invoice->status, [
                         PaymentDocumentStatus::PAID,

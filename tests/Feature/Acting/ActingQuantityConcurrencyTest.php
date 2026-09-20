@@ -178,11 +178,116 @@ final class ActingQuantityConcurrencyTest extends TestCase
         }
     }
 
-    private function fixture(): array
+    #[\PHPUnit\Framework\Attributes\DataProvider('activePaymentStatuses')]
+    public function test_completed_payment_ledger_blocks_annulment_even_when_invoice_snapshot_is_stale(string $ledgerStatus): void
     {
-        $organization = Organization::factory()->create();
+        [$contract, $work] = $this->fixture();
+        $act = $this->act($contract, $work, '7');
+        $workflow = app(ActReportWorkflowService::class);
+        $workflow->submit($act, $work->user_id);
+        $act = $workflow->approve($act->fresh(), $work->user_id);
+        $invoice = $this->invoice($contract, $act);
+        $this->payment($invoice, $work->user_id, '100', status: $ledgerStatus);
+
+        try {
+            $workflow->annul($act, $work->user_id, 'Исправление', 'paid-ledger-annul');
+            self::fail('A completed ledger payment must block annulment despite a stale invoice snapshot.');
+        } catch (BusinessLogicException $exception) {
+            self::assertSame(409, $exception->getCode());
+        }
+        self::assertSame(ContractPerformanceAct::STATUS_APPROVED, $act->fresh()->status);
+        self::assertSame(0, \App\Models\PerformanceActReversal::query()->where('performance_act_id', $act->id)->count());
+        self::assertSame('10.0000', $work->fresh()->quantity);
+        self::assertSame(3.0, app(ActingAvailabilityService::class)->getAvailableWorks($contract->id, '2026-09-01', '2026-09-30')[0]['available_quantity']);
+    }
+
+    public function test_signed_act_and_fully_refunded_payment_keep_history_when_annulled(): void
+    {
+        [$contract, $work] = $this->fixture();
+        $act = $this->act($contract, $work, '7');
+        $workflow = app(ActReportWorkflowService::class);
+        $workflow->submit($act, $work->user_id);
+        $act = $workflow->approve($act->fresh(), $work->user_id);
+        $file = \App\Models\File::query()->create([
+            'organization_id' => $contract->organization_id, 'fileable_type' => ContractPerformanceAct::class,
+            'fileable_id' => $act->id, 'user_id' => $work->user_id, 'name' => 'signed.pdf',
+            'original_name' => 'signed.pdf', 'path' => 'tests/signed.pdf', 'mime_type' => 'application/pdf',
+            'size' => 100, 'disk' => 's3', 'type' => 'document', 'category' => 'signed_act',
+        ]);
+        $act = $workflow->markSigned($act, $file->id, $work->user_id);
+        $lines = $act->lines()->get()->toArray();
+        $signedAt = $act->signed_at->toISOString();
+        $rows = app(ActingAvailabilityService::class)->getAvailableWorks($contract->id, '2026-09-01', '2026-09-30');
+        self::assertSame(7.0, $rows[0]['approved_acted_quantity']);
+        self::assertSame(0.0, $rows[0]['reserved_quantity']);
+        self::assertSame(3.0, $rows[0]['available_quantity']);
+
+        $invoice = $this->invoice($contract, $act);
+        $paid = $this->payment($invoice, $work->user_id, '100');
+        $this->payment($invoice, $work->user_id, '-100', $paid->id);
+        $annulled = $workflow->annul($act, $work->user_id, 'После полного возврата', 'refunded-annul');
+        self::assertSame(ContractPerformanceAct::STATUS_ANNULLED, $annulled->status);
+        self::assertSame($file->id, $annulled->signed_file_id);
+        self::assertSame($signedAt, $annulled->signed_at->toISOString());
+        self::assertSame($lines, $annulled->lines()->get()->toArray());
+        self::assertSame(2, $invoice->transactions()->count());
+        self::assertSame('10.0000', $work->fresh()->quantity);
+        self::assertSame(10.0, app(ActingAvailabilityService::class)->getAvailableWorks($contract->id, '2026-09-01', '2026-09-30')[0]['available_quantity']);
+    }
+
+    private function invoice(Contract $contract, ContractPerformanceAct $act): \App\BusinessModules\Core\Payments\Models\PaymentDocument
+    {
+        return \App\BusinessModules\Core\Payments\Models\PaymentDocument::query()->create([
+            'organization_id' => $contract->organization_id, 'project_id' => $contract->project_id,
+            'document_type' => 'invoice', 'document_number' => 'T06-'.$act->id, 'document_date' => '2026-09-20',
+            'direction' => 'outgoing', 'invoiceable_type' => ContractPerformanceAct::class, 'invoiceable_id' => $act->id,
+            'amount' => 350, 'paid_amount' => 0, 'remaining_amount' => 350, 'currency' => 'RUB', 'status' => 'approved',
+        ]);
+    }
+
+    public static function activePaymentStatuses(): array
+    {
+        return [['completed'], ['pending'], ['processing']];
+    }
+
+    private function payment(\App\BusinessModules\Core\Payments\Models\PaymentDocument $invoice, int $actorId, string $amount, ?int $reverses = null, string $status = 'completed'): \App\BusinessModules\Core\Payments\Models\PaymentTransaction
+    {
+        return \App\BusinessModules\Core\Payments\Models\PaymentTransaction::query()->create([
+            'payment_document_id' => $invoice->id, 'organization_id' => $invoice->organization_id,
+            'project_id' => $invoice->project_id, 'amount' => $amount, 'currency' => 'RUB',
+            'payment_method' => 'bank_transfer', 'transaction_date' => '2026-09-20', 'status' => $status,
+            'created_by_user_id' => $actorId, 'reverses_transaction_id' => $reverses,
+        ]);
+    }
+
+    public function test_preview_api_returns_the_same_remaining_quantity_as_the_reservation_guard(): void
+    {
+        $this->mock(\App\Modules\Core\AccessController::class)->shouldReceive('hasModuleAccess')->andReturnTrue();
+        foreach ([\App\Domain\Authorization\Services\ModulePermissionChecker::class, \App\Domain\Authorization\Services\PermissionResolver::class, \App\Domain\Authorization\Services\AuthorizationService::class] as $service) {
+            $this->app->forgetInstance($service);
+        }
+        $context = \Tests\Support\AdminApiTestContext::create();
+        [$contract, $work] = $this->fixture($context);
+        $this->act($contract, $work, '7');
+        $response = $this->postJson('/api/v1/admin/act-reports/preview', [
+            'contract_id' => $contract->id, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30',
+        ], $context->authHeaders())->assertOk();
+        $row = $response->json('data.available_works.0');
+        self::assertSame($work->id, $row['id']);
+        self::assertEquals(7, $row['reserved_quantity']);
+        self::assertEquals(0, $row['approved_acted_quantity']);
+        self::assertEquals(3, $row['available_quantity']);
+        DB::transaction(function () use ($work, $row): void {
+            $locked = CompletedWork::query()->whereKey($work->id)->lockForUpdate()->get();
+            self::assertSame((int) round($row['available_quantity'] * 10000), app(ActingQuantityReservationService::class)->availableQuantities($locked)[$work->id]);
+        });
+    }
+
+    private function fixture(?\Tests\Support\AdminApiTestContext $context = null): array
+    {
+        $organization = $context?->organization ?? Organization::factory()->create();
         $project = Project::factory()->create(['organization_id' => $organization->id]);
-        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $user = $context?->user ?? User::factory()->create(['current_organization_id' => $organization->id]);
         $contractor = Contractor::create(['organization_id' => $organization->id, 'name' => 'Резерв подрядчик', 'contractor_type' => 'manual']);
         $contract = Contract::create(['organization_id' => $organization->id, 'project_id' => $project->id, 'contractor_id' => $contractor->id, 'number' => 'ACT-RACE-'.$organization->id, 'date' => '2026-09-20', 'status' => 'active', 'total_amount' => 1000, 'currency' => 'RUB']);
         $unit = \App\Models\MeasurementUnit::query()->where('organization_id', $organization->id)->firstOrFail();
