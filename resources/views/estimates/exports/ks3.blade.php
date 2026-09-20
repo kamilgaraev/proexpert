@@ -159,7 +159,7 @@
         }
 
         .document-block {
-            margin-top: 12mm;
+            margin-top: 8mm;
         }
 
         .doc-row td {
@@ -245,7 +245,7 @@
         }
 
         .work-row td {
-            height: 7.5mm;
+            height: 5mm;
         }
 
         .blank-row td {
@@ -253,7 +253,7 @@
         }
 
         .intro-row td {
-            height: 11mm;
+            height: 7mm;
             vertical-align: middle;
         }
 
@@ -436,8 +436,8 @@
                     <td class="text-center">{{ $index + 2 }}</td>
                     <td>{{ $work['title'] ?? '' }}</td>
                     <td class="text-center">{{ $work['code'] ?? '' }}</td>
-                    <td class="text-right">{{ $formatMoney($includedAmount) }}</td>
-                    <td class="text-right">{{ $formatMoney($includedAmount) }}</td>
+                    <td class="text-right">{{ $formatMoney($work['from_start'] ?? $includedAmount) }}</td>
+                    <td class="text-right">{{ $formatMoney($work['year_total'] ?? $includedAmount) }}</td>
                     <td class="text-right">{{ $formatMoney($includedAmount) }}</td>
                 </tr>
             @endforeach
@@ -452,7 +452,15 @@
                     <td></td>
                 </tr>
             @endfor
+            <tr class="work-row">
+                <td></td><td>В том числе НДС</td><td></td><td></td><td></td>
+                <td class="text-right">{{ $formatMoney($vat_amount ?? 0) }}</td>
+            </tr>
         </tbody>
+    </table>
+    <table style="width: 100%; margin-top: 3mm; font-size: 8pt; page-break-inside: avoid;">
+        <tr><td style="width: 50%;">Заказчик: ____________________</td><td>Подрядчик: ____________________</td></tr>
+        <tr><td>Должность, подпись, расшифровка подписи</td><td>Должность, подпись, расшифровка подписи</td></tr>
     </table>
 </body>
 </html>

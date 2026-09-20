@@ -27,9 +27,15 @@
 
     $rows = collect($rows ?? []);
     $monthGroups = array_values($month_groups ?? []);
-    while (count($monthGroups) < 2) {
+    if ($monthGroups === []) {
+        $monthGroups = [
+            ['key' => null, 'title' => ''],
+            ['key' => null, 'title' => ''],
+        ];
+    } elseif (count($monthGroups) % 2 !== 0) {
         $monthGroups[] = ['key' => null, 'title' => ''];
     }
+    $monthPages = array_chunk($monthGroups, 2);
 
     $customerLine = $join([
         $customer_org?->legal_name ?? $customer_org?->name ?? null,
@@ -51,8 +57,6 @@
     $contractDate = $formatDate($contract->date ?? null);
     $contractAmount = (float) ($contract->total_amount ?? $contract->base_amount ?? $total_estimate_amount ?? 0);
     $letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'];
-    $firstMonth = $monthGroups[0];
-    $secondMonth = $monthGroups[1];
 @endphp
 <!DOCTYPE html>
 <html lang="ru">
@@ -66,7 +70,6 @@
             margin: 6mm 7mm 7mm;
         }
 
-        html,
         body {
             margin: 0;
             padding: 0;
@@ -262,6 +265,10 @@
             page-break-inside: avoid;
         }
 
+        .month-page-continuation {
+            page-break-before: always;
+        }
+
         .letter-row td,
         .number-row td {
             height: 3.5mm;
@@ -421,6 +428,12 @@
         </div>
     </div>
 
+    @foreach($monthPages as $pageIndex => $pageMonths)
+    @php
+        $firstMonth = $pageMonths[0] ?? ['key' => null, 'title' => ''];
+        $secondMonth = $pageMonths[1] ?? ['key' => null, 'title' => ''];
+    @endphp
+    <div class="month-page{{ $pageIndex > 0 ? ' month-page-continuation' : '' }}">
     <table class="official-table">
         <colgroup>
             <col style="width: 7mm;">
@@ -441,6 +454,7 @@
             <col style="width: 17mm;">
         </colgroup>
         <thead>
+            <tr><td colspan="16">КС-6а. Договор № {{ $contract->number ?? '' }}. Объект: {{ $project->name ?? '' }}. Заказчик: {{ $customer_org->legal_name ?? $customer_org->name ?? '' }}. Подрядчик: {{ $contractor->name ?? '' }}.</td></tr>
             <tr class="letter-row">
                 @foreach($letters as $letter)
                     <td>{{ $letter }}</td>
@@ -544,6 +558,8 @@
             </tr>
         </tbody>
     </table>
+    </div>
+    @endforeach
     @include('pdf.partials.most-brand-footer')
 </body>
 </html>

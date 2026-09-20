@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Export;
 
+use App\Exceptions\BusinessLogicException;
 use App\Helpers\NumberToWordsHelper;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -158,7 +159,7 @@ class OfficialFormsExportService
     protected function setKS6aHeader($sheet, Contract $contract): void
     {
         $org = $contract->organization;
-        $customer = $contract->project->client ?? $org; // Референс
+        [$customer, $contractor] = $this->exportParties($contract);
 
         $sheet->setCellValue('J1', 'Унифицированная форма № КС-6а');
         $sheet->setCellValue('J2', 'Утверждена постановлением Госкомстата');
@@ -166,7 +167,7 @@ class OfficialFormsExportService
 
         $sheet->setCellValue('A5', 'Стройка: '.$contract->project->name);
         $sheet->setCellValue('A6', 'Объект: '.$contract->project->name);
-        $sheet->setCellValue('A7', 'Подрядчик: '.($contract->contractor->name ?? $org->name));
+        $sheet->setCellValue('A7', 'Подрядчик: '.($contractor->name ?? $org->name));
         $sheet->setCellValue('A8', 'Заказчик: '.($customer->name ?? ''));
 
         $sheet->setCellValue('A10', 'ЖУРНАЛ УЧЕТА ВЫПОЛНЕННЫХ РАБОТ');
@@ -180,32 +181,49 @@ class OfficialFormsExportService
 
     protected function setKS6aTable($sheet, Contract $contract): void
     {
-        $row = 15;
-        $sheet->setCellValue("A{$row}", '№');
-        $sheet->setCellValue("B{$row}", 'Наименование работ');
-        $sheet->setCellValue("E{$row}", 'Ед. изм.');
-        $sheet->setCellValue("F{$row}", 'Цена');
-        $sheet->setCellValue("G{$row}", 'Выполнено за период (по месяцам)');
-
-        // Агрегируем суммы по месяцам из актов
-        $acts = $contract->performanceActs()->where('is_approved', true)->orderBy('act_date')->get();
-        $monthlyTotals = [];
-        foreach ($acts as $act) {
-            $month = $act->act_date->format('M Y');
-            $monthlyTotals[$month] = ($monthlyTotals[$month] ?? 0) + $act->amount;
+        $data = $this->prepareKS6aData($contract);
+        $headers = ['№', 'По смете', 'Наименование работ', 'Ед. изм.', 'Цена', 'По смете: количество', 'По смете: сумма', 'Выполнено: количество', 'Выполнено: сумма', 'Остаток: количество', 'Остаток: сумма'];
+        foreach ($headers as $index => $header) {
+            $sheet->setCellValue([$index + 1, 15], $header);
+            $sheet->mergeCells([$index + 1, 15, $index + 1, 16]);
         }
-
-        $colOffset = 7; // Начинаем с G
-        foreach ($monthlyTotals as $month => $total) {
-            $column = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colOffset);
-            $sheet->setCellValue("{$column}{$row}", $month);
-            $sheet->setCellValue("{$column}".($row + 1), $total);
-            $colOffset++;
+        $months = array_values(array_filter($data['month_groups'], static fn (array $month): bool => $month['key'] !== null));
+        foreach ($months as $index => $month) {
+            $column = 12 + $index * 3;
+            $sheet->setCellValue([$column, 15], $month['title']);
+            $sheet->mergeCells([$column, 15, $column + 2, 15]);
+            foreach (['Количество', 'Сумма', 'С начала работ'] as $offset => $title) {
+                $sheet->setCellValue([$column + $offset, 16], $title);
+            }
         }
-
-        $row += 2;
-        $sheet->setCellValue("A{$row}", 'ИТОГО');
-        $sheet->setCellValue("G{$row}", $contract->total_performed_amount);
+        $row = 17;
+        foreach ($data['rows'] as $item) {
+            $fields = ['number', 'estimate_position', 'title', 'unit', 'unit_price', 'estimate_quantity', 'estimate_amount', 'performed_quantity', 'performed_amount', 'remaining_quantity', 'remaining_amount'];
+            foreach ($fields as $index => $field) {
+                if (in_array($field, ['estimate_position', 'title', 'unit'], true)) {
+                    $sheet->setCellValueExplicit([$index + 1, $row], (string) ($item[$field] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                } else {
+                    $sheet->setCellValue([$index + 1, $row], $item[$field] ?? 0);
+                }
+            }
+            foreach ($months as $index => $month) {
+                foreach (['quantity', 'amount', 'from_start'] as $offset => $field) {
+                    $sheet->setCellValue([12 + $index * 3 + $offset, $row], $item['months'][$month['key']][$field] ?? 0);
+                }
+            }
+            $row++;
+        }
+        $sheet->setCellValue([3, $row], 'ИТОГО');
+        foreach ([7 => 'estimate_amount', 9 => 'performed_amount', 11 => 'remaining_amount'] as $column => $field) {
+            $sheet->setCellValue([$column, $row], $data['rows']->sum($field));
+        }
+        foreach ($months as $index => $month) {
+            foreach ([1 => 'amount', 2 => 'from_start'] as $offset => $field) {
+                $sheet->setCellValue([12 + $index * 3 + $offset, $row], $data['rows']->sum(
+                    static fn (array $item): float => (float) ($item['months'][$month['key']][$field] ?? 0)
+                ));
+            }
+        }
     }
 
     protected function setKS6aFooter($sheet, Contract $contract): void
@@ -218,9 +236,27 @@ class OfficialFormsExportService
     protected function applyKS6aStyles($sheet): void
     {
         $sheet->getColumnDimension('A')->setWidth(5);
-        $sheet->getColumnDimension('B')->setWidth(50);
+        $sheet->getColumnDimension('B')->setWidth(10);
+        $sheet->getColumnDimension('C')->setWidth(35);
+        $sheet->getColumnDimension('D')->setWidth(8);
         $highestRow = $sheet->getHighestRow();
-        $sheet->getStyle("A15:M{$highestRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        $highestColumn = $sheet->getHighestColumn();
+        $lastColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
+        for ($column = 5; $column <= $lastColumn; $column++) {
+            $sheet->getColumnDimension(\PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($column))->setWidth(12);
+        }
+        $sheet->getStyle("A15:{$highestColumn}{$highestRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        $sheet->getStyle("A15:{$highestColumn}{$highestRow}")->getAlignment()->setWrapText(true);
+        $sheet->getStyle("A15:{$highestColumn}16")->getFont()->setBold(true);
+        $sheet->getRowDimension(15)->setRowHeight(36);
+        $sheet->getRowDimension(16)->setRowHeight(28);
+        $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
+            ->setPaperSize(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::PAPERSIZE_A3)
+            ->setScale(65)->setPrintArea("A1:{$highestColumn}{$highestRow}")
+            ->setRowsToRepeatAtTop([15, 16])->setColumnsToRepeatAtLeft(['A', 'K']);
+        for ($column = 18; $column <= $lastColumn; $column += 6) {
+            $sheet->setBreak([$column, 1], \PhpOffice\PhpSpreadsheet\Worksheet\Worksheet::BREAK_COLUMN);
+        }
     }
 
     protected function setKS2Header($sheet, ContractPerformanceAct $act, Contract $contract): void
@@ -241,8 +277,7 @@ class OfficialFormsExportService
         $row += 2;
 
         // Секции сторон
-        $customerOrg = $contract->project?->organization ?? $contract->organization;
-        $contractor = $contract->contractor;
+        [$customerOrg, $contractor] = $this->exportParties($contract);
 
         // Инвестор (пусто)
         $sheet->setCellValue("A{$row}", 'Инвестор');
@@ -354,7 +389,7 @@ class OfficialFormsExportService
                 : ($includedQuantity > 0 ? ($includedAmount / $includedQuantity) : 0);
 
             $sheet->setCellValue("A{$row}", $index + 1);
-            $sheet->setCellValue("B{$row}", ''); // по смете
+            $sheet->setCellValueExplicit("B{$row}", (string) ($line['estimate_position'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
             $sheet->setCellValue("C{$row}", $line['title'] ?? '');
             $sheet->setCellValue("D{$row}", $line['unit'] ?? '');
             $sheet->setCellValue("E{$row}", $includedQuantity);
@@ -374,17 +409,15 @@ class OfficialFormsExportService
         $sheet->setCellValue("G{$row}", $totalAmount);
         $row++;
 
-        // НДС (20%)
-        $vatAmount = $this->priceService->vatAmountFromGross($totalAmount, $act->contract?->estimate);
+        $vatAmount = $this->storedActVatAmount($act);
         $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", '');
-        $sheet->setCellValue("C{$row}", 'НДС');
+        $sheet->setCellValue("C{$row}", 'В том числе НДС');
         $sheet->mergeCells("C{$row}:F{$row}");
         $sheet->setCellValue("G{$row}", $vatAmount);
         $row++;
 
         // Всего по Акту
-        $totalWithVat = $totalAmount; // В примере общая сумма без НДС, НДС отдельно
         $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", '');
         $sheet->setCellValue("C{$row}", 'Всего по Акту');
@@ -445,8 +478,7 @@ class OfficialFormsExportService
         $row += 2;
 
         // Секции сторон
-        $customerOrg = $contract->project?->organization ?? $contract->organization;
-        $contractor = $contract->contractor;
+        [$customerOrg, $contractor] = $this->exportParties($contract);
 
         // Инвестор (пусто)
         $sheet->setCellValue("A{$row}", 'Инвестор');
@@ -548,22 +580,9 @@ class OfficialFormsExportService
         $actAmount = (float) ($act->amount ?? 0);
         $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
 
-        // Сумма с начала года (сумма всех актов за текущий год)
-        // Для мультипроектных контрактов фильтруем по project_id
-        $yearStart = $act->act_date->copy()->startOfYear();
-        $yearTotal = $contract->performanceActs()
-            ->where('is_approved', true)
-            ->where('project_id', $act->project_id)
-            ->where('act_date', '>=', $yearStart)
-            ->where('act_date', '<=', $act->act_date)
-            ->sum('amount');
-
-        // Сумма с начала строительства (сумма всех актов этого проекта)
-        $totalFromStart = $contract->performanceActs()
-            ->where('is_approved', true)
-            ->where('project_id', $act->project_id)
-            ->where('act_date', '<=', $act->act_date)
-            ->sum('amount');
+        $aggregates = $this->ks3LineAggregates($act);
+        $yearTotal = $aggregates['year_total'];
+        $totalFromStart = $aggregates['total_from_start'];
 
         // Всего работ и затрат
         $sheet->setCellValue("A{$row}", '1');
@@ -582,14 +601,14 @@ class OfficialFormsExportService
 
         // Детализация по работам
         $workIndex = 2;
-        foreach ($this->actLinesForExport($act) as $line) {
+        foreach ($this->applyKS3LineAggregates($this->actLinesForExport($act), $aggregates) as $line) {
             $includedAmount = (float) ($line['amount'] ?? 0);
 
             $sheet->setCellValue("A{$row}", $workIndex);
             $sheet->setCellValue("B{$row}", $line['title'] ?? '');
             $sheet->setCellValue("C{$row}", $line['code'] ?? '');
-            $sheet->setCellValue("D{$row}", $totalFromStart);
-            $sheet->setCellValue("E{$row}", $yearTotal);
+            $sheet->setCellValue("D{$row}", $line['from_start']);
+            $sheet->setCellValue("E{$row}", $line['year_total']);
             $sheet->setCellValue("F{$row}", $includedAmount);
             $sheet->setCellValue("G{$row}", '');
 
@@ -608,9 +627,9 @@ class OfficialFormsExportService
         $row++;
 
         // Сумма НДС
-        $vatAmount = $this->priceService->vatAmountFromGross($actAmount, $act->contract?->estimate);
+        $vatAmount = $this->storedActVatAmount($act);
         $sheet->setCellValue("A{$row}", '');
-        $sheet->setCellValue("B{$row}", 'Сумма НДС');
+        $sheet->setCellValue("B{$row}", 'В том числе НДС');
         $sheet->setCellValue("C{$row}", '');
         $sheet->setCellValue("D{$row}", '');
         $sheet->setCellValue("E{$row}", '');
@@ -618,7 +637,7 @@ class OfficialFormsExportService
         $row++;
 
         // Всего с учетом НДС
-        $totalWithVat = $actAmount; // В примере общая сумма без НДС
+        $totalWithVat = $actAmount;
         $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", 'Всего с учетом НДС');
         $sheet->setCellValue("C{$row}", '');
@@ -689,6 +708,12 @@ class OfficialFormsExportService
 
         // Перенос текста для длинных ячеек
         $sheet->getStyle("B1:H{$highestRow}")->getAlignment()->setWrapText(true);
+        $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
+            ->setPaperSize(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::PAPERSIZE_A4)
+            ->setFitToWidth(1)->setFitToHeight(0)->setPrintArea("A1:H{$highestRow}");
+        if ($headerRow) {
+            $sheet->getPageSetup()->setRowsToRepeatAtTop([$headerRow, $headerRow]);
+        }
     }
 
     protected function applyKS3Styles($sheet): void
@@ -737,6 +762,12 @@ class OfficialFormsExportService
 
         // Перенос текста
         $sheet->getStyle("B{$dataStartRow}:G{$highestRow}")->getAlignment()->setWrapText(true);
+        $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
+            ->setPaperSize(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::PAPERSIZE_A4)
+            ->setFitToWidth(1)->setFitToHeight(0)->setPrintArea("A1:G{$highestRow}");
+        if ($headerRow) {
+            $sheet->getPageSetup()->setRowsToRepeatAtTop([$headerRow, $headerRow + 1]);
+        }
     }
 
     protected function findHeaderRow($sheet, string $searchText): ?int
@@ -750,6 +781,28 @@ class OfficialFormsExportService
         }
 
         return null;
+    }
+
+    protected function exportParties(Contract $contract): array
+    {
+        $contract->loadMissing(['firstParty', 'secondParty']);
+        $first = $contract->firstParty;
+        $second = $contract->secondParty;
+        $customer = $first === null ? ($contract->project?->organization ?? $contract->organization) : (object) [
+            'name' => $first->name,
+            'legal_name' => $first->legal_name ?? $first->name,
+            'tax_number' => $first->inn,
+            'postal_code' => null,
+            'city' => null,
+            'address' => $first->legal_address,
+        ];
+        $contractor = $second === null ? $contract->contractor : (object) [
+            'name' => $second->legal_name ?? $second->name,
+            'inn' => $second->inn,
+            'legal_address' => $second->legal_address,
+        ];
+
+        return [$customer, $contractor];
     }
 
     protected function formatAddress($organization): string
@@ -788,10 +841,9 @@ class OfficialFormsExportService
         $totalAmount = (float) $works->sum(fn (array $line): float => (float) ($line['amount'] ?? 0));
 
         $totalAmount = $totalAmount > 0 ? $totalAmount : (float) ($act->amount ?? 0);
-        $customerOrg = $contract->project?->organization ?? $contract->organization;
-        $contractor = $contract->contractor;
+        [$customerOrg, $contractor] = $this->exportParties($contract);
         $estimate = $contract->estimate;
-        $vatAmount = $this->priceService->vatAmountFromGross($totalAmount, $estimate);
+        $vatAmount = $this->storedActVatAmount($act);
         $contractAmount = $contract->is_fixed_amount ? ($contract->total_amount ?? 0) : ($estimate?->total_amount ?? 0);
 
         // Период отчета
@@ -830,38 +882,26 @@ class OfficialFormsExportService
         $estimate = $contract->estimate;
         $actAmount = (float) ($act->amount ?? 0);
         $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
-        $vatAmount = $this->priceService->vatAmountFromGross($actAmount, $estimate);
+        $vatAmount = $this->storedActVatAmount($act);
 
-        // Сумма с начала года (сумма всех актов за текущий год)
-        // Для мультипроектных контрактов фильтруем по project_id
-        $yearStart = $act->act_date->copy()->startOfYear();
-        $yearTotal = $contract->performanceActs()
-            ->where('project_id', $act->project_id)
-            ->where('is_approved', true)
-            ->where('act_date', '>=', $yearStart)
-            ->where('act_date', '<=', $act->act_date)
-            ->sum('amount');
-
-        // Сумма с начала строительства (сумма всех актов этого проекта)
-        $totalFromStart = $contract->performanceActs()
-            ->where('project_id', $act->project_id)
-            ->where('is_approved', true)
-            ->where('act_date', '<=', $act->act_date)
-            ->sum('amount');
+        $aggregates = $this->ks3LineAggregates($act);
+        $yearTotal = $aggregates['year_total'];
+        $totalFromStart = $aggregates['total_from_start'];
 
         // Период отчета
         $actDate = $act->act_date;
         $periodStart = $act->period_start ?? $actDate->copy()->startOfMonth();
         $periodEnd = $act->period_end ?? $actDate->copy()->endOfMonth();
 
-        $customerOrg = $contract->project?->organization ?? $contract->organization;
-        $contractor = $contract->contractor;
+        [$customerOrg, $contractor] = $this->exportParties($contract);
+
+        $works = $this->applyKS3LineAggregates($this->actLinesForExport($act), $aggregates);
 
         return [
             'act' => $act,
             'contract' => $contract,
             'estimate' => $estimate,
-            'works' => $this->actLinesForExport($act),
+            'works' => $works,
             'total_amount' => $actAmount,
             'vat_amount' => $vatAmount,
             'year_total' => (float) $yearTotal,
@@ -873,6 +913,95 @@ class OfficialFormsExportService
             'contractor' => $contractor,
             'project' => $contract->project,
         ];
+    }
+
+    protected function ks3LineAggregates(ContractPerformanceAct $act): array
+    {
+        $contract = $act->contract;
+        $periodEnd = $act->period_end ?? $act->act_date;
+        $acts = $contract->performanceActs()
+            ->where('project_id', $act->project_id)
+            ->where('is_approved', true)
+            ->whereRaw('COALESCE(period_end, act_date) <= ?', [$periodEnd->toDateString()])
+            ->with(['lines.estimateItem', 'lines.completedWork.workType', 'completedWorks.workType'])
+            ->get();
+        $yearStart = $periodEnd->copy()->startOfYear();
+        $lines = [];
+        $yearTotal = 0.0;
+        $totalFromStart = 0.0;
+
+        foreach ($acts as $historicalAct) {
+            $isCurrentYear = ($historicalAct->period_end ?? $historicalAct->act_date) >= $yearStart;
+            $amount = (float) ($historicalAct->amount ?? 0);
+            $totalFromStart += $amount;
+            if ($isCurrentYear) {
+                $yearTotal += $amount;
+            }
+
+            foreach ($this->actLinesForExport($historicalAct) as $line) {
+                $key = $line['key'] ?? '';
+                $lines[$key]['line'] ??= $line;
+                $lines[$key]['from_start'] = ($lines[$key]['from_start'] ?? 0) + (float) ($line['amount'] ?? 0);
+                if ($isCurrentYear) {
+                    $lines[$key]['year_total'] = ($lines[$key]['year_total'] ?? 0) + (float) ($line['amount'] ?? 0);
+                }
+            }
+        }
+
+        return [
+            'lines' => $lines,
+            'year_total' => $yearTotal,
+            'total_from_start' => $totalFromStart,
+        ];
+    }
+
+    protected function applyKS3LineAggregates(Collection $lines, array $aggregates): Collection
+    {
+        $grouped = [];
+        foreach ($lines as $line) {
+            $key = $line['key'] ?? '';
+            if (! isset($grouped[$key])) {
+                $grouped[$key] = $line;
+                continue;
+            }
+            $grouped[$key]['quantity'] = (float) ($grouped[$key]['quantity'] ?? 0) + (float) ($line['quantity'] ?? 0);
+            $grouped[$key]['amount'] = (float) ($grouped[$key]['amount'] ?? 0) + (float) ($line['amount'] ?? 0);
+        }
+
+        foreach ($aggregates['lines'] ?? [] as $key => $aggregate) {
+            if (! isset($grouped[$key])) {
+                $grouped[$key] = array_replace($aggregate['line'] ?? [], ['key' => $key, 'quantity' => 0.0, 'amount' => 0.0]);
+            }
+        }
+
+        return collect($grouped)->map(function (array $line) use ($aggregates): array {
+            $amount = (float) ($line['amount'] ?? 0);
+            $lineAggregate = $aggregates['lines'][$line['key'] ?? ''] ?? [];
+
+            return $line + [
+                'from_start' => (float) ($lineAggregate['from_start'] ?? $amount),
+                'year_total' => (float) ($lineAggregate['year_total'] ?? $amount),
+            ];
+        })->values();
+    }
+
+    protected function storedActVatAmount(ContractPerformanceAct $act): float
+    {
+        if ($act->vat_amount !== null) {
+            return round((float) $act->vat_amount, 2);
+        }
+
+        if ($act->amount !== null && $act->amount_without_vat !== null) {
+            return round((float) $act->amount - (float) $act->amount_without_vat, 2);
+        }
+
+        if ($act->amount !== null && $act->vat_rate !== null && (float) $act->vat_rate >= 0) {
+            $rate = (float) $act->vat_rate;
+
+            return round((float) $act->amount * $rate / (100 + $rate), 2);
+        }
+
+        throw new BusinessLogicException(trans_message('performance_acts.financial_snapshot_missing'), 422);
     }
 
     private function actLinesForExport(ContractPerformanceAct $act): Collection
@@ -887,14 +1016,19 @@ class OfficialFormsExportService
             return $act->lines->map(function ($line): array {
                 $work = $line->completedWork;
                 $workType = $work?->workType;
+                $snapshotItem = $line->basis_snapshot['estimate_item'] ?? [];
 
                 return [
+                    'key' => $line->estimateItem?->id
+                        ? 'estimate:'.$line->estimateItem->id
+                        : ($work?->id ? 'work:'.$work->id : 'line:'.$line->id),
                     'title' => $line->title ?: ($workType?->name ?? $work?->description ?? ''),
                     'unit' => $line->unit ?: ($workType?->measurementUnit?->short_name ?? ''),
                     'quantity' => (float) $line->quantity,
                     'unit_price' => $line->unit_price === null ? null : (float) $line->unit_price,
                     'amount' => (float) $line->amount,
-                    'code' => $line->estimateItem?->code ?? $workType?->code ?? '',
+                    'estimate_position' => $snapshotItem['position_number'] ?? '',
+                    'code' => $snapshotItem['normative_rate_code'] ?? $snapshotItem['justification'] ?? $snapshotItem['code'] ?? $line->estimateItem?->code ?? $workType?->code ?? '',
                     'notes' => $line->manual_reason,
                 ];
             })->values();
@@ -905,6 +1039,9 @@ class OfficialFormsExportService
             $amount = (float) ($work->pivot->included_amount ?? $work->total_amount ?? 0);
 
             return [
+                'key' => $work->estimateItem?->id
+                    ? 'estimate:'.$work->estimateItem->id
+                    : 'work:'.$work->id,
                 'title' => $work->workType?->name ?? $work->description ?? '',
                 'unit' => $work->workType?->measurementUnit?->short_name ?? '',
                 'quantity' => $quantity,
@@ -1308,16 +1445,16 @@ class OfficialFormsExportService
                 'completedWorks.estimateItem.measurementUnit',
                 'completedWorks.estimateItem.workType.measurementUnit',
             ])
-            ->orderBy('act_date')
+            ->orderByRaw('COALESCE(period_end, act_date)')
             ->get();
 
         $monthKeys = $acts
-            ->map(fn ($act): ?string => $act->act_date?->format('Y-m'))
+            ->map(fn ($act): ?string => ($act->period_end ?? $act->act_date)?->format('Y-m'))
             ->filter()
             ->unique()
             ->values();
 
-        $visibleMonthKeys = $monthKeys->take(2)->values();
+        $visibleMonthKeys = $monthKeys->values();
         $rows = $this->buildKS6aRows($contract, $acts, $monthKeys, $visibleMonthKeys);
         $monthGroups = $visibleMonthKeys
             ->map(fn (string $monthKey): array => [
@@ -1331,11 +1468,13 @@ class OfficialFormsExportService
             $monthGroups[] = ['key' => null, 'title' => ''];
         }
 
+        [$customer, $contractor] = $this->exportParties($contract);
+
         return [
             'contract' => $contract,
             'project' => $contract->project,
-            'customer_org' => $contract->project?->organization ?? $contract->organization,
-            'contractor' => $contract->contractor,
+            'customer_org' => $customer,
+            'contractor' => $contractor,
             'rows' => $rows,
             'month_groups' => $monthGroups,
             'remaining_label' => $this->formatRemainingMonth($visibleMonthKeys->last()),
@@ -1375,7 +1514,7 @@ class OfficialFormsExportService
         }
 
         foreach ($acts as $act) {
-            $monthKey = $act->act_date?->format('Y-m');
+            $monthKey = ($act->period_end ?? $act->act_date)?->format('Y-m');
 
             foreach ($act->lines as $line) {
                 $estimateItem = $line->estimateItem ?? $line->completedWork?->estimateItem;
