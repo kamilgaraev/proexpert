@@ -7,6 +7,23 @@
 >
     <testsuites>
         <testsuite name="ConstructionAccounting">
+            <file>tests/Unit/WorkVolumes/WorkVolumeStatementRequestTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementAcceptedFloorTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementLegacySourceTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementDraftEditTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementDraftEditHttpTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementRevisionTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementAccessTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementTenantTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementReviewTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementReviewHttpTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementImportTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementImportHttpTest.php</file>
+            <file>tests/Unit/WorkVolumes/WorkVolumeTableReaderTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementLifecycleTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementOperationTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeStatementComparisonTest.php</file>
+            <file>tests/Unit/WorkVolumes/WorkVolumeStatementDiffTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentImportTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentReferenceSearchTest.php</file>
             <file>tests/Unit/ExecutiveDocumentation/ExecutiveDocumentReferenceRequestTest.php</file>

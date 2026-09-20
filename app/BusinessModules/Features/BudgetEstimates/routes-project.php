@@ -11,6 +11,8 @@ use App\Http\Controllers\Api\V1\Admin\EstimateExportController;
 use App\Http\Controllers\Api\V1\Admin\EstimatePaymentController;
 use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateNormativeController;
+use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\WorkVolumeStatementController;
+use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\WorkVolumeStatementImportController;
 
 /*
 |--------------------------------------------------------------------------
@@ -147,6 +149,49 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             
             // Платежи по смете
             Route::get('/{estimate}/payments', [EstimatePaymentController::class, 'getPayments'])->name('payments');
+        });
+
+        Route::prefix('work-volume-statements')->name('work_volume_statements.')->group(function () {
+            Route::prefix('imports')->name('imports.')->group(function () {
+                Route::get('/', [WorkVolumeStatementImportController::class, 'index'])
+                    ->middleware('authorize:budget-estimates.view,project,project')->name('index');
+                Route::post('/', [WorkVolumeStatementImportController::class, 'store'])
+                    ->middleware('authorize:budget-estimates.edit,project,project')->name('store');
+                Route::get('/{import}', [WorkVolumeStatementImportController::class, 'show'])
+                    ->whereNumber('import')->middleware('authorize:budget-estimates.view,project,project')->name('show');
+                Route::put('/{import}/preview', [WorkVolumeStatementImportController::class, 'save'])
+                    ->whereNumber('import')->middleware('authorize:budget-estimates.edit,project,project')->name('save');
+                Route::patch('/{import}/preview', [WorkVolumeStatementImportController::class, 'patch'])
+                    ->whereNumber('import')->middleware('authorize:budget-estimates.edit,project,project')->name('patch');
+                Route::post('/{import}/register', [WorkVolumeStatementImportController::class, 'register'])
+                    ->whereNumber('import')->middleware('authorize:budget-estimates.edit,project,project')->name('register');
+                Route::get('/{import}/source', [WorkVolumeStatementImportController::class, 'source'])
+                    ->whereNumber('import')->middleware('authorize:budget-estimates.view,project,project')->name('source');
+            });
+            Route::get('/accepted-mappings/{actLine}', [WorkVolumeStatementController::class, 'acceptedMappingHistory'])
+                ->whereNumber('actLine')->middleware('authorize:budget-estimates.view,project,project')->name('accepted_mappings.history');
+            Route::put('/accepted-mappings/{actLine}', [WorkVolumeStatementController::class, 'mapAccepted'])
+                ->whereNumber('actLine')->middleware('authorize:budget-estimates.approve,project,project')->name('accepted_mappings.replace');
+            Route::post('/preview-import', [WorkVolumeStatementController::class, 'previewImport'])
+                ->middleware('authorize:budget-estimates.edit,project,project')->name('preview_import');
+            Route::get('/', [WorkVolumeStatementController::class, 'index'])
+                ->middleware('authorize:budget-estimates.view,project,project')->name('index');
+            Route::post('/', [WorkVolumeStatementController::class, 'store'])
+                ->middleware('authorize:budget-estimates.edit,project,project')->name('store');
+            Route::get('/{statement}', [WorkVolumeStatementController::class, 'show'])
+                ->whereNumber('statement')->middleware('authorize:budget-estimates.view,project,project')->name('show');
+            Route::get('/{statement}/compare/{otherStatement}', [WorkVolumeStatementController::class, 'compare'])
+                ->whereNumber(['statement', 'otherStatement'])->middleware('authorize:budget-estimates.view,project,project')->name('compare');
+            Route::post('/{statement}/revisions', [WorkVolumeStatementController::class, 'revision'])
+                ->whereNumber('statement')->middleware('authorize:budget-estimates.edit,project,project')->name('revision');
+            Route::post('/{statement}/approve', [WorkVolumeStatementController::class, 'approve'])
+                ->whereNumber('statement')->middleware('authorize:budget-estimates.approve,project,project')->name('approve');
+            Route::post('/{statement}/submit', [WorkVolumeStatementController::class, 'submitForReview'])
+                ->whereNumber('statement')->middleware('authorize:budget-estimates.edit,project,project')->name('submit');
+            Route::post('/{statement}/return', [WorkVolumeStatementController::class, 'returnForCorrection'])
+                ->whereNumber('statement')->middleware('authorize:budget-estimates.approve,project,project')->name('return');
+            Route::put('/{statement}/draft', [WorkVolumeStatementController::class, 'editDraft'])
+                ->whereNumber('statement')->middleware('authorize:budget-estimates.edit,project,project')->name('draft.edit');
         });
         
         // Интеграция с договорами (на уровне проекта)

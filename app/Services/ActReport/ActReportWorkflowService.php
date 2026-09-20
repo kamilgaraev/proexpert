@@ -282,6 +282,9 @@ class ActReportWorkflowService
     public function approve(ContractPerformanceAct $act, int $userId): ContractPerformanceAct
     {
         [$updatedAct, $changed] = DB::transaction(function () use ($act, $userId): array {
+            \App\Models\Project::query()->where('id', Contract::query()->select('project_id')
+                ->where('id', ContractPerformanceAct::query()->whereKey($act->getKey())->select('contract_id')))
+                ->lockForUpdate()->first();
             $lockedAct = $this->lockAct($act);
             $lockedContract = $lockedAct->contract;
 
