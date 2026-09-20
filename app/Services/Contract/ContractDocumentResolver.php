@@ -100,7 +100,8 @@ final class ContractDocumentResolver
         $validator->validate(['document' => $document, 'variables' => $variables], array_column($definitions, 'definition', 'id'));
         (new ContractFormulaEngine)->validate(array_column($definitions, 'definition', 'id'));
 
-        return ['document' => $document, 'definitions' => $definitions, 'blocks' => $blocks];
+        return ['document' => $document, 'definitions' => $definitions, 'blocks' => $blocks,
+            ...(isset($content['contract_profile_code']) ? ['contract_profile_code' => $content['contract_profile_code']] : [])];
     }
 
     private function invalid(): never

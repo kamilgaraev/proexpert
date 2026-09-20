@@ -57,9 +57,12 @@ final class ContractBuilderInstanceService
         return ['can_create' => $canCreate, 'can_adopt' => $canAdopt, 'can_edit_draft' => false, 'revision' => null];
     }
 
-    public function create(User $actor, int $organizationId, int $contractId, string $templateId, int $templateVersion, array $values, string $key, ?array $adoption = null): array
+    public function create(User $actor, int $organizationId, int $contractId, string $templateId, int $templateVersion, array $values, string $key, ?array $adoption = null, bool $initialCreation = false): array
     {
-        $this->authorize($actor, $organizationId, 'contracts.edit');
+        $this->authorize($actor, $organizationId, $initialCreation ? 'contracts.create' : 'contracts.edit');
+        if ($initialCreation && ($adoption !== null || DB::transactionLevel() < 1)) {
+            $this->invalid();
+        }
         if ($adoption !== null) {
             $this->authorize($actor, $organizationId, 'contracts.revisions.adopt');
             if (!is_string($adoption['fingerprint'] ?? null) || preg_match('/^[a-f0-9]{64}$/D', $adoption['fingerprint']) !== 1

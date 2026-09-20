@@ -140,11 +140,97 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         self::assertSame('2026-12-01', substr($contract->getRawOriginal('end_date'), 0, 10));
     }
 
+    public function test_standard_templates_are_idempotent_frozen_and_create_matching_subject_profile_and_terms(): void
+    {
+        [$actor, $input] = $this->fixture();
+        $catalogue = $this->getJson('/api/v1/admin/contracts/standard-templates')->assertOk()->json('data');
+        self::assertSame(['work', 'construction', 'subcontract'], array_column($catalogue, 'code'));
+        $resolved = [];
+        foreach ($catalogue as $standard) {
+            $resolved = $this->postJson('/api/v1/admin/contracts/standard-templates/install', ['code' => $standard['code']])->assertOk()->json('data');
+            $this->postJson('/api/v1/admin/contracts/standard-templates/install', ['code' => $standard['code']])
+                ->assertOk()->assertJsonPath('data.template_id', $resolved['template_id']);
+            $values = [];
+            foreach ($resolved['definitions'] as $id => $field) {
+                $definition = $field['definition'];
+                if (isset($definition['source'])) {
+                    continue;
+                }
+                $values[$id] = match ($definition['type']) {
+                    'money' => ['amount' => '123.45', 'currency' => 'RUB'],
+                    'date' => $definition['assignment']['field'] === 'start_date' ? '2026-10-01' : '2026-12-01',
+                    default => 'Согласованное условие: '.$field['title'],
+                };
+            }
+            $payload = [...$input, 'number' => 'BASE-'.$standard['code'], 'template' => [
+                'template_id' => $resolved['template_id'], 'template_version' => 1, 'values' => $values,
+            ]];
+            $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $payload)->assertOk()->json('data');
+            $payload['template']['source_hash'] = $prepared['source_hash'];
+            $payload['idempotency_key'] = 'base-'.$standard['code'];
+            $this->postJson('/api/v1/admin/contracts', [...$payload, 'document_profile_code' => 'contract.work'])->assertUnprocessable();
+            $this->postJson('/api/v1/admin/contracts', [...$payload, 'actual_advance_amount' => 5])->assertUnprocessable();
+            $saved = $this->postJson('/api/v1/admin/contracts', $payload)->assertCreated()->json('data');
+            $this->postJson('/api/v1/admin/contracts', $payload)->assertOk()->assertJsonPath('data.id', $saved['id']);
+            $contract = Contract::findOrFail($saved['id']);
+            self::assertSame('Согласованное условие: Предмет договора', $contract->subject);
+            self::assertSame('Согласованное условие: Порядок и сроки оплаты', $contract->payment_terms);
+            self::assertSame('123.45', $contract->getRawOriginal('total_amount'));
+            self::assertSame($standard['contract_profile_code'], $contract->legalArchiveDocument()->firstOrFail()->type_profile_code);
+            $reopened = $this->getJson('/api/v1/admin/contracts/'.$saved['id'].'/template-card')->assertOk()->json('data');
+            self::assertSame($prepared['card'], $reopened['revision']['card']);
+            $this->patchJson('/api/v1/admin/contract-library/'.$resolved['template_id'].'/archive', ['expected_version' => 1, 'archived' => true])->assertUnprocessable();
+            $this->postJson('/api/v1/admin/contract-library/'.$resolved['template_id'].'/versions', [
+                'kind' => 'template', 'title' => 'Подмена', 'content' => ['document' => $resolved['document'], 'variables' => array_fill_keys(array_keys($resolved['definitions']), 1)],
+                'expected_version' => 1, 'request_key' => 'replace-base',
+            ])->assertUnprocessable();
+        }
+        $foreign = Organization::factory()->verified()->create();
+        $other = User::factory()->create(['current_organization_id' => $foreign->id]);
+        $otherResolved = app(\App\Services\Contract\ContractStandardTemplateService::class)->install($other, $foreign->id, 'subcontract');
+        self::assertNotSame($resolved['template_id'], $otherResolved['template_id']);
+        try {
+            app(ContractLibraryService::class)->resolveTemplate($other, $foreign->id, $resolved['template_id'], 1);
+            self::fail('Foreign template was resolved');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            self::assertTrue(true);
+        }
+    }
+
+    public function test_standard_template_creation_does_not_require_library_or_edit_permissions(): void
+    {
+        [$actor, $input] = $this->fixture();
+        app(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(
+            static fn ($user, string $permission): bool => !str_starts_with($permission, 'contracts.library.') && $permission !== 'contracts.edit',
+        );
+        $resolved = $this->postJson('/api/v1/admin/contracts/standard-templates/install', ['code' => 'work'])->assertOk()->json('data');
+        $values = [];
+        foreach ($resolved['definitions'] as $id => $field) {
+            $definition = $field['definition'];
+            if (isset($definition['source'])) {
+                continue;
+            }
+            $values[$id] = match ($definition['type']) {
+                'money' => ['amount' => '100', 'currency' => 'RUB'],
+                'date' => '2026-12-01',
+                default => 'Согласовано сторонами',
+            };
+        }
+        $input['template'] = ['template_id' => $resolved['template_id'], 'template_version' => 1, 'values' => $values];
+        $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertOk()->json('data');
+        $input['template']['source_hash'] = $prepared['source_hash'];
+        $this->postJson('/api/v1/admin/contracts', [...$input, 'idempotency_key' => 'create-only'])->assertCreated();
+        $this->postJson('/api/v1/admin/contract-library', ['kind' => 'template', 'title' => 'Недопустимо',
+            'content' => ['document' => $resolved['document'], 'variables' => array_fill_keys(array_keys($resolved['definitions']), 1)],
+            'request_key' => 'create-denied'])->assertForbidden();
+        self::assertSame(1, Contract::where('number', $input['number'])->count());
+    }
+
     private function fixture(bool $positioned = false): array
     {
         $this->enableImmutableAuditWriter();
         $authorization = \Mockery::mock(AuthorizationService::class);
-        $authorization->shouldReceive('can')->andReturn(true);
+        $authorization->shouldReceive('can')->byDefault()->andReturn(true);
         $this->app->instance(AuthorizationService::class, $authorization);
         $owner = Organization::factory()->verified()->create();
         $actor = User::factory()->create(['current_organization_id' => $owner->id]);
