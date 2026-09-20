@@ -20,8 +20,7 @@ final class CompletedWorkScopeRegressionTest extends TestCase
     {
         $context = AdminApiTestContext::create();
         $projectA = Project::factory()->create(['organization_id' => $context->organization->id]);
-        $projectB = Project::factory()->create();
-        $this->allowAdminAccess();
+        $projectB = Project::factory()->create(['organization_id' => $context->organization->id]);
 
         $response = $this->withHeaders($context->authHeaders())->postJson(
             "/api/v1/admin/projects/{$projectA->id}/works",
@@ -41,17 +40,19 @@ final class CompletedWorkScopeRegressionTest extends TestCase
     {
         $context = AdminApiTestContext::create();
         $projectA = Project::factory()->create(['organization_id' => $context->organization->id]);
-        $projectB = Project::factory()->create();
-        $scheduleB = ProjectSchedule::factory()->create([
+        $projectB = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $scheduleB = ProjectSchedule::query()->create([
             'project_id' => $projectB->id,
             'organization_id' => $projectB->organization_id,
+            'name' => 'Чужой график',
         ]);
-        $taskB = ScheduleTask::factory()->create([
+        $taskB = ScheduleTask::query()->create([
             'schedule_id' => $scheduleB->id,
             'organization_id' => $projectB->organization_id,
+            'name' => 'Чужая задача',
+            'quantity' => 10,
             'completed_quantity' => 7,
         ]);
-        $this->allowAdminAccess();
 
         $response = $this->withHeaders($context->authHeaders())->postJson(
             "/api/v1/admin/projects/{$projectA->id}/works/bulk",

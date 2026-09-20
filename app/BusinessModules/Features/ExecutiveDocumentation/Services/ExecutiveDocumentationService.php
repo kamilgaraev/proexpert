@@ -156,12 +156,33 @@ final class ExecutiveDocumentationService
 
     public function addVersion(ExecutiveDocument $document, int $userId, array $data): ExecutiveDocumentVersion
     {
-        if ($document->documentSet?->status === ExecutiveDocumentStatusEnum::TRANSMITTED) {
-            throw new DomainException(trans_message('executive_documentation.errors.version_locked_after_transmit'));
+        if (isset($data['expected_version_id'])) {
+            $latestVersionId = $document->versions()->latest('id')->value('id');
+            if ((int) $data['expected_version_id'] !== (int) $latestVersionId) {
+                throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+            }
         }
-
         if (!($data['file'] ?? null) instanceof UploadedFile) {
             throw new DomainException(trans_message('executive_documentation.errors.version_file_required'));
+        }
+
+        $file = $data['file'];
+        $operationKey = $data['operation_key'] ?? null;
+        $contentHash = hash_file('sha256', $file->getRealPath());
+        $operationHash = hash('sha256', json_encode([
+            'document_id' => $document->id,
+            'version_number' => $data['version_number'],
+            'comment' => $data['comment'] ?? null,
+            'content_hash' => $contentHash,
+        ], JSON_THROW_ON_ERROR));
+        if ($operationKey !== null) {
+            $existing = $document->versions()->where('operation_key', $operationKey)->first();
+            if ($existing !== null) {
+                if ($existing->operation_hash !== $operationHash) {
+                    throw new DomainException(trans_message('executive_documentation.errors.operation_conflict'));
+                }
+                return $existing;
+            }
         }
 
         $organization = Organization::query()->find($document->organization_id);
@@ -177,23 +198,64 @@ final class ExecutiveDocumentationService
             throw new DomainException(trans_message('executive_documentation.errors.version_file_upload_failed'));
         }
 
-        return $document->versions()->create([
+        $version = $document->versions()->create([
             'organization_id' => $document->organization_id,
             'uploaded_by' => $userId,
+            'status' => 'draft',
             'version_number' => $data['version_number'],
             'file_url' => $uploadedPath,
+            'content_hash' => $contentHash,
             'comment' => $data['comment'] ?? null,
             'uploaded_at' => $data['uploaded_at'] ?? now(),
             'metadata' => $data['metadata'] ?? null,
+            'profile_snapshot' => $data['profile_snapshot'] ?? $document->profile_data,
+            'basis_snapshot' => $data['basis_snapshot'] ?? [
+                'project_id' => $document->project_id,
+                'completed_work_id' => $document->completed_work_id,
+                'journal_entry_id' => $document->journal_entry_id,
+            ],
+            'operation_key' => $operationKey,
+            'operation_hash' => $operationHash,
         ]);
+
+        if ($document->status !== ExecutiveDocumentStatusEnum::DRAFT) {
+            $document->update([
+                'status' => ExecutiveDocumentStatusEnum::DRAFT,
+                'submitted_at' => null,
+                'approved_at' => null,
+            ]);
+        }
+
+        return $version;
     }
 
-    public function submit(ExecutiveDocument $document, int $userId, ?string $comment = null): ExecutiveDocument
+    public function updateDraft(ExecutiveDocument $document, int $userId, array $data): ExecutiveDocument
+    {
+        $expectedVersionId = (int) ($data['expected_version_id'] ?? 0);
+        $latest = $document->versions()->latest('id')->first();
+        if ($expectedVersionId <= 0 || $latest === null || $latest->id !== $expectedVersionId) {
+            throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+        }
+        if (!in_array($document->status, [ExecutiveDocumentStatusEnum::DRAFT, ExecutiveDocumentStatusEnum::REMARKS], true)) {
+            throw new DomainException(trans_message('executive_documentation.errors.draft_locked'));
+        }
+
+        $document->fill(array_intersect_key($data, array_flip([
+            'title', 'section_name', 'document_date', 'inspection_date', 'participants', 'profile_data',
+            'signatories', 'metadata', 'work_type_id', 'work_type_name', 'completed_work_id', 'journal_entry_id',
+        ])))->save();
+
+        return $document->fresh(self::DOCUMENT_RELATIONS);
+    }
+
+    public function submit(ExecutiveDocument $document, int $userId, ?string $comment = null, ?int $versionId = null): ExecutiveDocument
     {
         if (!in_array($document->status, [ExecutiveDocumentStatusEnum::DRAFT, ExecutiveDocumentStatusEnum::REMARKS], true)) {
             throw new DomainException(trans_message('executive_documentation.errors.submit_invalid_status'));
         }
 
+        $version = $this->versionForAction($document, $versionId);
+        $version->update(['status' => 'under_review', 'submitted_at' => now()]);
         $document->update([
             'status' => ExecutiveDocumentStatusEnum::UNDER_REVIEW,
             'submitted_at' => now(),
@@ -205,12 +267,14 @@ final class ExecutiveDocumentationService
 
     public function addRemark(ExecutiveDocument $document, int $userId, array $data): ExecutiveDocumentRemark
     {
-        if ($document->status !== ExecutiveDocumentStatusEnum::UNDER_REVIEW) {
+        if (!in_array($document->status, [ExecutiveDocumentStatusEnum::UNDER_REVIEW, ExecutiveDocumentStatusEnum::REMARKS], true)) {
             throw new DomainException(trans_message('executive_documentation.errors.remark_invalid_status'));
         }
 
+        $version = $this->versionForAction($document, isset($data['version_id']) ? (int) $data['version_id'] : null);
         $remark = $document->remarks()->create([
             'organization_id' => $document->organization_id,
+            'version_id' => $version->id,
             'created_by' => $userId,
             'body' => $data['body'],
             'severity' => $data['severity'] ?? 'major',
@@ -237,19 +301,25 @@ final class ExecutiveDocumentationService
             'severity' => $data['severity'] ?? 'major',
             'status' => ExecutiveRemarkStatusEnum::OPEN,
             'metadata' => ['source' => 'customer'],
+            'version_id' => $document->versions()->where('status', 'transmitted')->latest('id')->value('id'),
         ])->fresh(['document']);
     }
 
-    public function resolveRemark(ExecutiveDocumentRemark $remark, int $userId, string $comment): ExecutiveDocumentRemark
+    public function resolveRemark(ExecutiveDocumentRemark $remark, int $userId, string $comment, ?string $response = null): ExecutiveDocumentRemark
     {
         $remark->update([
             'status' => ExecutiveRemarkStatusEnum::RESOLVED,
             'resolved_by' => $userId,
             'resolution_comment' => $comment,
+            'response' => $response ?? $comment,
             'resolved_at' => now(),
         ]);
 
         $document = $remark->document;
+        $version = $remark->version;
+        if ($version !== null && !$document->remarks()->where('version_id', $version->id)->where('status', ExecutiveRemarkStatusEnum::OPEN->value)->exists()) {
+            $version->update(['status' => 'under_review']);
+        }
         if ($document->openRemarks()->count() === 0) {
             $document->update(['status' => ExecutiveDocumentStatusEnum::UNDER_REVIEW]);
         }
@@ -257,16 +327,18 @@ final class ExecutiveDocumentationService
         return $remark->fresh(['document']);
     }
 
-    public function approve(ExecutiveDocument $document, int $userId, ?string $comment = null): ExecutiveDocument
+    public function approve(ExecutiveDocument $document, int $userId, ?string $comment = null, ?int $versionId = null): ExecutiveDocument
     {
         if (!in_array($document->status, [ExecutiveDocumentStatusEnum::UNDER_REVIEW, ExecutiveDocumentStatusEnum::REMARKS], true)) {
             throw new DomainException(trans_message('executive_documentation.errors.approve_invalid_status'));
         }
 
-        if ($document->openRemarks()->exists()) {
+        $version = $this->versionForAction($document, $versionId);
+        if ($document->remarks()->where('version_id', $version->id)->where('status', ExecutiveRemarkStatusEnum::OPEN->value)->exists()) {
             throw new DomainException(trans_message('executive_documentation.errors.open_remarks_block_approval'));
         }
 
+        $version->update(['status' => 'approved', 'approved_by' => $userId, 'approved_at' => now()]);
         $document->update([
             'status' => ExecutiveDocumentStatusEnum::APPROVED,
             'approved_at' => now(),
@@ -316,6 +388,12 @@ final class ExecutiveDocumentationService
             ]);
 
             $set->documents()->update(['status' => ExecutiveDocumentStatusEnum::TRANSMITTED]);
+            $set->documents->each(static function (ExecutiveDocument $document): void {
+                $document->versions()->where('status', 'approved')->update([
+                    'status' => 'transmitted',
+                    'transmitted_at' => now(),
+                ]);
+            });
 
             return $set->fresh(self::SET_RELATIONS);
         });
@@ -342,7 +420,8 @@ final class ExecutiveDocumentationService
     {
         $document->loadMissing('documentSet');
 
-        if ($document->documentSet?->status === ExecutiveDocumentStatusEnum::TRANSMITTED) {
+        if (in_array($version->status, ['under_review', 'approved', 'transmitted'], true)
+            || $document->documentSet?->status === ExecutiveDocumentStatusEnum::TRANSMITTED && $version->status !== 'draft') {
             throw new DomainException(trans_message('executive_documentation.errors.version_locked_after_transmit'));
         }
 
@@ -480,5 +559,14 @@ final class ExecutiveDocumentationService
 
             return $document->versions->isEmpty() || $document->openRemarks()->exists();
         });
+    }
+
+    private function versionForAction(ExecutiveDocument $document, ?int $versionId): ExecutiveDocumentVersion
+    {
+        $version = $document->versions()->when($versionId !== null, static fn ($query) => $query->whereKey($versionId))->first();
+        if ($version === null) {
+            throw new DomainException(trans_message('executive_documentation.errors.version_not_found'));
+        }
+        return $version;
     }
 }

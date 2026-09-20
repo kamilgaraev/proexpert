@@ -19,10 +19,12 @@ final class ExecutiveDocumentRemarkResource extends JsonResource
         return [
             'id' => $remark->id,
             'document_id' => $remark->document_id,
+            'version_id' => $remark->version_id,
             'body' => $remark->body,
             'severity' => $remark->severity,
             'status' => $remark->status->value,
             'resolution_comment' => $remark->resolution_comment,
+            'response' => $remark->response,
             'resolved_at' => $remark->resolved_at?->toIso8601String(),
             'created_at' => $remark->created_at?->toIso8601String(),
         ];

@@ -55,7 +55,6 @@ final class StoreCompletedWorkBulkRequest extends FormRequest
         ];
     }
 
-    /** @return list<CompletedWorkDTO> */
     public function toDtos(): array
     {
         $project = ProjectContextMiddleware::getProject($this);

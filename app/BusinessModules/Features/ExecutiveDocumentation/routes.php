@@ -26,6 +26,12 @@ Route::prefix('api/v1/admin/executive-documentation')
         Route::post('/sets/{id}/documents', [ExecutiveDocumentationController::class, 'storeDocument'])
             ->middleware('authorize:executive-documentation.create')
             ->name('documents.store');
+        Route::patch('/documents/{id}', [ExecutiveDocumentationController::class, 'updateDocument'])
+            ->middleware('authorize:executive-documentation.edit')
+            ->name('documents.update');
+        Route::post('/documents/{id}/versions', [ExecutiveDocumentationController::class, 'storeVersion'])
+            ->middleware('authorize:executive-documentation.edit')
+            ->name('versions.store');
         Route::post('/sets/{id}/transmit', [ExecutiveDocumentationController::class, 'transmit'])
             ->middleware('authorize:executive-documentation.approve')
             ->name('sets.transmit');

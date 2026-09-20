@@ -338,6 +338,57 @@ final class ExecutiveDocumentationController extends Controller
         return $this->documentAction($request, $id, 'submit');
     }
 
+    public function updateDocument(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'expected_version_id' => ['required', 'integer'],
+                'title' => ['sometimes', 'string', 'max:255'],
+                'section_name' => ['nullable', 'string', 'max:255'],
+                'document_date' => ['nullable', 'date'],
+                'inspection_date' => ['nullable', 'date'],
+                'participants' => ['nullable', 'array'],
+                'profile_data' => ['nullable', 'array'],
+                'signatories' => ['nullable', 'array'],
+                'metadata' => ['nullable', 'array'],
+            ]);
+            return AdminResponse::success(new ExecutiveDocumentResource(
+                $this->service->updateDraft($this->findDocument($request, $id), (int) auth()->id(), $validated)
+            ));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('update_document', $id, $e);
+        }
+    }
+
+    public function storeVersion(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'expected_version_id' => ['required', 'integer'],
+                'version_number' => ['required', 'string', 'max:40'],
+                'file' => ['required', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'])->max(25 * 1024)],
+                'comment' => ['nullable', 'string', 'max:1000'],
+                'uploaded_at' => ['nullable', 'date'],
+                'profile_snapshot' => ['nullable', 'array'],
+                'basis_snapshot' => ['nullable', 'array'],
+                'metadata' => ['nullable', 'array'],
+                'operation_key' => ['nullable', 'string', 'max:128'],
+            ]);
+            $version = $this->service->addVersion($this->findDocument($request, $id), (int) auth()->id(), $validated);
+            return AdminResponse::success(new \App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentVersionResource($version), null, 201);
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('store_version', $id, $e);
+        }
+    }
+
     public function approve(Request $request, int $id): JsonResponse
     {
         return $this->documentAction($request, $id, 'approve');
@@ -349,6 +400,7 @@ final class ExecutiveDocumentationController extends Controller
             $validated = $request->validate([
                 'body' => ['required', 'string', 'max:5000'],
                 'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'critical'])],
+                'version_id' => ['nullable', 'integer'],
             ]);
             $document = $this->findDocument($request, $id);
 
@@ -438,11 +490,14 @@ final class ExecutiveDocumentationController extends Controller
     private function documentAction(Request $request, int $id, string $action): JsonResponse
     {
         try {
-            $validated = $request->validate(['comment' => ['nullable', 'string', 'max:1000']]);
+            $validated = $request->validate([
+                'comment' => ['nullable', 'string', 'max:1000'],
+                'version_id' => ['nullable', 'integer'],
+            ]);
             $document = $this->findDocument($request, $id);
             $updated = $action === 'submit'
-                ? $this->service->submit($document, (int) auth()->id(), $validated['comment'] ?? null)
-                : $this->service->approve($document, (int) auth()->id(), $validated['comment'] ?? null);
+                ? $this->service->submit($document, (int) auth()->id(), $validated['comment'] ?? null, $validated['version_id'] ?? null)
+                : $this->service->approve($document, (int) auth()->id(), $validated['comment'] ?? null, $validated['version_id'] ?? null);
 
             return AdminResponse::success(new ExecutiveDocumentResource($updated));
         } catch (ValidationException $e) {

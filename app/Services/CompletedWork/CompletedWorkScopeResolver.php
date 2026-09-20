@@ -17,6 +17,7 @@ use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Models\WorkType;
 use App\Services\Project\UserProjectAccessService;
+use App\Services\Project\ProjectContextService;
 
 use function trans_message;
 
@@ -24,6 +25,7 @@ final class CompletedWorkScopeResolver
 {
     public function __construct(
         private readonly UserProjectAccessService $projectAccess,
+        private readonly ProjectContextService $projectContextService,
     ) {}
 
     public function assertCreate(
@@ -32,6 +34,7 @@ final class CompletedWorkScopeResolver
         ?ProjectContext $context = null,
     ): void {
         $this->assertActor($actor);
+        $context ??= $this->contextFor($dto->project_id, $actor);
         $project = $this->assertProject($dto->project_id, $dto->organization_id, $actor, $context);
 
         $this->assertReferences($dto, $project);
@@ -45,6 +48,7 @@ final class CompletedWorkScopeResolver
         ?ProjectContext $context = null,
     ): void {
         $this->assertActor($actor);
+        $context ??= $this->contextFor($existingWork->project_id, $actor);
 
         if ((int) $dto->organization_id !== (int) $existingWork->organization_id
             || (int) $dto->project_id !== (int) $existingWork->project_id) {
@@ -62,11 +66,11 @@ final class CompletedWorkScopeResolver
         ?ProjectContext $context = null,
     ): void {
         $this->assertActor($actor);
+        $context ??= $this->contextFor($work->project_id, $actor);
         $this->assertProject($work->project_id, $work->organization_id, $actor, $context);
         $this->assertManage($context);
     }
 
-    /** @param list<CompletedWorkDTO> $dtos */
     public function assertBulk(
         array $dtos,
         ?User $actor,
@@ -133,8 +137,9 @@ final class CompletedWorkScopeResolver
         if ($dto->contract_id !== null) {
             $contract = Contract::query()->find($dto->contract_id);
             $projects = $contract?->getProjectIds() ?? [];
-            if (! $contract || (int) $contract->organization_id !== $organizationId
-                || ($projects !== [] && ! in_array((int) $project->id, array_map('intval', $projects), true))) {
+            $linkedToProject = (int) ($contract?->project_id ?? 0) === (int) $project->id
+                || in_array((int) $project->id, array_map('intval', $projects), true);
+            if (! $contract || (int) $contract->organization_id !== $organizationId || ! $linkedToProject) {
                 throw $this->notFound();
             }
         }
@@ -169,5 +174,17 @@ final class CompletedWorkScopeResolver
     private function notFound(): BusinessLogicException
     {
         return new BusinessLogicException(trans_message('completed_work.not_found'), 404);
+    }
+
+    private function contextFor(int $projectId, User $actor): ProjectContext
+    {
+        $project = Project::query()->find($projectId);
+        $context = $project ? $this->projectContextService->getContextForUser($project, $actor) : null;
+
+        if (! $context) {
+            throw $this->notFound();
+        }
+
+        return $context;
     }
 }

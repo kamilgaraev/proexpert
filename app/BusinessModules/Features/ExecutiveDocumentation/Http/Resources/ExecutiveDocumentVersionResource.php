@@ -19,10 +19,15 @@ final class ExecutiveDocumentVersionResource extends JsonResource
         return [
             'id' => $version->id,
             'version_number' => $version->version_number,
+            'status' => $version->status,
             'file_url' => $version->file_url,
+            'content_hash' => $version->content_hash,
+            'profile_snapshot' => $version->profile_snapshot,
+            'basis_snapshot' => $version->basis_snapshot,
             'comment' => $version->comment,
             'uploaded_at' => $version->uploaded_at?->toIso8601String(),
             'created_at' => $version->created_at?->toIso8601String(),
+            'approved_at' => $version->approved_at?->toIso8601String(),
         ];
     }
 }
