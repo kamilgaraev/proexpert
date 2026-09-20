@@ -31,7 +31,7 @@ class ContractSideResolverService
             $firstSnapshot = $this->mapContractPartySnapshot($contract->firstParty);
             $secondSnapshot = $this->mapContractPartySnapshot($contract->secondParty);
             $currentOrgId = $organizationId ?? auth()->user()?->current_organization_id ?? $contract->organization_id;
-            $isSecondParty = $currentOrgId && (
+            $isSecondParty = ! $contract->is_self_execution && $currentOrgId && (
                 ($secondSnapshot['linked_organization_id'] ?? null) == $currentOrgId ||
                 ($secondSnapshot['organization_id'] ?? null) == $currentOrgId
             );
@@ -123,7 +123,7 @@ class ContractSideResolverService
             : null;
 
         $currentOrgId = $organizationId ?? auth()->user()?->current_organization_id ?? $contract->organization_id;
-        $isSecond = $currentOrgId && (
+        $isSecond = ! $contract->is_self_execution && $currentOrgId && (
             ($secondParty['organization_id'] ?? null) == $currentOrgId ||
             ($secondParty['linked_organization_id'] ?? null) == $currentOrgId
         );
