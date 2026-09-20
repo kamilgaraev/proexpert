@@ -7,6 +7,9 @@
 >
     <testsuites>
         <testsuite name="ConstructionAccounting">
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentImportTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentReferenceSearchTest.php</file>
+            <file>tests/Unit/ExecutiveDocumentation/ExecutiveDocumentReferenceRequestTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentReviewCycleTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveTransmittalLifecycleTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentProfilesTest.php</file>
