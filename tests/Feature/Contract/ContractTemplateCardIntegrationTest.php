@@ -226,9 +226,202 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         self::assertSame(1, Contract::where('number', $input['number'])->count());
     }
 
+    public function test_template_update_preserves_local_text_requires_explicit_replacement_and_freezes_proposal_origin(): void
+    {
+        [$actor, $input, $ids] = $this->fixture();
+        $contractId = $this->createTemplateContract($input);
+        $org = (int) $actor->current_organization_id;
+        $instances = app(ContractBuilderInstanceService::class);
+        $revision = $instances->read($actor, $org, $contractId, 1);
+        $local = $revision['document'];
+        $local['content'][] = ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => 'Индивидуальный порядок работ']]];
+        app(ContractBuilderDraftService::class)->save($actor, $org, $contractId, 1, 0, $local, $input['template']['values'], 'local-text');
+        $library = app(ContractLibraryService::class);
+        $item = $library->read($actor, $org, $input['template']['template_id'], 1);
+        $content = $item['version']['content'];
+        $content['document']['content'][] = ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => 'Новая общая формулировка']]];
+        $library->revise($actor, $org, $input['template']['template_id'], 2, 'Обновлённый шаблон', $content, 'updated-template');
+        $library->publish($actor, $org, $input['template']['template_id'], 2, 3);
+        $preview = $this->getJson("/api/v1/admin/contracts/{$contractId}/builder/template-update")->assertOk()->json('data');
+        self::assertTrue($preview['conflict']);
+        self::assertStringContainsString('Индивидуальный порядок', $preview['local_text']);
+        self::assertStringContainsString('Новая общая', $preview['template_text']);
+        self::assertSame($revision, $instances->read($actor, $org, $contractId, 1));
+        $payload = array_intersect_key($preview, array_flip(['base_revision', 'expected_version', 'target_version', 'comparison_hash']))
+            + ['resolution' => 'local', 'request_key' => 'keep-local'];
+        $draft = $this->postJson("/api/v1/admin/contracts/{$contractId}/builder/template-update", $payload)->assertOk()->json('data');
+        self::assertEquals($local, $draft['document']);
+        self::assertSame($revision['values'][$ids['custom']], $draft['values'][$ids['custom']]);
+        self::assertNotSame($revision['template_version_id'], $draft['template_version_id']);
+        $this->postJson("/api/v1/admin/contracts/{$contractId}/builder/template-update", $payload)->assertOk()->assertJsonPath('data.version', 2);
+        $this->postJson("/api/v1/admin/contracts/{$contractId}/builder/template-update", [...$payload, 'request_key' => 'stale-update'])->assertConflict();
+        $proposals = app(\App\Services\Contract\ContractProposalService::class);
+        $proposal = $proposals->create($actor, $org, $contractId, 1, 2, '', 'updated-proposal');
+        self::assertSame($draft['template_version_id'], (int) DB::table('contract_builder_proposals')->where('id', $proposal['id'])->value('template_version_id'));
+        self::assertEquals($local, $proposal['content']['document']);
+        self::assertSame(1, DB::table('contract_revision_documents')->count());
+        $this->fakeRevisionStorage();
+        $evidence = app(\App\Services\Contract\ContractBuilderAssetService::class)->upload($actor, $org, $contractId,
+            \Illuminate\Http\UploadedFile::fake()->createWithContent('Письмо.txt', 'Согласовано внешней стороной'), 'evidence', 'accept-evidence');
+        $proposals->decide($actor, $org, $contractId, $proposal['id'], 1, 'accepted', '', 'accept-update', ['basis' => 'Письмо внешней стороны', 'asset_id' => $evidence['id']]);
+        $next = $instances->read($actor, $org, $contractId, 2);
+        self::assertSame($draft['template_version_id'], $next['template_version_id']);
+        self::assertEquals($local, $next['document']);
+        self::assertSame(2, DB::table('contract_revision_documents')->count());
+        self::assertSame($revision, $instances->read($actor, $org, $contractId, 1));
+        $files = app(\App\Services\Contract\ContractRevisionDocumentService::class);
+        $generations = DB::table('contract_revision_documents')->orderBy('id')->pluck('id');
+        self::assertTrue($files->generate((int) $generations[0]));
+        $archive = Contract::findOrFail($contractId)->legalArchiveDocument()->firstOrFail();
+        $firstVersion = (int) $archive->current_primary_version_id;
+        self::assertTrue($files->generate((int) $generations[1]));
+        self::assertSame($firstVersion, (int) $archive->fresh()->current_primary_version_id);
+        self::assertSame(2, $archive->versions()->count());
+    }
+
+    public function test_revision_docx_uses_existing_dossier_frozen_layout_and_idempotent_archive_version(): void
+    {
+        [$actor, $input] = $this->fixture(true);
+        $this->fakeRevisionStorage();
+        $contractId = $this->createTemplateContract($input);
+        $contract = Contract::findOrFail($contractId);
+        $document = $contract->legalArchiveDocument()->firstOrFail();
+        $id = (int) DB::table('contract_revision_documents')->sole()->id;
+        $service = app(\App\Services\Contract\ContractRevisionDocumentService::class);
+        self::assertTrue($service->generate($id));
+        $row = DB::table('contract_revision_documents')->where('id', $id)->firstOrFail();
+        self::assertSame('ready', $row->status);
+        self::assertSame((int) $document->id, (int) $row->document_id);
+        $version = \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion::findOrFail($row->document_version_id);
+        self::assertSame((int) $document->id, (int) $version->document_id);
+        self::assertSame($row->content_hash, $version->metadata['contract_content_hash']);
+        $path = tempnam(sys_get_temp_dir(), 'revision-test-');
+        try {
+            file_put_contents($path, \Illuminate\Support\Facades\Storage::disk('revision-tests')->get($row->storage_path));
+            $zip = new \ZipArchive;
+            self::assertTrue($zip->open($path));
+            $xml = $zip->getFromName('word/document.xml');
+            $zip->close();
+            self::assertStringContainsString('Собственное', $xml);
+            self::assertStringContainsString($row->content_hash, strip_tags($xml));
+            self::assertStringContainsString('Внешний', $xml);
+        } finally {
+            unlink($path);
+        }
+        self::assertTrue($service->generate($id));
+        self::assertSame(1, $document->versions()->count());
+        self::assertSame($id, $service->request((int) $row->revision_id, (int) $actor->id));
+        self::assertSame(1, DB::table('contract_revision_documents')->count());
+        self::assertSame('ready', $service->state($actor, (int) $actor->current_organization_id, $contractId, 1)['status']);
+        config()->set('legal-document-editor.editing_enabled', false);
+        $access = $this->createMock(\App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class);
+        $this->app->instance(\App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class, $access);
+        $editor = $this->createMock(\App\Services\LegalArchive\Editor\LegalDocumentEditor::class);
+        $editor->method('enabled')->willReturn(false);
+        $this->app->instance(\App\Services\LegalArchive\Editor\LegalDocumentEditor::class, $editor);
+        $sessions = app(\App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService::class);
+        foreach (['edit', 'review'] as $mode) {
+            try {
+                $sessions->open($version, $actor, $mode);
+                self::fail('New Word editing must be disabled');
+            } catch (\DomainException $error) {
+                self::assertSame('legal_document_editor_disabled', $error->getMessage());
+            }
+        }
+        $viewer = $sessions->open($version, $actor, 'view');
+        self::assertSame('https://example.test/revision.docx', $viewer->viewerUrl);
+        try {
+            app(\App\Services\LegalArchive\Editor\LegalDocumentBlankDraftService::class)->start($document, $actor, 'Новый файл', (int) $document->lock_version);
+            self::fail('Blank Word drafts must be disabled');
+        } catch (\DomainException $error) {
+            self::assertSame('legal_document_editor_disabled', $error->getMessage());
+        }
+        self::assertSame(1, $document->versions()->count());
+    }
+
+    public function test_template_replacement_lists_removed_values_and_requires_acknowledgement(): void
+    {
+        [$actor, $input, $ids] = $this->fixture();
+        $contractId = $this->createTemplateContract($input);
+        $org = (int) $actor->current_organization_id;
+        $library = app(ContractLibraryService::class);
+        $item = $library->read($actor, $org, $input['template']['template_id'], 1);
+        $content = $item['version']['content'];
+        unset($content['variables'][$ids['custom']]);
+        $content['document']['content'][0]['content'][0]['content'] = array_values(array_filter(
+            $content['document']['content'][0]['content'][0]['content'], static fn ($node): bool => ($node['attrs']['variableId'] ?? '') !== $ids['custom']));
+        $library->revise($actor, $org, $input['template']['template_id'], 2, 'Без особого условия', $content, 'replace-template');
+        $library->publish($actor, $org, $input['template']['template_id'], 2, 3);
+        $preview = $this->getJson("/api/v1/admin/contracts/{$contractId}/builder/template-update")->assertOk()->json('data');
+        self::assertSame($ids['custom'], $preview['removed_values'][0]['id']);
+        $payload = array_intersect_key($preview, array_flip(['base_revision', 'expected_version', 'target_version', 'comparison_hash']))
+            + ['resolution' => 'template', 'values' => $preview['values'], 'request_key' => 'replace-values'];
+        $this->postJson("/api/v1/admin/contracts/{$contractId}/builder/template-update", $payload)->assertUnprocessable();
+        $draft = $this->postJson("/api/v1/admin/contracts/{$contractId}/builder/template-update", [...$payload, 'acknowledge_removed_values' => true])->assertOk()->json('data');
+        self::assertArrayNotHasKey($ids['custom'], $draft['values']);
+        self::assertSame($input['template']['values'][$ids['price']], $draft['values'][$ids['price']]);
+        self::assertSame(1, DB::table('contract_builder_revisions')->count());
+        self::assertSame(1, DB::table('contract_revision_documents')->count());
+    }
+
+    public function test_revision_document_failure_is_retryable_and_foreign_contract_is_forbidden(): void
+    {
+        [$actor, $input] = $this->fixture();
+        $this->fakeRevisionStorage(true);
+        $contractId = $this->createTemplateContract($input);
+        $row = DB::table('contract_revision_documents')->sole();
+        $service = app(\App\Services\Contract\ContractRevisionDocumentService::class);
+        try {
+            $service->generate((int) $row->id);
+            self::fail('Storage outage must fail');
+        } catch (\RuntimeException) {
+            self::assertSame('failed', DB::table('contract_revision_documents')->where('id', $row->id)->value('status'));
+        }
+        self::assertTrue($service->state($actor, (int) $actor->current_organization_id, $contractId, 1)['can_retry']);
+        $service->retry($actor, (int) $actor->current_organization_id, $contractId, 1);
+        self::assertTrue($service->generate((int) $row->id));
+        $foreign = Organization::factory()->verified()->create();
+        $other = User::factory()->create(['current_organization_id' => $foreign->id]);
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $service->state($other, (int) $foreign->id, $contractId, 1);
+    }
+
+    private function createTemplateContract(array $input): int
+    {
+        $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertOk()->json('data');
+
+        return $this->postJson('/api/v1/admin/contracts', [...$input, 'base_amount' => 120.01, 'is_fixed_amount' => true,
+            'idempotency_key' => 'instance-test', 'template' => [...$input['template'], 'source_hash' => $prepared['source_hash']]])->assertCreated()->json('data.id');
+    }
+
+    private function fakeRevisionStorage(bool $failFirst = false): void
+    {
+        $disk = \Illuminate\Support\Facades\Storage::fake('revision-tests');
+        $storage = $this->createMock(\App\Services\Storage\FileService::class);
+        $storage->method('disk')->willReturn($disk);
+        $storage->method('temporaryUrl')->willReturn('https://example.test/revision.docx');
+        $storage->method('putContent')->willReturnCallback(static function ($bytes, $directory, $filename, $visibility, $org) use ($disk, &$failFirst): string {
+            if ($failFirst) {
+                $failFirst = false;
+                throw new \RuntimeException('temporary_storage_outage');
+            }
+            $path = "org-{$org->id}/{$directory}/{$filename}";
+            $disk->put($path, $bytes);
+            return $path;
+        });
+        $storage->method('upload')->willReturnCallback(static function ($upload, $directory, $existing, $visibility, $org) use ($disk): string {
+            $path = "org-{$org->id}/{$directory}/".bin2hex(random_bytes(8)).'.'.$upload->getClientOriginalExtension();
+            $disk->put($path, $upload->getContent());
+            return $path;
+        });
+        $this->app->instance(\App\Services\Storage\FileService::class, $storage);
+        $this->app->instance(\App\Services\LegalArchive\Files\LegalDocumentScanner::class, $this->createMock(\App\Services\LegalArchive\Files\LegalDocumentScanner::class));
+    }
+
     private function fixture(bool $positioned = false): array
     {
         $this->enableImmutableAuditWriter();
+        \Illuminate\Support\Facades\Queue::fake([\App\Jobs\GenerateContractRevisionDocument::class]);
         $authorization = \Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('can')->byDefault()->andReturn(true);
         $this->app->instance(AuthorizationService::class, $authorization);

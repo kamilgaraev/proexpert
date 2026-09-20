@@ -55,6 +55,7 @@ final class ContractProposalService
                 throw new AuthorizationException;
             }
             $content = Arr::only($draft, ['document', 'definitions', 'blocks', 'values', 'entity_snapshots', 'parties', 'attachments']);
+            $templateVersionId = (int) ($draft['template_version_id'] ?? $base->template_version_id);
             foreach (['definitions', 'blocks', 'values', 'entity_snapshots'] as $map) {
                 $content[$map] = (object) $content[$map];
             }
@@ -62,7 +63,8 @@ final class ContractProposalService
                 'instance_id' => $instance->id, 'base_revision_id' => $base->id, 'draft_id' => $draft['id'], 'draft_version' => $draftVersion,
                 'author_organization_id' => $organizationId, 'recipient_organization_id' => $opposite[0]['linked_organization_id'] ?? null,
                 'created_by' => $actor->id, 'message' => $message, 'content' => $this->json($content),
-                'content_hash' => hash('sha256', $this->json([$base->template_version_id, $content])),
+                'template_version_id' => $templateVersionId,
+                'content_hash' => hash('sha256', $this->json([$templateVersionId, $content])),
                 'request_key' => $key, 'request_fingerprint' => $fingerprint, 'revision_request_key' => (string) Str::uuid(), 'created_at' => now(),
             ]);
 
@@ -116,7 +118,7 @@ final class ContractProposalService
                 }
                 $revisionId = DB::table('contract_builder_revisions')->insertGetId([
                     'instance_id' => $instance->id, 'revision_number' => (int) $base->revision_number + 1, 'base_revision_id' => $base->id,
-                    'template_version_id' => $base->template_version_id, 'author_organization_id' => $proposal->author_organization_id,
+                    'template_version_id' => $proposal->template_version_id ?? $base->template_version_id, 'author_organization_id' => $proposal->author_organization_id,
                     'created_by' => $actor->id, 'created_at' => now(), 'content_hash' => $proposal->content_hash,
                     'request_key' => $proposal->revision_request_key, 'request_fingerprint' => $proposal->request_fingerprint,
                     ...array_map(fn ($value): string => $this->json($value), $content),
@@ -124,6 +126,7 @@ final class ContractProposalService
                 DB::table('contract_builder_instances')->where('id', $instance->id)->update([
                     'current_revision_id' => $revisionId, 'lock_version' => (int) $instance->lock_version + 1, 'updated_at' => now(),
                 ]);
+                app(ContractRevisionDocumentService::class)->request($revisionId, (int) $actor->id);
             }
             DB::table('contract_builder_proposals')->where('id', $proposalId)->update([
                 'status' => $decision, 'decided_by' => $actor->id, 'decision_organization_id' => $organizationId,

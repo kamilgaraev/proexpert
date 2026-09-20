@@ -144,6 +144,7 @@ final class ContractBuilderInstanceService
                 ...array_map(fn ($value): string => $this->json($value), $snapshot),
             ]);
             DB::table('contract_builder_instances')->where('id', $instanceId)->update(['current_revision_id' => $revisionId]);
+            app(ContractRevisionDocumentService::class)->request($revisionId, (int) $actor->id);
 
             return $this->read($actor, $organizationId, $contractId, 1);
         });
