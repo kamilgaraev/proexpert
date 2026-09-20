@@ -16,6 +16,10 @@ Route::get('contracts/{contract}/template-card', [\App\Http\Controllers\Api\V1\A
     ->whereNumber('contract')->middleware('authorize:contracts.view')->name('contracts.template-card.show');
 
 Route::prefix('contract-library')->name('contracts.library.')->group(function (): void {
+    Route::get('system-fields', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractStandardTemplateController::class, 'systemFields'])
+        ->middleware('authorize:contracts.library.view')->name('system-fields.index');
+    Route::post('system-fields/install', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractStandardTemplateController::class, 'installSystemField'])
+        ->middleware('authorize:contracts.library.create')->name('system-fields.install');
     Route::get('standard-templates', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractStandardTemplateController::class, 'index'])
         ->middleware('authorize:contracts.library.view')->name('standard-templates.index');
     Route::post('standard-templates/install', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractStandardTemplateController::class, 'install'])
