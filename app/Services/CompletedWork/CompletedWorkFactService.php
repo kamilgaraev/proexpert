@@ -22,6 +22,7 @@ use App\Services\Schedule\ScheduleTaskCompletedWorkService;
 use App\Services\Schedule\ScheduleTaskService;
 use App\Services\Workflow\JournalScheduleTaskResolver;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CompletedWorkFactService
 {
@@ -34,19 +35,34 @@ class CompletedWorkFactService
 
     public function syncFromJournalEntry(ConstructionJournalEntry $entry): void
     {
-        $entry->load([
-            'journal.contract',
-            'scheduleTask.estimateItem.contractLinks.contract.contractor',
-            'workVolumes.estimateItem.contractLinks.contract.contractor',
-            'workVolumes.workType',
-            'materials.estimateItem.contractLinks.contract.contractor',
-            'materials.material',
-            'equipment.estimateItem.contractLinks.contract.contractor',
-            'workers.estimateItem.contractLinks.contract.contractor',
-        ]);
-
         DB::transaction(function () use ($entry): void {
+            $entry = ConstructionJournalEntry::query()
+                ->whereKey($entry->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $entry->load([
+                'journal.contract',
+                'scheduleTask.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.workType',
+                'materials.estimateItem.contractLinks.contract.contractor',
+                'materials.material',
+                'equipment.estimateItem.contractLinks.contract.contractor',
+                'workers.estimateItem.contractLinks.contract.contractor',
+            ]);
             $existingWorks = $entry->completedWorks()->orderBy('id')->get();
+            $duplicateVolumeIds = $existingWorks
+                ->whereNotNull('journal_work_volume_id')
+                ->groupBy('journal_work_volume_id')
+                ->filter(static fn ($works): bool => $works->count() > 1)
+                ->keys();
+            if ($duplicateVolumeIds->isNotEmpty()) {
+                Log::warning('completed_work.journal_volume_duplicates_preserved', [
+                    'journal_entry_id' => $entry->id,
+                    'journal_work_volume_ids' => $duplicateVolumeIds->values()->all(),
+                ]);
+                throw new \App\Exceptions\BusinessLogicException(trans_message('completed_work.journal_duplicates_require_review'), 409);
+            }
             $worksByVolumeId = $existingWorks
                 ->whereNotNull('journal_work_volume_id')
                 ->keyBy('journal_work_volume_id');
