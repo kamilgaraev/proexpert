@@ -98,24 +98,26 @@ class ContractController extends Controller
 
         try {
             $contractDTO = $request->toDto();
-            $result = $this->contractDossierCreationService()->create(
-                $organizationId,
-                $user,
-                new ContractDossierCreationInput(
-                    $contractDTO,
-                    $request->validated('idempotency_key'),
-                    $request->validated('document_title') ?? 'Договор №'.$contractDTO->number,
-                    $request->validated('document_profile_code') ?? $this->documentProfileCode($contractDTO),
-                    $request->validated('document_metadata') ?? [],
-                    $request->validated('document_confidentiality_level'),
-                ),
+            $input = new ContractDossierCreationInput(
+                $contractDTO,
+                $request->validated('idempotency_key'),
+                $request->validated('document_title') ?? 'Договор №'.$contractDTO->number,
+                $request->validated('document_profile_code') ?? $this->documentProfileCode($contractDTO),
+                $request->validated('document_metadata') ?? [],
+                $request->validated('document_confidentiality_level'),
             );
+            $template = $request->validated('template');
+            $result = $template === null
+                ? $this->contractDossierCreationService()->create($organizationId, $user, $input)
+                : app(\App\Services\Contract\ContractTemplateCardService::class)->create($user, $organizationId, $input, $template);
 
             return AdminResponse::success(
                 new ContractResource($result->contract),
                 null,
                 $result->replayed ? Response::HTTP_OK : Response::HTTP_CREATED
             );
+        } catch (\App\Exceptions\ContractBuilderException|\Illuminate\Auth\Access\AuthorizationException $exception) {
+            throw $exception;
         } catch (PaymentBudgetLimitException|ContractPaymentWorkflowException $exception) {
             $this->logFailure('contract.store.budget_rejected', $request, $exception, [
                 'organization_id' => $organizationId,

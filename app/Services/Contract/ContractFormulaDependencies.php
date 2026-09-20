@@ -22,7 +22,7 @@ final class ContractFormulaDependencies
                 throw new ContractBuilderException('contracts.formula_invalid', 422);
             }
             $source = $definition['source'] ?? ['kind' => 'manual'];
-            if (!is_array($source) || !in_array($source['kind'] ?? null, ['manual', 'formula', 'entity_field'], true)) {
+            if (!is_array($source) || !in_array($source['kind'] ?? null, ['manual', 'formula', 'entity_field', 'contract_context'], true)) {
                 throw new ContractBuilderException('contracts.formula_invalid', 422);
             }
             $references = [];
