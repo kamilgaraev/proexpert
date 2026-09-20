@@ -32,7 +32,13 @@ final class WorkVolumeStatementAcceptedFloorTest extends TestCase
 {
     use \Tests\Support\SubmitsWorkVolumeStatements;
 
-    public function test_actual_accepted_eighty_protects_only_explicitly_mapped_place_and_annulment_releases_it(): void
+    public static function quantityUnits(): array
+    {
+        return ['same units' => [false], 'confirmed conversion' => [true]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('quantityUnits')]
+    public function test_actual_accepted_eighty_protects_only_explicitly_mapped_place_and_annulment_releases_it(bool $converted): void
     {
         $context = AdminApiTestContext::create();
         $actor = $context->user;
@@ -52,6 +58,9 @@ final class WorkVolumeStatementAcceptedFloorTest extends TestCase
             'number' => 'WVS-FLOOR', 'date' => '2026-09-01', 'total_amount' => 100000, 'currency' => 'RUB', 'status' => 'active',
         ]);
         $unit = MeasurementUnit::query()->where('organization_id', $organization->id)->where('short_name', 'м²')->firstOrFail();
+        if ($converted) {
+            $unit = MeasurementUnit::query()->create(['organization_id' => $organization->id, 'name' => 'Объём стены', 'short_name' => 'м3', 'type' => 'work']);
+        }
         $estimate = Estimate::query()->create([
             'organization_id' => $organization->id, 'project_id' => $project->id, 'contract_id' => $contract->id,
             'number' => 'WVS-FLOOR', 'name' => 'Основание', 'status' => 'draft', 'estimate_date' => '2026-09-01',
@@ -71,20 +80,39 @@ final class WorkVolumeStatementAcceptedFloorTest extends TestCase
         $workType = WorkType::query()->create(['organization_id' => $organization->id, 'name' => 'Стена', 'measurement_unit_id' => $unit->id]);
         $service = app(WorkVolumeStatementService::class);
         $first = ['line_key' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'name' => 'Стена', 'unit_code' => 'м²', 'quantity' => '100', 'place' => ['axis' => 'А-1'], 'estimate_item_id' => $item->id];
+        if ($converted) {
+            $first['estimate_item_id'] = null;
+        }
         $second = [...$first, 'line_key' => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'place' => ['axis' => 'А-2']];
         $statement = $this->approveReviewed($service, $actor, $service->createDraft($actor, $project->id, ['lines' => [$first, $second]]));
+        $coverageRows = $statement->lines->map(fn ($line): array => [
+            'statement_line_id' => $line->id, 'contract_id' => $contract->id, 'estimate_id' => $estimate->id,
+            'estimate_item_id' => $item->id, 'quantity' => '100', 'unit_code' => 'м²',
+            'conversion_basis' => $converted ? ['coefficient' => '0.2', 'reason' => 'Толщина стены по обмеру 0,2 м'] : null,
+        ])->all();
+        $coverageService = app(\App\BusinessModules\Features\BudgetEstimates\Services\WorkVolumeCoverageService::class);
+        $coverageService->replaceAllocations($actor, $statement, $coverageRows, 'accepted-conversion', 0);
         $work = CompletedWork::query()->create([
             'organization_id' => $organization->id, 'project_id' => $project->id, 'contract_id' => $contract->id,
             'estimate_item_id' => $item->id, 'work_type_id' => $workType->id, 'user_id' => $actor->id,
-            'quantity' => 100, 'completed_quantity' => 100, 'price' => 10, 'total_amount' => 1000,
+            'quantity' => $converted ? 20 : 100, 'completed_quantity' => $converted ? 20 : 100, 'price' => 10, 'total_amount' => $converted ? 200 : 1000,
             'work_origin_type' => CompletedWork::ORIGIN_MANUAL, 'planning_status' => CompletedWork::PLANNING_PLANNED,
             'completion_date' => '2026-09-20', 'status' => CompletedWork::STATUS_CONFIRMED,
         ]);
         $act = app(ActingActWizardService::class)->createFromWizard($organization->id, [
             'contract_id' => $contract->id, 'act_document_number' => 'WVS-FLOOR-80', 'act_date' => '2026-09-20',
             'period_start' => '2026-09-01', 'period_end' => '2026-09-30',
-            'selected_works' => [['completed_work_id' => $work->id, 'quantity' => '80']],
+            'selected_works' => [['completed_work_id' => $work->id, 'quantity' => $converted ? '16' : '80']],
         ], $actor->id, false);
+        $insufficient = $coverageRows;
+        $insufficient[0]['quantity'] = '30';
+        $insufficient[1]['quantity'] = '30';
+        try {
+            $coverageService->replaceAllocations($actor, $statement, $insufficient, 'below-pending-reservation', 1);
+            self::fail('Распределение должно сохранять объём, зарезервированный черновиком акта');
+        } catch (BusinessLogicException $exception) {
+            self::assertSame(422, $exception->getCode());
+        }
         $workflow = app(ActReportWorkflowService::class);
         $workflow->submit($act, $actor->id);
         $approvalLocks = [];
@@ -138,6 +166,19 @@ final class WorkVolumeStatementAcceptedFloorTest extends TestCase
             ->assertOk()->assertJsonPath('meta.total', 2)
             ->assertJsonPath('data.0.revision', 2)->assertJsonPath('data.0.allocations.0.quantity', '80.000000')
             ->assertJsonPath('data.1.revision', 1)->assertJsonPath('data.1.allocations.0.quantity', '40.000000');
+
+        self::assertSame($converted ? '16.000000' : '80.000000', $response->json('data.allocations.0.source_quantity'));
+        $coverageRows[0]['quantity'] = '80';
+        $coverageRows[1]['quantity'] = '20';
+        self::assertSame(2, $coverageService->replaceAllocations($actor, $statement, $coverageRows, 'redistribute-after-acceptance', 1)['coverage_revision']);
+        $coverageRows[0]['quantity'] = '70';
+        $coverageRows[1]['quantity'] = '30';
+        try {
+            $coverageService->replaceAllocations($actor, $statement, $coverageRows, 'move-accepted-to-other-place', 2);
+            self::fail('Общий объём договора не разрешает перенести принятые 80 на другую строку');
+        } catch (BusinessLogicException $exception) {
+            self::assertSame(422, $exception->getCode());
+        }
 
         $moved = $service->createRevision($actor, $statement, ['lines' => [[...$first, 'place' => ['axis' => 'А-9']], $second], 'change_reason' => 'Перенос осей']);
         try {

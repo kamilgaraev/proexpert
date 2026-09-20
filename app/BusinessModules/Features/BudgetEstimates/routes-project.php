@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateNormativeController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\WorkVolumeStatementController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\WorkVolumeStatementImportController;
+use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\WorkVolumeCoverageController;
 
 /*
 |--------------------------------------------------------------------------
@@ -152,6 +153,8 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
         });
 
         Route::prefix('work-volume-statements')->name('work_volume_statements.')->group(function () {
+            Route::get('/unmapped-facts', [WorkVolumeStatementController::class, 'unmappedFacts'])
+                ->middleware('authorize:budget-estimates.view,project,project')->name('unmapped_facts');
             Route::prefix('imports')->name('imports.')->group(function () {
                 Route::get('/', [WorkVolumeStatementImportController::class, 'index'])
                     ->middleware('authorize:budget-estimates.view,project,project')->name('index');
@@ -192,6 +195,12 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 ->whereNumber('statement')->middleware('authorize:budget-estimates.approve,project,project')->name('return');
             Route::put('/{statement}/draft', [WorkVolumeStatementController::class, 'editDraft'])
                 ->whereNumber('statement')->middleware('authorize:budget-estimates.edit,project,project')->name('draft.edit');
+            Route::get('/{statement}/coverage', [WorkVolumeCoverageController::class, 'index'])
+                ->whereNumber('statement')->middleware('authorize:budget-estimates.view,project,project')->name('coverage.index');
+            Route::put('/{statement}/coverage', [WorkVolumeCoverageController::class, 'replace'])
+                ->whereNumber('statement')->middleware('authorize:budget-estimates.edit,project,project')->name('coverage.replace');
+            Route::get('/{statement}/coverage/source-reviews', [WorkVolumeCoverageController::class, 'sourceReviews'])
+                ->whereNumber('statement')->middleware('authorize:budget-estimates.view,project,project')->name('coverage.source_reviews');
         });
         
         // Интеграция с договорами (на уровне проекта)

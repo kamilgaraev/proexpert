@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services;
 use App\BusinessModules\Features\BudgetEstimates\Models\WorkVolumeAcceptanceMapping;
 use App\BusinessModules\Features\BudgetEstimates\Models\WorkVolumeStatement;
 use App\BusinessModules\Features\BudgetEstimates\Models\WorkVolumeStatementLine;
+use App\BusinessModules\Features\BudgetEstimates\Models\WorkVolumeStatementCoverage;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
@@ -78,6 +79,21 @@ final class WorkVolumeAcceptedAllocationService
                 throw new BusinessLogicException(trans_message('budget_estimates.work_volume_statements.mapping_revision_conflict'), 409);
             }
             $sourceQuantity = BigDecimal::of((string) $source->quantity);
+            $previousAccepted = DB::table('work_volume_accepted_allocations as allocation')
+                ->join('work_volume_acceptance_mappings as mapping', 'mapping.id', '=', 'allocation.mapping_id')
+                ->join('performance_act_lines as source', 'source.id', '=', 'mapping.performance_act_line_id')
+                ->join('contract_performance_acts as act', 'act.id', '=', 'source.performance_act_id')
+                ->where('mapping.organization_id', $organizationId)->where('mapping.project_id', $projectId)
+                ->where('mapping.sealed', true)->where('mapping.performance_act_line_id', '!=', $sourceLineId)
+                ->where('act.contract_id', $contract->id)->whereNull('act.annulled_at')
+                ->whereIn('act.status', [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED])
+                ->where('source.estimate_item_id', $source->estimate_item_id)
+                ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('work_volume_acceptance_mappings as newer')
+                    ->whereColumn('newer.performance_act_line_id', 'mapping.performance_act_line_id')->where('newer.sealed', true)
+                    ->whereColumn('newer.revision', '>', 'mapping.revision'))
+                ->selectRaw("allocation.line_snapshot->>'statement_key' AS statement_key, allocation.line_snapshot->>'line_key' AS line_key, allocation.line_snapshot->>'unit_code' AS unit_code, SUM(allocation.quantity) AS quantity")
+                ->groupByRaw("allocation.line_snapshot->>'statement_key', allocation.line_snapshot->>'line_key', allocation.line_snapshot->>'unit_code'")
+                ->get()->keyBy(fn ($row): string => $row->statement_key.':'.$row->line_key.':'.$row->unit_code);
             $total = BigDecimal::zero();
             $normalized = [];
             $seen = [];
@@ -91,16 +107,41 @@ final class WorkVolumeAcceptedAllocationService
                     throw new BusinessLogicException(trans_message('budget_estimates.work_volume_statements.scope_invalid'), 404);
                 }
                 $identity = $line->statement->statement_key.':'.$line->line_key;
-                if (isset($seen[$identity]) || $line->unit_code !== $source->unit
+                if (isset($seen[$identity])
                     || ($line->estimate_item_id !== null && (int) $line->estimate_item_id !== (int) $source->estimate_item_id)) {
                     throw new BusinessLogicException(trans_message('budget_estimates.work_volume_statements.mapping_invalid'), 422);
                 }
                 $seen[$identity] = true;
-                $total = $total->plus($quantity);
+                $conversionSnapshot = [];
+                $sourceAllocatedQuantity = $quantity;
+                $coverage = WorkVolumeStatementCoverage::query()
+                    ->where('statement_id', $line->statement_id)->where('statement_line_id', $line->id)
+                    ->where('organization_id', $organizationId)->where('project_id', $projectId)
+                    ->where('contract_id', $contract->id)->where('estimate_item_id', $source->estimate_item_id)
+                    ->where('unit_code', $line->unit_code)->where('estimate_unit_code', $source->unit)
+                    ->whereRaw('coverage_revision = (SELECT MAX(revision) FROM work_volume_coverage_revisions WHERE statement_id = work_volume_statement_coverages.statement_id)')
+                    ->first();
+                if ($coverage !== null) {
+                    $alreadyAccepted = $previousAccepted->get($identity.':'.$line->unit_code)?->quantity ?? '0';
+                    if (BigDecimal::of($quantity)->plus((string) $alreadyAccepted)->isGreaterThan((string) $coverage->quantity)) {
+                        throw new BusinessLogicException(trans_message('budget_estimates.work_volume_statements.coverage_below_reserved'), 422);
+                    }
+                }
+                if ($line->unit_code !== $source->unit) {
+                    $basis = $coverage?->conversion_basis;
+                    if ($line->statement->status !== WorkVolumeStatement::STATUS_APPROVED || $basis === null
+                        || empty($basis['confirmed_by_user_id']) || empty($basis['confirmed_at'])) {
+                        throw new BusinessLogicException(trans_message('budget_estimates.work_volume_statements.coverage_unit_conversion_required'), 422);
+                    }
+                    $sourceAllocatedQuantity = (new WorkVolumeCoverageConversion())->convert($quantity, $line->unit_code, $source->unit,
+                        ['coefficient' => $basis['coefficient'], 'reason' => $basis['reason']])['quantity'];
+                    $conversionSnapshot = ['conversion_basis' => $basis, 'coverage_id' => $coverage->id, 'coverage_revision' => $coverage->coverage_revision];
+                }
+                $total = $total->plus($sourceAllocatedQuantity);
                 $normalized[] = [
                     'statement_line_id' => $line->id, 'quantity' => $quantity,
                     'line_snapshot' => $line->only(['line_key', 'name', 'unit_code', 'place', 'basis_revision', 'estimate_item_id'])
-                        + ['statement_key' => $line->statement->statement_key],
+                        + ['statement_key' => $line->statement->statement_key] + $conversionSnapshot,
                 ];
             }
             if ($sourceQuantity->isLessThanOrEqualTo(0) || $total->isGreaterThan($sourceQuantity)) {
@@ -184,7 +225,7 @@ final class WorkVolumeAcceptedAllocationService
             ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('work_volume_acceptance_mappings as newer')
                 ->whereColumn('newer.performance_act_line_id', 'mapping.performance_act_line_id')->where('newer.sealed', true)
                 ->whereColumn('newer.revision', '>', 'mapping.revision'))
-            ->selectRaw('mapping.performance_act_line_id, SUM(allocation.quantity) AS quantity')
+            ->selectRaw('mapping.performance_act_line_id, SUM(allocation.source_quantity) AS quantity')
             ->groupBy('mapping.performance_act_line_id');
         $physical = CompletedWork::withTrashed()->physicalFacts()
             ->whereColumn('completed_works.id', 'source.completed_work_id')

@@ -107,6 +107,11 @@ final class WorkVolumeStatementController
         return $this->respond(fn () => $allocations->history($request->user(), $project, $actLine, $request->integer('per_page', 25)));
     }
 
+    public function unmappedFacts(Request $request, int $project, \App\BusinessModules\Features\BudgetEstimates\Services\WorkVolumeUnmappedFactsQuery $facts): JsonResponse
+    {
+        return $this->respond(fn () => $facts->paginate($request->user(), $project, $request->integer('per_page', 25)));
+    }
+
     private function respond(callable $action, int $status = 200): JsonResponse
     {
         try {

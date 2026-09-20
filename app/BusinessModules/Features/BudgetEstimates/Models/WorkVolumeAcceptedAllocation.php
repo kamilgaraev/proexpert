@@ -12,5 +12,5 @@ final class WorkVolumeAcceptedAllocation extends Model
 
     protected $guarded = ['id'];
 
-    protected $casts = ['quantity' => 'decimal:6', 'line_snapshot' => 'array'];
+    protected $casts = ['quantity' => 'decimal:6', 'source_quantity' => 'decimal:6', 'line_snapshot' => 'array'];
 }

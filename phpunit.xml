@@ -7,6 +7,11 @@
 >
     <testsuites>
         <testsuite name="ConstructionAccounting">
+            <file>tests/Feature/WorkVolumes/WorkVolumeCoverageTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeCoverageConversionTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeCoverageSourceEvidenceTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeUnmappedFactsTest.php</file>
+            <file>tests/Feature/WorkVolumes/WorkVolumeCoverageAcceptanceIntegrityTest.php</file>
             <file>tests/Unit/WorkVolumes/WorkVolumeStatementRequestTest.php</file>
             <file>tests/Feature/WorkVolumes/WorkVolumeStatementAcceptedFloorTest.php</file>
             <file>tests/Feature/WorkVolumes/WorkVolumeStatementLegacySourceTest.php</file>

@@ -48,6 +48,11 @@ final class WorkVolumeStatement extends Model
         return $this->hasMany(WorkVolumeStatementLine::class, 'statement_id')->orderBy('id');
     }
 
+    public function coverages(): HasMany
+    {
+        return $this->hasMany(WorkVolumeStatementCoverage::class, 'statement_id');
+    }
+
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
