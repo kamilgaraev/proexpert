@@ -213,7 +213,10 @@ final class ContractLibraryService
             }
             $this->validate($item->kind, $version['title'], $version['content'], $version['request_key']);
             if (in_array($item->kind, ['template', 'block'], true)) {
-                (new ContractDocumentResolver)->resolve($version['content'], fn (string $id, int $dependencyVersion, string $kind): array => $this->publishedVersion($organizationId, $id, $dependencyVersion, $kind));
+                $resolved = (new ContractDocumentResolver)->resolve($version['content'], fn (string $id, int $dependencyVersion, string $kind): array => $this->publishedVersion($organizationId, $id, $dependencyVersion, $kind));
+                if ($item->kind === 'template') {
+                    (new ContractRevisionTermsCompiler)->validateBasis($resolved);
+                }
             }
             DB::table('contract_library_versions')->where('id', $version['id'])->update([
                 'status' => 'published', 'published_by' => $actor->id, 'published_at' => now(),

@@ -90,7 +90,7 @@ final class ContractTemplateCardIntegrationTest extends TestCase
             (new \App\Services\Contract\ContractRevisionTermsCompiler)->compile($duplicate);
             self::fail('Two price assignments were accepted');
         } catch (\App\Exceptions\ContractBuilderException $error) {
-            self::assertSame('contracts.revision_terms_invalid', $error->messageKey());
+            self::assertSame('contracts.revision_terms_invalid_assignment', $error->messageKey());
         }
         Contract::created(static function (Contract $contract): void {
             $contract->project()->update(['name' => 'Источник изменился внутри записи']);
@@ -416,6 +416,63 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         });
         $this->app->instance(\App\Services\Storage\FileService::class, $storage);
         $this->app->instance(\App\Services\LegalArchive\Files\LegalDocumentScanner::class, $this->createMock(\App\Services\LegalArchive\Files\LegalDocumentScanner::class));
+    }
+
+    public function test_system_fields_are_ready_idempotent_immutable_and_organization_scoped(): void
+    {
+        [$actor] = $this->fixture();
+        $rows = $this->getJson('/api/v1/admin/contract-library/system-fields')->assertOk()->json('data');
+        self::assertCount(19, $rows);
+        $payload = ['code' => 'second_party.name'];
+        $first = $this->postJson('/api/v1/admin/contract-library/system-fields/install', $payload)->assertOk()->json('data');
+        $this->postJson('/api/v1/admin/contract-library/system-fields/install', $payload)->assertOk()->assertJsonPath('data.item.id', $first['item']['id']);
+        self::assertSame('published', $first['version']['status']);
+        self::assertSame(['kind' => 'contract_context', 'field' => 'second_party.name'], $first['version']['content']['source']);
+        $this->postJson('/api/v1/admin/contract-library/system-fields/install', ['code' => 'organization.secret'])->assertUnprocessable();
+        $library = app(ContractLibraryService::class);
+        try {
+            $library->revise($actor, $actor->current_organization_id, $first['item']['id'], $first['item']['lock_version'], 'Changed', ['type' => 'text'], 'system-change');
+            self::fail('System definition changed');
+        } catch (\App\Exceptions\ContractBuilderException $error) {
+            self::assertSame('contract_templates.readonly', $error->messageKey());
+        }
+        $foreign = Organization::factory()->create();
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(\App\Services\Contract\ContractStandardTemplateService::class)->installSystemField($actor, $foreign->id, 'contract.number');
+    }
+
+    public function test_template_publication_requires_real_clause_basis_and_preserves_published_history(): void
+    {
+        [$actor, $input] = $this->fixture();
+        $library = app(ContractLibraryService::class);
+        $id = $input['template']['template_id'];
+        $original = $library->read($actor, $actor->current_organization_id, $id, 1);
+        $content = $original['version']['content'];
+        $content['document']['content'] = $content['document']['content'][0]['content'];
+        $draft = $library->revise($actor, $actor->current_organization_id, $id, $original['item']['lock_version'], 'Missing clause', $content, 'missing-basis');
+        try {
+            $library->publish($actor, $actor->current_organization_id, $id, 2, $draft['item']['lock_version']);
+            self::fail('Invalid template published');
+        } catch (\App\Exceptions\ContractBuilderException $error) {
+            self::assertSame('contracts.revision_terms_invalid_basis', $error->messageKey());
+            self::assertMatchesRegularExpression('/Поле «(?:price|start|end|works)»/u', $error->getMessage());
+            self::assertStringNotContainsString($input['template']['template_id'], $error->getMessage());
+        }
+        self::assertSame('draft', $library->read($actor, $actor->current_organization_id, $id, 2)['version']['status']);
+        self::assertSame($original['version'], $library->read($actor, $actor->current_organization_id, $id, 1)['version']);
+    }
+
+    public function test_source_preview_uses_authoritative_context_and_preserves_manual_input(): void
+    {
+        [$actor, $input, $ids] = $this->fixture();
+        $input['resolve_only'] = true;
+        $input['template']['values'][$ids['source']] = 'Поддельное название';
+        $preview = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertOk()->json('data');
+        self::assertSame(Project::findOrFail($input['project_id'])->name, $preview['values'][$ids['source']]);
+        self::assertSame('Собственное условие', $preview['values'][$ids['custom']]);
+        self::assertNull($preview['html']);
+        self::assertNull($preview['card']);
+        self::assertSame(0, Contract::where('number', $input['number'])->count());
     }
 
     private function fixture(bool $positioned = false): array
