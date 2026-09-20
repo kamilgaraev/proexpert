@@ -122,6 +122,7 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
         $container->instance('config', new Repository([
             'app' => ['locale' => 'ru', 'fallback_locale' => 'ru'],
             'legal-document-editor' => [
+                'editing_enabled' => true,
                 'callback_base_url' => 'https://api.example.test',
                 'session_ttl_minutes' => 120,
                 'source_url_ttl_minutes' => 10,
