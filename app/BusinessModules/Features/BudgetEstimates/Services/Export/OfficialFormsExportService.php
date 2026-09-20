@@ -163,7 +163,7 @@ class OfficialFormsExportService
 
         $sheet->setCellValue('J1', 'Унифицированная форма № КС-6а');
         $sheet->setCellValue('J2', 'Утверждена постановлением Госкомстата');
-        $sheet->setCellValue('J3', 'России от 30.10.97 № 71а');
+        $sheet->setCellValue('J3', 'России от 11.11.1999 № 100');
 
         $sheet->setCellValue('A5', 'Стройка: '.$contract->project->name);
         $sheet->setCellValue('A6', 'Объект: '.$contract->project->name);
