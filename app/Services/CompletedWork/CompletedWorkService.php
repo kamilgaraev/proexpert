@@ -17,6 +17,7 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
+use App\Models\User;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Rules\ProjectAccessibleRule;
 use App\Services\Contract\ContractAuditedMutationService;
@@ -40,18 +41,22 @@ class CompletedWorkService
 
     protected ContractAuditedMutationService $contractMutations;
 
+    protected CompletedWorkScopeResolver $scopeResolver;
+
     public function __construct(
         CompletedWorkRepositoryInterface $completedWorkRepository,
         RateCoefficientService $rateCoefficientService,
         LoggingService $logging,
         ProjectContextService $projectContextService,
         ContractAuditedMutationService $contractMutations,
+        CompletedWorkScopeResolver $scopeResolver,
     ) {
         $this->completedWorkRepository = $completedWorkRepository;
         $this->rateCoefficientService = $rateCoefficientService;
         $this->logging = $logging;
         $this->projectContextService = $projectContextService;
         $this->contractMutations = $contractMutations;
+        $this->scopeResolver = $scopeResolver;
     }
 
     public function getAll(array $filters = [], int $perPage = 15, string $sortBy = 'completion_date', string $sortDirection = 'desc', array $relations = []): LengthAwarePaginator
@@ -70,8 +75,10 @@ class CompletedWorkService
         return $completedWork;
     }
 
-    public function create(CompletedWorkDTO $dto, ?ProjectContext $projectContext = null): CompletedWork
+    public function create(CompletedWorkDTO $dto, ?ProjectContext $projectContext = null, ?User $actor = null): CompletedWork
     {
+        $actor ??= request()->user();
+        $this->scopeResolver->assertCreate($dto, $actor, $projectContext);
         $this->assertCreateSourcePolicy($dto);
 
         // Project-Based RBAC: валидация прав и auto-fill contractor_org_id
@@ -237,10 +244,13 @@ class CompletedWorkService
         });
     }
 
-    public function update(int $id, CompletedWorkDTO $dto): CompletedWork
+    public function update(int $id, CompletedWorkDTO $dto, ?User $actor = null, ?ProjectContext $projectContext = null): CompletedWork
     {
-        return DB::transaction(function () use ($id, $dto) {
+        $actor ??= request()->user();
+        return DB::transaction(function () use ($id, $dto, $actor, $projectContext) {
             $existingWork = $this->getById($id, $dto->organization_id);
+
+            $this->scopeResolver->assertUpdate($existingWork, $dto, $actor, $projectContext);
 
             $this->assertUpdateSourcePolicy($existingWork, $dto);
 
@@ -293,9 +303,11 @@ class CompletedWorkService
         });
     }
 
-    public function delete(int $id, int $organizationId): bool
+    public function delete(int $id, int $organizationId, ?User $actor = null, ?ProjectContext $projectContext = null): bool
     {
-        $this->getById($id, $organizationId);
+        $actor ??= request()->user();
+        $work = $this->getById($id, $organizationId);
+        $this->scopeResolver->assertDelete($work, $actor, $projectContext);
 
         $success = $this->completedWorkRepository->delete($id);
         if (! $success) {

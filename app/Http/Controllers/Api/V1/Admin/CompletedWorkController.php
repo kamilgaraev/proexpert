@@ -11,6 +11,7 @@ use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\ProjectContextMiddleware;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
+use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkBulkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
@@ -127,7 +128,7 @@ class CompletedWorkController extends Controller
         try {
             $dto = $request->toDto();
             $projectContext = ProjectContextMiddleware::getProjectContext($request);
-            $completedWork = $this->completedWorkService->create($dto, $projectContext);
+            $completedWork = $this->completedWorkService->create($dto, $projectContext, Auth::user());
 
             return AdminResponse::success(
                 new CompletedWorkResource($this->loadWorkRelations($completedWork)),
@@ -223,7 +224,12 @@ class CompletedWorkController extends Controller
 
         try {
             $dto = $request->toDto();
-            $updatedWork = $this->completedWorkService->update($completed_work->id, $dto);
+            $updatedWork = $this->completedWorkService->update(
+                $completed_work->id,
+                $dto,
+                Auth::user(),
+                $projectContext,
+            );
 
             return AdminResponse::success(
                 new CompletedWorkResource($this->loadWorkRelations($updatedWork)),
@@ -264,7 +270,12 @@ class CompletedWorkController extends Controller
         }
 
         try {
-            $this->completedWorkService->delete($completed_work->id, $completed_work->organization_id);
+            $this->completedWorkService->delete(
+                $completed_work->id,
+                $completed_work->organization_id,
+                Auth::user(),
+                $projectContext,
+            );
 
             return AdminResponse::success(null, trans_message('completed_work.deleted'), Response::HTTP_NO_CONTENT);
         } catch (BusinessLogicException $e) {
@@ -421,7 +432,7 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function bulkCreate(Request $request): JsonResponse
+    public function bulkCreate(StoreCompletedWorkBulkRequest $request): JsonResponse
     {
         try {
             $projectId = (int) $request->route('project');
@@ -513,7 +524,7 @@ class CompletedWorkController extends Controller
 
                 foreach ($dtos as $dto) {
                     $createdWorks[] = $this->loadWorkRelations(
-                        $this->completedWorkService->create($dto, $projectContext)
+                        $this->completedWorkService->create($dto, $projectContext, Auth::user())
                     );
                 }
 
