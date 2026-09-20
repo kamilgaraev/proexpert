@@ -50,6 +50,9 @@ final class LegalDocumentEditorSessionService
         }
         $document = $this->documentForVersion($version);
         $this->authorizer->authorize($actor, $document, LegalDocumentAbility::VIEW->value);
+        if ($mode !== 'view' && !config('legal-document-editor.editing_enabled', false)) {
+            throw new DomainException('legal_document_editor_disabled');
+        }
         $callbackBaseUrl = '';
         if ($this->editor->enabled()) {
             $callbackBaseUrl = rtrim((string) config('legal-document-editor.callback_base_url'), '/');

@@ -33,7 +33,7 @@ final class LegalDocumentBlankDraftService
         $this->authorizer->authorizePermission($actor, $document, 'legal_archive.files.upload');
         $this->authorizer->authorizePermission($actor, $document, 'legal_archive.versions.create');
         $this->authorizer->authorize($actor, $document, 'edit');
-        if (! $this->editor->enabled()) {
+        if (! $this->editor->enabled() || !config('legal-document-editor.editing_enabled', false)) {
             throw new DomainException('legal_document_editor_disabled');
         }
 
