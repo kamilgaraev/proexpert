@@ -17,6 +17,9 @@ use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\Http\Controllers\Controller;
+use App\Exceptions\BusinessLogicException;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\StoreExecutiveDocumentVersionRequest;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\UpdateExecutiveDocumentRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
@@ -338,20 +341,10 @@ final class ExecutiveDocumentationController extends Controller
         return $this->documentAction($request, $id, 'submit');
     }
 
-    public function updateDocument(Request $request, int $id): JsonResponse
+    public function updateDocument(UpdateExecutiveDocumentRequest $request, int $id): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'expected_version_id' => ['required', 'integer'],
-                'title' => ['sometimes', 'string', 'max:255'],
-                'section_name' => ['nullable', 'string', 'max:255'],
-                'document_date' => ['nullable', 'date'],
-                'inspection_date' => ['nullable', 'date'],
-                'participants' => ['nullable', 'array'],
-                'profile_data' => ['nullable', 'array'],
-                'signatories' => ['nullable', 'array'],
-                'metadata' => ['nullable', 'array'],
-            ]);
+            $validated = $request->validated();
             return AdminResponse::success(new ExecutiveDocumentResource(
                 $this->service->updateDraft($this->findDocument($request, $id), (int) auth()->id(), $validated)
             ));
@@ -364,20 +357,10 @@ final class ExecutiveDocumentationController extends Controller
         }
     }
 
-    public function storeVersion(Request $request, int $id): JsonResponse
+    public function storeVersion(StoreExecutiveDocumentVersionRequest $request, int $id): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'expected_version_id' => ['required', 'integer'],
-                'version_number' => ['required', 'string', 'max:40'],
-                'file' => ['required', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'])->max(25 * 1024)],
-                'comment' => ['nullable', 'string', 'max:1000'],
-                'uploaded_at' => ['nullable', 'date'],
-                'profile_snapshot' => ['nullable', 'array'],
-                'basis_snapshot' => ['nullable', 'array'],
-                'metadata' => ['nullable', 'array'],
-                'operation_key' => ['nullable', 'string', 'max:128'],
-            ]);
+            $validated = $request->validated();
             $version = $this->service->addVersion($this->findDocument($request, $id), (int) auth()->id(), $validated);
             return AdminResponse::success(new \App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentVersionResource($version), null, 201);
         } catch (ValidationException $e) {
@@ -477,7 +460,7 @@ final class ExecutiveDocumentationController extends Controller
                 return AdminResponse::error(trans_message('executive_documentation.errors.version_not_found'), 404);
             }
 
-            $this->service->deleteVersion($document, $version);
+            $this->service->deleteVersion($document, $version, (int) auth()->id());
 
             return AdminResponse::success(null, trans_message('executive_documentation.messages.version_deleted'));
         } catch (DomainException $e) {
@@ -514,7 +497,7 @@ final class ExecutiveDocumentationController extends Controller
         $document = $this->service->findDocument($id, (int) $request->attributes->get('current_organization_id'));
 
         if ($document === null) {
-            throw new DomainException(trans_message('executive_documentation.errors.document_not_found'));
+            throw new BusinessLogicException(trans_message('executive_documentation.errors.document_not_found'), 404);
         }
 
         return $document;
@@ -880,6 +863,12 @@ final class ExecutiveDocumentationController extends Controller
 
     private function failed(string $action, ?int $id, \Throwable $e): JsonResponse
     {
+        if ($e instanceof BusinessLogicException) {
+            $status = in_array($e->getCode(), [403, 404], true) ? $e->getCode() : 409;
+            return AdminResponse::error(trans_message($status === 403
+                ? 'executive_documentation.errors.forbidden'
+                : 'executive_documentation.errors.document_not_found'), $status);
+        }
         Log::error("executive_documentation.{$action}.error", [
             'id' => $id,
             'user_id' => auth()->id(),
