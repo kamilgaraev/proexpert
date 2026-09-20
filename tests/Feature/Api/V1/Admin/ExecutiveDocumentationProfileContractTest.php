@@ -122,6 +122,8 @@ final class ExecutiveDocumentationProfileContractTest extends TestCase
             'system_test_act',
             'inspection_result',
             'incoming_control_document',
+            'quality_passport',
+            'incoming_batch_control',
             'work_journal',
         ], $profileTypes);
 

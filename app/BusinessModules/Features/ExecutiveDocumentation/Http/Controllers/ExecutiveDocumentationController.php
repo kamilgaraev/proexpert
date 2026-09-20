@@ -246,6 +246,7 @@ final class ExecutiveDocumentationController extends Controller
                         ),
                     ])
                     ->values(),
+                'material_deliveries' => app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveMaterialProfileGuard::class)->deliveryReferences($organizationId, $projectId),
                 'materials' => Material::query()
                     ->where('organization_id', $organizationId)
                     ->where('is_active', true)
@@ -752,6 +753,11 @@ final class ExecutiveDocumentationController extends Controller
 
     private function relationTargetExists(string $targetType, int $targetId, ExecutiveDocumentSet $set): bool
     {
+        if ($targetType === 'project_material_delivery') {
+            return \App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery::query()
+                ->where('organization_id', $set->organization_id)->where('project_id', $set->project_id)
+                ->whereIn('status', ['partially_delivered', 'delivered', 'accepted', 'problem'])->whereKey($targetId)->exists();
+        }
         if ($targetType === 'journal_entry') {
             return ConstructionJournalEntry::query()
                 ->whereHas('journal', static fn ($query) => $query

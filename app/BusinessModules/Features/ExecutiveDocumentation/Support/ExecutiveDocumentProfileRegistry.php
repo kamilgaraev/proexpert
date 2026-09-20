@@ -57,22 +57,19 @@ final class ExecutiveDocumentProfileRegistry
      */
     public function missingRequiredFields(string $type, array $profileData): array
     {
-        $profile = $this->require($type);
-        $missing = [];
+        return (new ExecutiveDocumentProfileValidator())->missingRequiredFields($this->require($type), $profileData);
+    }
 
-        foreach ($profile['fields'] as $field) {
-            if (($field['required'] ?? false) !== true) {
-                continue;
-            }
+    /** @return array<int, array<string, mixed>> */
+    public function profilesForCategory(string $category): array
+    {
+        return array_values(array_filter($this->all(), static fn (array $profile): bool => $profile['category'] === $category));
+    }
 
-            $value = data_get($profileData, $field['key']);
-
-            if ($value === null || $value === '' || $value === []) {
-                $missing[$field['key']] = $field['label'];
-            }
-        }
-
-        return $missing;
+    /** @return array<string, string> */
+    public function validateProfileData(string $type, array $profileData): array
+    {
+        return (new ExecutiveDocumentProfileValidator())->validate($this->require($type), $profileData);
     }
 
     /**
@@ -322,6 +319,7 @@ final class ExecutiveDocumentProfileRegistry
                 ],
             ],
             'system_test_act' => [
+                'profile_mode' => 'external_manual_review',
                 'group' => 'tests',
                 'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
                 'requires_work_type' => true,
@@ -334,6 +332,8 @@ final class ExecutiveDocumentProfileRegistry
                     $this->field('test_conditions', 'textarea', true),
                     $this->field('measuring_instruments', 'textarea', true),
                     $this->field('actual_results', 'textarea', true),
+                    $this->field('measured_value', 'number'),
+                    $this->field('measurement_unit', 'text'),
                     $this->field('test_conclusion', 'select', true, ['options' => ['passed', 'retest_required', 'accepted_with_conditions']]),
                 ],
                 'relations' => [
@@ -349,6 +349,7 @@ final class ExecutiveDocumentProfileRegistry
                 ],
             ],
             'inspection_result' => [
+                'profile_mode' => 'external_manual_review',
                 'group' => 'tests',
                 'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
                 'requires_work_type' => true,
@@ -361,6 +362,8 @@ final class ExecutiveDocumentProfileRegistry
                     $this->field('methodology', 'textarea', true),
                     $this->field('sampled_at', 'date'),
                     $this->field('indicators', 'table', true),
+                    $this->field('measured_value', 'number'),
+                    $this->field('measurement_unit', 'text'),
                     $this->field('compliance_conclusion', 'textarea', true),
                     $this->field('recommendations', 'textarea'),
                 ],
@@ -376,6 +379,8 @@ final class ExecutiveDocumentProfileRegistry
                 ],
             ],
             'incoming_control_document' => [
+                'profile_mode' => 'external_manual_review',
+                'legacy_type' => 'incoming_control_document',
                 'group' => 'materials',
                 'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
                 'requires_work_type' => false,
@@ -408,7 +413,60 @@ final class ExecutiveDocumentProfileRegistry
                     'other',
                 ],
             ],
+            'quality_passport' => [
+                'group' => 'materials',
+                'category' => 'quality_documents',
+                'profile_revision' => '2026-09-20.1',
+                'profile_mode' => 'external_manual_review',
+                'regulatory_basis' => ['344/пр, применимый состав ИД'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
+                'fields' => [
+                    $this->field('document_number', 'text', true),
+                    $this->field('quality_document_kind', 'select', true, ['options' => ['passport', 'certificate', 'declaration', 'test_protocol', 'other']]),
+                    $this->field('material_name', 'text', true),
+                    $this->field('manufacturer', 'text', true),
+                    $this->field('quality_document_date', 'date', true),
+                    $this->field('quality_document_details', 'textarea', true),
+                    $this->field('valid_until', 'date'),
+                ],
+                'relations' => [
+                    $this->relation('material_reference', 'material', false),
+                    $this->relation('supplier_document', 'supplier', false),
+                ],
+                'signatory_roles' => ['supplier_representative', 'contractor_control_representative', 'other'],
+            ],
+            'incoming_batch_control' => [
+                'group' => 'materials',
+                'category' => 'incoming_control',
+                'profile_revision' => '2026-09-20.1',
+                'profile_mode' => 'prepared',
+                'regulatory_basis' => ['344/пр, применимый состав ИД', 'СП 48.13330.2019'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
+                'fields' => [
+                    $this->field('control_number', 'text', true),
+                    $this->field('received_at', 'date', true),
+                    $this->field('checked_at', 'date', true),
+                    $this->field('material_name', 'text', true),
+                    $this->field('manufacturer', 'text'),
+                    $this->field('supplier', 'text', true),
+                    $this->field('batch_details', 'textarea', true),
+                    $this->field('quantity', 'text', true),
+                    $this->field('storage_place', 'text'),
+                    $this->field('control_result', 'select', true, ['options' => ['accepted', 'accepted_with_restrictions', 'rejected']]),
+                    $this->field('quality_remarks', 'textarea'),
+                ],
+                'relations' => [
+                    [...$this->relation('material_delivery', 'project_material_delivery', false), 'required' => true],
+                    $this->relation('quality_passport', 'quality_passport', true),
+                    $this->relation('material_reference', 'material', false),
+                    $this->relation('used_in_documents', 'executive_document', true),
+                ],
+                'signatory_roles' => ['construction_representative', 'contractor_control_representative', 'supplier_representative', 'other'],
+            ],
             'work_journal' => [
+                'profile_mode' => 'external_manual_review',
                 'group' => 'journals',
                 'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
                 'requires_work_type' => false,
@@ -475,6 +533,11 @@ final class ExecutiveDocumentProfileRegistry
         return [
             'type' => $type,
             'label' => trans_message("executive_documentation.document_types.{$type}"),
+            'category' => $profile['category'] ?? $profile['group'],
+            'category_label' => trans_message("executive_documentation.profile_categories.".($profile['category'] ?? $profile['group'])),
+            'profile_revision' => $profile['profile_revision'] ?? '2026-09-20.1',
+            'profile_mode' => $profile['profile_mode'] ?? 'prepared',
+            'legacy_type' => $profile['legacy_type'] ?? null,
             'group' => $profile['group'],
             'group_label' => trans_message("executive_documentation.profile_groups.{$profile['group']}"),
             'regulatory_basis' => $profile['regulatory_basis'],

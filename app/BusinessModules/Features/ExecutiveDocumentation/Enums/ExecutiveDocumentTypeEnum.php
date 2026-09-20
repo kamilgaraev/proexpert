@@ -18,6 +18,8 @@ enum ExecutiveDocumentTypeEnum: string
     case SYSTEM_TEST_ACT = 'system_test_act';
     case INSPECTION_RESULT = 'inspection_result';
     case INCOMING_CONTROL_DOCUMENT = 'incoming_control_document';
+    case QUALITY_PASSPORT = 'quality_passport';
+    case INCOMING_BATCH_CONTROL = 'incoming_batch_control';
     case WORK_JOURNAL = 'work_journal';
     case EXECUTIVE_SCHEME = 'executive_scheme';
     case MATERIAL_CERTIFICATE = 'material_certificate';

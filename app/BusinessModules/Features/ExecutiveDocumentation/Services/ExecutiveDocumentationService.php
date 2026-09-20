@@ -153,11 +153,13 @@ final class ExecutiveDocumentationService
                     'metadata' => $data['metadata'] ?? null,
                 ]);
 
+                $this->mutationGuard->assertActor($document, $userId, 'executive-documentation.create');
+                $this->mutationGuard->assertReferences($document);
+                $this->syncRelations($document, $data['relations'] ?? []);
+                app(ExecutiveMaterialProfileGuard::class)->assertValid($document);
                 if (!empty($data['initial_version'])) {
                     $createdVersion = $this->createVersion($document, $userId, $data['initial_version'], 'executive-documentation.create');
                 }
-
-                $this->syncRelations($document, $data['relations'] ?? []);
 
                 return $document->fresh(self::DOCUMENT_RELATIONS);
             });
@@ -198,6 +200,7 @@ final class ExecutiveDocumentationService
                 'signatories', 'metadata', 'work_type_id', 'work_type_name', 'completed_work_id', 'journal_entry_id',
             ])));
             $this->mutationGuard->assertReferences($lockedDocument);
+            app(ExecutiveMaterialProfileGuard::class)->assertValid($lockedDocument);
             $lockedDocument->save();
             $latest->update([
                 'metadata' => array_merge($latest->metadata ?? [], ['draft_revision' => $revision + 1]),
@@ -727,6 +730,9 @@ final class ExecutiveDocumentationService
                     throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
                 }
                 $this->mutationGuard->assertReferences($lockedDocument);
+                $candidate = clone $lockedDocument;
+                $candidate->profile_data = $requestedProfile ?? $lockedDocument->profile_data;
+                app(ExecutiveMaterialProfileGuard::class)->assertValid($candidate);
                 $basisSnapshot = $this->versionBasis($lockedDocument);
                 foreach ($data['basis_snapshot'] ?? [] as $key => $value) {
                     if (! in_array($key, ['project_id', 'completed_work_id', 'journal_entry_id'], true)
@@ -783,6 +789,9 @@ final class ExecutiveDocumentationService
     private function versionBasis(ExecutiveDocument $document): array
     {
         return [
+            'profile' => $this->profileRegistry->find($document->document_type->value),
+            'material_delivery' => app(ExecutiveMaterialProfileGuard::class)->snapshot($document),
+            'relations' => $document->relations()->get(['relation_type', 'target_type', 'target_id'])->toArray(),
             'project_id' => $document->project_id,
             'completed_work_id' => $document->completed_work_id,
             'journal_entry_id' => $document->journal_entry_id,
