@@ -14,6 +14,7 @@ final class ExecutiveDocumentationServiceProvider extends ServiceProvider
         $this->app->singleton(Services\ExecutiveDocumentNumberGenerator::class);
         $this->app->singleton(Services\ExecutiveDocumentationWorkflowService::class);
         $this->app->singleton(Services\ExecutiveDocumentationService::class);
+        $this->app->singleton(Services\ExecutiveDocumentReferenceService::class);
     }
 
     public function boot(): void
@@ -26,6 +27,11 @@ final class ExecutiveDocumentationServiceProvider extends ServiceProvider
         $routesPath = __DIR__ . '/routes.php';
         if (is_file($routesPath)) {
             require $routesPath;
+        }
+
+        $referenceRoutesPath = __DIR__ . '/routes-reference.php';
+        if (is_file($referenceRoutesPath)) {
+            require $referenceRoutesPath;
         }
 
         $this->app['router']->aliasMiddleware(
