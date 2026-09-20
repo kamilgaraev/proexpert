@@ -89,7 +89,7 @@ final class ExecutiveDocumentationWorkflowService
             ], true)
         )->count();
         $openRemarks = $documents->sum(static fn (ExecutiveDocument $document): int => $document->remarks
-            ->filter(static fn ($remark): bool => $remark->status === ExecutiveRemarkStatusEnum::OPEN)
+            ->filter(static fn ($remark): bool => in_array($remark->status, [ExecutiveRemarkStatusEnum::OPEN, ExecutiveRemarkStatusEnum::ANSWERED, ExecutiveRemarkStatusEnum::RETURNED], true))
             ->count());
         $missingRequiredData = $documents->filter(fn (ExecutiveDocument $document): bool => $this->documentHasMissingRequiredData($document))->count();
 
@@ -129,11 +129,16 @@ final class ExecutiveDocumentationWorkflowService
     public function forDocument(ExecutiveDocument $document): WorkflowSurfaceData
     {
         $openRemarks = $document->relationLoaded('remarks')
-            ? $document->remarks->filter(static fn ($remark): bool => $remark->status === ExecutiveRemarkStatusEnum::OPEN)->count()
-            : $document->remarks()->where('status', 'open')->count();
+            ? $document->remarks->filter(static fn ($remark): bool => in_array($remark->status, [
+                ExecutiveRemarkStatusEnum::OPEN,
+                ExecutiveRemarkStatusEnum::ANSWERED,
+                ExecutiveRemarkStatusEnum::RETURNED,
+            ], true))->count()
+            : $document->remarks()->whereIn('status', ['open', 'answered', 'returned'])->count();
         $actions = match ($document->status) {
-            ExecutiveDocumentStatusEnum::DRAFT, ExecutiveDocumentStatusEnum::REMARKS => ['submit'],
-            ExecutiveDocumentStatusEnum::UNDER_REVIEW => ['remark', 'approve', 'reject'],
+            ExecutiveDocumentStatusEnum::DRAFT => ['submit'],
+            ExecutiveDocumentStatusEnum::REMARKS => ['submit', 'remark', 'reject'],
+            ExecutiveDocumentStatusEnum::UNDER_REVIEW => $openRemarks > 0 ? ['remark', 'reject'] : ['remark', 'approve', 'reject'],
             ExecutiveDocumentStatusEnum::APPROVED => [],
             default => [],
         };

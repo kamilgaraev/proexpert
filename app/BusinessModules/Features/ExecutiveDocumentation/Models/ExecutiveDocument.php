@@ -106,7 +106,7 @@ final class ExecutiveDocument extends Model
 
     public function openRemarks(): HasMany
     {
-        return $this->remarks()->where('status', 'open');
+        return $this->remarks()->whereIn('status', ['open', 'answered', 'returned']);
     }
 
     public function relations(): HasMany

@@ -41,11 +41,20 @@ Route::prefix('api/v1/admin/executive-documentation')
         Route::post('/documents/{id}/remarks', [ExecutiveDocumentationController::class, 'storeRemark'])
             ->middleware('authorize:executive-documentation.review')
             ->name('remarks.store');
+        Route::post('/remarks/{id}/answer', [ExecutiveDocumentationController::class, 'answerRemark'])
+            ->middleware('authorize:executive-documentation.edit')
+            ->name('remarks.answer');
+        Route::post('/remarks/{id}/review', [ExecutiveDocumentationController::class, 'reviewRemark'])
+            ->middleware('authorize:executive-documentation.review')
+            ->name('remarks.review');
+        Route::post('/documents/{id}/reject', [ExecutiveDocumentationController::class, 'reject'])
+            ->middleware('authorize:executive-documentation.review')
+            ->name('documents.reject');
         Route::post('/documents/{id}/approve', [ExecutiveDocumentationController::class, 'approve'])
             ->middleware('authorize:executive-documentation.approve')
             ->name('documents.approve');
         Route::post('/remarks/{id}/resolve', [ExecutiveDocumentationController::class, 'resolveRemark'])
-            ->middleware('authorize:executive-documentation.edit')
+            ->middleware('authorize:executive-documentation.review')
             ->name('remarks.resolve');
         Route::delete('/documents/{documentId}/versions/{versionId}', [ExecutiveDocumentationController::class, 'deleteVersion'])
             ->middleware('authorize:executive-documentation.delete')

@@ -30,6 +30,7 @@ use App\Models\WorkType;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\RejectExecutiveDocumentRequest;
 use Illuminate\Validation\Rules\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
@@ -404,7 +405,7 @@ final class ExecutiveDocumentationController extends Controller
     public function resolveRemark(Request $request, int $id): JsonResponse
     {
         try {
-            $validated = $request->validate(['resolution_comment' => ['required', 'string', 'max:1000']]);
+            $validated = $request->validate(['resolution_comment' => ['required', 'string', 'max:1000'], 'expected_revision' => ['required', 'integer', 'min:0']]);
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $remark = $this->service->findRemark($id, $organizationId);
 
@@ -413,12 +414,78 @@ final class ExecutiveDocumentationController extends Controller
             }
 
             return AdminResponse::success(
-                new ExecutiveDocumentRemarkResource($this->service->resolveRemark($remark, (int) auth()->id(), $validated['resolution_comment']))
+                new ExecutiveDocumentRemarkResource($this->service->resolveRemark($remark, (int) auth()->id(), $validated['resolution_comment'], null, $validated['expected_revision']))
             );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
         } catch (\Throwable $e) {
             return $this->failed('resolve_remark', $id, $e);
+        }
+    }
+
+    public function answerRemark(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'response' => ['required', 'string', 'max:5000'],
+                'expected_version_id' => ['nullable', 'integer'],
+                'expected_revision' => ['required', 'integer', 'min:0'],
+                'response_version_id' => ['nullable', 'integer', 'min:1'],
+            ]);
+            $remark = $this->service->findRemark($id, (int) $request->attributes->get('current_organization_id'));
+            if ($remark === null) {
+                return AdminResponse::error(trans_message('executive_documentation.errors.remark_not_found'), 404);
+            }
+            return AdminResponse::success(new ExecutiveDocumentRemarkResource(
+                $this->service->answerRemark($remark, (int) auth()->id(), $validated['response'], $validated['expected_version_id'] ?? null, $validated['response_version_id'] ?? null, $validated['expected_revision'])
+            ));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('answer_remark', $id, $e);
+        }
+    }
+
+    public function reviewRemark(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'decision' => ['required', Rule::in(['accept', 'return'])],
+                'comment' => ['required', 'string', 'max:1000'],
+                'expected_version_id' => ['nullable', 'integer'],
+                'expected_revision' => ['required', 'integer', 'min:0'],
+            ]);
+            $remark = $this->service->findRemark($id, (int) $request->attributes->get('current_organization_id'));
+            if ($remark === null) {
+                return AdminResponse::error(trans_message('executive_documentation.errors.remark_not_found'), 404);
+            }
+            return AdminResponse::success(new ExecutiveDocumentRemarkResource(
+                $this->service->reviewRemark($remark, (int) auth()->id(), $validated['decision'], $validated['comment'], $validated['expected_version_id'] ?? null, $validated['expected_revision'])
+            ));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('review_remark', $id, $e);
+        }
+    }
+
+    public function reject(RejectExecutiveDocumentRequest $request, int $id): JsonResponse
+    {
+        try {
+            $data = $request->validated();
+            return AdminResponse::success(new ExecutiveDocumentResource($this->service->reject(
+                $this->findDocument($request, $id), (int) auth()->id(), $data['comment'], $data['version_id']
+            )));
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('reject', $id, $e);
         }
     }
 

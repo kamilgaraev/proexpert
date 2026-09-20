@@ -212,6 +212,7 @@ final class ExecutiveDocumentationService
     {
         return DB::transaction(function () use ($document, $userId, $comment, $versionId): ExecutiveDocument {
             $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
+            $this->mutationGuard->assertActor($lockedDocument, $userId, 'executive-documentation.submit');
             if (!in_array($lockedDocument->status, [ExecutiveDocumentStatusEnum::DRAFT, ExecutiveDocumentStatusEnum::REMARKS], true)) {
                 throw new DomainException(trans_message('executive_documentation.errors.submit_invalid_status'));
             }
@@ -228,23 +229,24 @@ final class ExecutiveDocumentationService
 
     public function addRemark(ExecutiveDocument $document, int $userId, array $data): ExecutiveDocumentRemark
     {
-        if (!in_array($document->status, [ExecutiveDocumentStatusEnum::UNDER_REVIEW, ExecutiveDocumentStatusEnum::REMARKS], true)) {
-            throw new DomainException(trans_message('executive_documentation.errors.remark_invalid_status'));
-        }
-
-        $version = $this->versionForAction($document, isset($data['version_id']) ? (int) $data['version_id'] : null);
-        $remark = $document->remarks()->create([
-            'organization_id' => $document->organization_id,
-            'version_id' => $version->id,
-            'created_by' => $userId,
-            'body' => $data['body'],
-            'severity' => $data['severity'] ?? 'major',
-            'status' => ExecutiveRemarkStatusEnum::OPEN,
-        ]);
-
-        $document->update(['status' => ExecutiveDocumentStatusEnum::REMARKS]);
-
-        return $remark->fresh(['document']);
+        return DB::transaction(function () use ($document, $userId, $data): ExecutiveDocumentRemark {
+            $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
+            $this->mutationGuard->assertActor($lockedDocument, $userId, 'executive-documentation.review');
+            if (!in_array($lockedDocument->status, [ExecutiveDocumentStatusEnum::UNDER_REVIEW, ExecutiveDocumentStatusEnum::REMARKS], true)) {
+                throw new DomainException(trans_message('executive_documentation.errors.remark_invalid_status'));
+            }
+            $version = $this->versionForAction($lockedDocument, isset($data['version_id']) ? (int) $data['version_id'] : null);
+            $remark = $lockedDocument->remarks()->create([
+                'organization_id' => $lockedDocument->organization_id,
+                'version_id' => $version->id,
+                'created_by' => $userId,
+                'body' => $data['body'],
+                'severity' => $data['severity'] ?? 'major',
+                'status' => ExecutiveRemarkStatusEnum::OPEN,
+            ]);
+            $lockedDocument->update(['status' => ExecutiveDocumentStatusEnum::REMARKS]);
+            return $remark->fresh(['document']);
+        });
     }
 
     public function addCustomerRemark(ExecutiveDocument $document, int $userId, array $data): ExecutiveDocumentRemark
@@ -266,37 +268,21 @@ final class ExecutiveDocumentationService
         ])->fresh(['document']);
     }
 
-    public function resolveRemark(ExecutiveDocumentRemark $remark, int $userId, string $comment, ?string $response = null): ExecutiveDocumentRemark
+    public function resolveRemark(ExecutiveDocumentRemark $remark, int $userId, string $comment, ?string $response = null, ?int $expectedRevision = null): ExecutiveDocumentRemark
     {
-        $remark->update([
-            'status' => ExecutiveRemarkStatusEnum::RESOLVED,
-            'resolved_by' => $userId,
-            'resolution_comment' => $comment,
-            'response' => $response ?? $comment,
-            'resolved_at' => now(),
-        ]);
-
-        $document = $remark->document;
-        $version = $remark->version;
-        if ($version !== null && !$document->remarks()->where('version_id', $version->id)->where('status', ExecutiveRemarkStatusEnum::OPEN->value)->exists()) {
-            $version->update(['status' => 'under_review']);
-        }
-        if ($document->openRemarks()->count() === 0) {
-            $document->update(['status' => ExecutiveDocumentStatusEnum::UNDER_REVIEW]);
-        }
-
-        return $remark->fresh(['document']);
+        return $this->reviewRemark($remark, $userId, 'accept', $comment, null, $expectedRevision);
     }
 
     public function approve(ExecutiveDocument $document, int $userId, ?string $comment = null, ?int $versionId = null): ExecutiveDocument
     {
         return DB::transaction(function () use ($document, $userId, $comment, $versionId): ExecutiveDocument {
             $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
+            $this->mutationGuard->assertActor($lockedDocument, $userId, 'executive-documentation.approve');
             if (!in_array($lockedDocument->status, [ExecutiveDocumentStatusEnum::UNDER_REVIEW, ExecutiveDocumentStatusEnum::REMARKS], true)) {
                 throw new DomainException(trans_message('executive_documentation.errors.approve_invalid_status'));
             }
             $version = $this->versionForAction($lockedDocument, $versionId);
-            if ($lockedDocument->remarks()->where('version_id', $version->id)->whereIn('status', ['open'])->exists()) {
+            if ($lockedDocument->remarks()->whereIn('status', ['open', 'answered', 'returned'])->exists()) {
                 throw new DomainException(trans_message('executive_documentation.errors.open_remarks_block_approval'));
             }
             $version->update(['status' => 'approved', 'approved_by' => $userId, 'approved_at' => now()]);
@@ -308,6 +294,117 @@ final class ExecutiveDocumentationService
                     'approval_comment' => $comment,
                 ]),
             ]);
+            return $lockedDocument->fresh(self::DOCUMENT_RELATIONS);
+        });
+    }
+
+    public function answerRemark(ExecutiveDocumentRemark $remark, int $userId, string $response, ?int $expectedVersionId = null, ?int $responseVersionId = null, ?int $expectedRevision = null): ExecutiveDocumentRemark
+    {
+        return DB::transaction(function () use ($remark, $userId, $response, $expectedVersionId, $responseVersionId, $expectedRevision): ExecutiveDocumentRemark {
+            $remarkDocumentId = ExecutiveDocumentRemark::query()->whereKey($remark->id)->value('document_id');
+            $document = ExecutiveDocument::query()->lockForUpdate()->findOrFail($remarkDocumentId);
+            $this->mutationGuard->assertActor($document, $userId, 'executive-documentation.edit');
+            if (trim($response) === '' || $document->status === ExecutiveDocumentStatusEnum::ARCHIVED) {
+                throw new DomainException(trans_message('executive_documentation.errors.review_input_invalid'));
+            }
+            $lockedRemark = ExecutiveDocumentRemark::query()->whereKey($remark->id)->lockForUpdate()->firstOrFail();
+            if ($expectedRevision !== null && $expectedRevision !== count($lockedRemark->metadata['review_history'] ?? [])) {
+                throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+            }
+            if ($expectedVersionId !== null && (int) $lockedRemark->version_id !== $expectedVersionId) {
+                throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+            }
+            if (!in_array($lockedRemark->status, [ExecutiveRemarkStatusEnum::OPEN, ExecutiveRemarkStatusEnum::RETURNED], true)) {
+                throw new DomainException(trans_message('executive_documentation.errors.remark_answer_invalid_status'));
+            }
+            if ($lockedRemark->version_id === null || !$document->versions()->whereKey($lockedRemark->version_id)->exists()) {
+                throw new DomainException(trans_message('executive_documentation.errors.version_not_found'));
+            }
+            if ($responseVersionId !== null && ($responseVersionId <= (int) $lockedRemark->version_id || !$document->versions()->whereKey($responseVersionId)->whereNotNull('content_hash')->exists())) {
+                throw new DomainException(trans_message('executive_documentation.errors.version_not_found'));
+            }
+            $metadata = $lockedRemark->metadata ?? [];
+            $metadata['response_version_id'] = $responseVersionId;
+            $metadata['review_history'][] = ['action' => 'answer', 'actor_id' => $userId, 'at' => now()->toIso8601String(), 'comment' => $response, 'response_version_id' => $responseVersionId];
+            $lockedRemark->update([
+                'metadata' => $metadata,
+                'review_comment' => null,
+                'reviewed_at' => null,
+                'reviewed_by' => null,
+                'status' => ExecutiveRemarkStatusEnum::ANSWERED,
+                'answered_by' => $userId,
+                'answered_at' => now(),
+                'response' => $response,
+            ]);
+            return $lockedRemark->fresh(['document', 'version']);
+        });
+    }
+
+    public function reviewRemark(ExecutiveDocumentRemark $remark, int $userId, string $decision, string $comment, ?int $expectedVersionId = null, ?int $expectedRevision = null): ExecutiveDocumentRemark
+    {
+        return DB::transaction(function () use ($remark, $userId, $decision, $comment, $expectedVersionId, $expectedRevision): ExecutiveDocumentRemark {
+            $remarkDocumentId = ExecutiveDocumentRemark::query()->whereKey($remark->id)->value('document_id');
+            $document = ExecutiveDocument::query()->lockForUpdate()->findOrFail($remarkDocumentId);
+            $this->mutationGuard->assertActor($document, $userId, 'executive-documentation.review');
+            if (trim($comment) === '' || $document->status === ExecutiveDocumentStatusEnum::ARCHIVED) {
+                throw new DomainException(trans_message('executive_documentation.errors.review_input_invalid'));
+            }
+            $lockedRemark = ExecutiveDocumentRemark::query()->whereKey($remark->id)->lockForUpdate()->firstOrFail();
+            if ($expectedRevision !== null && $expectedRevision !== count($lockedRemark->metadata['review_history'] ?? [])) {
+                throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+            }
+            if ($expectedVersionId !== null && (int) $lockedRemark->version_id !== $expectedVersionId) {
+                throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+            }
+            if ((int) $lockedRemark->answered_by === $userId) {
+                throw new DomainException(trans_message('executive_documentation.errors.remark_self_review_forbidden'));
+            }
+            if ($lockedRemark->status !== ExecutiveRemarkStatusEnum::ANSWERED) {
+                throw new DomainException(trans_message('executive_documentation.errors.remark_review_requires_answer'));
+            }
+            $version = $document->versions()->whereKey($lockedRemark->version_id)->first();
+            if ($version === null) {
+                throw new DomainException(trans_message('executive_documentation.errors.version_not_found'));
+            }
+            if (!in_array($decision, ['accept', 'return'], true)) {
+                throw new DomainException(trans_message('executive_documentation.errors.remark_review_decision_invalid'));
+            }
+            $metadata = $lockedRemark->metadata ?? [];
+            $metadata['review_history'][] = ['action' => $decision, 'actor_id' => $userId, 'at' => now()->toIso8601String(), 'comment' => $comment, 'response_version_id' => $metadata['response_version_id'] ?? null];
+            $lockedRemark->update([
+                'metadata' => $metadata,
+                'resolution_comment' => $decision === 'accept' ? $comment : null,
+                'status' => $decision === 'accept' ? ExecutiveRemarkStatusEnum::RESOLVED : ExecutiveRemarkStatusEnum::RETURNED,
+                'reviewed_by' => $userId,
+                'reviewed_at' => now(),
+                'review_comment' => $comment,
+                'resolved_by' => $decision === 'accept' ? $userId : null,
+                'resolved_at' => $decision === 'accept' ? now() : null,
+            ]);
+            if ((int) $document->versions()->value('id') === (int) $version->id
+                && $document->status === ExecutiveDocumentStatusEnum::REMARKS
+                && $version->status === 'under_review' && $decision === 'accept'
+                && !$document->openRemarks()->exists()) {
+                $version->update(['status' => 'under_review']);
+                $document->update(['status' => ExecutiveDocumentStatusEnum::UNDER_REVIEW]);
+            }
+            return $lockedRemark->fresh(['document', 'version']);
+        });
+    }
+
+    public function reject(ExecutiveDocument $document, int $userId, string $comment, ?int $versionId = null): ExecutiveDocument
+    {
+        return DB::transaction(function () use ($document, $userId, $comment, $versionId): ExecutiveDocument {
+            $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
+            $this->mutationGuard->assertActor($lockedDocument, $userId, 'executive-documentation.review');
+            if (trim($comment) === '' || !in_array($lockedDocument->status, [ExecutiveDocumentStatusEnum::UNDER_REVIEW, ExecutiveDocumentStatusEnum::REMARKS], true)) {
+                throw new DomainException(trans_message('executive_documentation.errors.review_input_invalid'));
+            }
+            $version = $this->versionForAction($lockedDocument, $versionId);
+            $metadata = $version->metadata ?? [];
+            $metadata['review_history'][] = ['action' => 'reject', 'actor_id' => $userId, 'at' => now()->toIso8601String(), 'comment' => $comment];
+            $version->update(['status' => 'rejected', 'metadata' => $metadata]);
+            $lockedDocument->update(['status' => ExecutiveDocumentStatusEnum::REJECTED]);
             return $lockedDocument->fresh(self::DOCUMENT_RELATIONS);
         });
     }
