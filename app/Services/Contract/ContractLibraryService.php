@@ -41,6 +41,7 @@ final class ContractLibraryService
                 $join->on('versions.item_id', '=', 'items.id')->on('versions.version_number', '=', 'latest.latest_version');
             })
             ->where('items.organization_id', $organizationId)
+            ->where('items.creation_key', 'not like', ContractStandardTemplates::PREFIX.'%')
             ->where('items.is_archived', (bool) ($filters['archived'] ?? false))
             ->select(['items.id', 'items.organization_id', 'items.kind', 'items.is_archived', 'items.lock_version', 'items.updated_at',
                 'versions.version_number', 'versions.title', 'versions.status']);
@@ -109,6 +110,9 @@ final class ContractLibraryService
     public function create(User $actor, int $organizationId, string $kind, string $title, array $content, string $key): array
     {
         $this->authorize($actor, $organizationId, 'create');
+        if (str_starts_with($key, ContractStandardTemplates::PREFIX)) {
+            throw new ContractBuilderException('contracts.library_input_invalid', 422);
+        }
         $this->validate($kind, $title, $content, $key);
         $fingerprint = $this->fingerprint([$kind, $title, $content]);
 
@@ -135,9 +139,10 @@ final class ContractLibraryService
 
     public function read(User $actor, int $organizationId, string $itemId, int $number): array
     {
-        $this->authorize($actor, $organizationId, 'view');
+        $item = $this->item($organizationId, $itemId);
+        $this->authorizeRead($actor, $organizationId, $item);
 
-        return $this->result($this->item($organizationId, $itemId), $number);
+        return $this->result($item, $number);
     }
 
     public function calculateTemplate(User $actor, int $organizationId, string $itemId, int $number, array $input): array
@@ -157,7 +162,8 @@ final class ContractLibraryService
 
     public function resolveTemplate(User $actor, int $organizationId, string $itemId, int $number): array
     {
-        $this->authorize($actor, $organizationId, 'view');
+        $item = $this->item($organizationId, $itemId);
+        $this->authorizeRead($actor, $organizationId, $item);
         $version = $this->publishedVersion($organizationId, $itemId, $number, 'template');
 
         return (new ContractDocumentResolver)->resolve($version['content'], fn (string $id, int $version, string $kind): array => $this->publishedVersion($organizationId, $id, $version, $kind));
@@ -169,6 +175,7 @@ final class ContractLibraryService
 
         return DB::transaction(function () use ($actor, $organizationId, $itemId, $expectedVersion, $title, $content, $key): array {
             $item = $this->item($organizationId, $itemId, true);
+            $this->assertEditable($item);
             $this->validate($item->kind, $title, $content, $key);
             $fingerprint = $this->fingerprint([$expectedVersion, $title, $content]);
             $existing = DB::table('contract_library_versions')->where('item_id', $itemId)->where('request_key', $key)->first();
@@ -195,6 +202,7 @@ final class ContractLibraryService
 
         return DB::transaction(function () use ($actor, $organizationId, $itemId, $number, $expectedVersion): array {
             $item = $this->item($organizationId, $itemId, true);
+            $this->assertEditable($item);
             $version = $this->result($item, $number)['version'];
             if ($version['status'] === 'published' && (int) $item->lock_version === $expectedVersion + 1) {
                 return $this->result($item, $number);
@@ -222,6 +230,7 @@ final class ContractLibraryService
 
         return DB::transaction(function () use ($organizationId, $itemId, $expectedVersion, $archived): array {
             $item = $this->item($organizationId, $itemId, true);
+            $this->assertEditable($item);
             if ((int) $item->lock_version === $expectedVersion + 1 && (bool) $item->is_archived === $archived) {
                 return (array) $item;
             }
@@ -231,6 +240,23 @@ final class ContractLibraryService
 
             return (array) $item;
         });
+    }
+
+    private function authorizeRead(User $actor, int $organizationId, stdClass $item): void
+    {
+        if (!str_starts_with($item->creation_key, ContractStandardTemplates::PREFIX)
+            || (int) $actor->current_organization_id !== $organizationId
+            || (!$this->authorization->can($actor, 'contracts.create', ['organization_id' => $organizationId])
+                && !$this->authorization->can($actor, 'contracts.library.create', ['organization_id' => $organizationId]))) {
+            $this->authorize($actor, $organizationId, 'view');
+        }
+    }
+
+    private function assertEditable(stdClass $item): void
+    {
+        if (str_starts_with($item->creation_key, ContractStandardTemplates::PREFIX)) {
+            throw new ContractBuilderException('contract_templates.readonly', 422);
+        }
     }
 
     private function authorize(User $actor, int $organizationId, string $action): void

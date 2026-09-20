@@ -235,7 +235,7 @@ class StoreContractRequest extends FormRequest
             'organization_id_for_creation' => ['sometimes', 'integer'],
             'idempotency_key' => ['required', 'string', 'max:191'],
             'document_title' => ['nullable', 'string', 'max:512'],
-            'document_profile_code' => ['nullable', 'string', 'max:191'],
+            'document_profile_code' => ['nullable', 'string', 'max:191', Rule::prohibitedIf($this->has('template'))],
             'document_metadata' => ['nullable', 'array'],
             'document_confidentiality_level' => ['nullable', 'in:internal,restricted,secret'],
         ];

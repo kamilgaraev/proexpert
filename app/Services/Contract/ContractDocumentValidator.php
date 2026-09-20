@@ -11,9 +11,13 @@ final class ContractDocumentValidator
 {
     public function validate(array $content, ?array $definitions = null, bool $deferReferences = false): void
     {
-        if (array_diff(array_keys($content), ['document', 'variables']) !== []
+        if (array_diff(array_keys($content), ['document', 'variables', 'contract_profile_code']) !== []
             || ! is_array($content['document'] ?? null) || ($content['document']['type'] ?? null) !== 'doc'
             || ! is_array($content['variables'] ?? null) || count($content['variables']) > 500) {
+            $this->invalid();
+        }
+        if (array_key_exists('contract_profile_code', $content)
+            && !in_array($content['contract_profile_code'], ['contract.work', 'contract.construction', 'contract.subcontract'], true)) {
             $this->invalid();
         }
         foreach ($content['variables'] as $id => $version) {

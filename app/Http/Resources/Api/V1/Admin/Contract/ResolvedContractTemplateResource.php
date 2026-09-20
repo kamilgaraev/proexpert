@@ -12,7 +12,7 @@ final class ResolvedContractTemplateResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $data = Arr::only($this->resource, ['template_id', 'template_version', 'document', 'definitions', 'blocks']);
+        $data = Arr::only($this->resource, ['template_id', 'template_version', 'document', 'definitions', 'blocks', 'contract_profile_code']);
         foreach ($data['blocks'] as &$block) {
             $block['content']['variables'] = (object) $block['content']['variables'];
         }

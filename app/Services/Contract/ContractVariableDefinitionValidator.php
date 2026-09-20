@@ -129,8 +129,11 @@ final class ContractVariableDefinitionValidator
         }
         if (isset($definition['assignment'])) {
             $assignment = $definition['assignment'];
-            if (!in_array($assignment['target'] ?? null, ['works', 'price', 'schedule', 'advance', 'retention'], true)
+            if (!in_array($assignment['target'] ?? null, ['works', 'price', 'schedule', 'advance', 'retention', 'subject', 'payment_terms', 'delivery_terms'], true)
                 || array_diff(array_keys($assignment), ['target', 'field', 'columns']) !== []) {
+                $this->invalid();
+            }
+            if (in_array($assignment['target'], ['subject', 'payment_terms', 'delivery_terms'], true) && $type !== 'text') {
                 $this->invalid();
             }
             if (isset($assignment['field']) && ($assignment['target'] !== 'schedule'

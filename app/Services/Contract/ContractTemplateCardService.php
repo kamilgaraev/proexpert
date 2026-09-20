@@ -32,6 +32,8 @@ final class ContractTemplateCardService
         ];
         $template = $input['template'];
         $resolved = app(ContractLibraryService::class)->resolveTemplate($actor, $organizationId, $template['template_id'], $template['template_version']);
+        $resolved['contract_profile_code'] ??= 'contract.work';
+        $context['contract']['profile_code'] = $resolved['contract_profile_code'];
         $types = array_column($resolved['definitions'], 'definition', 'id');
         $values = $template['values'];
         $catalog = app(ContractEntityCatalog::class);
@@ -125,7 +127,7 @@ final class ContractTemplateCardService
                 $attributes['gp_coefficient'] = null;
             }
             $result = app(ContractDossierCreationService::class)->create($organizationId, $actor, new ContractDossierCreationInput(
-                new ContractDTO(...$attributes), $input->idempotencyKey, $input->documentTitle, $input->profileCode,
+                new ContractDTO(...$attributes), $input->idempotencyKey, $input->documentTitle, $prepared['contract_profile_code'],
                 $input->documentMetadata, $input->confidentialityLevel,
             ));
             $contract = $result->contract;
@@ -138,7 +140,7 @@ final class ContractTemplateCardService
                     'template_conditions_prepared', (int) $actor->id);
             }
             $revision = app(ContractBuilderInstanceService::class)->create($actor, $organizationId, (int) $contract->id,
-                $template['template_id'], $template['template_version'], $template['values'], $input->normalizedIdempotencyKey());
+                $template['template_id'], $template['template_version'], $template['values'], $input->normalizedIdempotencyKey(), initialCreation: true);
             if ($this->fingerprint($revision['values']) !== $this->fingerprint($prepared['values'])) {
                 throw new ContractBuilderException('contracts.template_sources_changed', 409);
             }

@@ -65,7 +65,12 @@ final class ContractRevisionTermsCompiler
                 $this->invalid($id, 'assignment');
             }
             $bases[$key] = ['variable_id' => $id, 'definition_version' => $entry['version'], 'clause_ids' => array_keys($visible[$id])];
-            if (in_array($target, ['price', 'advance'], true)) {
+            if (in_array($target, ['subject', 'payment_terms', 'delivery_terms'], true)) {
+                if ($definition['type'] !== 'text' || !is_string($value) || trim($value) === '') {
+                    $this->invalid($id, 'type');
+                }
+                $terms[$target] = $value;
+            } elseif (in_array($target, ['price', 'advance'], true)) {
                 if ($definition['type'] !== 'money') {
                     $this->invalid($id, 'type');
                 }
