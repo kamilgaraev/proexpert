@@ -8,6 +8,7 @@
     <testsuites>
         <testsuite name="ConstructionAccounting">
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentReviewCycleTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveTransmittalLifecycleTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRevisionIntegrityTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRevisionBoundaryTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRevisionWorkflowTest.php</file>

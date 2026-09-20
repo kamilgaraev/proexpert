@@ -30,6 +30,7 @@ use App\Models\WorkType;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\TransmitExecutiveDocumentSetRequest;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\RejectExecutiveDocumentRequest;
 use Illuminate\Validation\Rules\File;
 use Illuminate\Support\Facades\Log;
@@ -489,14 +490,10 @@ final class ExecutiveDocumentationController extends Controller
         }
     }
 
-    public function transmit(Request $request, int $id): JsonResponse
+    public function transmit(TransmitExecutiveDocumentSetRequest $request, int $id): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'transmittal_number' => ['required', 'string', 'max:80'],
-                'comment' => ['nullable', 'string', 'max:1000'],
-                'metadata' => ['nullable', 'array'],
-            ]);
+            $validated = $request->validated();
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $set = $this->service->findSet($id, $organizationId);
 

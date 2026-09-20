@@ -117,7 +117,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $setResponse->assertJsonPath('data.project.id', $project->id);
         $setResponse->assertJsonPath('data.workflow_summary.status', 'draft');
         $setResponse->assertJsonPath('data.workflow_summary.available_actions', []);
-        $setResponse->assertJsonPath('data.workflow_summary.problem_flags.0.key', 'no_documents');
+        self::assertContains('no_documents', collect($setResponse->json('data.workflow_summary.problem_flags'))->pluck('key')->all());
 
         $setId = (int) $setResponse->json('data.id');
 
@@ -188,10 +188,17 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $approveWithOpenRemarkResponse->assertStatus(422);
 
         $remarkId = (int) $remarkResponse->json('data.id');
+        $author = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($author->id, ['is_active' => true]);
+        app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService::class)->answerRemark(
+            \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRemark::query()->findOrFail($remarkId),
+            $author->id, 'Batch reference is present in the attachment', $versionId, null, 0
+        );
 
         $resolveRemarkResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/executive-documentation/remarks/{$remarkId}/resolve", [
                 'resolution_comment' => 'Batch reference added in version 1.1',
+                'expected_revision' => 1,
             ]);
 
         $resolveRemarkResponse->assertOk();
@@ -208,6 +215,8 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $transmitResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/transmit", [
                 'transmittal_number' => 'TR-2026-0001',
+                'operation_key' => 'workflow-transmit',
+                'expected_versions' => [['document_id' => $documentId, 'version_id' => $versionId]],
                 'comment' => 'Transmitted to customer',
             ]);
 
@@ -220,29 +229,36 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
         $deleteVersionResponse->assertStatus(422);
 
-        $customerResponse = $this->withHeaders($context->authHeaders())
+        $customerHeaders = $this->customerHeaders($context);
+        $customerResponse = $this->withHeaders($customerHeaders)
             ->getJson('/api/v1/customer/executive-documentation/sets');
 
         $customerResponse->assertOk();
         $ids = collect($customerResponse->json('data'))->pluck('id')->all();
         $this->assertContains($setId, $ids);
 
-        $customerRemarkResponse = $this->withHeaders($context->authHeaders())
+        $transmittal = \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentTransmittal::query()->where('document_set_id', $setId)->firstOrFail();
+        $customerRemarkResponse = $this->withHeaders($customerHeaders)
             ->postJson("/api/v1/customer/executive-documentation/documents/{$documentId}/remarks", [
                 'body' => 'Customer asks to attach the concrete batch passport',
+                'operation_key' => 'workflow-remark',
+                'transmittal_id' => $transmittal->id,
+                'version_id' => $versionId,
                 'severity' => 'major',
             ]);
 
-        $customerRemarkResponse->assertCreated();
+        $customerRemarkResponse->assertOk();
         $customerRemarkResponse->assertJsonPath('data.status', 'open');
 
-        $acknowledgeResponse = $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/customer/executive-documentation/sets/{$setId}/acknowledge", [
+        $acknowledgeResponse = $this->withHeaders($customerHeaders)
+            ->postJson("/api/v1/customer/executive-documentation/transmittals/{$transmittal->id}/receive", [
                 'comment' => 'Received for customer archive',
+                'operation_key' => 'workflow-receive',
+                'expected_manifest_hash' => $transmittal->manifest_hash,
             ]);
 
         $acknowledgeResponse->assertOk();
-        $acknowledgeResponse->assertJsonPath('data.transmittal.acknowledged', true);
+        $acknowledgeResponse->assertJsonPath('data.transmittal.status', 'received');
     }
 
     public function test_executive_documentation_rejects_foreign_project_and_hides_untransmitted_sets_from_customer(): void
@@ -271,7 +287,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $ownSetResponse->assertCreated();
         $ownSetId = (int) $ownSetResponse->json('data.id');
 
-        $customerResponse = $this->withHeaders($context->authHeaders())
+        $customerResponse = $this->withHeaders($this->customerHeaders($context))
             ->getJson('/api/v1/customer/executive-documentation/sets');
 
         $customerResponse->assertOk();
@@ -901,6 +917,15 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $response->assertJsonPath('data.profile_data.supplier', 'Concrete plant');
         $response->assertJsonPath('data.relations.0.target_type', 'material');
         $response->assertJsonPath('data.relations.0.target_id', $material->id);
+    }
+
+    private function customerHeaders(AdminApiTestContext $context): array
+    {
+        app('auth')->forgetGuards();
+        $token = app(\App\Services\Auth\JwtTokenIssuer::class)->issue($context->user, [
+            'guard' => 'api_landing', 'organization_id' => $context->organization->id,
+        ]);
+        return ['Authorization' => 'Bearer '.$token, 'Accept' => 'application/json', 'Origin' => 'https://customer.1мост.рф'];
     }
 
     private function fakeDocumentFile(string $name): UploadedFile

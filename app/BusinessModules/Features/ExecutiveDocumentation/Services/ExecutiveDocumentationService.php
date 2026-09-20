@@ -251,21 +251,10 @@ final class ExecutiveDocumentationService
 
     public function addCustomerRemark(ExecutiveDocument $document, int $userId, array $data): ExecutiveDocumentRemark
     {
-        $document->loadMissing('documentSet');
-
-        if ($document->documentSet?->status !== ExecutiveDocumentStatusEnum::TRANSMITTED) {
-            throw new DomainException(trans_message('executive_documentation.errors.customer_remark_requires_transmitted_set'));
+        if (empty($data['transmittal_id']) || empty($data['version_id'])) {
+            throw new DomainException(trans_message('executive_documentation.errors.transmittal_client_upgrade'));
         }
-
-        return $document->remarks()->create([
-            'organization_id' => $document->organization_id,
-            'created_by' => $userId,
-            'body' => $data['body'],
-            'severity' => $data['severity'] ?? 'major',
-            'status' => ExecutiveRemarkStatusEnum::OPEN,
-            'metadata' => ['source' => 'customer'],
-            'version_id' => $document->versions()->where('status', 'transmitted')->latest('id')->value('id'),
-        ])->fresh(['document']);
+        return app(ExecutiveTransmittalService::class)->remark((int) $document->id, $userId, $data);
     }
 
     public function resolveRemark(ExecutiveDocumentRemark $remark, int $userId, string $comment, ?string $response = null, ?int $expectedRevision = null): ExecutiveDocumentRemark
@@ -411,14 +400,38 @@ final class ExecutiveDocumentationService
 
     public function transmit(ExecutiveDocumentSet $set, int $userId, array $data): ExecutiveDocumentSet
     {
-        $set->loadMissing('documents.versions', 'documents.remarks', 'documents.workType', 'documents.journalEntry');
+        return DB::transaction(function () use ($set, $userId, $data): ExecutiveDocumentSet {
+        $set = ExecutiveDocumentSet::query()->lockForUpdate()->findOrFail($set->id);
+        $documents = ExecutiveDocument::query()
+            ->where('document_set_id', $set->id)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+        foreach ($documents as $document) {
+            $this->mutationGuard->assertActor($document, $userId, 'executive-documentation.approve');
+        }
+        $documents->load(['versions', 'remarks', 'workType', 'journalEntry']);
+        $set->setRelation('documents', $documents);
+        $operationKey = (string) ($data['operation_key'] ?? 'transmittal:'.$set->id.':'.(string) $data['transmittal_number']);
+        $existingTransmittal = ExecutiveDocumentTransmittal::query()
+            ->where('organization_id', $set->organization_id)
+            ->where('document_set_id', $set->id)
+            ->where('operation_key', $operationKey)
+            ->first();
+        if ($existingTransmittal !== null) {
+            $requestHash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
+            if ($existingTransmittal->operation_hash !== $requestHash) {
+                throw new DomainException(trans_message('executive_documentation.errors.operation_conflict'));
+            }
+            return $set->fresh(self::SET_RELATIONS)->setRelation('transmittal', $existingTransmittal);
+        }
 
         if ($set->documents->isEmpty()) {
             throw new DomainException(trans_message('executive_documentation.errors.transmit_without_documents'));
         }
 
         $notApproved = $set->documents->contains(
-            static fn (ExecutiveDocument $document): bool => $document->status !== ExecutiveDocumentStatusEnum::APPROVED
+            static fn (ExecutiveDocument $document): bool => !in_array($document->status, [ExecutiveDocumentStatusEnum::APPROVED, ExecutiveDocumentStatusEnum::TRANSMITTED], true)
         );
 
         if ($notApproved) {
@@ -429,25 +442,70 @@ final class ExecutiveDocumentationService
             throw new DomainException(trans_message('executive_documentation.errors.transmit_requires_complete_documents'));
         }
 
-        return DB::transaction(function () use ($set, $userId, $data): ExecutiveDocumentSet {
+            $documentsManifest = $set->documents->map(static function (ExecutiveDocument $document): array {
+                $version = $document->versions->sortByDesc('id')->first();
+                if ($version === null || !in_array($version->status, ['approved', 'transmitted'], true) || empty($version->content_hash)) {
+                    throw new DomainException(trans_message('executive_documentation.errors.transmit_requires_approved_documents'));
+                }
+                return [
+                    'document_id' => $document->id,
+                    'title' => $version->basis_snapshot['document']['title'] ?? $document->title,
+                    'document_type' => $document->document_type->value,
+                    'document_type_label' => $document->document_type->label(),
+                    'version_id' => $version->id,
+                    'content_hash' => $version->content_hash,
+                    'version_number' => $version->version_number,
+                    'file_url' => $version->file_url,
+                    'profile_snapshot' => $version->profile_snapshot,
+                    'basis_snapshot' => $version->basis_snapshot,
+                ];
+            })->values()->all();
+            if (isset($data['expected_versions'])) {
+                $expected = collect($data['expected_versions'])->mapWithKeys(fn ($row) => [(int) $row['document_id'] => (int) $row['version_id']])->sortKeys()->all();
+                $actual = collect($documentsManifest)->mapWithKeys(fn ($row) => [(int) $row['document_id'] => (int) $row['version_id']])->sortKeys()->all();
+                if ($expected !== $actual || count($data['expected_versions']) !== count($actual)) {
+                    throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+                }
+            }
+            $recipient = app(\App\Services\Project\ProjectCustomerResolverService::class)->resolve($set->project);
+            if (isset($data['recipient']['organization_id']) && (int) $data['recipient']['organization_id'] !== (int) $recipient['id']) {
+                throw new DomainException(trans_message('executive_documentation.errors.recipient_conflict'));
+            }
+            $previous = $set->transmittal()->first();
+            $manifest = [
+                'set' => $set->only(['id', 'set_number', 'title', 'project_id', 'stage_name', 'zone_name']),
+                'project' => ['id' => $set->project_id, 'name' => $set->project->name],
+                'sender' => ['user_id' => $userId, 'organization_id' => $set->organization_id, 'name' => $set->organization->name],
+                'recipient' => ['organization_id' => $recipient['id'], 'name' => $recipient['name'], 'source' => $recipient['source']],
+                'documents' => $documentsManifest,
+            ];
+            $operationHash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
             $set->update([
                 'status' => ExecutiveDocumentStatusEnum::TRANSMITTED,
                 'transmitted_at' => now(),
             ]);
 
-            ExecutiveDocumentTransmittal::query()->create([
+            $transmittal = ExecutiveDocumentTransmittal::query()->create([
                 'organization_id' => $set->organization_id,
                 'document_set_id' => $set->id,
                 'transmitted_by' => $userId,
                 'transmittal_number' => $data['transmittal_number'],
                 'comment' => $data['comment'] ?? null,
                 'transmitted_at' => now(),
-                'metadata' => $data['metadata'] ?? null,
+                'metadata' => ['source_metadata' => $data['metadata'] ?? null],
+                'manifest' => $manifest,
+                'manifest_hash' => hash('sha256', json_encode($manifest, JSON_THROW_ON_ERROR)),
+                'status' => 'sent',
+                'previous_transmittal_id' => $previous?->id,
+                'operation_key' => $operationKey,
+                'operation_hash' => $operationHash,
             ]);
 
-            $set->documents()->update(['status' => ExecutiveDocumentStatusEnum::TRANSMITTED]);
-            $set->documents->each(static function (ExecutiveDocument $document): void {
-                $document->versions()->where('status', 'approved')->update([
+            $manifestVersionIds = collect($documentsManifest)->pluck('version_id')->all();
+            $set->documents()->whereIn('id', collect($documentsManifest)->pluck('document_id')->all())
+                ->update(['status' => ExecutiveDocumentStatusEnum::TRANSMITTED]);
+            $set->documents->each(static function (ExecutiveDocument $document) use ($manifestVersionIds): void {
+                $document->versions()->whereIn('id', $manifestVersionIds)->where('status', 'approved')->update([
                     'status' => 'transmitted',
                     'transmitted_at' => now(),
                 ]);
@@ -459,19 +517,7 @@ final class ExecutiveDocumentationService
 
     public function acknowledgeTransmittal(ExecutiveDocumentSet $set, int $userId, ?string $comment = null): ExecutiveDocumentSet
     {
-        $set->loadMissing('transmittal');
-
-        if ($set->status !== ExecutiveDocumentStatusEnum::TRANSMITTED || $set->transmittal === null) {
-            throw new DomainException(trans_message('executive_documentation.errors.acknowledge_requires_transmitted_set'));
-        }
-
-        $set->transmittal->update([
-            'acknowledged_by' => $userId,
-            'acknowledgement_comment' => $comment,
-            'acknowledged_at' => now(),
-        ]);
-
-        return $set->fresh(self::SET_RELATIONS);
+        throw new DomainException(trans_message('executive_documentation.errors.transmittal_client_upgrade'));
     }
 
     public function deleteVersion(ExecutiveDocument $document, ExecutiveDocumentVersion $version, int $userId): void

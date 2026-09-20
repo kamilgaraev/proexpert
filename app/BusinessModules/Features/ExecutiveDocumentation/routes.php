@@ -65,6 +65,11 @@ Route::prefix('api/v1/customer/executive-documentation')
     ->name('customer.executive_documentation.')
     ->middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'organization.context', 'executive-documentation.active'])
     ->group(function (): void {
+        Route::get('/transmittals', [CustomerExecutiveDocumentationController::class, 'index'])->middleware('authorize:executive-documentation.view')->name('transmittals.index');
+        Route::get('/transmittals/{id}/versions/{versionId}/download', [CustomerExecutiveDocumentationController::class, 'download'])->middleware('authorize:executive-documentation.view')->name('transmittals.download');
+        foreach (['receive', 'return', 'accept'] as $action) {
+            Route::post('/transmittals/{id}/'.$action, [CustomerExecutiveDocumentationController::class, 'decision'])->defaults('action', $action)->middleware('authorize:executive-documentation.approve')->name('transmittals.'.$action);
+        }
         Route::get('/sets', [CustomerExecutiveDocumentationController::class, 'index'])
             ->middleware('authorize:executive-documentation.view')
             ->name('sets.index');

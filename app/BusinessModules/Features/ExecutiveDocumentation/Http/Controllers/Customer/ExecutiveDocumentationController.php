@@ -4,146 +4,73 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\Customer;
 
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\CustomerTransmittalDecisionRequest;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\CustomerTransmittalRemarkRequest;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentRemarkResource;
-use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentSetResource;
-use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveTransmittalService;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Api\V1\Customer\CustomerController;
 use App\Http\Responses\CustomerResponse;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 
 final class ExecutiveDocumentationController extends CustomerController
 {
-    public function __construct(
-        private readonly ExecutiveDocumentationService $service,
-    ) {
-    }
+    public function __construct(private readonly ExecutiveTransmittalService $transmittals) {}
 
     public function index(Request $request): JsonResponse
     {
-        try {
-            $organizationId = $this->resolveOrganizationId($request);
-
-            if (!$this->hasPermission($request, 'executive-documentation.view', $organizationId)) {
-                return CustomerResponse::error(trans_message('customer.forbidden'), 403);
-            }
-
-            return CustomerResponse::success(
-                ExecutiveDocumentSetResource::collection(
-                    $this->service->listSets($organizationId, $request->only(['project_id']), true)
-                )->resolve()
-            );
-        } catch (\Throwable $e) {
-            Log::error('executive_documentation.customer.index.error', [
-                'user_id' => $request->user()?->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return CustomerResponse::error(trans_message('executive_documentation.errors.index_failed'), 500);
-        }
+        return $this->respond(function () use ($request) {
+            $userId = (int) $request->user()?->id;
+            return $this->transmittals->list($userId, $request->filled('project_id') ? (int) $request->input('project_id') : null)
+                ->map(fn ($item) => $this->transmittals->present($item, $userId))->all();
+        });
     }
 
     public function show(Request $request, int $id): JsonResponse
     {
-        try {
-            $organizationId = $this->resolveOrganizationId($request);
-
-            if (!$this->hasPermission($request, 'executive-documentation.view', $organizationId)) {
-                return CustomerResponse::error(trans_message('customer.forbidden'), 403);
-            }
-
-            $set = $this->service->findSet($id, $organizationId, true);
-
-            if ($set === null) {
-                return CustomerResponse::error(trans_message('executive_documentation.errors.not_found'), 404);
-            }
-
-            return CustomerResponse::success(new ExecutiveDocumentSetResource($set));
-        } catch (\Throwable $e) {
-            Log::error('executive_documentation.customer.show.error', [
-                'id' => $id,
-                'user_id' => $request->user()?->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return CustomerResponse::error(trans_message('executive_documentation.errors.show_failed'), 500);
-        }
+        return $this->respond(fn () => $this->transmittals->present(
+            $this->transmittals->latestForSet($id, (int) $request->user()?->id), (int) $request->user()?->id
+        ));
     }
 
-    public function storeRemark(Request $request, int $id): JsonResponse
+    public function download(Request $request, int $id, int $versionId): JsonResponse
     {
-        try {
-            $organizationId = $this->resolveOrganizationId($request);
+        return $this->respond(fn () => ['url' => $this->transmittals->download($id, $versionId, (int) $request->user()?->id)]);
+    }
 
-            if (!$this->hasPermission($request, 'executive-documentation.review', $organizationId)) {
-                return CustomerResponse::error(trans_message('customer.forbidden'), 403);
-            }
+    public function decision(CustomerTransmittalDecisionRequest $request, int $id, string $action): JsonResponse
+    {
+        return $this->respond(fn () => $this->transmittals->present(
+            $this->transmittals->decide($id, (int) $request->user()?->id, $action, $request->validated()), (int) $request->user()?->id
+        ));
+    }
 
-            $validated = $request->validate([
-                'body' => ['required', 'string', 'max:5000'],
-                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'critical'])],
-            ]);
-            $document = $this->service->findDocument($id, $organizationId);
-
-            if ($document === null) {
-                return CustomerResponse::error(trans_message('executive_documentation.errors.document_not_found'), 404);
-            }
-
-            return CustomerResponse::success(
-                new ExecutiveDocumentRemarkResource($this->service->addCustomerRemark($document, (int) $request->user()?->id, $validated)),
-                trans_message('executive_documentation.messages.remark_created'),
-                201
-            );
-        } catch (ValidationException $e) {
-            return CustomerResponse::error($e->getMessage(), 422, $e->errors());
-        } catch (DomainException $e) {
-            return CustomerResponse::error($e->getMessage(), 422);
-        } catch (\Throwable $e) {
-            Log::error('executive_documentation.customer.remark.error', [
-                'document_id' => $id,
-                'user_id' => $request->user()?->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return CustomerResponse::error(trans_message('executive_documentation.errors.remark_failed'), 500);
-        }
+    public function storeRemark(CustomerTransmittalRemarkRequest $request, int $id): JsonResponse
+    {
+        return $this->respond(fn () => new ExecutiveDocumentRemarkResource(
+            $this->transmittals->remark($id, (int) $request->user()?->id, $request->validated())
+        ));
     }
 
     public function acknowledge(Request $request, int $id): JsonResponse
     {
+        return CustomerResponse::error(trans_message('executive_documentation.errors.transmittal_client_upgrade'), 409);
+    }
+
+    private function respond(callable $action): JsonResponse
+    {
         try {
-            $organizationId = $this->resolveOrganizationId($request);
-
-            if (!$this->hasPermission($request, 'executive-documentation.approve', $organizationId)) {
-                return CustomerResponse::error(trans_message('customer.forbidden'), 403);
-            }
-
-            $validated = $request->validate(['comment' => ['nullable', 'string', 'max:1000']]);
-            $set = $this->service->findSet($id, $organizationId, true);
-
-            if ($set === null) {
-                return CustomerResponse::error(trans_message('executive_documentation.errors.not_found'), 404);
-            }
-
-            return CustomerResponse::success(new ExecutiveDocumentSetResource(
-                $this->service->acknowledgeTransmittal($set, (int) $request->user()?->id, $validated['comment'] ?? null)
-            ));
-        } catch (ValidationException $e) {
-            return CustomerResponse::error($e->getMessage(), 422, $e->errors());
-        } catch (DomainException $e) {
-            return CustomerResponse::error($e->getMessage(), 422);
-        } catch (\Throwable $e) {
-            Log::error('executive_documentation.customer.acknowledge.error', [
-                'set_id' => $id,
-                'user_id' => $request->user()?->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return CustomerResponse::error(trans_message('executive_documentation.errors.acknowledge_failed'), 500);
+            return CustomerResponse::success($action());
+        } catch (BusinessLogicException $exception) {
+            return CustomerResponse::error($exception->getMessage(), in_array($exception->getCode(), [403, 404], true) ? $exception->getCode() : 422);
+        } catch (DomainException $exception) {
+            return CustomerResponse::error($exception->getMessage(), 409);
+        } catch (\Throwable $exception) {
+            Log::error('executive_documentation.customer.failed', ['exception' => $exception::class]);
+            return CustomerResponse::error(trans_message('executive_documentation.errors.show_failed'), 500);
         }
     }
 }
