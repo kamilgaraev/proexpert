@@ -9,6 +9,7 @@ use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\PerformanceActLine;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 use function trans_message;
 
@@ -68,6 +69,7 @@ class ActingAvailabilityService
         $lines = PerformanceActLine::query()
             ->with('performanceAct')
             ->whereIn('completed_work_id', $workIds)
+            ->where('line_type', PerformanceActLine::TYPE_COMPLETED_WORK)
             ->get();
 
         $usage = [];
@@ -92,6 +94,26 @@ class ActingAvailabilityService
             }
 
             $usage[$workId]['reserved_quantity'] += (float) $line->quantity;
+        }
+
+        $legacyReservations = DB::table('performance_act_completed_works as links')
+            ->join('contract_performance_acts as acts', 'acts.id', '=', 'links.performance_act_id')
+            ->whereIn('links.completed_work_id', $workIds)
+            ->where(static fn ($query) => $query->whereNull('acts.status')->orWhereNotIn('acts.status', ActingQuantityStatus::releasedStatuses()))
+            ->whereNotExists(static function ($query): void {
+                $query->selectRaw('1')->from('performance_act_lines as lines')
+                    ->whereColumn('lines.performance_act_id', 'links.performance_act_id')
+                    ->whereColumn('lines.completed_work_id', 'links.completed_work_id')
+                    ->where('lines.line_type', PerformanceActLine::TYPE_COMPLETED_WORK);
+            })
+            ->get(['links.completed_work_id', 'links.included_quantity', 'acts.status', 'acts.is_approved']);
+
+        foreach ($legacyReservations as $reservation) {
+            $workId = (int) $reservation->completed_work_id;
+            $usage[$workId] ??= ['reserved_quantity' => 0.0, 'approved_acted_quantity' => 0.0];
+            $key = (bool) $reservation->is_approved || in_array($reservation->status, ActingQuantityStatus::approvedStatuses(), true)
+                ? 'approved_acted_quantity' : 'reserved_quantity';
+            $usage[$workId][$key] += (float) $reservation->included_quantity;
         }
 
         foreach ($usage as $workId => $values) {
