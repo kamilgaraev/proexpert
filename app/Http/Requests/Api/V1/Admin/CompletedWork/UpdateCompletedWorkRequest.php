@@ -178,7 +178,7 @@ class UpdateCompletedWorkRequest extends FormRequest
             price: isset($validatedData['price']) ? (float) $validatedData['price'] : (isset($completedWork->price) ? (float) $completedWork->price : null),
             total_amount: $totalAmount,
             completion_date: isset($validatedData['completion_date']) ? Carbon::parse($validatedData['completion_date']) : $completedWork->completion_date,
-            notes: $validatedData['notes'] ?? $completedWork->notes,
+            notes: array_key_exists('notes', $validatedData) ? $validatedData['notes'] : $completedWork->notes,
             status: $validatedData['status'] ?? $completedWork->status,
             additional_info: $validatedData['additional_info'] ?? $completedWork->additional_info,
             materials: $materials,
