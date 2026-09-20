@@ -201,6 +201,30 @@ class ContractMutationAtomicityTest extends TestCase
         }
     }
 
+    public function test_self_execution_expense_is_created_for_multiple_projects(): void
+    {
+        $project = \App\Models\Project::factory()->create(['organization_id' => $this->organizationId]);
+        $secondProject = \App\Models\Project::factory()->create(['organization_id' => $this->organizationId]);
+        $dto = new ContractDTO(...[
+            ...get_object_vars($this->contractDto($project->id)),
+            'number' => 'SELF-EXPENSE-100',
+            'contractor_id' => null,
+            'status' => ContractStatusEnum::DRAFT,
+            'is_self_execution' => true,
+            'is_multi_project' => true,
+            'project_ids' => [$project->id, $secondProject->id],
+            'direction' => 'expense',
+        ]);
+        $contract = $this->mutationService()->create($this->organizationId, $dto)->fresh();
+        self::assertTrue($contract->is_self_execution);
+        self::assertTrue($contract->is_multi_project);
+        self::assertSame(ContractStatusEnum::DRAFT, $contract->status);
+        self::assertSame($this->organizationId, $contract->firstParty->linked_organization_id);
+        self::assertSame($this->organizationId, $contract->secondParty->linked_organization_id);
+        self::assertEqualsCanonicalizing([$project->id, $secondProject->id], $contract->projects()->pluck('projects.id')->all());
+        self::assertSame('expense', app(\App\Services\Contract\ContractSideResolverService::class)->resolve($contract, $this->organizationId)['direction']);
+    }
+
     private function contractDto(?int $projectId = null, ?int $supplierId = null): ContractDTO
     {
         return new ContractDTO(

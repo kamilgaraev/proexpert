@@ -20,6 +20,36 @@ use Mockery;
 
 final class ContractPerspectiveTest extends TestCase
 {
+    public function test_self_execution_is_expense_with_saved_and_legacy_parties(): void
+    {
+        $contract = new Contract;
+        $contract->setRawAttributes(['organization_id' => 20, 'contract_side_type' => 'contract', 'is_self_execution' => true]);
+        $first = new ContractParty;
+        $first->setRawAttributes(['linked_organization_id' => 20, 'name' => 'Наша организация', 'role' => 'general_contractor']);
+        $second = new ContractParty;
+        $second->setRawAttributes(['linked_organization_id' => 20, 'name' => 'Собственные силы', 'role' => 'contractor']);
+        $contract->setRelation('firstParty', $first);
+        $contract->setRelation('secondParty', $second);
+        $resolver = new ContractSideResolverService(new ProjectCustomerResolverService);
+        $saved = $resolver->resolve($contract, 20);
+        self::assertSame('expense', $saved['direction']);
+        self::assertTrue($saved['is_expense']);
+        self::assertFalse($saved['is_income']);
+
+        $organization = new \App\Models\Organization;
+        $organization->setRawAttributes(['id' => 20, 'name' => 'Наша организация']);
+        $contractor = new \App\Models\Contractor;
+        $contractor->setRawAttributes(['id' => 5, 'source_organization_id' => 20, 'name' => 'Собственные силы', 'contractor_type' => 'self_execution']);
+        $contractor->setRelation('sourceOrganization', $organization);
+        $contract->setRelation('firstParty', null);
+        $contract->setRelation('secondParty', null);
+        $contract->setRelation('organization', $organization);
+        $contract->setRelation('project', null);
+        $contract->setRelation('contractor', $contractor);
+        $contract->setRelation('supplier', null);
+        self::assertSame('expense', $resolver->resolve($contract, 20)['direction']);
+    }
+
     public static function paymentCurrencies(): array
     {
         return [
