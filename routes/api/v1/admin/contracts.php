@@ -25,16 +25,16 @@ Route::prefix('contract-library')->name('contracts.library.')->group(function ()
     $controller = \App\Http\Controllers\Api\V1\Admin\Contract\ContractLibraryController::class;
     Route::get('', [$controller, 'index'])->middleware('authorize:contracts.library.view')->name('index');
     Route::post('definitions/read', [$controller, 'definitions'])->middleware('authorize:contracts.library.view')->name('definitions');
-    Route::post('{libraryItem}/versions/{version}/calculate', [$controller, 'calculate'])->whereUuid('libraryItem')->whereNumber('version')
+    Route::post('{libraryItem}/versions/{libraryVersion}/calculate', [$controller, 'calculate'])->whereUuid('libraryItem')->whereNumber('libraryVersion')
         ->middleware('authorize:contracts.library.view')->name('calculate');
-    Route::get('{libraryItem}/versions/{version}/resolved', [$controller, 'resolved'])->whereUuid('libraryItem')->whereNumber('version')
+    Route::get('{libraryItem}/versions/{libraryVersion}/resolved', [$controller, 'resolved'])->whereUuid('libraryItem')->whereNumber('libraryVersion')
         ->middleware('authorize:contracts.library.view')->name('resolved');
     Route::post('', [$controller, 'store'])->middleware('authorize:contracts.library.create')->name('store');
-    Route::get('{libraryItem}/versions/{version}', [$controller, 'show'])->whereUuid('libraryItem')->whereNumber('version')
+    Route::get('{libraryItem}/versions/{libraryVersion}', [$controller, 'show'])->whereUuid('libraryItem')->whereNumber('libraryVersion')
         ->middleware('authorize:contracts.library.view')->name('show');
     Route::post('{libraryItem}/versions', [$controller, 'revise'])->whereUuid('libraryItem')
         ->middleware('authorize:contracts.library.create')->name('revise');
-    Route::post('{libraryItem}/versions/{version}/publish', [$controller, 'publish'])->whereUuid('libraryItem')->whereNumber('version')
+    Route::post('{libraryItem}/versions/{libraryVersion}/publish', [$controller, 'publish'])->whereUuid('libraryItem')->whereNumber('libraryVersion')
         ->middleware('authorize:contracts.library.publish')->name('publish');
     Route::patch('{libraryItem}/archive', [$controller, 'archive'])->whereUuid('libraryItem')
         ->middleware('authorize:contracts.library.archive')->name('archive');

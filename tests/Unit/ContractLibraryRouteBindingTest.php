@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit;
 
 use App\Http\Requests\Api\V1\Admin\Contract\SaveContractLibraryItemRequest;
+use App\Http\Requests\Api\V1\Admin\Contract\ChangeContractLibraryStateRequest;
 use Illuminate\Container\Container;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Http\Request;
@@ -29,6 +30,9 @@ final class ContractLibraryRouteBindingTest extends TestCase
             $router->bind('item', static function (): never {
                 throw new \LogicException('Estimate item binding intercepted a library request');
             });
+            $router->bind('version', static function (): never {
+                throw new \LogicException('Estimate version binding intercepted a library request');
+            });
             $id = '3a25b8ad-e676-48b9-8050-bf22e7cdfa12';
             $routes = [
                 ['GET', "{$id}/versions/1", 'show', 'view'],
@@ -46,11 +50,18 @@ final class ContractLibraryRouteBindingTest extends TestCase
                 self::assertContains('authorize:contracts.library.'.$permission, $route->middleware());
                 (new SubstituteBindings($router))->handle($request, static function (Request $bound) use ($id): void {
                     self::assertSame($id, $bound->route('libraryItem'));
+                    if (str_contains($bound->path(), '/versions/1')) {
+                        self::assertSame('1', $bound->route('libraryVersion'));
+                    }
                 });
                 if ($action === 'revise') {
                     $form = SaveContractLibraryItemRequest::createFrom($request);
                     self::assertSame('required', $form->rules()['expected_version'][0]);
                     self::assertSame('prohibited', $form->rules()['kind'][0]);
+                }
+                if (in_array($action, ['publish', 'archive'], true)) {
+                    $form = ChangeContractLibraryStateRequest::createFrom($request);
+                    self::assertSame($action === 'archive' ? 'required' : 'prohibited', $form->rules()['archived'][0]);
                 }
             }
             $create = Request::create('/contract-library', 'POST');

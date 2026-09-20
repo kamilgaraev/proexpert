@@ -17,7 +17,7 @@ final class ChangeContractLibraryStateRequest extends FormRequest
     {
         return [
             'expected_version' => ['required', 'integer', 'min:1'],
-            'archived' => [$this->route('version') === null ? 'required' : 'prohibited', 'boolean'],
+            'archived' => [$this->route('libraryVersion') === null ? 'required' : 'prohibited', 'boolean'],
         ];
     }
 }

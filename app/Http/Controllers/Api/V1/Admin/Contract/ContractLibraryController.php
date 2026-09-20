@@ -18,19 +18,19 @@ use Illuminate\Http\Request;
 
 final class ContractLibraryController extends Controller
 {
-    public function calculate(\App\Http\Requests\Api\V1\Admin\Contract\CalculateContractTemplateRequest $request, string $libraryItem, int $version, ContractLibraryService $service): JsonResponse
+    public function calculate(\App\Http\Requests\Api\V1\Admin\Contract\CalculateContractTemplateRequest $request, string $libraryItem, int $libraryVersion, ContractLibraryService $service): JsonResponse
     {
-        $result = $service->calculateTemplate($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $version, $request->validated('values'));
+        $result = $service->calculateTemplate($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $libraryVersion, $request->validated('values'));
 
         return AdminResponse::success((new \App\Http\Resources\Api\V1\Admin\Contract\CalculatedContractTemplateResource($result))->resolve($request));
     }
 
-    public function resolved(Request $request, string $libraryItem, int $version, ContractLibraryService $service): JsonResponse
+    public function resolved(Request $request, string $libraryItem, int $libraryVersion, ContractLibraryService $service): JsonResponse
     {
-        $result = $service->resolveTemplate($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $version);
+        $result = $service->resolveTemplate($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $libraryVersion);
 
         return AdminResponse::success((new ResolvedContractTemplateResource([
-            'template_id' => $libraryItem, 'template_version' => $version, ...$result,
+            'template_id' => $libraryItem, 'template_version' => $libraryVersion, ...$result,
         ]))->resolve($request));
     }
 
@@ -58,9 +58,9 @@ final class ContractLibraryController extends Controller
         return AdminResponse::success((new ContractLibraryResource($result))->resolve($request));
     }
 
-    public function show(Request $request, string $libraryItem, int $version, ContractLibraryService $service): JsonResponse
+    public function show(Request $request, string $libraryItem, int $libraryVersion, ContractLibraryService $service): JsonResponse
     {
-        $result = $service->read($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $version);
+        $result = $service->read($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $libraryVersion);
 
         return AdminResponse::success((new ContractLibraryResource($result))->resolve($request));
     }
@@ -73,9 +73,9 @@ final class ContractLibraryController extends Controller
         return AdminResponse::success((new ContractLibraryResource($result))->resolve($request));
     }
 
-    public function publish(ChangeContractLibraryStateRequest $request, string $libraryItem, int $version, ContractLibraryService $service): JsonResponse
+    public function publish(ChangeContractLibraryStateRequest $request, string $libraryItem, int $libraryVersion, ContractLibraryService $service): JsonResponse
     {
-        $result = $service->publish($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $version, (int) $request->validated('expected_version'));
+        $result = $service->publish($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $libraryVersion, (int) $request->validated('expected_version'));
 
         return AdminResponse::success((new ContractLibraryResource($result))->resolve($request));
     }
