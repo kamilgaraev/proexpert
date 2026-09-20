@@ -56,7 +56,17 @@ final class ContractDocumentResolver
                         'title' => $version['title'], 'content' => $version['content'],
                     ];
 
-                    return $expand($version['content'], $nextPath, [...$stack, $key]);
+                    $children = $expand($version['content'], $nextPath, [...$stack, $key]);
+                    if ($prefix !== '' && isset($attrs['layout']['id'])) {
+                        $attrs['layout']['id'] = $prefix.$attrs['layout']['id'];
+                    }
+
+                    return isset($attrs['layout'])
+                        ? [['type' => 'group', 'attrs' => ['layout' => $attrs['layout']], 'content' => $children]]
+                        : $children;
+                }
+                if ($prefix !== '' && isset($node['attrs']['layout']['id'])) {
+                    $node['attrs']['layout']['id'] = $prefix.$node['attrs']['layout']['id'];
                 }
                 if ($prefix !== '' && $node['type'] === 'clause') {
                     $node['attrs']['id'] = $prefix.$node['attrs']['id'];
@@ -78,7 +88,7 @@ final class ContractDocumentResolver
 
             return $document['content'] ?? [];
         };
-        $document = ['type' => 'doc', 'content' => $expand($content, [], [])];
+        $document = [...$content['document'], 'content' => $expand($content, [], [])];
         $definitions = [];
         foreach ($variables as $id => $number) {
             $version = $publishedVersion($id, $number, 'variable');

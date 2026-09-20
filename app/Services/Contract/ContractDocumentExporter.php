@@ -18,8 +18,18 @@ final class ContractDocumentExporter
 {
     public function render(string $html, string $format): string
     {
-        if (strlen($html) > 2 * 1024 * 1024 || !in_array($format, ['docx', 'pdf'], true)) {
+        $limit = str_starts_with($html, '<article data-contract-print="') ? 10 * 1024 * 1024 : 2 * 1024 * 1024;
+        if (strlen($html) > $limit || ! in_array($format, ['docx', 'pdf'], true)) {
             throw new ContractBuilderException('contracts.builder_export_invalid', 422);
+        }
+        $plan = (new ContractDocumentPrintLayout)->decode($html);
+        if ($plan !== null) {
+            $bytes = (new ContractPositionedExporter)->render($plan, $format);
+            if (strlen($bytes) > 20 * 1024 * 1024) {
+                throw new ContractBuilderException('contracts.builder_export_invalid', 422);
+            }
+
+            return $bytes;
         }
         $document = new DOMDocument('1.0', 'UTF-8');
         $previous = libxml_use_internal_errors(true);
@@ -29,19 +39,19 @@ final class ContractDocumentExporter
             libxml_clear_errors();
             libxml_use_internal_errors($previous);
         }
-        if (!$loaded) {
+        if (! $loaded) {
             throw new ContractBuilderException('contracts.builder_export_invalid', 422);
         }
         foreach ($document->getElementsByTagName('*') as $element) {
             if ($element->tagName === 'a' && preg_match('~^(?:https?://|mailto:|#)~i', $element->getAttribute('href')) !== 1) {
                 throw new ContractBuilderException('contracts.builder_export_invalid', 422);
             }
-            if (!in_array($element->tagName, ['html', 'body', 'article', 'section', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+            if (! in_array($element->tagName, ['html', 'body', 'article', 'section', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
                 'strong', 'em', 'u', 's', 'a', 'br', 'ol', 'ul', 'li', 'table', 'tr', 'td'], true)) {
                 throw new ContractBuilderException('contracts.builder_export_invalid', 422);
             }
             foreach ($element->attributes as $attribute) {
-                if (!in_array($attribute->name, ['class', 'id', 'href', 'rel', 'start', 'colspan', 'rowspan'], true)) {
+                if (! in_array($attribute->name, ['class', 'id', 'href', 'rel', 'start', 'colspan', 'rowspan'], true)) {
                     throw new ContractBuilderException('contracts.builder_export_invalid', 422);
                 }
             }
@@ -100,7 +110,7 @@ final class ContractDocumentExporter
             $strike->parentNode?->replaceChild($span, $strike);
         }
         $body = $document->getElementsByTagName('body')->item(0);
-        if (!$body instanceof DOMElement) {
+        if (! $body instanceof DOMElement) {
             throw new ContractBuilderException('contracts.builder_export_invalid', 422);
         }
         $this->blocks($body, $section);
@@ -129,7 +139,7 @@ final class ContractDocumentExporter
     private function blocks(DOMElement $parent, AbstractContainer $container): void
     {
         foreach ($parent->childNodes as $node) {
-            if (!$node instanceof DOMElement) {
+            if (! $node instanceof DOMElement) {
                 continue;
             }
             if (in_array($node->tagName, ['article', 'section'], true)) {
@@ -154,7 +164,7 @@ final class ContractDocumentExporter
         $table = $container->addTable(['borderSize' => 6, 'borderColor' => 'AAB3BF', 'cellMargin' => 80, 'width' => 5000, 'unit' => 'pct']);
         $pending = [];
         foreach ($node->childNodes as $rowNode) {
-            if (!$rowNode instanceof DOMElement || $rowNode->tagName !== 'tr') {
+            if (! $rowNode instanceof DOMElement || $rowNode->tagName !== 'tr') {
                 continue;
             }
             $row = $table->addRow(null, ['cantSplit' => true]);
@@ -168,11 +178,13 @@ final class ContractDocumentExporter
                         unset($pending[$column]);
                     }
                     $column += $merge['span'];
+
                     continue;
                 }
-                if (!isset($cells[$index])) {
+                if (! isset($cells[$index])) {
                     $row->addCell();
                     $column++;
+
                     continue;
                 }
                 $cell = $cells[$index++];

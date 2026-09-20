@@ -42,7 +42,7 @@ final class ContractDocumentRenderer
                     array_push($children, ...$expand($child, $row));
                 }
 
-                return $children;
+                return isset($attrs['layout']) ? [['type' => 'group', 'attrs' => ['layout' => $attrs['layout']], 'content' => $children]] : $children;
             }
             if ($node['type'] === 'repeatRows') {
                 $children = [];
@@ -92,12 +92,43 @@ final class ContractDocumentRenderer
             }
         };
         $number($resolved);
-        $html = $this->html($resolved, $numbers);
+        $layout = $resolved['attrs']['layout'] ?? null;
+        if ($layout !== null) {
+            $bottom = 0;
+            $blocks = [];
+            [$pageWidth] = (new ContractDocumentPrintLayout)->size($layout['page']);
+            $width = $pageWidth / ContractDocumentPrintMeasure::PT_PER_MM - $layout['page']['margins']['left'] - $layout['page']['margins']['right'];
+            foreach ($resolved['content'] as $index => $node) {
+                $geometry = $node['attrs']['layout'] ?? ['id' => 'legacy-'.$index, 'x' => 0, 'y' => $bottom, 'width' => $width, 'minHeight' => 0];
+                $bottom = $geometry['y'] + max(14, $geometry['minHeight']) + 4;
+                $blocks[] = $this->printBlock($node, $geometry, $numbers);
+            }
+            $html = (new ContractDocumentPrintLayout)->render($layout, $blocks);
+        } else {
+            $html = $this->html($resolved, $numbers);
+        }
         if (strlen($html) > 10485760) {
             $this->invalid();
         }
 
         return $html;
+    }
+
+    private function printBlock(array $node, array $geometry, array $numbers): array
+    {
+        $block = ['layout' => $geometry, 'html' => $this->html($node, $numbers)];
+        if ($node['type'] !== 'group') {
+            return $block;
+        }
+        $block['children'] = [];
+        $bottom = 0;
+        foreach ($node['content'] as $index => $child) {
+            $childGeometry = $child['attrs']['layout'] ?? ['id' => 'child-'.$index, 'x' => 0, 'y' => $bottom, 'width' => $geometry['width'], 'minHeight' => 0];
+            $bottom = $childGeometry['y'] + max(14, $childGeometry['minHeight']) + 4;
+            $block['children'][] = $this->printBlock($child, $childGeometry, $numbers);
+        }
+
+        return $block;
     }
 
     private function html(array $node, array $numbers): string
@@ -119,7 +150,7 @@ final class ContractDocumentRenderer
             return '<br>';
         }
         if ($node['type'] === 'clauseReference') {
-            if (!isset($numbers[$attrs['target']])) {
+            if (! isset($numbers[$attrs['target']])) {
                 $this->invalid();
             }
 
@@ -128,7 +159,7 @@ final class ContractDocumentRenderer
         $children = implode('', array_map(fn (array $child): string => $this->html($child, $numbers), $node['content'] ?? []));
         $tag = match ($node['type']) {
             'doc' => 'article', 'paragraph' => 'p', 'heading' => 'h'.$attrs['level'],
-            'clause' => 'section', 'orderedList' => 'ol', 'bulletList' => 'ul', 'listItem' => 'li',
+            'clause', 'group' => 'section', 'orderedList' => 'ol', 'bulletList' => 'ul', 'listItem' => 'li',
             'table' => 'table', 'tableRow' => 'tr', 'tableCell' => 'td',
             default => $this->invalid(),
         };
