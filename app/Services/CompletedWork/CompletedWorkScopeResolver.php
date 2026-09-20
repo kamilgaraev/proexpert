@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\CompletedWork;
 
 use App\Domain\Project\ValueObjects\ProjectContext;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
@@ -26,6 +27,7 @@ final class CompletedWorkScopeResolver
     public function __construct(
         private readonly UserProjectAccessService $projectAccess,
         private readonly ProjectContextService $projectContextService,
+        private readonly AuthorizationService $authorization,
     ) {}
 
     public function assertCreate(
@@ -38,7 +40,7 @@ final class CompletedWorkScopeResolver
         $project = $this->assertProject($dto->project_id, $dto->organization_id, $actor, $context);
 
         $this->assertReferences($dto, $project);
-        $this->assertManage($context);
+        $this->assertManage($context, $actor, 'completed_works.create');
     }
 
     public function assertUpdate(
@@ -57,7 +59,7 @@ final class CompletedWorkScopeResolver
 
         $project = $this->assertProject($existingWork->project_id, $existingWork->organization_id, $actor, $context);
         $this->assertReferences($dto, $project);
-        $this->assertManage($context);
+        $this->assertManage($context, $actor, 'completed_works.edit');
     }
 
     public function assertDelete(
@@ -68,7 +70,14 @@ final class CompletedWorkScopeResolver
         $this->assertActor($actor);
         $context ??= $this->contextFor($work->project_id, $actor);
         $this->assertProject($work->project_id, $work->organization_id, $actor, $context);
-        $this->assertManage($context);
+        $this->assertManage($context, $actor, 'completed_works.delete');
+    }
+
+    public function assertCorrection(CompletedWork $work, User $actor, ?ProjectContext $context = null): void
+    {
+        $context ??= $this->contextFor($work->project_id, $actor);
+        $this->assertProject($work->project_id, $work->organization_id, $actor, $context);
+        $this->assertManage($context, $actor, 'completed_works.edit');
     }
 
     public function assertBulk(
@@ -88,9 +97,13 @@ final class CompletedWorkScopeResolver
         }
     }
 
-    private function assertManage(?ProjectContext $context): void
+    private function assertManage(ProjectContext $context, User $actor, string $permission): void
     {
-        if ($context && ! $context->roleConfig->canManageWorks) {
+        if (! $context->roleConfig->canManageWorks || ! $this->authorization->can($actor, $permission, [
+            'project_id' => $context->projectId,
+            'organization_id' => $context->organizationId,
+            'strict_project_scope' => true,
+        ])) {
             throw new BusinessLogicException(trans_message('completed_work.forbidden'), 403);
         }
     }
@@ -107,7 +120,8 @@ final class CompletedWorkScopeResolver
         }
 
         $accessOrganizationId = $context?->organizationId ?? (int) $actor->current_organization_id;
-        if (! $accessOrganizationId || ! $this->projectAccess->canAccessProject($actor, $project, $accessOrganizationId)) {
+        if (! $accessOrganizationId || ! $actor->belongsToOrganization($accessOrganizationId)
+            || ! $this->projectAccess->canAccessProject($actor, $project, $accessOrganizationId)) {
             throw $this->notFound();
         }
 
@@ -179,7 +193,8 @@ final class CompletedWorkScopeResolver
     private function contextFor(int $projectId, User $actor): ProjectContext
     {
         $project = Project::query()->find($projectId);
-        $context = $project ? $this->projectContextService->getContextForUser($project, $actor) : null;
+        $organization = $actor->currentOrganization()->first();
+        $context = $project && $organization ? $this->projectContextService->getContext($project, $organization) : null;
 
         if (! $context) {
             throw $this->notFound();

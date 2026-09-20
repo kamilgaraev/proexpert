@@ -367,12 +367,14 @@ class CompletedWorkController extends Controller
                 return AdminResponse::error(trans_message('completed_work.schedule_task_not_found'), 404);
             }
 
-            $updatedWork = $this->completedWorkFactService->attachToTask($completedWork, $task);
+            $updatedWork = $this->completedWorkFactService->attachToTask($completedWork, $task, $request->user());
 
             return AdminResponse::success(
                 new CompletedWorkResource($updatedWork),
                 trans_message('completed_work.attached_to_schedule')
             );
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
             Log::error('completed_work.attach_schedule_task.error', [
                 'completed_work_id' => $completedWork->id,
@@ -420,6 +422,8 @@ class CompletedWorkController extends Controller
                     'completed_quantity' => $task->completed_quantity !== null ? (float) $task->completed_quantity : null,
                 ],
             ], trans_message('completed_work.schedule_task_created'), Response::HTTP_CREATED);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
             Log::error('completed_work.create_schedule_task.error', [
                 'completed_work_id' => $completedWork->id,

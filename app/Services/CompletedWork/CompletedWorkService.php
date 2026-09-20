@@ -20,7 +20,6 @@ use App\Models\Project;
 use App\Models\PerformanceActLine;
 use App\Models\User;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
-use App\Rules\ProjectAccessibleRule;
 use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Logging\LoggingService;
 use App\Services\Project\ProjectContextService;
@@ -169,20 +168,6 @@ class CompletedWorkService
         ]);
 
         return DB::transaction(function () use ($dto) {
-            // Проверяем, доступен ли проект для текущей организации безопасности
-            $rule = new ProjectAccessibleRule;
-            if (! $rule->passes('project_id', $dto->project_id)) {
-                // SECURITY: Попытка создать работу для недоступного проекта
-                $this->logging->security('completed_work.creation.unauthorized', [
-                    'project_id' => $dto->project_id,
-                    'organization_id' => $dto->organization_id,
-                    'user_id' => request()->user()?->id,
-                    'attempted_by_ip' => request()->ip(),
-                ], 'warning');
-
-                throw new BusinessLogicException('Проект недоступен для вашей организации.', 422);
-            }
-
             $data = $this->prepareFinancialData($dto);
 
             if ($dto->contract_id) {

@@ -23,6 +23,7 @@ final class CompletedWorkWorkflowService
         private readonly ProjectContextService $projectContextService,
         private readonly ContractAuditedMutationService $contractMutations,
         private readonly LoggingService $logging,
+        private readonly CompletedWorkScopeResolver $scopeResolver,
     ) {}
 
     public function confirm(CompletedWork $work, User $actor): CompletedWork
@@ -38,6 +39,7 @@ final class CompletedWorkWorkflowService
             if (! $lockedWork) {
                 throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
             }
+            $this->scopeResolver->assertCorrection($lockedWork, $actor);
 
             $actor->loadMissing('currentOrganization');
             $context = $actor->currentOrganization

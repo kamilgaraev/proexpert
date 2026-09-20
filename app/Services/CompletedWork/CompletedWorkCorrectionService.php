@@ -25,7 +25,7 @@ final class CompletedWorkCorrectionService
         ProjectContext $context,
         array $input,
     ): CompletedWorkCorrection {
-        $this->scopeResolver->assertDelete($work, $actor, $context);
+        $this->scopeResolver->assertCorrection($work, $actor, $context);
 
         if ($work->work_origin_type === CompletedWork::ORIGIN_JOURNAL || $work->journal_entry_id !== null) {
             throw new BusinessLogicException(trans_message('completed_work.correction_required'), 409);

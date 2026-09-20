@@ -15,6 +15,16 @@ final class CompletedWorkCorrectionTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->mock(\App\Modules\Core\AccessController::class)->shouldReceive('hasModuleAccess')->andReturnTrue();
+        $this->app->forgetInstance(\App\Domain\Authorization\Services\ModulePermissionChecker::class);
+        $this->app->forgetInstance(\App\Domain\Authorization\Services\PermissionResolver::class);
+        $this->app->forgetInstance(\App\Domain\Authorization\Services\AuthorizationService::class);
+        \Illuminate\Support\Facades\Http::fake(['nominatim.openstreetmap.org/*' => \Illuminate\Support\Facades\Http::response([], 200)]);
+    }
+
     public function test_manual_correction_records_snapshots_and_moves_fact_to_pending(): void
     {
         $context = AdminApiTestContext::create();
