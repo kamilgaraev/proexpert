@@ -93,12 +93,13 @@ final class ContractBuilderDraftService
             }
             $entitySnapshots = app(ContractEntityCatalog::class)->snapshots($actor, $organizationId, $types, $values, $frozen);
             $frozenValues = $sourceRefreshHash === null ? json_decode($sourceBasis->values, true, 512, JSON_THROW_ON_ERROR) : null;
-            $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $values, $frozenValues);
+            $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $values, $frozenValues, ContractContextSourceFields::forContract($contract));
             if ($sourceRefreshHash !== null && !hash_equals($sourceRefreshHash, $this->sourceHash($entitySnapshots, $sourceValues))) {
                 $this->conflict();
             }
             $resolved = (new ContractFormulaEngine)->calculate($types, $values, ContractEntityCatalog::accessible($entitySnapshots), static fn (string $id): mixed => $sourceValues[$id]);
-            (new ContractDocumentRenderer)->render($document, $definitions, $resolved, $entitySnapshots);
+            (new ContractRevisionTermsCompiler)->compile(['document' => $document, 'definitions' => $definitions,
+                'values' => $resolved, 'entity_snapshots' => $entitySnapshots]);
             $data = [
                 'base_revision_id' => $base->id, 'version' => $expectedVersion + 1,
                 'document' => $this->json($document), 'values' => $this->json((object) $resolved),
@@ -138,7 +139,7 @@ final class ContractBuilderDraftService
         $snapshots = app(ContractEntityCatalog::class)->snapshots($actor, $organizationId,
             array_column($draft['definitions'], 'definition', 'id'), $draft['values']);
         $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId,
-            array_column($draft['definitions'], 'definition', 'id'), $draft['values']);
+            array_column($draft['definitions'], 'definition', 'id'), $draft['values'], null, ContractContextSourceFields::forContract(Contract::findOrFail($contractId)));
         $types = array_column($draft['definitions'], 'definition', 'id');
         $input = array_filter($draft['values'], static fn (string $id): bool => ($types[$id]['source']['kind'] ?? 'manual') === 'manual', ARRAY_FILTER_USE_KEY);
         $updatedValues = (new ContractFormulaEngine)->calculate($types, $input, ContractEntityCatalog::accessible($snapshots), static fn (string $id): mixed => $sourceValues[$id]);

@@ -116,7 +116,7 @@ final class ContractBuilderInstanceService
             $definitions = $resolved['definitions'];
             $types = array_column($definitions, 'definition', 'id');
             $entitySnapshots = app(ContractEntityCatalog::class)->snapshots($actor, $organizationId, $types, $values);
-            $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $values);
+            $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $values, null, ContractContextSourceFields::forContract($contract));
             $resolvedValues = (new ContractFormulaEngine($this->values))->calculate($types, $values, ContractEntityCatalog::accessible($entitySnapshots), static fn (string $id): mixed => $sourceValues[$id]);
             (new ContractDocumentRenderer)->render($resolved['document'], $definitions, $resolvedValues, $entitySnapshots);
             $snapshot = [

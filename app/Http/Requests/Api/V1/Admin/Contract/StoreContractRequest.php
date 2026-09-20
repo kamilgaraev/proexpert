@@ -177,6 +177,11 @@ class StoreContractRequest extends FormRequest
         }
 
         return [
+            'template' => ['sometimes', 'array:template_id,template_version,values,source_hash'],
+            'template.template_id' => ['required_with:template', 'uuid'],
+            'template.template_version' => ['required_with:template', 'integer', 'min:1'],
+            'template.values' => ['present_with:template', 'array', 'max:500'],
+            'template.source_hash' => ['required_with:template', 'string', 'regex:/^[a-f0-9]{64}$/D'],
             'project_id' => $projectIdRules,
             'contract_side_type' => ['required', new Enum(ContractSideTypeEnum::class)],
             'contractor_id' => [

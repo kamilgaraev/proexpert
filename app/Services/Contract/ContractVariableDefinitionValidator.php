@@ -110,6 +110,12 @@ final class ContractVariableDefinitionValidator
                     $this->invalid();
                 }
                 (new ContractFormulaExpression)->references($source['expression']);
+            } elseif (($source['kind'] ?? null) === 'contract_context') {
+                if ($depth !== 0 || !is_string($source['field'] ?? null)
+                    || ContractContextSourceFields::type($source['field']) !== $type
+                    || array_diff(array_keys($source), ['kind', 'field']) !== []) {
+                    $this->invalid();
+                }
             } elseif (($source['kind'] ?? null) === 'entity_field') {
                 if ($depth !== 0 || !is_string($source['variable_id'] ?? null) || !\Illuminate\Support\Str::isUuid($source['variable_id'])
                     || !is_string($source['entity_type'] ?? null) || !is_string($source['field'] ?? null)

@@ -94,7 +94,7 @@ final class ContractEntityCatalog
         return $snapshots;
     }
 
-    public function sourceValues(User $actor, int $organizationId, array $definitions, array $input, ?array $frozenValues = null): array
+    public function sourceValues(User $actor, int $organizationId, array $definitions, array $input, ?array $frozenValues = null, array $context = []): array
     {
         if ((int) $actor->current_organization_id !== $organizationId) {
             throw new AuthorizationException;
@@ -104,6 +104,11 @@ final class ContractEntityCatalog
         $pending = [];
         foreach ($definitions as $id => $definition) {
             $source = $definition['source'] ?? [];
+            if (($source['kind'] ?? null) === 'contract_context') {
+                $values[$id] = $frozenValues !== null && array_key_exists($id, $frozenValues)
+                    ? $frozenValues[$id] : ContractContextSourceFields::value($context, $source['field']);
+                continue;
+            }
             if (($source['kind'] ?? null) !== 'entity_field') {
                 continue;
             }

@@ -1,0 +1,174 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\Contract;
+
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
+use App\Services\Contract\ContractBuilderDraftService;
+use App\Services\Contract\ContractBuilderInstanceService;
+use App\Services\Contract\ContractLibraryService;
+use App\Services\Contract\ContractTemplateCardService;
+use Illuminate\Support\Facades\DB;
+use Tests\TestCase;
+
+final class ContractTemplateCardIntegrationTest extends TestCase
+{
+    use \Tests\Support\EnablesImmutableAuditWriter;
+
+    public function test_template_card_save_replay_read_sources_and_private_revision_are_consistent(): void
+    {
+        [$actor, $input, $ids] = $this->fixture();
+        $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertOk()->json('data');
+        self::assertSame('120.01', $prepared['card']['terms']['total_amount']);
+        self::assertSame(['amount' => '240.02', 'currency' => 'RUB'], $prepared['values'][$ids['formula']]);
+        $payload = [...$input, 'is_fixed_amount' => true, 'base_amount' => 120.01,
+            'idempotency_key' => 'card-one', 'template' => [...$input['template'], 'source_hash' => $prepared['source_hash']]];
+        $saved = $this->postJson('/api/v1/admin/contracts', $payload)->assertCreated()->json('data');
+        $contractId = $saved['id'];
+        $this->postJson('/api/v1/admin/contracts', $payload)->assertOk()->assertJsonPath('data.id', $contractId);
+        $this->postJson('/api/v1/admin/contracts', [...$payload, 'number' => 'CONFLICT'])->assertConflict();
+        self::assertSame(1, Contract::where('number', $input['number'])->count());
+        $contract = Contract::findOrFail($contractId);
+        self::assertSame('120.01', $contract->getRawOriginal('total_amount'));
+        self::assertSame('2026-12-01', substr($contract->getRawOriginal('end_date'), 0, 10));
+        $instances = app(ContractBuilderInstanceService::class);
+        $revision = $instances->read($actor, $actor->current_organization_id, $contractId, 1);
+        self::assertEquals($prepared['values'], $revision['values']);
+        self::assertSame(2, substr_count($instances->preview($actor, $actor->current_organization_id, $contractId, 1)['html'], 'Собственное условие'));
+        $contract->project->update(['name' => 'Новое название проекта']);
+        $drafts = app(ContractBuilderDraftService::class);
+        $draftValues = [...$input['template']['values'], $ids['price'] => ['amount' => '150.01', 'currency' => 'RUB']];
+        $draft = $drafts->save($actor, $actor->current_organization_id, $contractId, 1, 0, $revision['document'], $draftValues, 'draft-one');
+        self::assertSame($prepared['values'][$ids['source']], $draft['values'][$ids['source']]);
+        self::assertSame($draft, $drafts->read($actor, $actor->current_organization_id, $contractId));
+        $card = app(ContractTemplateCardService::class)->read($actor, $actor->current_organization_id, $contractId);
+        self::assertSame('150.01', $card['draft']['card']['terms']['total_amount']);
+        self::assertSame('120.01', $contract->fresh()->getRawOriginal('total_amount'));
+        try {
+            $drafts->save($actor, $actor->current_organization_id, $contractId, 1, 0, $revision['document'], $draftValues, 'stale');
+            self::fail('Stale draft was accepted');
+        } catch (\App\Exceptions\ContractBuilderException $error) {
+            self::assertSame(409, $error->getCode());
+        }
+    }
+
+    public function test_invalid_values_currency_foreign_context_and_changed_sources_leave_no_partial_contract(): void
+    {
+        [, $input, $ids] = $this->fixture();
+        $invalid = $input;
+        $invalid['template']['values'][$ids['price']] = ['amount' => '1', 'currency' => 'USD'];
+        $this->postJson('/api/v1/admin/contracts/template-card/prepare', $invalid)->assertUnprocessable();
+        $invalid['template']['values'][$ids['price']] = ['not' => 'money'];
+        $this->postJson('/api/v1/admin/contracts/template-card/prepare', $invalid)->assertUnprocessable();
+        $foreign = Project::factory()->create();
+        $this->postJson('/api/v1/admin/contracts/template-card/prepare', [...$input, 'project_id' => $foreign->id])->assertForbidden();
+        $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertOk()->json('data');
+        Project::findOrFail($input['project_id'])->update(['name' => 'Изменено до сохранения']);
+        $this->postJson('/api/v1/admin/contracts', [...$input, 'base_amount' => 120.01, 'is_fixed_amount' => true,
+            'idempotency_key' => 'changed-source', 'template' => [...$input['template'], 'source_hash' => $prepared['source_hash']]])->assertConflict();
+        self::assertSame(0, Contract::where('number', $input['number'])->count());
+        self::assertSame(0, DB::table('contract_template_card_operations')->count());
+    }
+
+    public function test_duplicate_assignments_and_late_source_change_roll_back_the_whole_creation(): void
+    {
+        [$actor, $input, $ids] = $this->fixture();
+        $service = app(ContractTemplateCardService::class);
+        $prepared = $service->prepare($actor, $actor->current_organization_id, $input);
+        $duplicateId = '77777777-7777-4777-8777-777777777777';
+        $duplicate = $prepared;
+        $duplicate['definitions'][$duplicateId] = [...$prepared['definitions'][$ids['price']], 'id' => $duplicateId];
+        $duplicate['values'][$duplicateId] = $prepared['values'][$ids['price']];
+        $duplicate['document']['content'][0]['content'][0]['content'][] = ['type' => 'variable', 'attrs' => ['variableId' => $duplicateId]];
+        try {
+            (new \App\Services\Contract\ContractRevisionTermsCompiler)->compile($duplicate);
+            self::fail('Two price assignments were accepted');
+        } catch (\App\Exceptions\ContractBuilderException $error) {
+            self::assertSame('contracts.revision_terms_invalid', $error->messageKey());
+        }
+        Contract::created(static function (Contract $contract): void {
+            $contract->project()->update(['name' => 'Источник изменился внутри записи']);
+        });
+        $before = DB::table('legal_archive_documents')->count();
+        $this->postJson('/api/v1/admin/contracts', [...$input, 'base_amount' => 120.01, 'is_fixed_amount' => true,
+            'idempotency_key' => 'late-source', 'template' => [...$input['template'], 'source_hash' => $prepared['source_hash']]])->assertConflict();
+        self::assertSame(0, Contract::where('number', $input['number'])->count());
+        self::assertSame($before, DB::table('legal_archive_documents')->count());
+        self::assertSame(0, DB::table('contract_builder_instances')->count());
+        self::assertSame(0, DB::table('contract_template_card_operations')->count());
+    }
+
+    public function test_context_sources_are_typed_readonly_and_feed_formulas(): void
+    {
+        $id = '11111111-1111-4111-8111-111111111111';
+        $derived = '22222222-2222-4222-8222-222222222222';
+        $definitions = [
+            $id => ['type' => 'date', 'required' => true, 'source' => ['kind' => 'contract_context', 'field' => 'contract.date']],
+            $derived => ['type' => 'date', 'source' => ['kind' => 'formula', 'expression' => ['kind' => 'reference', 'variable_id' => $id]]],
+        ];
+        self::assertSame('date', \App\Services\Contract\ContractContextSourceFields::type('contract.date'));
+        self::assertNull(\App\Services\Contract\ContractContextSourceFields::type('contract.secret'));
+        $values = (new \App\Services\Contract\ContractFormulaEngine)->calculate($definitions, [], null, static fn (): string => '2026-09-20');
+        self::assertSame('2026-09-20', $values[$derived]);
+        $this->expectException(\App\Exceptions\ContractBuilderException::class);
+        (new \App\Services\Contract\ContractFormulaEngine)->calculate($definitions, [$id => '2025-01-01']);
+    }
+
+    private function fixture(): array
+    {
+        $this->enableImmutableAuditWriter();
+        $authorization = \Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturn(true);
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $owner = Organization::factory()->verified()->create();
+        $actor = User::factory()->create(['current_organization_id' => $owner->id]);
+        $owner->users()->attach($actor->id, ['is_owner' => true, 'is_active' => true]);
+        $project = Project::factory()->create(['organization_id' => $owner->id]);
+        $contractor = Contractor::create(['organization_id' => $owner->id, 'name' => 'Внешний подрядчик']);
+        $this->withoutMiddleware();
+        $this->actingAs($actor, 'api_admin');
+        \Illuminate\Support\Facades\Event::listen(\Illuminate\Routing\Events\RouteMatched::class, static function ($event): void {
+            $event->request->attributes->set('current_organization_id', $event->request->user()?->current_organization_id);
+        });
+        $library = app(ContractLibraryService::class);
+        $ids = [];
+        $definitions = [
+            'custom' => ['type' => 'text', 'required' => true],
+            'price' => ['type' => 'money', 'required' => true, 'constraints' => ['currency' => 'RUB'], 'assignment' => ['target' => 'price']],
+            'end' => ['type' => 'date', 'required' => true, 'assignment' => ['target' => 'schedule', 'field' => 'end_date']],
+            'source' => ['type' => 'text', 'required' => true, 'source' => ['kind' => 'contract_context', 'field' => 'project.name']],
+        ];
+        foreach ($definitions as $name => $definition) {
+            $variable = $library->create($actor, $owner->id, 'variable', $name, $definition, 'variable-'.$name);
+            $ids[$name] = $variable['item']['id'];
+            $library->publish($actor, $owner->id, $ids[$name], 1, 1);
+        }
+        $formula = $library->create($actor, $owner->id, 'variable', 'Расчёт', ['type' => 'money', 'source' => ['kind' => 'formula', 'expression' => [
+            'kind' => 'operation', 'operator' => 'multiply', 'args' => [
+                ['kind' => 'reference', 'variable_id' => $ids['price']], ['kind' => 'literal', 'type' => 'number', 'value' => '2'],
+            ],
+        ]]], 'formula');
+        $ids['formula'] = $formula['item']['id'];
+        $library->publish($actor, $owner->id, $ids['formula'], 1, 1);
+        $nodes = array_map(static fn (string $id): array => ['type' => 'variable', 'attrs' => ['variableId' => $id]], [...array_values($ids), $ids['custom']]);
+        $template = $library->create($actor, $owner->id, 'template', 'Карточка', [
+            'document' => ['type' => 'doc', 'content' => [['type' => 'clause', 'attrs' => ['id' => 'terms'], 'content' => [['type' => 'paragraph', 'content' => $nodes]]]]],
+            'variables' => array_fill_keys(array_values($ids), 1),
+        ], 'template');
+        $library->publish($actor, $owner->id, $template['item']['id'], 1, 1);
+
+        return [$actor, [
+            'project_id' => $project->id, 'contract_side_type' => 'subcontract', 'direction' => 'expense',
+            'contractor_id' => $contractor->id, 'number' => 'TEMPLATE-CARD-1', 'date' => '2026-09-20',
+            'template' => ['template_id' => $template['item']['id'], 'template_version' => 1, 'values' => [
+                $ids['custom'] => 'Собственное условие', $ids['price'] => ['amount' => '120.01', 'currency' => 'RUB'], $ids['end'] => '2026-12-01',
+            ]],
+        ], $ids];
+    }
+}

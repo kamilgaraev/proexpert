@@ -48,7 +48,7 @@ final class ContractFormulaEngine
         }
         $values = [];
         foreach ($definitions as $id => $definition) {
-            if (in_array($definition['source']['kind'] ?? 'manual', ['formula', 'entity_field'], true)) {
+            if (in_array($definition['source']['kind'] ?? 'manual', ['formula', 'entity_field', 'contract_context'], true)) {
                 if (array_key_exists($id, $input)) {
                     throw (new ContractBuilderException('contracts.formula_readonly', 422))->atField('values.'.$id);
                 }
@@ -64,7 +64,7 @@ final class ContractFormulaEngine
         $evaluator = new ContractFormulaEvaluator;
         foreach ($order as $id) {
             $definition = $definitions[$id];
-            if (($definition['source']['kind'] ?? 'manual') === 'entity_field') {
+            if (in_array($definition['source']['kind'] ?? 'manual', ['entity_field', 'contract_context'], true)) {
                 if ($sourceValue === null) {
                     throw (new ContractBuilderException('contracts.variable_value_invalid', 422))->atField('values.'.$id);
                 }

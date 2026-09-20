@@ -5,6 +5,11 @@ use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractTypeProfileController;
 use Illuminate\Support\Facades\Route;
 
+Route::post('contracts/template-card/prepare', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractTemplateCardController::class, 'prepare'])
+    ->middleware('authorize:contracts.create')->name('contracts.template-card.prepare');
+Route::get('contracts/{contract}/template-card', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractTemplateCardController::class, 'show'])
+    ->whereNumber('contract')->middleware('authorize:contracts.view')->name('contracts.template-card.show');
+
 Route::prefix('contract-library')->name('contracts.library.')->group(function (): void {
     Route::get('entities', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractEntityController::class, 'index'])
         ->middleware('authorize:contracts.view')->name('entities');
