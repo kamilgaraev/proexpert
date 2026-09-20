@@ -120,7 +120,27 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         (new \App\Services\Contract\ContractFormulaEngine)->calculate($definitions, [$id => '2025-01-01']);
     }
 
-    private function fixture(): array
+    public function test_positioned_library_block_keeps_layout_values_and_card_terms_through_atomic_save(): void
+    {
+        [$actor, $input, $ids] = $this->fixture(true);
+        $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertOk()->json('data');
+        self::assertSame('group', $prepared['document']['content'][0]['type']);
+        self::assertSame('card-block', $prepared['document']['content'][0]['attrs']['layout']['id']);
+        self::assertStringContainsString('data-contract-print=', $prepared['html']);
+        $saved = $this->postJson('/api/v1/admin/contracts', [...$input, 'is_fixed_amount' => true, 'base_amount' => 120.01,
+            'idempotency_key' => 'positioned-card', 'template' => [...$input['template'], 'source_hash' => $prepared['source_hash']]])->assertCreated()->json('data');
+        $revision = app(ContractBuilderInstanceService::class)->read($actor, $actor->current_organization_id, $saved['id'], 1);
+        self::assertEquals($prepared['document'], $revision['document']);
+        self::assertEquals($prepared['values'], $revision['values']);
+        self::assertSame(['amount' => '240.02', 'currency' => 'RUB'], $revision['values'][$ids['formula']]);
+        $card = $this->getJson('/api/v1/admin/contracts/'.$saved['id'].'/template-card')->assertOk()->json('data');
+        self::assertEquals($prepared['card'], $card['revision']['card']);
+        $contract = Contract::findOrFail($saved['id']);
+        self::assertSame('120.01', $contract->getRawOriginal('total_amount'));
+        self::assertSame('2026-12-01', substr($contract->getRawOriginal('end_date'), 0, 10));
+    }
+
+    private function fixture(bool $positioned = false): array
     {
         $this->enableImmutableAuditWriter();
         $authorization = \Mockery::mock(AuthorizationService::class);
@@ -157,10 +177,24 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         $ids['formula'] = $formula['item']['id'];
         $library->publish($actor, $owner->id, $ids['formula'], 1, 1);
         $nodes = array_map(static fn (string $id): array => ['type' => 'variable', 'attrs' => ['variableId' => $id]], [...array_values($ids), $ids['custom']]);
-        $template = $library->create($actor, $owner->id, 'template', 'Карточка', [
+        $content = [
             'document' => ['type' => 'doc', 'content' => [['type' => 'clause', 'attrs' => ['id' => 'terms'], 'content' => [['type' => 'paragraph', 'content' => $nodes]]]]],
             'variables' => array_fill_keys(array_values($ids), 1),
-        ], 'template');
+        ];
+        if ($positioned) {
+            $block = $library->create($actor, $owner->id, 'block', 'Условия карточки', $content, 'card-block');
+            $library->publish($actor, $owner->id, $block['item']['id'], 1, 1);
+            $content['document'] = ['type' => 'doc', 'attrs' => ['layout' => [
+                'version' => 1, 'page' => ['format' => 'A4', 'orientation' => 'portrait',
+                    'margins' => ['top' => 20, 'right' => 20, 'bottom' => 20, 'left' => 20]],
+                'grid' => ['size' => 5, 'snap' => true, 'visible' => true],
+            ]], 'content' => [['type' => 'blockReference', 'attrs' => [
+                'blockId' => $block['item']['id'], 'version' => 1, 'instanceId' => 'card-copy',
+                'layout' => ['id' => 'card-block', 'x' => 10, 'y' => 15, 'width' => 150, 'minHeight' => 35,
+                    'align' => 'left', 'firstLineIndent' => 5, 'lineHeight' => 1.5, 'spaceAfter' => 3],
+            ]]]];
+        }
+        $template = $library->create($actor, $owner->id, 'template', 'Карточка', $content, 'template');
         $library->publish($actor, $owner->id, $template['item']['id'], 1, 1);
 
         return [$actor, [
