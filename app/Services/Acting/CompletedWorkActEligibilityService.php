@@ -19,6 +19,10 @@ final class CompletedWorkActEligibilityService
             ->where('organization_id', $contract->organization_id)
             ->whereNull('deleted_at')
             ->where('status', CompletedWork::STATUS_CONFIRMED)
+            ->where('quantity', '>=', 0)
+            ->where(function (Builder $query): void {
+                $query->whereNull('completed_quantity')->orWhereColumn('quantity', 'completed_quantity');
+            })
             ->whereBetween('completion_date', [$periodStart, $periodEnd])
             ->whereIn('work_origin_type', [
                 CompletedWork::ORIGIN_MANUAL,

@@ -12,6 +12,7 @@ use App\Models\PerformanceActLine;
 use App\Services\Acting\ActingQuantityStatus;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 use function trans_message;
 
@@ -27,6 +28,10 @@ final class CompletedWorkCorrectionService
     ): CompletedWorkCorrection {
         $this->scopeResolver->assertCorrection($work, $actor, $context);
 
+        if (Validator::make($input, CompletedWorkCorrectionRules::all())->fails()) {
+            throw new BusinessLogicException(trans_message('completed_work.correction_required'), 422);
+        }
+
         if ($work->work_origin_type === CompletedWork::ORIGIN_JOURNAL || $work->journal_entry_id !== null) {
             throw new BusinessLogicException(trans_message('completed_work.correction_required'), 409);
         }
@@ -36,7 +41,7 @@ final class CompletedWorkCorrectionService
         if (array_key_exists('completed_quantity', $input) && abs($completedQuantity - $quantity) > 0.0000001) {
             throw new BusinessLogicException(trans_message('completed_work.correction_required'), 422);
         }
-        if ($quantity < 0) {
+        if (! is_finite($quantity) || ! is_finite($completedQuantity) || $quantity < 0 || $quantity >= 100000000000000) {
             throw new BusinessLogicException(trans_message('completed_work.correction_required'), 422);
         }
 

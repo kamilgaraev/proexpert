@@ -36,6 +36,7 @@ class JournalScheduleIntegrationService
         $progress = (float) $task->progress_percent;
         $plannedQuantity = (float) ($task->estimateItem?->quantity_total ?? $task->quantity ?? 0);
         $facts = CompletedWork::query()
+            ->physicalFacts()
             ->effectiveForSchedule()
             ->where('schedule_task_id', $task->id)
             ->where('status', 'confirmed')
@@ -65,7 +66,7 @@ class JournalScheduleIntegrationService
 
         if ($plannedQuantity > 0) {
             foreach ($orderedFacts as $fact) {
-                $completedQuantity += (float) ($fact->completed_quantity ?? $fact->quantity ?? 0);
+                $completedQuantity += $fact->effectiveCompletedQuantity();
                 if ($completedQuantity >= $plannedQuantity) {
                     $end = Carbon::parse($fact->completion_date);
                     break;

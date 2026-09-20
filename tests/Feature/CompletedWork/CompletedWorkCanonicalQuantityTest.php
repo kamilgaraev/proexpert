@@ -25,6 +25,7 @@ final class CompletedWorkCanonicalQuantityTest extends TestCase
         $response = $this->withHeaders($context->authHeaders())->postJson(
             "/api/v1/admin/projects/{$project->id}/works",
             ['project_id' => $project->id, 'quantity' => 10, 'price' => 50,
+                'additional_info' => ['schedule_auto_draft' => true],
                 'completion_date' => '2026-09-20', 'status' => 'pending'],
         );
 
@@ -33,6 +34,7 @@ final class CompletedWorkCanonicalQuantityTest extends TestCase
         self::assertSame('10.0000', $work->completed_quantity);
         self::assertSame('500.00', $work->total_amount);
         self::assertSame(10.0, $work->effectiveCompletedQuantity());
+        self::assertArrayNotHasKey('schedule_auto_draft', $work->additional_info);
     }
 
     public function test_conflicting_quantities_cannot_create_a_new_fact(): void
@@ -89,6 +91,45 @@ final class CompletedWorkCanonicalQuantityTest extends TestCase
         self::assertNull($work->fresh()->deleted_at);
     }
 
+    public function test_reserved_fact_rejects_reduction_unconfirmation_and_deletion_through_api(): void
+    {
+        [$context, $project] = $this->context();
+        $contractor = \App\Models\Contractor::query()->create([
+            'organization_id' => $context->organization->id, 'name' => 'Подрядчик',
+        ]);
+        $contract = \App\Models\Contract::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'contractor_id' => $contractor->id, 'number' => 'PROTECTED-FACT',
+            'date' => '2026-09-20', 'status' => 'active', 'total_amount' => 1000,
+        ]);
+        $unit = MeasurementUnit::query()->where('organization_id', $context->organization->id)->firstOrFail();
+        $workType = \App\Models\WorkType::query()->create([
+            'organization_id' => $context->organization->id, 'name' => 'Работа',
+            'measurement_unit_id' => $unit->id,
+        ]);
+        $work = $this->fact($context, $project, [
+            'contract_id' => $contract->id, 'work_type_id' => $workType->id,
+            'planning_status' => CompletedWork::PLANNING_PLANNED,
+        ]);
+        $act = app(\App\Services\Acting\ActingActWizardService::class)->createFromWizard(
+            $context->organization->id,
+            ['contract_id' => $contract->id, 'act_document_number' => 'RESERVE-8',
+                'act_date' => '2026-09-20', 'period_start' => '2026-09-01', 'period_end' => '2026-09-30',
+                'selected_works' => [['completed_work_id' => $work->id, 'quantity' => '8']]],
+            $context->user->id,
+            false,
+        );
+        $url = "/api/v1/admin/projects/{$project->id}/works/{$work->id}";
+        foreach ([['quantity' => 3, 'completed_quantity' => 3], ['status' => CompletedWork::STATUS_PENDING]] as $changes) {
+            $this->withHeaders($context->authHeaders())->putJson($url, $changes)->assertUnprocessable();
+        }
+        $this->withHeaders($context->authHeaders())->deleteJson($url)->assertUnprocessable();
+        self::assertSame('10.0000', $work->fresh()->completed_quantity);
+        self::assertSame(CompletedWork::STATUS_CONFIRMED, $work->fresh()->status);
+        self::assertNull($work->fresh()->deleted_at);
+        self::assertSame(8.0, (float) $act->lines()->sum('quantity'));
+    }
+
     public function test_legacy_fact_without_completed_quantity_remains_in_estimate_progress(): void
     {
         [$context, $project] = $this->context();
@@ -108,6 +149,68 @@ final class CompletedWorkCanonicalQuantityTest extends TestCase
 
         self::assertSame(10.0, $work->effectiveCompletedQuantity());
         self::assertSame(10.0, $item->getActualVolume());
+    }
+
+    public function test_direct_service_cannot_create_negative_fact_and_api_rejects_excess_precision(): void
+    {
+        [$context, $project] = $this->context();
+        $dto = \App\DTOs\CompletedWork\CompletedWorkDTO::fromModel(CompletedWork::make([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'quantity' => -1, 'completed_quantity' => -1, 'completion_date' => '2026-09-20',
+            'status' => CompletedWork::STATUS_PENDING, 'work_origin_type' => CompletedWork::ORIGIN_MANUAL,
+            'planning_status' => CompletedWork::PLANNING_REQUIRES_SCHEDULE,
+        ]));
+        try {
+            app(\App\Services\CompletedWork\CompletedWorkService::class)->create($dto, null, $context->user);
+            self::fail('Negative facts must not bypass HTTP validation.');
+        } catch (\App\Exceptions\BusinessLogicException $exception) {
+            self::assertSame(422, $exception->getCode());
+        }
+        foreach (['10.00001', '100000000000000'] as $quantity) {
+            $this->withHeaders($context->authHeaders())->postJson(
+                "/api/v1/admin/projects/{$project->id}/works",
+                ['project_id' => $project->id, 'quantity' => $quantity, 'price' => 50,
+                    'completion_date' => '2026-09-20', 'status' => 'pending'],
+            )->assertUnprocessable();
+        }
+        self::assertSame(0, CompletedWork::query()->where('project_id', $project->id)->count());
+    }
+
+    public function test_conflicting_historical_fact_is_marked_for_review_and_cannot_be_silently_overwritten(): void
+    {
+        [$context, $project] = $this->context();
+        $work = $this->fact($context, $project, [
+            'quantity' => 100, 'completed_quantity' => 10, 'status' => CompletedWork::STATUS_PENDING,
+        ]);
+        $this->withHeaders($context->authHeaders())->getJson(
+            "/api/v1/admin/projects/{$project->id}/works/{$work->id}",
+        )->assertOk()->assertJsonPath('data.quantity_conflict', true)
+            ->assertJsonPath('data.reconciliation_issues.0', 'quantity_conflict');
+
+        $this->withHeaders($context->authHeaders())->putJson(
+            "/api/v1/admin/projects/{$project->id}/works/{$work->id}",
+            ['project_id' => $project->id, 'quantity' => 10, 'completed_quantity' => 10],
+        )->assertUnprocessable();
+        self::assertSame('100.0000', $work->fresh()->quantity);
+        self::assertSame('10.0000', $work->fresh()->completed_quantity);
+    }
+
+    public function test_journal_origin_can_only_be_created_from_the_journal_workflow(): void
+    {
+        [$context, $project] = $this->context();
+        $dto = \App\DTOs\CompletedWork\CompletedWorkDTO::fromModel(CompletedWork::make([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'quantity' => 10, 'completed_quantity' => 10, 'completion_date' => '2026-09-20',
+            'status' => CompletedWork::STATUS_PENDING, 'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
+            'planning_status' => CompletedWork::PLANNING_PLANNED,
+        ]));
+        try {
+            app(\App\Services\CompletedWork\CompletedWorkService::class)->create($dto, null, $context->user);
+            self::fail('Ordinary CRUD must not manufacture journal facts.');
+        } catch (\App\Exceptions\BusinessLogicException $exception) {
+            self::assertSame(422, $exception->getCode());
+        }
+        self::assertSame(0, CompletedWork::query()->where('project_id', $project->id)->count());
     }
 
     private function fact(AdminApiTestContext $context, Project $project, array $overrides = []): CompletedWork

@@ -107,7 +107,7 @@ final class CompletedWorkWorkflowService
             throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
         }
 
-        if ($work->work_origin_type === CompletedWork::ORIGIN_MANUAL && ($work->schedule_task_id !== null || $work->journal_entry_id !== null)) {
+        if ($work->work_origin_type === CompletedWork::ORIGIN_MANUAL && $work->journal_entry_id !== null) {
             throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
         }
 

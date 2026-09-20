@@ -17,14 +17,12 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
-use App\Models\PerformanceActLine;
 use App\Models\User;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Logging\LoggingService;
 use App\Services\Project\ProjectContextService;
 use App\Services\RateCoefficient\RateCoefficientService;
-use App\Services\Acting\ActingQuantityStatus;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -51,6 +49,7 @@ class CompletedWorkService
         ProjectContextService $projectContextService,
         ContractAuditedMutationService $contractMutations,
         CompletedWorkScopeResolver $scopeResolver,
+        private readonly CompletedWorkMutationGuard $mutationGuard,
     ) {
         $this->completedWorkRepository = $completedWorkRepository;
         $this->rateCoefficientService = $rateCoefficientService;
@@ -322,16 +321,7 @@ class CompletedWorkService
 
     private function assertOrdinaryMutationAllowed(CompletedWork $work): void
     {
-        $activeAct = static fn ($query) => $query->where(function ($query): void {
-            $query->whereNull('status')->orWhereNotIn('status', ActingQuantityStatus::releasedStatuses());
-        });
-        if ($work->status === CompletedWork::STATUS_CONFIRMED
-            || $work->work_origin_type === CompletedWork::ORIGIN_JOURNAL
-            || $work->performanceActs()->where($activeAct)->exists()
-            || PerformanceActLine::query()->where('completed_work_id', $work->id)
-                ->whereHas('performanceAct', $activeAct)->exists()) {
-            throw new BusinessLogicException(trans_message('completed_work.correction_required'), 422);
-        }
+        $this->mutationGuard->assertMutable($work);
     }
 
     private function prepareUpdatedFinancialData(CompletedWork $work, CompletedWorkDTO $dto): array
@@ -371,6 +361,11 @@ class CompletedWorkService
 
     private function prepareFinancialData(CompletedWorkDTO $dto, bool $applyCoefficients = true, array $financialOverrides = []): array
     {
+        if (! is_finite($dto->quantity) || $dto->quantity < 0 || $dto->quantity >= 100000000000000
+            || round($dto->quantity, 4) !== $dto->quantity
+            || ($dto->completed_quantity !== null && ! is_finite($dto->completed_quantity))) {
+            throw new BusinessLogicException(trans_message('completed_work.quantity_invalid'), 422);
+        }
         if ($dto->completed_quantity !== null && abs($dto->completed_quantity - $dto->quantity) > 0.0000001) {
             throw new BusinessLogicException(trans_message('completed_work.quantity_conflict'), 422);
         }
@@ -378,7 +373,7 @@ class CompletedWorkService
         $data['completed_quantity'] = $dto->quantity;
         unset($data['materials']);
         $data['additional_info'] = $data['additional_info'] ?? [];
-        unset($data['additional_info']['financial_calculation']);
+        unset($data['additional_info']['financial_calculation'], $data['additional_info']['schedule_auto_draft']);
 
         if ($data['price'] === null && $data['total_amount'] !== null && $data['quantity'] > 0) {
             $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
@@ -453,6 +448,9 @@ class CompletedWorkService
 
     private function assertCreateSourcePolicy(CompletedWorkDTO $dto): void
     {
+        if ($dto->work_origin_type === CompletedWork::ORIGIN_JOURNAL || $dto->journal_entry_id !== null) {
+            throw new BusinessLogicException(trans_message('completed_work.origin_immutable'), 422);
+        }
         if ($dto->status === CompletedWork::STATUS_CONFIRMED) {
             throw new BusinessLogicException(trans_message('completed_work.confirm_requires_operation'), 422);
         }
@@ -465,7 +463,7 @@ class CompletedWorkService
             throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
         }
 
-        if ($dto->work_origin_type === CompletedWork::ORIGIN_MANUAL && ($dto->schedule_task_id !== null || $dto->journal_entry_id !== null)) {
+        if ($dto->work_origin_type === CompletedWork::ORIGIN_MANUAL && $dto->journal_entry_id !== null) {
             throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
         }
 
@@ -486,10 +484,6 @@ class CompletedWorkService
 
         if ($dto->work_origin_type !== $existingOrigin || $dto->journal_entry_id !== $existingWork->journal_entry_id) {
             throw new BusinessLogicException(trans_message('completed_work.origin_immutable'), 422);
-        }
-
-        if ($existingOrigin === CompletedWork::ORIGIN_MANUAL && $dto->schedule_task_id !== null) {
-            throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
         }
 
         if ($existingOrigin === CompletedWork::ORIGIN_SCHEDULE && $dto->schedule_task_id === null) {

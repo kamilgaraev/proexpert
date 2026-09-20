@@ -35,6 +35,7 @@ class CompletedWorkFactService
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly JournalScheduleTaskResolver $scheduleTaskResolver,
         private readonly CompletedWorkScopeResolver $scopeResolver,
+        private readonly CompletedWorkMutationGuard $mutationGuard,
     ) {}
 
     public function syncFromJournalEntry(ConstructionJournalEntry $entry): void
@@ -54,7 +55,7 @@ class CompletedWorkFactService
                 'equipment.estimateItem.contractLinks.contract.contractor',
                 'workers.estimateItem.contractLinks.contract.contractor',
             ]);
-            $existingWorks = $entry->completedWorks()->orderBy('id')->get();
+            $existingWorks = $entry->completedWorks()->orderBy('id')->lockForUpdate()->get();
             $duplicateVolumeIds = $existingWorks
                 ->whereNotNull('journal_work_volume_id')
                 ->groupBy('journal_work_volume_id')
@@ -112,6 +113,7 @@ class CompletedWorkFactService
                     ?? $legacyWorks->shift()
                     ?? new CompletedWork;
                 $completedWork->fill($payload);
+                $this->assertJournalFactChangeAllowed($completedWork);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
 
@@ -126,6 +128,7 @@ class CompletedWorkFactService
                 /** @var CompletedWork $completedWork */
                 $completedWork = $worksByMaterialId->get($material->id) ?? new CompletedWork;
                 $completedWork->fill($payload);
+                $this->assertJournalFactChangeAllowed($completedWork);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
             }
@@ -136,6 +139,7 @@ class CompletedWorkFactService
                 /** @var CompletedWork $completedWork */
                 $completedWork = $worksByEquipmentId->get($equipmentItem->id) ?? new CompletedWork;
                 $completedWork->fill($payload);
+                $this->assertJournalFactChangeAllowed($completedWork);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
             }
@@ -146,6 +150,7 @@ class CompletedWorkFactService
                 /** @var CompletedWork $completedWork */
                 $completedWork = $worksByWorkerId->get($worker->id) ?? new CompletedWork;
                 $completedWork->fill($payload);
+                $this->assertJournalFactChangeAllowed($completedWork);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
             }
@@ -159,6 +164,7 @@ class CompletedWorkFactService
                         $syncedTaskIds->push((int) $completedWork->schedule_task_id);
                     }
 
+                    $this->mutationGuard->assertNotActed($completedWork);
                     $completedWork->delete();
                 });
 
@@ -171,13 +177,16 @@ class CompletedWorkFactService
 
     public function deleteJournalEntryFacts(ConstructionJournalEntry $entry): void
     {
-        $taskIds = $entry->completedWorks()
-            ->whereNotNull('schedule_task_id')
-            ->pluck('schedule_task_id')
-            ->map(fn ($id) => (int) $id)
-            ->unique();
-
-        DB::transaction(function () use ($entry, $taskIds): void {
+        DB::transaction(function () use ($entry): void {
+            $entry = ConstructionJournalEntry::query()->whereKey($entry->id)->lockForUpdate()->firstOrFail();
+            if ($entry->status !== JournalEntryStatusEnum::DRAFT || $entry->approvalEvents()->exists()) {
+                throw new BusinessLogicException(trans_message('completed_work.correction_required'), 422);
+            }
+            $works = $entry->completedWorks()->orderBy('id')->lockForUpdate()->get();
+            $works->each(function (CompletedWork $work): void {
+                $this->mutationGuard->assertNotActed($work);
+            });
+            $taskIds = $works->pluck('schedule_task_id')->filter()->map(fn ($id) => (int) $id)->unique();
             $entry->completedWorks()->delete();
 
             $taskIds->each(fn (int $taskId) => $this->syncTaskById($taskId));
@@ -368,6 +377,7 @@ class CompletedWorkFactService
                 'work_type_id' => $completedWork->work_type_id ?? $task->work_type_id,
             ]);
             $this->scopeResolver->assertUpdate($completedWork, CompletedWorkDTO::fromModel($candidate), $actor);
+            $this->mutationGuard->assertMutable($completedWork);
             $previousTaskId = $completedWork->schedule_task_id;
             $completedWork->forceFill([
                 'schedule_task_id' => $task->id,
@@ -413,6 +423,7 @@ class CompletedWorkFactService
                 throw new BusinessLogicException(trans_message('completed_work.schedule_not_found'), 404);
             }
             $this->scopeResolver->assertUpdate($completedWork, CompletedWorkDTO::fromModel($completedWork), $actor);
+            $this->mutationGuard->assertMutable($completedWork);
             $completedWork->loadMissing(['estimateItem.measurementUnit', 'workType']);
 
             $quantity = (float) ($completedWork->quantity ?? $completedWork->completed_quantity ?? 0);
@@ -734,6 +745,13 @@ class CompletedWorkFactService
 
         if ($task) {
             $this->scheduleTaskCompletedWorkService->syncCompletedQuantity($task);
+        }
+    }
+
+    private function assertJournalFactChangeAllowed(CompletedWork $work): void
+    {
+        if ($work->exists && $work->isDirty()) {
+            $this->mutationGuard->assertNotActed($work);
         }
     }
 

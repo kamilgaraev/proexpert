@@ -157,6 +157,27 @@ final class ActingQuantityConcurrencyTest extends TestCase
         self::assertSame(7.0, $rows[0]['reserved_quantity']);
     }
 
+    public function test_reserved_fact_stays_immutable_even_with_legacy_pending_status(): void
+    {
+        foreach (['canonical', 'legacy'] as $representation) {
+            [$contract, $work] = $this->fixture();
+            $act = $this->act($contract, $work, '8');
+            $work->forceFill(['status' => CompletedWork::STATUS_PENDING])->saveQuietly();
+            if ($representation === 'canonical') {
+                DB::table('performance_act_completed_works')->where('performance_act_id', $act->id)->delete();
+            } else {
+                $act->lines()->delete();
+            }
+            try {
+                app(\App\Services\CompletedWork\CompletedWorkMutationGuard::class)->assertMutable($work->fresh());
+                self::fail('An active reservation must protect a fact regardless of legacy status.');
+            } catch (BusinessLogicException $exception) {
+                self::assertSame(422, $exception->getCode(), $representation);
+            }
+            self::assertSame('10.0000', $work->fresh()->quantity);
+        }
+    }
+
     private function fixture(): array
     {
         $organization = Organization::factory()->create();

@@ -126,6 +126,92 @@ final class CompletedWorkScheduleScopeTest extends TestCase
         $this->assertDatabaseHas('completed_works', ['id' => $work->id, 'schedule_task_id' => $task->id, 'project_id' => $project->id]);
     }
 
+    public function test_attached_manual_fact_can_be_confirmed_without_rewriting_its_origin(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $project->users()->syncWithoutDetaching([$context->user->id => ['role' => 'member', 'is_active' => true]]);
+        $schedule = $this->schedule($project, $context->user->id);
+        $task = $this->task($schedule, $context->user->id, 0);
+        $work = $this->work($context->organization->id, $project->id);
+        $work = app(CompletedWorkFactService::class)->attachToTask($work, $task, $context->user);
+        self::assertSame(2.0, (float) $work->quantity);
+        self::assertSame(CompletedWork::ORIGIN_MANUAL, $work->work_origin_type);
+        $confirmed = app(\App\Services\CompletedWork\CompletedWorkWorkflowService::class)->confirm($work, $context->user);
+
+        self::assertSame(CompletedWork::STATUS_CONFIRMED, $confirmed->status);
+        self::assertSame(CompletedWork::ORIGIN_MANUAL, $confirmed->work_origin_type);
+        self::assertSame($task->id, $confirmed->schedule_task_id);
+    }
+
+    public function test_confirmed_and_journal_facts_cannot_be_relinked_by_schedule_commands(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $project->users()->syncWithoutDetaching([$context->user->id => ['role' => 'member', 'is_active' => true]]);
+        $schedule = $this->schedule($project, $context->user->id);
+        $task = $this->task($schedule, $context->user->id, 0);
+        foreach ([['status' => CompletedWork::STATUS_CONFIRMED], ['work_origin_type' => CompletedWork::ORIGIN_JOURNAL]] as $attributes) {
+            $work = $this->work($context->organization->id, $project->id);
+            $work->forceFill($attributes)->save();
+            foreach ([
+                fn () => app(CompletedWorkFactService::class)->attachToTask($work, $task, $context->user),
+                fn () => app(CompletedWorkFactService::class)->createTaskFromWork($work, $schedule, $context->user->id),
+            ] as $operation) {
+                try {
+                    $operation();
+                    self::fail('A protected fact must not change through schedule commands.');
+                } catch (BusinessLogicException $exception) {
+                    self::assertSame(422, $exception->getCode());
+                }
+                self::assertNull($work->fresh()->schedule_task_id);
+            }
+        }
+        self::assertSame(1, ScheduleTask::query()->where('schedule_id', $schedule->id)->count());
+    }
+
+    public function test_task_completion_and_cancellation_do_not_rewrite_actual_work(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $project->users()->syncWithoutDetaching([$context->user->id => ['role' => 'member', 'is_active' => true]]);
+        $schedule = $this->schedule($project, $context->user->id);
+        $task = $this->task($schedule, $context->user->id, 0);
+        $work = app(CompletedWorkFactService::class)->attachToTask($this->work($context->organization->id, $project->id), $task, $context->user);
+
+        foreach (['completed', 'cancelled'] as $status) {
+            $task->refresh()->update(['status' => $status, 'progress_percent' => 100]);
+            $work->refresh();
+            self::assertSame(CompletedWork::STATUS_PENDING, $work->status);
+            self::assertSame(CompletedWork::ORIGIN_MANUAL, $work->work_origin_type);
+            self::assertSame(2.0, (float) $work->quantity);
+        }
+    }
+
+    public function test_schedule_proposal_uses_actual_quantity_and_stops_sync_after_confirmation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $project->users()->syncWithoutDetaching([$context->user->id => ['role' => 'member', 'is_active' => true]]);
+        $task = $this->task($this->schedule($project, $context->user->id), $context->user->id, 4);
+        $service = app(\App\Services\Schedule\ScheduleTaskSyncService::class);
+        $work = $service->autoCreateCompletedWork($task);
+        self::assertNotNull($work);
+        self::assertSame(4.0, (float) $work->quantity);
+        self::assertSame($work->quantity, $work->completed_quantity);
+        self::assertSame(CompletedWork::STATUS_DRAFT, $work->status);
+        self::assertNull($service->autoCreateCompletedWork($task->fresh()));
+
+        $task->refresh()->update(['completed_quantity' => 5, 'progress_percent' => 50]);
+        self::assertSame(5.0, (float) $work->fresh()->quantity);
+        app(\App\Services\CompletedWork\CompletedWorkWorkflowService::class)->confirm($work->fresh(), $context->user);
+        $task->refresh()->update(['status' => 'completed', 'progress_percent' => 100]);
+
+        self::assertSame(5.0, (float) $work->fresh()->quantity);
+        self::assertSame(CompletedWork::STATUS_CONFIRMED, $work->fresh()->status);
+        self::assertSame(1, CompletedWork::query()->where('schedule_task_id', $task->id)->count());
+    }
+
     private function work(int $organizationId, int $projectId): CompletedWork
     {
         return CompletedWork::query()->create([

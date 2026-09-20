@@ -6,6 +6,16 @@
          cacheDirectory=".phpunit.cache/postgres"
 >
     <testsuites>
+        <testsuite name="ConstructionAccounting">
+            <file>tests/Feature/Acting/ActingQuantityConcurrencyTest.php</file>
+            <file>tests/Feature/CompletedWork/CompletedWorkPhysicalProgressTest.php</file>
+            <file>tests/Feature/CompletedWork/CompletedWorkScheduleScopeTest.php</file>
+            <file>tests/Feature/CompletedWork/CompletedWorkBulkScopeTest.php</file>
+            <file>tests/Feature/CompletedWork/CompletedWorkCanonicalQuantityTest.php</file>
+            <file>tests/Feature/CompletedWork/CompletedWorkScopeRegressionTest.php</file>
+            <file>tests/Feature/CompletedWork/JournalFactIdempotencyTest.php</file>
+            <file>tests/Feature/CompletedWork/CompletedWorkCorrectionTest.php</file>
+        </testsuite>
         <testsuite name="ContractFoundation">
             <file>tests/Feature/Contract/ContractLibraryApiTest.php</file>
             <file>tests/Feature/Contract/ContractLibraryPersistenceTest.php</file>

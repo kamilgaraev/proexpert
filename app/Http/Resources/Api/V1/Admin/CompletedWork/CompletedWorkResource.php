@@ -86,6 +86,8 @@ class CompletedWorkResource extends JsonResource
             ]),
             'quantity' => $this->quantity !== null ? (float) $this->quantity : null,
             'completed_quantity' => $completedQuantity,
+            'quantity_conflict' => $this->hasQuantityConflict(),
+            'reconciliation_issues' => $this->hasQuantityConflict() ? ['quantity_conflict'] : [],
             'price' => $price,
             'total_amount' => $totalAmount,
             'completion_date' => $this->completion_date->format('Y-m-d'),

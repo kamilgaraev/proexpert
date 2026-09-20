@@ -136,5 +136,18 @@ final class CompletedWorkCorrectionTest extends TestCase
                 'source_event_id' => '999999',
             ],
         )->assertUnprocessable();
+
+        foreach ([['source_event_id' => 'abc'], ['source_event_id' => '0'], ['quantity' => '8.00001']] as $invalidInput) {
+            $this->withHeaders($context->authHeaders())->postJson(
+                "/api/v1/admin/projects/{$project->id}/works/{$work->id}/correction",
+                array_replace([
+                    'operation_key' => 'correction-invalid-input',
+                    'expected_version' => CompletedWorkRevisionToken::forWork($work),
+                    'reason' => 'Проверка формата исходного события и точности объёма',
+                    'quantity' => 8,
+                ], $invalidInput),
+            )->assertUnprocessable();
+        }
+        $this->assertDatabaseMissing('completed_work_corrections', ['completed_work_id' => $work->id]);
     }
 }

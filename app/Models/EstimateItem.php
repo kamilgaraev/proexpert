@@ -211,7 +211,7 @@ class EstimateItem extends Model
      */
     public function getActualVolume(?int $contractId = null): float
     {
-        $completedWorksQuery = $this->completedWorks()->effectiveForSchedule();
+        $completedWorksQuery = $this->completedWorks()->physicalFacts()->effectiveForSchedule();
 
         if ($contractId !== null) {
             $contractLinksCount = $this->contractLinks()->count();
@@ -225,9 +225,9 @@ class EstimateItem extends Model
             });
         }
 
-        $completedWorksSum = (float) $completedWorksQuery->sum(\Illuminate\Support\Facades\DB::raw('COALESCE(completed_quantity, quantity, 0)'));
+        $completedWorksSum = (float) $completedWorksQuery->sum(\Illuminate\Support\Facades\DB::raw(CompletedWork::EFFECTIVE_QUANTITY_SQL));
 
-        if ($contractId !== null || $completedWorksSum > 0 || $this->completedWorks()->exists()) {
+        if ($contractId !== null || $completedWorksSum > 0 || $this->completedWorks()->physicalFacts()->exists()) {
             return $completedWorksSum;
         }
 
