@@ -251,6 +251,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         require __DIR__.'/api/v1/admin/personal_files.php';
         require __DIR__.'/api/v1/admin/report_files.php';
         require __DIR__.'/api/v1/admin/act_reports.php';
+        require __DIR__.'/api/v1/admin/material_consumption.php';
         require __DIR__.'/api/v1/admin/act_files.php';
         require __DIR__.'/api/v1/admin/advance_settings.php';
         // Подключаем маршруты для учета времени

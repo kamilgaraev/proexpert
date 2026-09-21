@@ -283,9 +283,9 @@ final class ReportDefinitionRegistryTest extends TestCase
         ], $registry->codes());
         self::assertSame('official_material_usage_m29', $definition->code);
         self::assertSame('reports.official.official_material_usage_m29', $definition->titleKey);
-        self::assertSame('blocked', $definition->publicationReadiness->value);
-        self::assertSame('1.0.0', $definition->rendererVersion);
-        self::assertSame('unassigned', $definition->legalRetentionPolicy);
+        self::assertSame('candidate', $definition->publicationReadiness->value);
+        self::assertSame('1.1.0', $definition->rendererVersion);
+        self::assertSame('project_material_consumption', $definition->legalRetentionPolicy);
         self::assertCount(7, $definition->sealRequires);
         self::assertSame($manifest->bytesHash->value, $registry->manifestSha256()->value);
 

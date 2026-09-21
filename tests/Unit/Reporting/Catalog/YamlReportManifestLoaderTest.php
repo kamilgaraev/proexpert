@@ -57,7 +57,7 @@ final class YamlReportManifestLoaderTest extends TestCase
             'official_material_usage_m29', 'official_hidden_work_act', 'official_axis_layout_act',
             'official_geodetic_base_acceptance_act', 'official_responsible_structure_act', 'official_engineering_network_section_act',
         ], array_column($manifest->definitions, 'code'));
-        self::assertSame('blocked', $manifest->definitions[0]['publication_readiness']);
+        self::assertSame('candidate', $manifest->definitions[0]['publication_readiness']);
         self::assertCount(7, $manifest->definitions[0]['seal_requires']);
         self::assertSame('candidate', $manifest->definitions[1]['publication_readiness']);
     }
