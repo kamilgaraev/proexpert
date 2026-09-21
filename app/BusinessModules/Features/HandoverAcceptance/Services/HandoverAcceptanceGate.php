@@ -23,7 +23,7 @@ final readonly class HandoverAcceptanceGate
 
     public function evaluate(AcceptanceScope $scope, bool $forHandover = false): array
     {
-        $scope->load(['checklists.items', 'findings', 'handoverPackage.documents.executiveDocumentVersion.document', 'handoverPackage.executiveDocumentSet', 'workQuantities.completedWork.estimateItem', 'workQuantities.completedWork.workType']);
+        $scope->load(['checklists.items', 'findings.workRework', 'workReworks', 'handoverPackage.documents.executiveDocumentVersion.document', 'handoverPackage.executiveDocumentSet', 'workQuantities.completedWork.estimateItem', 'workQuantities.completedWork.workType']);
         $requiredChecks = [];
         $checklistFacts = [];
         $documentCodes = [];
@@ -54,12 +54,28 @@ final readonly class HandoverAcceptanceGate
             }
         }
         foreach ($scope->findings as $finding) {
+            if (! $forHandover && $finding->workRework !== null
+                && (int) $finding->workRework->acceptance_scope_id === (int) $scope->id
+                && (int) $finding->workRework->organization_id === (int) $scope->organization_id) {
+                continue;
+            }
             if ($finding->status !== 'resolved') {
                 $evidence[] = new HandoverEvidenceFact('finding_opened', 'finding', $finding->id, null, 'open', CarbonImmutable::now());
                 $blockers[] = $this->blocker($scope, 'open_findings_block_accept', 'finding', $finding->id);
             }
         }
         $package = $scope->handoverPackage;
+        if ($forHandover) {
+            foreach ($scope->workReworks as $rework) {
+                if ($rework->status !== 'accepted') {
+                    $blockers[] = [
+                        'code' => 'work_rework_open', 'scope_id' => $scope->id, 'stage' => 'transmission',
+                        'message' => trans_message('work_rework.errors.findings_open'),
+                        'target' => ['type' => 'work_rework', 'id' => $rework->id],
+                    ];
+                }
+            }
+        }
         $set = $package?->executiveDocumentSet;
         $requirementSnapshot = [];
         if ($package?->executive_document_set_id !== null) {

@@ -7,6 +7,9 @@
 >
     <testsuites>
         <testsuite name="ConstructionAccounting">
+            <file>tests/Feature/HandoverAcceptance/WorkReworkBoundaryTest.php</file>
+            <file>tests/Feature/HandoverAcceptance/WorkReworkAccountingTest.php</file>
+            <file>tests/Feature/HandoverAcceptance/WorkReworkFinancialImpactTest.php</file>
             <file>tests/Unit/Acting/ActingAvailabilityServiceTest.php</file>
             <file>tests/Feature/HandoverAcceptance/PartialAcceptanceGateTest.php</file>
             <file>tests/Feature/HandoverAcceptance/TechnicalAcceptanceQuantityTest.php</file>

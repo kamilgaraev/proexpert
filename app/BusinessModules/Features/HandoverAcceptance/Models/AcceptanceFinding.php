@@ -19,6 +19,7 @@ final class AcceptanceFinding extends Model
         'acceptance_scope_id',
         'acceptance_session_id',
         'quality_defect_id',
+        'work_rework_id',
         'created_by_user_id',
         'resolved_by_user_id',
         'title',
@@ -43,5 +44,10 @@ final class AcceptanceFinding extends Model
     public function qualityDefect(): BelongsTo
     {
         return $this->belongsTo(QualityDefect::class, 'quality_defect_id');
+    }
+
+    public function workRework(): BelongsTo
+    {
+        return $this->belongsTo(WorkRework::class);
     }
 }

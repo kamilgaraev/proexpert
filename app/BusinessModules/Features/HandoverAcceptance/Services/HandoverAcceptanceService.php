@@ -159,8 +159,15 @@ final class HandoverAcceptanceService
     public function addFinding(AcceptanceSession $session, int $userId, array $data): AcceptanceFinding
     {
         return DB::transaction(function () use ($session, $userId, $data): AcceptanceFinding {
-            $scope = $session->scope()->lockForUpdate()->firstOrFail();
-            $this->assertStatus($scope, ['in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened']);
+            $scope = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($session->scope);
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.punch-list.create');
+            $rework = isset($data['work_rework_id']) ? $scope->workReworks()->find($data['work_rework_id']) : null;
+            if (isset($data['work_rework_id']) && ($rework === null || $rework->status === 'accepted')) {
+                throw new DomainException(trans_message('work_rework.errors.not_found'));
+            }
+            $this->assertStatus($scope, $rework === null
+                ? ['in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened']
+                : ['in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened', 'accepted', 'handed_over']);
             $qualityDefect = null;
 
             if ($data['create_quality_defect'] === true) {
@@ -191,6 +198,7 @@ final class HandoverAcceptanceService
                 'acceptance_scope_id' => $scope->id,
                 'acceptance_session_id' => $session->id,
                 'quality_defect_id' => $qualityDefect?->id,
+                'work_rework_id' => $rework?->id,
                 'created_by_user_id' => $userId,
                 'title' => $data['title'],
                 'description' => $data['description'] ?? null,
@@ -198,7 +206,9 @@ final class HandoverAcceptanceService
                 'status' => 'open',
             ]);
 
-            $scope->update(['status' => 'findings_open']);
+            if ($rework === null || ! in_array($scope->status, ['accepted', 'handed_over'], true)) {
+                $scope->update(['status' => 'findings_open']);
+            }
             $session->update(['status' => 'findings_open']);
 
             return $finding->fresh(['qualityDefect']);
@@ -207,18 +217,26 @@ final class HandoverAcceptanceService
 
     public function resolveFinding(AcceptanceFinding $finding, int $userId, array $data): AcceptanceFinding
     {
-        if ($finding->status !== 'open') {
-            throw new DomainException(trans_message('handover_acceptance.errors.finding_resolve_invalid_status'));
-        }
+        return DB::transaction(function () use ($finding, $userId, $data): AcceptanceFinding {
+            $scope = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($finding->scope);
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.punch-list.resolve');
+            $finding = AcceptanceFinding::query()->whereKey($finding->id)->lockForUpdate()->firstOrFail();
+            if ($finding->status !== 'open') {
+                throw new DomainException(trans_message('handover_acceptance.errors.finding_resolve_invalid_status'));
+            }
+            if ($finding->work_rework_id !== null) {
+                $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.approve');
+                if ($finding->workRework?->status !== 'submitted') {
+                    throw new DomainException(trans_message('work_rework.errors.invalid_status'));
+                }
+            }
+            $finding->update([
+                'status' => 'resolved', 'resolved_by_user_id' => $userId,
+                'resolution_comment' => $data['resolution_comment'], 'resolved_at' => now(),
+            ]);
 
-        $finding->update([
-            'status' => 'resolved',
-            'resolved_by_user_id' => $userId,
-            'resolution_comment' => $data['resolution_comment'],
-            'resolved_at' => now(),
-        ]);
-
-        return $finding->fresh(['qualityDefect']);
+            return $finding->fresh(['qualityDefect']);
+        });
     }
 
     public function reviewChecklistItem(AcceptanceChecklistItem $item, int $userId, array $data): AcceptanceChecklistItem

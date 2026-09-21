@@ -160,6 +160,7 @@ final class HandoverAcceptanceController extends Controller
                 'severity' => ['required', 'string', Rule::in(['minor', 'major', 'critical'])],
                 'create_quality_defect' => ['required', 'boolean'],
                 'quality_defect_inspection_required' => ['required_if:create_quality_defect,true', 'boolean'],
+                'work_rework_id' => ['nullable', 'integer', 'min:1'],
             ]);
 
             return MobileResponse::success(

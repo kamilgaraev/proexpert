@@ -77,4 +77,9 @@ final class AcceptanceScope extends Model
     {
         return $this->hasMany(AcceptanceScopeWorkQuantity::class);
     }
+
+    public function workReworks(): HasMany
+    {
+        return $this->hasMany(WorkRework::class);
+    }
 }

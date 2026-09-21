@@ -131,6 +131,7 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         foreach ($checklistResponse->json('data.items') as $item) {
             $checklistService->reviewChecklistItem(
                 AcceptanceChecklistItem::query()->findOrFail((int) $item['id']),
+                $context->user->id,
                 ['status' => 'accepted'],
             );
         }

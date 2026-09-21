@@ -25,6 +25,7 @@ final class AcceptanceFindingResource extends JsonResource
             'acceptance_scope_id' => $finding->acceptance_scope_id,
             'acceptance_session_id' => $finding->acceptance_session_id,
             'quality_defect_id' => $finding->quality_defect_id,
+            'work_rework_id' => $finding->work_rework_id,
             'title' => $finding->title,
             'description' => $finding->description,
             'severity' => $finding->severity,
