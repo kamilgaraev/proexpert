@@ -56,7 +56,7 @@
     $workName = $contract->subject ?? $project?->name ?? '';
     $contractDate = $formatDate($contract->date ?? null);
     $contractAmount = (float) ($contract->total_amount ?? $contract->base_amount ?? $total_estimate_amount ?? 0);
-    $letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'];
+    $letters = range('A', 'X');
 @endphp
 <!DOCTYPE html>
 <html lang="ru">
@@ -432,29 +432,26 @@
     @php
         $firstMonth = $pageMonths[0] ?? ['key' => null, 'title' => ''];
         $secondMonth = $pageMonths[1] ?? ['key' => null, 'title' => ''];
+        $monthValue = static function (array $monthData, string $field, ?string $actedFallback = null): float {
+            if (array_key_exists($field, $monthData)) {
+                return (float) $monthData[$field];
+            }
+            if ($actedFallback !== null) {
+                return (float) ($monthData[$actedFallback] ?? 0);
+            }
+
+            return 0.0;
+        };
     @endphp
     <div class="month-page{{ $pageIndex > 0 ? ' month-page-continuation' : '' }}">
     <table class="official-table">
         <colgroup>
-            <col style="width: 7mm;">
-            <col style="width: 8mm;">
-            <col style="width: 34mm;">
-            <col style="width: 18mm;">
-            <col style="width: 14mm;">
-            <col style="width: 15mm;">
-            <col style="width: 14mm;">
-            <col style="width: 17mm;">
-            <col style="width: 14mm;">
-            <col style="width: 17mm;">
-            <col style="width: 23mm;">
-            <col style="width: 14mm;">
-            <col style="width: 17mm;">
-            <col style="width: 23mm;">
-            <col style="width: 14mm;">
-            <col style="width: 17mm;">
+            @for($col = 1; $col <= 24; $col++)
+                <col style="width: {{ $col === 3 ? '28mm' : '10mm' }};">
+            @endfor
         </colgroup>
         <thead>
-            <tr><td colspan="16">КС-6а. Договор № {{ $contract->number ?? '' }}. Объект: {{ $project->name ?? '' }}. Заказчик: {{ $customer_org->legal_name ?? $customer_org->name ?? '' }}. Подрядчик: {{ $contractor->name ?? '' }}.</td></tr>
+            <tr><td colspan="24">КС-6а. Договор № {{ $contract->number ?? '' }}. Объект: {{ $project->name ?? '' }}. Заказчик: {{ $customer_org->legal_name ?? $customer_org->name ?? '' }}. Подрядчик: {{ $contractor->name ?? '' }}.</td></tr>
             <tr class="letter-row">
                 @foreach($letters as $letter)
                     <td>{{ $letter }}</td>
@@ -468,28 +465,40 @@
                 <th rowspan="3">Цена за единицу, руб.</th>
                 <th rowspan="3">Количество работ по смете</th>
                 <th rowspan="3">Сметная (договорная) стоимость, руб.</th>
-                <th colspan="3">Выполнено работ</th>
-                <th colspan="3">Выполнено работ</th>
-                <th colspan="2">Остаток работ {{ $remaining_label }}</th>
+                <th colspan="6">{{ $firstMonth['title'] ?? '' }}</th>
+                <th colspan="6">{{ $secondMonth['title'] ?? '' }}</th>
+                <th colspan="4">Остаток работ {{ $remaining_label }}</th>
             </tr>
             <tr>
                 <th rowspan="2">п/п</th>
                 <th rowspan="2">поз. по смете</th>
-                <th colspan="3">{{ $firstMonth['title'] ?? '' }}</th>
-                <th colspan="3">{{ $secondMonth['title'] ?? '' }}</th>
-                <th rowspan="2">количество</th>
-                <th rowspan="2">стоимость</th>
+                <th colspan="3">Факт</th>
+                <th colspan="3">Актировано</th>
+                <th colspan="3">Факт</th>
+                <th colspan="3">Актировано</th>
+                <th colspan="2">по факту</th>
+                <th colspan="2">по актированию</th>
             </tr>
             <tr>
                 <th>количество</th>
                 <th>стоимость</th>
-                <th>стоимость фактически выполненных работ с начала строительства, руб.</th>
+                <th>с начала строительства</th>
                 <th>количество</th>
                 <th>стоимость</th>
-                <th>стоимость фактически выполненных работ с начала строительства, руб.</th>
+                <th>с начала строительства</th>
+                <th>количество</th>
+                <th>стоимость</th>
+                <th>с начала строительства</th>
+                <th>количество</th>
+                <th>стоимость</th>
+                <th>с начала строительства</th>
+                <th>количество</th>
+                <th>стоимость</th>
+                <th>количество</th>
+                <th>стоимость</th>
             </tr>
             <tr class="number-row">
-                @for($index = 1; $index <= 16; $index++)
+                @for($index = 1; $index <= 24; $index++)
                     <td>{{ $index }}</td>
                 @endfor
             </tr>
@@ -509,52 +518,70 @@
                     <td class="text-right">{{ $formatMoney($row['unit_price'] ?? 0) }}</td>
                     <td class="text-right">{{ $formatNumber($row['estimate_quantity'] ?? 0, 3) }}</td>
                     <td class="text-right">{{ $formatMoney($row['estimate_amount'] ?? 0) }}</td>
-                    <td class="text-right">{{ $formatNumber($firstMonthData['quantity'] ?? 0, 3) }}</td>
-                    <td class="text-right">{{ $formatMoney($firstMonthData['amount'] ?? 0) }}</td>
-                    <td class="text-right">{{ $formatMoney($firstMonthData['from_start'] ?? 0) }}</td>
-                    <td class="text-right">{{ $formatNumber($secondMonthData['quantity'] ?? 0, 3) }}</td>
-                    <td class="text-right">{{ $formatMoney($secondMonthData['amount'] ?? 0) }}</td>
-                    <td class="text-right">{{ $formatMoney($secondMonthData['from_start'] ?? 0) }}</td>
-                    <td class="text-right">{{ $formatNumber($row['remaining_quantity'] ?? 0, 3) }}</td>
-                    <td class="text-right">{{ $formatMoney($row['remaining_amount'] ?? 0) }}</td>
+                    <td class="text-right">{{ $formatNumber($monthValue($firstMonthData, 'fact_quantity'), 3) }}</td>
+                    <td class="text-right">{{ $formatMoney($monthValue($firstMonthData, 'fact_amount')) }}</td>
+                    <td class="text-right">{{ $formatMoney($monthValue($firstMonthData, 'fact_from_start')) }}</td>
+                    <td class="text-right">{{ $formatNumber($monthValue($firstMonthData, 'acted_quantity', 'quantity'), 3) }}</td>
+                    <td class="text-right">{{ $formatMoney($monthValue($firstMonthData, 'acted_amount', 'amount')) }}</td>
+                    <td class="text-right">{{ $formatMoney($monthValue($firstMonthData, 'acted_from_start', 'from_start')) }}</td>
+                    <td class="text-right">{{ $formatNumber($monthValue($secondMonthData, 'fact_quantity'), 3) }}</td>
+                    <td class="text-right">{{ $formatMoney($monthValue($secondMonthData, 'fact_amount')) }}</td>
+                    <td class="text-right">{{ $formatMoney($monthValue($secondMonthData, 'fact_from_start')) }}</td>
+                    <td class="text-right">{{ $formatNumber($monthValue($secondMonthData, 'acted_quantity', 'quantity'), 3) }}</td>
+                    <td class="text-right">{{ $formatMoney($monthValue($secondMonthData, 'acted_amount', 'amount')) }}</td>
+                    <td class="text-right">{{ $formatMoney($monthValue($secondMonthData, 'acted_from_start', 'from_start')) }}</td>
+                    <td class="text-right">{{ $formatNumber($row['remaining_fact_quantity'] ?? $row['remaining_quantity'] ?? 0, 3) }}</td>
+                    <td class="text-right">{{ $formatMoney($row['remaining_fact_amount'] ?? $row['remaining_amount'] ?? 0) }}</td>
+                    <td class="text-right">{{ $formatNumber($row['remaining_acted_quantity'] ?? $row['remaining_quantity'] ?? 0, 3) }}</td>
+                    <td class="text-right">{{ $formatMoney($row['remaining_acted_amount'] ?? $row['remaining_amount'] ?? 0) }}</td>
                 </tr>
             @endforeach
 
             @for($blank = $rows->count(); $blank < 3; $blank++)
                 <tr class="blank-row">
-                    @for($cell = 1; $cell <= 16; $cell++)
+                    @for($cell = 1; $cell <= 24; $cell++)
                         <td></td>
                     @endfor
                 </tr>
             @endfor
 
             @php
-                $firstTotals = $firstMonth['key']
-                    ? [
-                        'quantity' => $rows->sum(fn (array $row): float => (float) ($row['months'][$firstMonth['key']]['quantity'] ?? 0)),
-                        'amount' => $rows->sum(fn (array $row): float => (float) ($row['months'][$firstMonth['key']]['amount'] ?? 0)),
-                        'from_start' => $rows->sum(fn (array $row): float => (float) ($row['months'][$firstMonth['key']]['from_start'] ?? 0)),
-                    ]
-                    : ['quantity' => 0, 'amount' => 0, 'from_start' => 0];
-                $secondTotals = $secondMonth['key']
-                    ? [
-                        'quantity' => $rows->sum(fn (array $row): float => (float) ($row['months'][$secondMonth['key']]['quantity'] ?? 0)),
-                        'amount' => $rows->sum(fn (array $row): float => (float) ($row['months'][$secondMonth['key']]['amount'] ?? 0)),
-                        'from_start' => $rows->sum(fn (array $row): float => (float) ($row['months'][$secondMonth['key']]['from_start'] ?? 0)),
-                    ]
-                    : ['quantity' => 0, 'amount' => 0, 'from_start' => 0];
+                $monthTotals = static function (?string $key) use ($rows): array {
+                    if (! $key) {
+                        return ['fact_quantity' => 0, 'fact_amount' => 0, 'fact_from_start' => 0, 'acted_quantity' => 0, 'acted_amount' => 0, 'acted_from_start' => 0];
+                    }
+
+                    return [
+                        'fact_quantity' => $rows->sum(fn (array $row): float => (float) ($row['months'][$key]['fact_quantity'] ?? 0)),
+                        'fact_amount' => $rows->sum(fn (array $row): float => (float) ($row['months'][$key]['fact_amount'] ?? 0)),
+                        'fact_from_start' => $rows->sum(fn (array $row): float => (float) ($row['months'][$key]['fact_from_start'] ?? 0)),
+                        'acted_quantity' => $rows->sum(fn (array $row): float => (float) ($row['months'][$key]['acted_quantity'] ?? $row['months'][$key]['quantity'] ?? 0)),
+                        'acted_amount' => $rows->sum(fn (array $row): float => (float) ($row['months'][$key]['acted_amount'] ?? $row['months'][$key]['amount'] ?? 0)),
+                        'acted_from_start' => $rows->sum(fn (array $row): float => (float) ($row['months'][$key]['acted_from_start'] ?? $row['months'][$key]['from_start'] ?? 0)),
+                    ];
+                };
+                $firstTotals = $monthTotals($firstMonth['key'] ?? null);
+                $secondTotals = $monthTotals($secondMonth['key'] ?? null);
             @endphp
             <tr class="total-row bold">
                 <td colspan="7" class="text-right">Итого:</td>
                 <td class="text-right">{{ $formatMoney($total_estimate_amount ?? 0) }}</td>
-                <td class="text-right">{{ $formatNumber($firstTotals['quantity'], 3) }}</td>
-                <td class="text-right">{{ $formatMoney($firstTotals['amount']) }}</td>
-                <td class="text-right">{{ $formatMoney($firstTotals['from_start']) }}</td>
-                <td class="text-right">{{ $formatNumber($secondTotals['quantity'], 3) }}</td>
-                <td class="text-right">{{ $formatMoney($secondTotals['amount']) }}</td>
-                <td class="text-right">{{ $formatMoney($secondTotals['from_start']) }}</td>
+                <td class="text-right">{{ $formatNumber($firstTotals['fact_quantity'], 3) }}</td>
+                <td class="text-right">{{ $formatMoney($firstTotals['fact_amount']) }}</td>
+                <td class="text-right">{{ $formatMoney($firstTotals['fact_from_start']) }}</td>
+                <td class="text-right">{{ $formatNumber($firstTotals['acted_quantity'], 3) }}</td>
+                <td class="text-right">{{ $formatMoney($firstTotals['acted_amount']) }}</td>
+                <td class="text-right">{{ $formatMoney($firstTotals['acted_from_start']) }}</td>
+                <td class="text-right">{{ $formatNumber($secondTotals['fact_quantity'], 3) }}</td>
+                <td class="text-right">{{ $formatMoney($secondTotals['fact_amount']) }}</td>
+                <td class="text-right">{{ $formatMoney($secondTotals['fact_from_start']) }}</td>
+                <td class="text-right">{{ $formatNumber($secondTotals['acted_quantity'], 3) }}</td>
+                <td class="text-right">{{ $formatMoney($secondTotals['acted_amount']) }}</td>
+                <td class="text-right">{{ $formatMoney($secondTotals['acted_from_start']) }}</td>
                 <td></td>
-                <td class="text-right">{{ $formatMoney($total_remaining_amount ?? 0) }}</td>
+                <td class="text-right">{{ $formatMoney($rows->sum(fn (array $row): float => (float) ($row['remaining_fact_amount'] ?? 0))) }}</td>
+                <td></td>
+                <td class="text-right">{{ $formatMoney($total_remaining_amount ?? $rows->sum(fn (array $row): float => (float) ($row['remaining_acted_amount'] ?? $row['remaining_amount'] ?? 0))) }}</td>
             </tr>
         </tbody>
     </table>

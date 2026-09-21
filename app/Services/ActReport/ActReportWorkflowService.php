@@ -7,8 +7,8 @@ namespace App\Services\ActReport;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\BusinessModules\Core\Payments\Services\FinancialBalanceQuery;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -18,10 +18,11 @@ use App\Models\User;
 use App\Services\Acting\ActingActWizardService;
 use App\Services\Acting\ActingAvailabilityService;
 use App\Services\Acting\ActingPolicyResolver;
+use App\Services\Acting\ContractPeriodCertificateService;
 use App\Services\Acting\FixedContractActAmountGuard;
 use App\Services\Acting\KS3SummaryService;
-use App\Services\Acting\PerformanceActFinancialTotalsService;
 use App\Services\Acting\PerformanceActConditionGuard;
+use App\Services\Acting\PerformanceActFinancialTotalsService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
 use App\Services\Workflow\WorkflowGuardService;
 use Brick\Math\BigDecimal;
@@ -48,6 +49,7 @@ class ActReportWorkflowService
         private readonly FinancialBalanceQuery $financialBalances,
         private readonly PerformanceActConditionGuard $conditionGuard,
         private readonly \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard $financeQuantityGuard,
+        private readonly ContractPeriodCertificateService $periodCertificates,
     ) {}
 
     public function preview(int $organizationId, array $data, ?User $user): array
@@ -504,6 +506,7 @@ class ActReportWorkflowService
                 'annulment_reason' => $reason,
             ])->save();
             $updatedAct = $lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']);
+            $this->periodCertificates->markActAnnulled($updatedAct);
             $this->acceptanceEvents->recordTransitionIfApplicable(
                 $updatedAct,
                 $previousStatus,

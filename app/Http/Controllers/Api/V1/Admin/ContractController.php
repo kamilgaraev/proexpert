@@ -447,8 +447,8 @@ class ContractController extends Controller
         try {
             $accessibleContract = $this->contractAccessService()->findAccessibleOrFail($contract, $organizationId, $projectId);
             $path = $request->exportFormat() === 'xlsx'
-                ? $this->exportService->exportKS6aToExcel($accessibleContract)
-                : $this->exportService->exportKS6aToPdf($accessibleContract);
+                ? $this->exportService->exportKS6aToExcel($accessibleContract, $request->periodStart(), $request->periodEnd())
+                : $this->exportService->exportKS6aToPdf($accessibleContract, $request->periodStart(), $request->periodEnd());
             $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
 
             return AdminResponse::success(['url' => $url], trans_message('contract.file_generated'));

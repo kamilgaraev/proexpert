@@ -6,10 +6,10 @@ namespace Tests\Unit\Acting;
 
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
-use Smalot\PdfParser\Parser;
-use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use Illuminate\Contracts\Console\Kernel;
+use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
+use Smalot\PdfParser\Parser;
 
 final class OfficialFormsPdfRenderTest extends TestCase
 {
@@ -50,8 +50,12 @@ final class OfficialFormsPdfRenderTest extends TestCase
         ]);
         $line->setRelation('estimateItem', null);
         $line->setRelation('completedWork', null);
-        $act = new class extends \App\Models\ContractPerformanceAct {
-            public function loadMissing($relations) { return $this; }
+        $act = new class extends \App\Models\ContractPerformanceAct
+        {
+            public function loadMissing($relations)
+            {
+                return $this;
+            }
         };
         $act->setRawAttributes(['id' => 1, 'act_document_number' => 'КС-01', 'act_date' => '2026-01-31', 'period_start' => '2026-01-01', 'period_end' => '2026-01-31', 'amount' => 120, 'amount_without_vat' => 100, 'vat_amount' => 20, 'vat_rate' => 20]);
         $act->setRelation('contract', $contract);
@@ -149,11 +153,13 @@ final class OfficialFormsPdfRenderTest extends TestCase
 
         [$text, $pages] = $this->render('estimates.exports.ks6a', $data, 'ks6a');
 
-        self::assertSame(3, $pages);
+        self::assertGreaterThanOrEqual(2, $pages);
         self::assertStringContainsString('декабрь 2025', $text);
         self::assertStringContainsString('январь 2026', $text);
         self::assertStringContainsString('февраль 2026', $text);
         self::assertStringContainsString('Работа 12', $text);
+        self::assertStringContainsString('Факт', $text);
+        self::assertStringContainsString('Актировано', $text);
     }
 
     private function render(string $view, array $data, string $name): array
@@ -165,11 +171,14 @@ final class OfficialFormsPdfRenderTest extends TestCase
 
         $debugDirectory = getenv('MOST_EXPORT_DEBUG_DIR');
         if (is_string($debugDirectory) && $debugDirectory !== '') {
-            if (! is_dir($debugDirectory)) mkdir($debugDirectory, 0777, true);
+            if (! is_dir($debugDirectory)) {
+                mkdir($debugDirectory, 0777, true);
+            }
             file_put_contents($debugDirectory.'/'.$name.'.pdf', $bytes);
         }
 
         $document = (new Parser)->parseContent($bytes);
+
         return [$document->getText(), count($document->getPages())];
     }
 

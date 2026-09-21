@@ -70,6 +70,10 @@
             <file>tests/Feature/CompletedWork/CompletedWorkScopeRegressionTest.php</file>
             <file>tests/Feature/CompletedWork/JournalFactIdempotencyTest.php</file>
             <file>tests/Feature/CompletedWork/CompletedWorkCorrectionTest.php</file>
+            <file>tests/Feature/Acting/ContractPeriodCertificateTest.php</file>
+            <file>tests/Feature/Acting/OfficialFormsPeriodRegressionTest.php</file>
+            <file>tests/Unit/Acting/OfficialFormsSnapshotRegressionTest.php</file>
+            <file>tests/Unit/Acting/OfficialFormsPdfLayoutTest.php</file>
         </testsuite>
         <testsuite name="ContractFoundation">
             <file>tests/Feature/Contract/ContractLibraryApiTest.php</file>

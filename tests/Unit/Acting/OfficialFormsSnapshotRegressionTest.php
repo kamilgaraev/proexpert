@@ -225,16 +225,22 @@ final class OfficialFormsSnapshotRegressionTest extends TestCase
         {
             public function __construct() {}
 
-            protected function prepareKS6aData(Contract $contract): array
+            protected function prepareKS6aData(Contract $contract, ?string $periodStart = null, ?string $periodEnd = null): array
             {
                 return [
                     'month_groups' => [['key' => '2026-01', 'title' => 'январь 2026 г.']],
                     'rows' => collect([[
                         'number' => 1, 'estimate_position' => '2.1', 'title' => 'Монтаж', 'unit' => 'м2',
                         'unit_price' => 1, 'estimate_quantity' => 100, 'estimate_amount' => 100,
-                        'performed_quantity' => 10, 'performed_amount' => 10,
-                        'remaining_quantity' => 90, 'remaining_amount' => 90,
-                        'months' => ['2026-01' => ['quantity' => 10, 'amount' => 10, 'from_start' => 10]],
+                        'fact_quantity' => 12, 'fact_amount' => 12,
+                        'acted_quantity' => 10, 'acted_amount' => 10,
+                        'remaining_fact_quantity' => 88, 'remaining_fact_amount' => 88,
+                        'remaining_acted_quantity' => 90, 'remaining_acted_amount' => 90,
+                        'months' => ['2026-01' => [
+                            'quantity' => 10, 'amount' => 10, 'from_start' => 10,
+                            'fact_quantity' => 12, 'fact_amount' => 12, 'fact_from_start' => 12,
+                            'acted_quantity' => 10, 'acted_amount' => 10, 'acted_from_start' => 10,
+                        ]],
                     ]]),
                 ];
             }
@@ -256,11 +262,71 @@ final class OfficialFormsSnapshotRegressionTest extends TestCase
         self::assertSame('2.1', $sheet->getCell('B17')->getValue());
         self::assertSame('Монтаж', $sheet->getCell('C17')->getValue());
         self::assertEquals(100, $sheet->getCell('F17')->getValue());
-        self::assertEquals(90, $sheet->getCell('K17')->getValue());
-        self::assertEquals(10, $sheet->getCell('M17')->getValue());
-        self::assertEquals(10, $sheet->getCell('N17')->getValue());
+        self::assertEquals(12, $sheet->getCell('I17')->getValue());
+        self::assertEquals(10, $sheet->getCell('K17')->getValue());
+        self::assertEquals(88, $sheet->getCell('M17')->getValue());
+        self::assertEquals(90, $sheet->getCell('O17')->getValue());
+        self::assertEquals(12, $sheet->getCell('P17')->getValue());
+        self::assertEquals(10, $sheet->getCell('S17')->getValue());
         self::assertEquals([15, 16], $sheet->getPageSetup()->getRowsToRepeatAtTop());
-        self::assertSame(['A', 'K'], $sheet->getPageSetup()->getColumnsToRepeatAtLeft());
+        self::assertSame(['A', 'O'], $sheet->getPageSetup()->getColumnsToRepeatAtLeft());
+    }
+
+    public function test_ks6a_month_span_covers_thirteen_months_across_year_boundary(): void
+    {
+        $reflection = new ReflectionClass(OfficialFormsExportService::class);
+        $export = $reflection->newInstanceWithoutConstructor();
+        $keys = $reflection->getMethod('monthKeysBetween')->invoke($export, '2025-12-01', '2026-12-31');
+
+        self::assertSame(13, $keys->count());
+        self::assertSame('2025-12', $keys->first());
+        self::assertSame('2026-12', $keys->last());
+    }
+
+    public function test_ks6a_keeps_same_title_on_distinct_estimate_keys(): void
+    {
+        $reflection = new ReflectionClass(OfficialFormsExportService::class);
+        $export = $reflection->newInstanceWithoutConstructor();
+        $firstItem = (object) [
+            'id' => 11,
+            'name' => 'Одинаковое имя',
+            'quantity_total' => 10,
+            'quantity' => 10,
+            'total_amount' => 10,
+            'current_total_amount' => 10,
+            'measurementUnit' => null,
+            'workType' => null,
+        ];
+        $secondItem = (object) [
+            'id' => 12,
+            'name' => 'Одинаковое имя',
+            'quantity_total' => 20,
+            'quantity' => 20,
+            'total_amount' => 20,
+            'current_total_amount' => 20,
+            'measurementUnit' => null,
+            'workType' => null,
+        ];
+        $acts = new Collection;
+        foreach ([[$firstItem, 10], [$secondItem, 20]] as $index => [$item, $amount]) {
+            $line = new PerformanceActLine;
+            $line->setRawAttributes(['id' => $index + 1, 'quantity' => $amount, 'amount' => $amount, 'title' => 'Одинаковое имя']);
+            $line->setRelation('estimateItem', $item);
+            $line->setRelation('completedWork', null);
+            $act = new ContractPerformanceAct;
+            $act->setRawAttributes(['id' => $index + 1, 'act_date' => '2026-01-31', 'period_end' => '2026-01-01', 'is_approved' => true]);
+            $act->setRelation('lines', new Collection([$line]));
+            $act->setRelation('completedWorks', new Collection);
+            $acts->push($act);
+        }
+        $contract = new Contract;
+        $contract->setRelation('contractEstimateItems', new Collection);
+        $months = new Collection(['2026-01']);
+        $rows = $reflection->getMethod('buildKS6aRows')->invoke($export, $contract, $acts, $months, $months);
+
+        self::assertCount(2, $rows);
+        self::assertSame(['Одинаковое имя', 'Одинаковое имя'], $rows->pluck('title')->all());
+        self::assertSame([10.0, 20.0], $rows->pluck('acted_amount')->all());
     }
 
     private function renderItems(string $vat)

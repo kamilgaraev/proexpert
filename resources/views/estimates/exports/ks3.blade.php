@@ -13,10 +13,12 @@
     $join = static fn (array $parts): string => implode(', ', array_values(array_filter($parts, static fn ($value): bool => trim((string) $value) !== '')));
     $workRows = collect($works ?? []);
 
-    $actDate = $act->act_date ?? now();
+    $actDate = $document_date ?? $act->act_date ?? now();
     $periodStartDate = $period_start ?? $actDate;
     $periodEndDate = $period_end ?? $actDate;
-    $documentNumber = $act->act_document_number ?? str_pad((string) ($act->id ?? 0), 10, '0', STR_PAD_LEFT);
+    $documentNumber = $document_number ?? $act->act_document_number ?? str_pad((string) ($act->id ?? 0), 10, '0', STR_PAD_LEFT);
+    $isDraft = (bool) ($is_draft ?? false);
+    $hasAnnulledActs = (bool) ($has_annulled_acts ?? false);
     $customerName = $customer_org->legal_name ?? $customer_org->name ?? '';
     $customerLine = $join([
         $customerName,
@@ -265,9 +267,32 @@
             text-align: right;
         }
 
+        .draft-watermark {
+            color: rgba(176, 0, 0, 0.16);
+            font-size: 42pt;
+            font-weight: bold;
+            left: 18%;
+            letter-spacing: 4mm;
+            pointer-events: none;
+            position: fixed;
+            top: 42%;
+            transform: rotate(-24deg);
+            z-index: 0;
+        }
+
+        .status-note {
+            color: #7a1f1f;
+            font-size: 8pt;
+            margin-top: 2mm;
+            text-align: center;
+        }
+
     </style>
 </head>
 <body>
+    @if($isDraft)
+        <div class="draft-watermark">ЧЕРНОВИК</div>
+    @endif
     @include('pdf.partials.most-brand-footer')
     <div class="header-area">
         <div class="top-note">
@@ -387,6 +412,12 @@
             </tr>
         </table>
         <div class="main-title">О стоимости выполненных работ и затрат</div>
+        @if($isDraft)
+            <div class="status-note">Черновик справки КС-3. Суммы пересчитываются до утверждения.</div>
+        @endif
+        @if($hasAnnulledActs)
+            <div class="status-note">В составе есть аннулированный акт. Сохранённые суммы справки не пересчитаны.</div>
+        @endif
     </div>
 
     <table class="official-table">

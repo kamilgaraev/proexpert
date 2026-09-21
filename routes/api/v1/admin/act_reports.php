@@ -5,6 +5,16 @@ use Illuminate\Support\Facades\Route;
 
 // Маршруты для управления отчетами по актам
 Route::prefix('act-reports')->group(function () {
+    Route::post('contract-period-certificates', [ActReportsController::class, 'createPeriodCertificate'])
+        ->middleware('authorize:act_reports.create')->name('act-reports.certificates.create');
+    Route::get('contract-period-certificates/{certificate}', [ActReportsController::class, 'showPeriodCertificate'])
+        ->middleware('authorize:act_reports.view')->name('act-reports.certificates.show');
+    Route::post('contract-period-certificates/{certificate}/approve', [ActReportsController::class, 'approvePeriodCertificate'])
+        ->middleware('authorize:act_reports.approve')->name('act-reports.certificates.approve');
+    Route::get('contract-period-certificates/{certificate}/export/ks3', [ActReportsController::class, 'exportPeriodCertificateKS3'])
+        ->middleware('authorize:act_reports.export.excel')->name('act-reports.certificates.export.ks3');
+    Route::get('contract-period-certificates/{certificate}/export/ks3/pdf', [ActReportsController::class, 'exportPeriodCertificateKS3Pdf'])
+        ->middleware('authorize:act_reports.export.pdf')->name('act-reports.certificates.export.ks3.pdf');
     // Получить все акты организации с фильтрацией
     Route::get('/', [ActReportsController::class, 'index'])
         ->name('act-reports.index');
