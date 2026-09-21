@@ -477,7 +477,9 @@ final class ExecutiveDocumentationController extends Controller
 
             return AdminResponse::success(new ExecutiveDocumentSetResource($this->service->transmit($set, (int) auth()->id(), $validated)));
         } catch (ValidationException $e) {
-            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+            $message = collect($e->errors())->flatten()->first();
+
+            return AdminResponse::error(is_string($message) && $message !== '' ? $message : $e->getMessage(), 422, $e->errors());
         } catch (DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {

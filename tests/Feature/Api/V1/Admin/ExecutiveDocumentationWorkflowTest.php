@@ -147,6 +147,11 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                     ['name' => 'Site engineer', 'role' => 'contractor'],
                     ['name' => 'Customer representative', 'role' => 'customer'],
                 ],
+                'signatories' => [
+                    ['role' => 'developer_control_representative', 'name' => 'Иван Петров', 'organization' => 'Застройщик', 'authority_document' => 'Приказ 1'],
+                    ['role' => 'construction_representative', 'name' => 'Пётр Иванов', 'organization' => 'Техзаказчик', 'authority_document' => 'Приказ 2'],
+                    ['role' => 'contractor_control_representative', 'name' => 'Сергей Сидоров', 'organization' => 'Подрядчик', 'authority_document' => 'Приказ 3'],
+                ],
                 'initial_version' => [
                     'file' => $this->fakeDocumentFile('foundation-v1.pdf'),
                     'version_number' => '1.0',
@@ -211,6 +216,24 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
 
         $approveResponse->assertOk();
         $approveResponse->assertJsonPath('data.status', 'approved');
+
+        $emptyCompositionTransmit = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/transmit", [
+                'transmittal_number' => 'TR-2026-0001',
+                'operation_key' => 'workflow-transmit-unconfigured',
+                'expected_versions' => [['document_id' => $documentId, 'version_id' => $versionId]],
+                'comment' => 'Transmitted to customer',
+            ]);
+        $emptyCompositionTransmit->assertStatus(422);
+        $emptyCompositionBody = (string) json_encode($emptyCompositionTransmit->json(), JSON_UNESCAPED_UNICODE);
+        self::assertStringContainsString('Ожидаемый состав исполнительной документации не настроен', $emptyCompositionBody);
+        self::assertStringNotContainsString('requirements_not_configured', $emptyCompositionBody);
+
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover(
+            \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet::query()->findOrFail($setId),
+            \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion::query()->findOrFail($versionId),
+            $context->user,
+        );
 
         $transmitResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/transmit", [
@@ -293,6 +316,64 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $customerResponse->assertOk();
         $ids = collect($customerResponse->json('data'))->pluck('id')->all();
         $this->assertNotContains($ownSetId, $ids);
+    }
+
+    public function test_transmit_without_expected_composition_returns_user_facing_unprocessable(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $setResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/executive-documentation/sets', [
+                'project_id' => $project->id,
+                'title' => 'Комплект без состава',
+            ]);
+        $setResponse->assertCreated();
+        $setId = (int) $setResponse->json('data.id');
+
+        $documentResponse = $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
+                'document_type' => 'working_drawing_set',
+                'title' => 'Комплект рабочих чертежей',
+                'profile_data' => [
+                    'drawing_set_code' => 'РД-1',
+                    'drawing_section' => 'АР',
+                    'sheet_list' => ['1'],
+                    'compliance_mark' => 'Соответствует',
+                    'responsible_person' => 'Инженер',
+                    'authority_document' => 'Приказ 1',
+                    'drawing_set_status' => 'review',
+                ],
+                'initial_version' => [
+                    'file' => $this->fakeDocumentFile('drawings.pdf'),
+                    'version_number' => '1.0',
+                ],
+            ]);
+        $documentResponse->assertCreated();
+        $documentId = (int) $documentResponse->json('data.id');
+        $versionId = (int) $documentResponse->json('data.versions.0.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/executive-documentation/documents/{$documentId}/submit", ['comment' => 'Ready'])
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/executive-documentation/documents/{$documentId}/approve", ['comment' => 'Approved'])
+            ->assertOk();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/executive-documentation/sets/{$setId}/transmit", [
+                'transmittal_number' => 'TR-EMPTY',
+                'operation_key' => 'workflow-empty-composition',
+                'expected_versions' => [['document_id' => $documentId, 'version_id' => $versionId]],
+            ]);
+        $response->assertStatus(422);
+        $body = (string) json_encode($response->json(), JSON_UNESCAPED_UNICODE);
+        self::assertStringContainsString('Ожидаемый состав исполнительной документации не настроен', $body);
+        self::assertStringNotContainsString('requirements_not_configured', $body);
+        self::assertSame('draft', \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet::query()->findOrFail($setId)->status->value);
     }
 
     public function test_hidden_work_act_autofills_dates_number_and_required_data_from_journal(): void

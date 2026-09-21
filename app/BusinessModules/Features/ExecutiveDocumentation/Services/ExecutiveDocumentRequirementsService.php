@@ -338,7 +338,7 @@ final class ExecutiveDocumentRequirementsService
             $blockers[] = ['code' => 'requirements_not_configured', 'requirement_id' => null, 'scope_id' => $set->project_id, 'stage' => 'document_review', 'message' => trans_message('executive_requirements.not_configured'), 'target' => ['type' => 'document_set', 'id' => $set->id]];
         }
 
-        return ['requirements_total' => $requirements->count(), 'requirements_applicable' => $applicable->count(), 'requirements_satisfied' => max(0, $satisfied), 'missing_requirements' => count($blockers), 'blockers' => $blockers, 'ready' => $requirements->isEmpty() || $blockers === []];
+        return ['requirements_total' => $requirements->count(), 'requirements_applicable' => $applicable->count(), 'requirements_satisfied' => max(0, $satisfied), 'missing_requirements' => count($blockers), 'blockers' => $blockers, 'ready' => $blockers === []];
     }
 
     public function assertReadyForTransmission(ExecutiveDocumentSet $set): array
@@ -347,7 +347,11 @@ final class ExecutiveDocumentRequirementsService
             $lockedSet = ExecutiveDocumentSet::query()->lockForUpdate()->findOrFail($set->id);
             $result = $this->readiness($lockedSet);
             if (! $result['ready']) {
-                throw ValidationException::withMessages(['requirements' => trans_message('executive_requirements.not_ready')]);
+                $codes = array_column($result['blockers'], 'code');
+                $message = in_array('requirements_not_configured', $codes, true)
+                    ? trans_message('executive_requirements.not_configured')
+                    : trans_message('executive_requirements.not_ready');
+                throw ValidationException::withMessages(['requirements' => $message]);
             }
 
             return $result;

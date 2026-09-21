@@ -19,10 +19,14 @@ final class ExecutiveDocumentRequirementFixture
         $type = $version->document->document_type->value;
         $requirement = $set->requirements()->whereNull('superseded_at')->where('profile_type', $type)->first();
         if ($requirement === null) {
-            $requirement = $service->create($set, [
+            $payload = [
                 'requirement_key' => $type, 'profile_type' => $type, 'source' => 'Утверждённый перечень ИД тестового проекта',
                 'source_revision' => '1', 'coverage_scope' => ['project_id' => (int) $set->project_id],
-            ], $actor, $authorization);
+            ];
+            if (in_array($type, ['hidden_work_act', 'axis_layout_act', 'geodetic_base_acceptance_act', 'responsible_structure_act', 'engineering_network_section_act'], true)) {
+                $payload['conditions'] = ['designer_supervision' => false, 'separate_executor' => false];
+            }
+            $requirement = $service->create($set, $payload, $actor, $authorization);
         }
         $service->attachEvidence($requirement, $version->id, ['project_id' => (int) $set->project_id], $actor, $authorization);
     }
