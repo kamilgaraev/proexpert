@@ -5,9 +5,13 @@ declare(strict_types=1);
 namespace Tests\Feature\CompletedWork;
 
 use App\Models\CompletedWork;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
+use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Models\User;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Services\CompletedWork\CompletedWorkService;
@@ -191,8 +195,71 @@ final class CompletedWorkScopeRegressionTest extends TestCase
             ],
         );
 
-        $response->assertStatus(404);
+        $response->assertStatus(422);
         $this->assertDatabaseMissing('completed_works', ['project_id' => $projectA->id]);
         $this->assertSame(7.0, (float) $taskB->fresh()->completed_quantity);
+    }
+
+    public function test_bulk_foreign_estimate_item_is_rejected_by_request_scope(): void
+    {
+        $context = AdminApiTestContext::create();
+        $projectA = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $organizationB = Organization::factory()->create();
+        $projectB = Project::factory()->create(['organization_id' => $organizationB->id]);
+        $estimateB = Estimate::query()->create([
+            'organization_id' => $organizationB->id,
+            'project_id' => $projectB->id,
+            'name' => 'Чужая смета',
+            'number' => 'FOREIGN-EST',
+            'status' => 'approved',
+            'type' => 'local',
+            'version' => 1,
+            'estimate_date' => '2026-09-20',
+        ]);
+        $itemB = EstimateItem::query()->create([
+            'estimate_id' => $estimateB->id,
+            'position_number' => '1',
+            'name' => 'Чужая позиция',
+            'quantity' => 1,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())->postJson(
+            "/api/v1/admin/projects/{$projectA->id}/works/bulk",
+            [
+                'works' => [[
+                    'estimate_item_id' => $itemB->id,
+                    'quantity' => 1,
+                    'completion_date' => '2026-09-20',
+                    'status' => CompletedWork::STATUS_PENDING,
+                ]],
+            ],
+        );
+
+        $response->assertStatus(422);
+        $this->assertDatabaseMissing('completed_works', ['project_id' => $projectA->id]);
+    }
+
+    public function test_bulk_foreign_user_is_rejected_by_request_scope(): void
+    {
+        $context = AdminApiTestContext::create();
+        $projectA = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $organizationB = Organization::factory()->create();
+        $foreignUser = User::factory()->create(['current_organization_id' => $organizationB->id]);
+        $organizationB->users()->attach($foreignUser->id, ['is_active' => true, 'is_owner' => true]);
+
+        $response = $this->withHeaders($context->authHeaders())->postJson(
+            "/api/v1/admin/projects/{$projectA->id}/works/bulk",
+            [
+                'works' => [[
+                    'user_id' => $foreignUser->id,
+                    'quantity' => 1,
+                    'completion_date' => '2026-09-20',
+                    'status' => CompletedWork::STATUS_PENDING,
+                ]],
+            ],
+        );
+
+        $response->assertStatus(422);
+        $this->assertDatabaseMissing('completed_works', ['project_id' => $projectA->id]);
     }
 }

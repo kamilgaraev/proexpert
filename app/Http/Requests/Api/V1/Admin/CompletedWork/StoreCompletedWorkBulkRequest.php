@@ -30,9 +30,45 @@ final class StoreCompletedWorkBulkRequest extends FormRequest
         return [
             'works' => ['required', 'array', 'min:1'],
             'works.*.work_type_id' => ['nullable', 'integer', Rule::exists('work_types', 'id')->where('organization_id', $organizationId)],
-            'works.*.user_id' => ['nullable', 'integer'],
-            'works.*.schedule_task_id' => ['nullable', 'integer'],
-            'works.*.estimate_item_id' => ['nullable', 'integer'],
+            'works.*.user_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('users', 'id')
+                    ->whereNull('deleted_at')
+                    ->whereIn('id', function ($query) use ($organizationId) {
+                        $query->select('user_id')
+                            ->from('organization_user')
+                            ->where('organization_id', $organizationId)
+                            ->where('is_active', true);
+                    }),
+            ],
+            'works.*.schedule_task_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('schedule_tasks', 'id')
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at')
+                    ->whereIn('schedule_id', function ($query) use ($projectId, $organizationId) {
+                        $query->select('id')
+                            ->from('project_schedules')
+                            ->where('organization_id', $organizationId)
+                            ->where('project_id', $projectId)
+                            ->whereNull('deleted_at');
+                    }),
+            ],
+            'works.*.estimate_item_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('estimate_items', 'id')
+                    ->whereNull('deleted_at')
+                    ->whereIn('estimate_id', function ($query) use ($projectId, $organizationId) {
+                        $query->select('id')
+                            ->from('estimates')
+                            ->where('organization_id', $organizationId)
+                            ->where('project_id', $projectId)
+                            ->whereNull('deleted_at');
+                    }),
+            ],
             'works.*.contract_id' => ['nullable', 'integer', Rule::exists('contracts', 'id')->where('organization_id', $organizationId)],
             'works.*.contractor_id' => ['nullable', 'integer', Rule::exists('contractors', 'id')->where('organization_id', $organizationId)],
             'works.*.quantity' => ['required', 'numeric', 'min:0.001'],

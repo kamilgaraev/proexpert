@@ -71,7 +71,7 @@ final class CompletedWorkBulkScopeTest extends TestCase
             self::assertSame(404, $exception->getCode());
         }
 
-        $this->assertDatabaseCount('completed_works', 0);
+        $this->assertNoCompletedWorksForProjects([$projectA->id, $projectB->id]);
         self::assertSame(4.0, (float) $taskB->fresh()->completed_quantity);
     }
 
@@ -134,7 +134,7 @@ final class CompletedWorkBulkScopeTest extends TestCase
             self::assertContains($exception->getCode(), [404, 422]);
         }
 
-        $this->assertDatabaseCount('completed_works', 0);
+        $this->assertNoCompletedWorksForProjects([$projectA->id, $projectB->id]);
     }
 
     public function test_bulk_foreign_user_after_valid_first_writes_nothing(): void
@@ -156,7 +156,12 @@ final class CompletedWorkBulkScopeTest extends TestCase
             self::assertContains($exception->getCode(), [404, 422]);
         }
 
-        $this->assertDatabaseCount('completed_works', 0);
+        $this->assertNoCompletedWorksForProjects([$projectA->id]);
+    }
+
+    private function assertNoCompletedWorksForProjects(array $projectIds): void
+    {
+        self::assertSame(0, CompletedWork::query()->whereIn('project_id', $projectIds)->count());
     }
 
     private function dto(int $organizationId, int $projectId, ?int $scheduleTaskId = null, ?int $estimateItemId = null, ?int $userId = null): CompletedWorkDTO
