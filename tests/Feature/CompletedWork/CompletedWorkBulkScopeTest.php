@@ -161,6 +161,7 @@ final class CompletedWorkBulkScopeTest extends TestCase
 
     private function assertNoCompletedWorksForProjects(array $projectIds): void
     {
+        $this->assertDatabaseCount('completed_works', 0);
         self::assertSame(0, CompletedWork::query()->whereIn('project_id', $projectIds)->count());
     }
 

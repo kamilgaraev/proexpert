@@ -110,15 +110,19 @@ final class ActingQuantityConcurrencyTest extends TestCase
             self::assertSame(422, $rejected[0]['code']);
             self::assertSame(7.0, (float) PerformanceActLine::query()->where('completed_work_id', $work->id)->sum('quantity'));
         } finally {
-            if (DB::transactionLevel() > 0) {
-                DB::rollBack();
-            }
             foreach ($workers as $worker) {
                 if ($worker->isRunning()) {
                     $worker->stop();
                 }
             }
-            DB::beginTransaction();
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            try {
+                $this->deleteCommittedRaceFixture($contract, $work);
+            } finally {
+                DB::beginTransaction();
+            }
         }
     }
 
@@ -357,5 +361,49 @@ final class ActingQuantityConcurrencyTest extends TestCase
             'act_date' => '2026-09-20', 'period_start' => '2026-09-01', 'period_end' => '2026-09-30',
             'selected_works' => [['completed_work_id' => $work->id, 'quantity' => $quantity]],
         ], (int) $work->user_id, false);
+    }
+
+    private function deleteCommittedRaceFixture(Contract $contract, CompletedWork $work): void
+    {
+        $workId = (int) $work->id;
+        $contractId = (int) $contract->id;
+        $projectId = (int) $contract->project_id;
+        $contractorId = (int) $contract->contractor_id;
+        $workTypeId = (int) $work->work_type_id;
+        $userId = (int) $work->user_id;
+        $organizationId = (int) $contract->organization_id;
+        $actIds = DB::table('contract_performance_acts')->where('contract_id', $contractId)->pluck('id');
+        if ($actIds->isNotEmpty()) {
+            DB::table('performance_act_lines')->whereIn('performance_act_id', $actIds)->delete();
+            DB::table('performance_act_completed_works')->whereIn('performance_act_id', $actIds)->delete();
+            DB::table('performance_act_reversals')->whereIn('performance_act_id', $actIds)->delete();
+            DB::table('contract_performance_acts')->whereIn('id', $actIds)->delete();
+        }
+        $scopeIds = DB::table('acceptance_scopes')->where('project_id', $projectId)->pluck('id');
+        if ($scopeIds->isNotEmpty()) {
+            DB::table('acceptance_scope_work_quantity_operations')->whereIn('acceptance_scope_id', $scopeIds)->delete();
+            DB::table('acceptance_scope_work_quantities')->whereIn('acceptance_scope_id', $scopeIds)->delete();
+            DB::table('acceptance_scopes')->whereIn('id', $scopeIds)->delete();
+        }
+        DB::table('acting_policies')->where('contract_id', $contractId)->delete();
+        $viewIds = DB::table('contract_organization_views')->where('contract_id', $contractId)->pluck('id');
+        if ($viewIds->isNotEmpty()) {
+            DB::table('contract_organization_view_events')->whereIn('view_id', $viewIds)->delete();
+            DB::table('contract_organization_views')->whereIn('id', $viewIds)->delete();
+        }
+        DB::table('activity_events')->where('organization_id', $organizationId)->delete();
+        DB::table('contract_state_events')->where('contract_id', $contractId)->delete();
+        DB::table('contract_project')->where('contract_id', $contractId)->delete();
+        DB::table('completed_works')->where('id', $workId)->delete();
+        DB::table('contracts')->where('id', $contractId)->delete();
+        DB::table('contractors')->where('id', $contractorId)->delete();
+        DB::table('work_types')->where('id', $workTypeId)->delete();
+        DB::table('project_user')->where('project_id', $projectId)->delete();
+        DB::table('project_organization')->where('project_id', $projectId)->delete();
+        DB::table('projects')->where('id', $projectId)->delete();
+        DB::table('measurement_units')->where('organization_id', $organizationId)->delete();
+        DB::table('organization_user')->where('organization_id', $organizationId)->delete();
+        DB::table('users')->where('id', $userId)->delete();
+        DB::table('organizations')->where('id', $organizationId)->delete();
     }
 }
