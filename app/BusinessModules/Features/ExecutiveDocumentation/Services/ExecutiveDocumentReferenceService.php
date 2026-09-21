@@ -140,14 +140,18 @@ final class ExecutiveDocumentReferenceService
 
         $like = '%' . $search . '%';
         $query->where(static function ($builder) use ($search, $like): void {
+            if (preg_match('/^#(\d+)$/', $search, $matches) === 1) {
+                $builder->where('id', (int) $matches[1]);
+
+                return;
+            }
             if (ctype_digit($search)) {
-                $builder->orWhere('id', (int) $search)
-                    ->orWhere('entry_number', (int) $search);
-            } else {
-                $builder->whereRaw('1 = 0');
+                $builder->where('entry_number', (int) $search);
+
+                return;
             }
             $builder
-                ->orWhere('work_description', 'ilike', $like)
+                ->where('work_description', 'ilike', $like)
                 ->orWhereHas('journal', static function ($journal) use ($like): void {
                     $journal->where(static function ($related) use ($like): void {
                         $related->where('name', 'ilike', $like)

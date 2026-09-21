@@ -63,8 +63,8 @@ final class ExecutiveDocumentReferenceSearchTest extends TestCase
             $entries[] = ConstructionJournalEntry::query()->create([
                 'journal_id' => $journal->id,
                 'entry_date' => '2026-09-'.str_pad((string) (($i % 28) + 1), 2, '0', STR_PAD_LEFT),
-                'entry_number' => 100000 + $i,
-                'work_description' => $i === 1 ? 'Старая запись основания ID-SEARCH' : 'Запись reference',
+                'entry_number' => $i,
+                'work_description' => $i === 7 ? 'Старая запись основания ID-SEARCH' : 'Запись reference',
                 'status' => 'draft',
                 'created_by_user_id' => $context->user->id,
             ]);
@@ -90,13 +90,20 @@ final class ExecutiveDocumentReferenceSearchTest extends TestCase
         $this->assertSearchPageMatchesTotal($oldWorkSearch);
         $oldWorkSearch->assertJsonStructure(['data' => [['hidden_work_act_defaults' => ['profile_data', 'metadata']]]]);
 
-        $oldEntry = $entries[0];
+        $oldEntry = $entries[6];
         $oldEntrySearch = $this->withHeaders($context->authHeaders())->getJson(
-            '/api/v1/admin/executive-documentation/references/paginated?project_id='.$project->id.'&reference_type=journal_entries&search='.$oldEntry->id
+            '/api/v1/admin/executive-documentation/references/paginated?project_id='.$project->id.'&reference_type=journal_entries&search='.$oldEntry->entry_number
         );
         $oldEntrySearch->assertOk()->assertJsonPath('meta.total', 1)->assertJsonPath('data.0.id', $oldEntry->id);
+        $oldEntrySearch->assertJsonPath('data.0.entry_number', $oldEntry->entry_number);
         $this->assertSearchPageMatchesTotal($oldEntrySearch);
         $oldEntrySearch->assertJsonStructure(['data' => [['hidden_work_act_defaults' => ['profile_data', 'metadata']]]]);
+
+        $oldEntryById = $this->withHeaders($context->authHeaders())->getJson(
+            '/api/v1/admin/executive-documentation/references/paginated?project_id='.$project->id.'&reference_type=journal_entries&search='.rawurlencode('#'.$oldEntry->id)
+        );
+        $oldEntryById->assertOk()->assertJsonPath('meta.total', 1)->assertJsonPath('data.0.id', $oldEntry->id);
+        $this->assertSearchPageMatchesTotal($oldEntryById);
 
         $uniqueEntrySearch = $this->withHeaders($context->authHeaders())->getJson(
             '/api/v1/admin/executive-documentation/references/paginated?project_id='.$project->id.'&reference_type=journal_entries&search=ID-SEARCH'
