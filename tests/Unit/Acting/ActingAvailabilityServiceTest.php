@@ -39,7 +39,7 @@ class ActingAvailabilityServiceTest extends TestCase
             'contract_id' => $contract->id,
             'journal_entry_id' => 1001,
             'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
-            'quantity' => 10,
+            'quantity' => 8,
             'completed_quantity' => 8,
             'price' => 100,
             'total_amount' => 800,
@@ -79,6 +79,18 @@ class ActingAvailabilityServiceTest extends TestCase
         $this->assertSame(500.0, $available[0]['available_amount']);
     }
 
+    public function test_unreconciled_quantity_conflict_is_not_available_for_acting(): void
+    {
+        [$contract, $project, $organization] = $this->createContract();
+        CompletedWork::create([
+            'organization_id' => $organization->id, 'project_id' => $project->id,
+            'contract_id' => $contract->id, 'work_origin_type' => CompletedWork::ORIGIN_MANUAL,
+            'quantity' => 10, 'completed_quantity' => 8, 'price' => 100, 'total_amount' => 800,
+            'completion_date' => '2026-04-10', 'status' => 'confirmed',
+        ]);
+        self::assertSame([], app(ActingAvailabilityService::class)->getAvailableWorks($contract->id, '2026-04-01', '2026-04-30'));
+    }
+
     public function test_draft_act_reserves_available_quantity(): void
     {
         [$contract, $project, $organization] = $this->createContract();
@@ -89,7 +101,7 @@ class ActingAvailabilityServiceTest extends TestCase
             'contract_id' => $contract->id,
             'journal_entry_id' => 1004,
             'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
-            'quantity' => 10,
+            'quantity' => 8,
             'completed_quantity' => 8,
             'price' => 100,
             'total_amount' => 800,
@@ -139,7 +151,7 @@ class ActingAvailabilityServiceTest extends TestCase
             'contract_id' => $contract->id,
             'journal_entry_id' => 1005,
             'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
-            'quantity' => 10,
+            'quantity' => 8,
             'completed_quantity' => 8,
             'price' => 100,
             'total_amount' => 800,

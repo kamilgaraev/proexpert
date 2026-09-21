@@ -251,6 +251,8 @@ class ActReportWorkflowService
             }
             $this->assertMutable($lockedAct);
             $this->financeQuantityGuard->assertFits($lockedAct, $lockedContract);
+            app(\App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService::class)
+                ->assertActFits($lockedAct, $this->actingPolicyResolver->resolveForContract($lockedContract));
             $this->contractAmountGuard->assertActFits(
                 $lockedContract,
                 (string) $lockedAct->amount,
@@ -304,6 +306,8 @@ class ActReportWorkflowService
             $lockedAct = $this->recalculatePricedLines($lockedAct);
             $previousStatus = $this->acceptanceStatus($lockedAct);
             $this->financeQuantityGuard->assertFits($lockedAct, $lockedContract);
+            app(\App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService::class)
+                ->assertActFits($lockedAct, $this->actingPolicyResolver->resolveForContract($lockedContract));
             if ((float) $lockedAct->amount <= 0) {
                 throw new BusinessLogicException(trans_message('act_reports.empty_act'), 422);
             }

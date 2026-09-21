@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\DB;
 final class HandoverAcceptanceService
 {
     private const SCOPE_RELATIONS = [
-        'project:id,name',
+        'project:id,name,organization_id',
         'location',
         'checklists.items',
         'sessions.findings.qualityDefect',
@@ -37,6 +37,9 @@ final class HandoverAcceptanceService
     public function __construct(
         private readonly FileService $fileService,
         private readonly QualityDefectService $qualityDefects,
+        private readonly HandoverAcceptanceGate $acceptanceGate,
+        private readonly HandoverAcceptanceMutationGuard $mutationGuard,
+        private readonly HandoverExecutiveEvidenceService $executiveEvidence,
     ) {}
 
     public function listScopes(int $organizationId, array $filters = []): Collection
@@ -105,6 +108,8 @@ final class HandoverAcceptanceService
     public function addChecklist(AcceptanceScope $scope, array $data): AcceptanceChecklist
     {
         return DB::transaction(function () use ($scope, $data): AcceptanceChecklist {
+            $scope = AcceptanceScope::query()->whereKey($scope->id)->lockForUpdate()->firstOrFail();
+            $this->assertStatus($scope, ['planned', 'in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened']);
             $checklist = AcceptanceChecklist::query()->create([
                 'organization_id' => $scope->organization_id,
                 'project_id' => $scope->project_id,
@@ -139,18 +144,23 @@ final class HandoverAcceptanceService
         ])->fresh(['findings.qualityDefect']);
     }
 
-    public function startScope(AcceptanceScope $scope): AcceptanceScope
+    public function startScope(AcceptanceScope $scope, int $userId): AcceptanceScope
     {
-        $this->assertStatus($scope, ['planned', 'reopened', 'rejected']);
-        $scope->update(['status' => 'in_progress']);
+        return DB::transaction(function () use ($scope, $userId): AcceptanceScope {
+            $scope = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($scope);
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.inspect');
+            $this->assertStatus($scope, ['planned', 'reopened', 'rejected']);
+            $scope->update(['status' => 'in_progress']);
 
-        return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        });
     }
 
     public function addFinding(AcceptanceSession $session, int $userId, array $data): AcceptanceFinding
     {
         return DB::transaction(function () use ($session, $userId, $data): AcceptanceFinding {
-            $scope = $session->scope()->firstOrFail();
+            $scope = $session->scope()->lockForUpdate()->firstOrFail();
+            $this->assertStatus($scope, ['in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened']);
             $qualityDefect = null;
 
             if ($data['create_quality_defect'] === true) {
@@ -211,56 +221,85 @@ final class HandoverAcceptanceService
         return $finding->fresh(['qualityDefect']);
     }
 
-    public function reviewChecklistItem(AcceptanceChecklistItem $item, array $data): AcceptanceChecklistItem
+    public function reviewChecklistItem(AcceptanceChecklistItem $item, int $userId, array $data): AcceptanceChecklistItem
     {
-        $item->update([
-            'status' => $data['status'],
-            'comment' => $data['comment'] ?? null,
-        ]);
+        return DB::transaction(function () use ($item, $userId, $data): AcceptanceChecklistItem {
+            $checklist = $item->checklist()->firstOrFail();
+            $scope = $checklist->scope()->lockForUpdate()->firstOrFail();
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.inspect');
+            $this->assertStatus($scope, ['planned', 'in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened']);
+            $item->update(['status' => $data['status'], 'comment' => $data['comment'] ?? null]);
+            $this->refreshChecklistStatus($checklist);
 
-        $this->refreshChecklistStatus($item->checklist()->firstOrFail());
-
-        return $item->fresh(['checklist.items']);
+            return $item->fresh(['checklist.items']);
+        });
     }
 
-    public function markReadyForReinspection(AcceptanceScope $scope): AcceptanceScope
+    public function markReadyForReinspection(AcceptanceScope $scope, int $userId): AcceptanceScope
     {
-        if ($this->openFindingsCount($scope) > 0) {
-            throw new DomainException(trans_message('handover_acceptance.errors.open_findings_block_ready'));
-        }
+        return DB::transaction(function () use ($scope, $userId): AcceptanceScope {
+            $scope = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($scope);
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.inspect');
+            if ($this->openFindingsCount($scope) > 0) {
+                throw new DomainException(trans_message('handover_acceptance.errors.open_findings_block_ready'));
+            }
 
-        $this->assertStatus($scope, ['findings_open', 'in_progress', 'rejected']);
-        $scope->update(['status' => 'ready_for_reinspection']);
+            $this->assertStatus($scope, ['findings_open', 'in_progress', 'rejected']);
+            $scope->update(['status' => 'ready_for_reinspection']);
 
-        return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        });
     }
 
     public function acceptScope(AcceptanceScope $scope, int $userId, ?string $comment): AcceptanceScope
     {
-        if ($this->openFindingsCount($scope) > 0) {
-            $scope->update(['status' => 'findings_open']);
-            throw new DomainException(trans_message('handover_acceptance.errors.open_findings_block_accept'));
-        }
+        return DB::transaction(function () use ($scope, $userId, $comment): AcceptanceScope {
+            $locked = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($scope);
+            $this->mutationGuard->assertActor($locked, $userId, 'handover-acceptance.approve');
+            $this->lockExecutiveEvidence($locked);
+            $this->assertStatus($locked, ['in_progress', 'ready_for_reinspection', 'rejected']);
+            $readiness = $this->acceptanceGate->evaluate($locked);
+            if (! $readiness['ready']) {
+                throw new DomainException($readiness['blockers'][0]['message']);
+            }
+            $locked->update(['status' => 'accepted', 'accepted_at' => now()]);
+            $this->sign($locked, $userId, 'accepted', $comment, $readiness['evidence_snapshot']);
 
-        $this->assertStatus($scope, ['in_progress', 'ready_for_reinspection', 'rejected']);
-        $scope->update(['status' => 'accepted', 'accepted_at' => now()]);
-        $this->sign($scope, $userId, 'accepted', $comment);
-
-        return $scope->fresh(self::SCOPE_RELATIONS);
+            return $locked->fresh(self::SCOPE_RELATIONS);
+        });
     }
 
     public function rejectScope(AcceptanceScope $scope, int $userId, string $reason): AcceptanceScope
     {
-        $this->assertStatus($scope, ['in_progress', 'findings_open', 'ready_for_reinspection']);
-        $scope->update(['status' => 'rejected']);
-        $this->sign($scope, $userId, 'rejected', $reason);
+        return DB::transaction(function () use ($scope, $userId, $reason): AcceptanceScope {
+            $scope = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($scope);
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.reject');
+            $this->assertStatus($scope, ['in_progress', 'findings_open', 'ready_for_reinspection']);
+            $scope->update(['status' => 'rejected']);
+            $this->sign($scope, $userId, 'rejected', $reason);
 
-        return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        });
     }
 
     public function createPackage(AcceptanceScope $scope, int $userId, array $data): HandoverPackage
     {
         return DB::transaction(function () use ($scope, $userId, $data): HandoverPackage {
+            $scope = AcceptanceScope::query()->whereKey($scope->id)->lockForUpdate()->firstOrFail();
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.edit');
+            $this->assertStatus($scope, ['planned', 'in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened', 'accepted']);
+            \Illuminate\Support\Facades\Validator::make($data, [
+                'title' => ['required', 'string', 'max:255'],
+                'executive_document_set_id' => ['nullable', 'integer', 'min:1'],
+                'documents' => ['present', 'array', 'max:500'],
+                'documents.*.title' => ['required', 'string', 'max:255'],
+                'documents.*.document_type' => ['required', 'string', 'max:80'],
+                'documents.*.is_required' => ['required', 'boolean'],
+                'documents.*.status' => ['sometimes', 'in:missing,draft'],
+                'documents.*.executive_document_version_id' => ['nullable', 'integer', 'min:1'],
+                'documents.*.external_url' => ['prohibited'],
+            ])->validate();
+            $set = $this->executiveEvidence->resolveSet($scope, isset($data['executive_document_set_id']) ? (int) $data['executive_document_set_id'] : null);
             $package = HandoverPackage::query()->updateOrCreate(
                 ['acceptance_scope_id' => $scope->id],
                 [
@@ -269,93 +308,120 @@ final class HandoverAcceptanceService
                     'created_by_user_id' => $userId,
                     'title' => $data['title'],
                     'status' => 'draft',
+                    'executive_document_set_id' => $set?->id,
                 ]
             );
 
             $package->documents()->delete();
 
             foreach ($data['documents'] as $document) {
-                $package->documents()->create([
+                $binding = isset($document['executive_document_version_id'])
+                    ? $this->executiveEvidence->binding($scope, $set, $document['document_type'], (int) $document['executive_document_version_id'])
+                    : ['status' => 'missing'];
+                $package->documents()->create(array_merge([
                     'title' => $document['title'],
                     'document_type' => $document['document_type'],
                     'is_required' => (bool) $document['is_required'],
-                    'status' => $document['status'],
-                    'external_url' => $document['external_url'] ?? null,
-                    'approved_at' => $document['status'] === 'approved' ? now() : null,
-                ]);
+                ], $binding));
             }
 
             return $package->fresh(['documents']);
         });
     }
 
-    public function approveDocument(HandoverPackageDocument $document, array $data): HandoverPackageDocument
+    public function approveDocument(HandoverPackageDocument $document, int $userId, array $data): HandoverPackageDocument
     {
-        $document->update([
-            'status' => 'approved',
-            'external_url' => $data['external_url'] ?? $document->external_url,
-            'approved_at' => now(),
-        ]);
+        return DB::transaction(function () use ($document, $userId, $data): HandoverPackageDocument {
+            $scope = $document->package->scope()->lockForUpdate()->firstOrFail();
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.approve');
+            $this->assertStatus($scope, ['planned', 'in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened', 'accepted']);
+            $document = HandoverPackageDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+            $package = $document->package;
+            $set = $this->executiveEvidence->resolveSet($scope, $package->executive_document_set_id);
+            if (isset($data['executive_document_version_id'])) {
+                $attributes = $this->executiveEvidence->binding($scope, $set, $document->document_type, (int) $data['executive_document_version_id']);
+            } else {
+                if ($this->executiveEvidence->requiresCanonicalVersion($document->document_type) || empty($document->external_url)
+                    || (isset($data['external_url']) && $data['external_url'] !== $document->external_url)) {
+                    throw new DomainException(trans_message('handover_acceptance.errors.executive_evidence_invalid'));
+                }
+                $attributes = ['status' => 'approved', 'approved_at' => now()];
+            }
+            $document->update($attributes + ['approved_by_user_id' => $userId]);
 
-        return $document->fresh();
+            return $document->fresh();
+        });
     }
 
-    public function uploadDocument(HandoverPackageDocument $document, UploadedFile $file): HandoverPackageDocument
+    public function uploadDocument(HandoverPackageDocument $document, UploadedFile $file, int $userId): HandoverPackageDocument
     {
-        $package = $document->package()->firstOrFail();
-        $organization = Organization::query()->find((int) $package->organization_id);
+        return DB::transaction(function () use ($document, $file, $userId): HandoverPackageDocument {
+            $package = $document->package()->firstOrFail();
+            $scope = $package->scope()->lockForUpdate()->firstOrFail();
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.submit');
+            $this->assertStatus($scope, ['planned', 'in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened', 'accepted']);
+            if ($this->executiveEvidence->requiresCanonicalVersion($document->document_type) || $document->executive_document_version_id !== null) {
+                throw new DomainException(trans_message('handover_acceptance.errors.executive_evidence_invalid'));
+            }
+            $organization = Organization::query()->find((int) $package->organization_id);
 
-        if (! $organization instanceof Organization) {
-            throw new DomainException(trans_message('handover_acceptance.errors.organization_not_found'));
-        }
+            if (! $organization instanceof Organization) {
+                throw new DomainException(trans_message('handover_acceptance.errors.organization_not_found'));
+            }
 
-        $url = $this->fileService->upload(
-            $file,
-            "handover-acceptance/package-documents/{$document->id}",
-            null,
-            'private',
-            $organization
-        );
+            $url = $this->fileService->upload(
+                $file,
+                "handover-acceptance/package-documents/{$document->id}",
+                null,
+                'private',
+                $organization
+            );
 
-        if ($url === false) {
-            throw new DomainException(trans_message('handover_acceptance.errors.document_upload_failed'));
-        }
+            if ($url === false) {
+                throw new DomainException(trans_message('handover_acceptance.errors.document_upload_failed'));
+            }
 
-        $document->update([
-            'status' => 'approved',
-            'external_url' => $url,
-            'approved_at' => now(),
-        ]);
+            $document->update([
+                'status' => 'draft',
+                'external_url' => $url,
+                'approved_at' => null,
+                'approved_by_user_id' => null,
+            ]);
 
-        return $document->fresh(['package.documents']);
+            return $document->fresh(['package.documents']);
+        });
     }
 
     public function handoverScope(AcceptanceScope $scope, int $userId): AcceptanceScope
     {
-        $this->assertStatus($scope, ['accepted']);
+        return DB::transaction(function () use ($scope, $userId): AcceptanceScope {
+            $scope = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($scope);
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.customer-sign');
+            $this->assertStatus($scope, ['accepted']);
+            $this->lockExecutiveEvidence($scope);
+            $readiness = $this->acceptanceGate->evaluate($scope, true);
+            if (! $readiness['ready']) {
+                throw new DomainException($readiness['blockers'][0]['message']);
+            }
+            $scope->handoverPackage->update(['status' => 'approved']);
+            $scope->update(['status' => 'handed_over', 'handed_over_at' => now()]);
+            $this->sign($scope, $userId, 'handed_over', null, $readiness['evidence_snapshot']);
 
-        $package = $scope->handoverPackage()->with('documents')->first();
-        $missingRequiredDocuments = $package === null
-            || $package->documents->contains(fn (HandoverPackageDocument $document): bool => $document->is_required && $document->status !== 'approved');
-
-        if ($missingRequiredDocuments) {
-            throw new DomainException(trans_message('handover_acceptance.errors.required_documents_block_handover'));
-        }
-
-        $package->update(['status' => 'approved']);
-        $scope->update(['status' => 'handed_over', 'handed_over_at' => now()]);
-        $this->sign($scope, $userId, 'handed_over', null);
-
-        return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        });
     }
 
     public function reopenScope(AcceptanceScope $scope, int $userId, string $reason): AcceptanceScope
     {
-        $this->assertStatus($scope, ['accepted', 'handed_over']);
-        $scope->update(['status' => 'reopened', 'reopened_at' => now()]);
-        $this->sign($scope, $userId, 'reopened', $reason);
+        return DB::transaction(function () use ($scope, $userId, $reason): AcceptanceScope {
+            $scope = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($scope);
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.reject');
+            $this->assertStatus($scope, ['accepted', 'handed_over']);
+            $scope->update(['status' => 'reopened', 'reopened_at' => now()]);
+            $this->sign($scope, $userId, 'reopened', $reason);
 
-        return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        });
     }
 
     public function findScope(int $organizationId, int $id, ?array $projectIds = null): AcceptanceScope
@@ -457,7 +523,15 @@ final class HandoverAcceptanceService
         $checklist->update(['status' => 'active']);
     }
 
-    private function sign(AcceptanceScope $scope, int $userId, string $status, ?string $comment): void
+    private function lockExecutiveEvidence(AcceptanceScope $scope): void
+    {
+        $package = $scope->handoverPackage()->first();
+        if ($package?->executive_document_set_id !== null) {
+            $this->executiveEvidence->resolveSet($scope, (int) $package->executive_document_set_id);
+        }
+    }
+
+    private function sign(AcceptanceScope $scope, int $userId, string $status, ?string $comment, ?array $evidenceSnapshot = null): void
     {
         AcceptanceSignoff::query()->create([
             'organization_id' => $scope->organization_id,
@@ -467,6 +541,7 @@ final class HandoverAcceptanceService
             'status' => $status,
             'comment' => $comment,
             'signed_at' => now(),
+            'evidence_snapshot' => $evidenceSnapshot,
         ]);
     }
 }

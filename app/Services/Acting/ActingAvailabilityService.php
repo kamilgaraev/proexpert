@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Services\Acting;
 
 use App\Exceptions\BusinessLogicException;
+use App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService;
 use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\PerformanceActLine;
+use Brick\Math\BigDecimal;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -18,6 +20,7 @@ class ActingAvailabilityService
     public function __construct(
         private readonly PerformanceActFinancialBasisService $financialBasis,
         private readonly CompletedWorkActEligibilityService $completedWorkEligibility,
+        private readonly TechnicalAcceptanceQuantityService $technicalAcceptance,
     ) {}
 
     public function getAvailableWorks(int $contractId, string $periodStart, string $periodEnd): array
@@ -29,8 +32,10 @@ class ActingAvailabilityService
             ->get();
         $quantityUsage = $this->resolveQuantityUsage($works->pluck('id')->map(fn ($id): int => (int) $id)->all());
 
+        $policy = app(ActingPolicyResolver::class)->resolveForContract($contract);
+        $technicalQuantities = $this->technicalAcceptance->acceptedQuantityDecimals($works, $policy);
         return $works
-            ->map(fn (CompletedWork $work): array => $this->mapWork($work, $contract, $quantityUsage[$work->id] ?? []))
+            ->map(fn (CompletedWork $work): array => $this->mapWork($work, $contract, $quantityUsage[$work->id] ?? [], $technicalQuantities[$work->id] ?? null))
             ->filter(fn (array $work): bool => $work['available_quantity'] > 0 && $work['blockers'] === [])
             ->values()
             ->all();
@@ -45,8 +50,10 @@ class ActingAvailabilityService
             ->get();
         $quantityUsage = $this->resolveQuantityUsage($works->pluck('id')->map(fn ($id): int => (int) $id)->all());
 
+        $policy = app(ActingPolicyResolver::class)->resolveForContract($contract);
+        $technicalQuantities = $this->technicalAcceptance->acceptedQuantityDecimals($works, $policy);
         return $works
-            ->map(fn (CompletedWork $work): array => $this->mapWork($work, $contract, $quantityUsage[$work->id] ?? []))
+            ->map(fn (CompletedWork $work): array => $this->mapWork($work, $contract, $quantityUsage[$work->id] ?? [], $technicalQuantities[$work->id] ?? null))
             ->filter(fn (array $work): bool => $work['available_quantity'] <= 0 || $work['blockers'] !== [])
             ->values()
             ->all();
@@ -126,13 +133,16 @@ class ActingAvailabilityService
         return $usage;
     }
 
-    private function mapWork(CompletedWork $work, Contract $contract, array $quantityUsage): array
+    private function mapWork(CompletedWork $work, Contract $contract, array $quantityUsage, ?string $technicalQuantity): array
     {
         $effectiveQuantity = $work->effectiveCompletedQuantity();
         $reservedQuantity = (float) ($quantityUsage['reserved_quantity'] ?? 0);
         $approvedActedQuantity = (float) ($quantityUsage['approved_acted_quantity'] ?? 0);
         $actedQuantity = $reservedQuantity + $approvedActedQuantity;
-        $availableQuantity = round(max(0, $effectiveQuantity - $actedQuantity), 4);
+        $effectiveForActing = $technicalQuantity === null ? BigDecimal::of((string) $effectiveQuantity)
+            : BigDecimal::min((string) $effectiveQuantity, $technicalQuantity);
+        $availableQuantity = (float) BigDecimal::max('0', $effectiveForActing->minus((string) $actedQuantity))
+            ->toScale(4, \Brick\Math\RoundingMode::Down)->__toString();
         $blockers = $this->buildBlockers($work, $availableQuantity);
         $unitPrice = 0.0;
         try {
@@ -164,6 +174,7 @@ class ActingAvailabilityService
                 ?? $work->notes,
             'work_type_name' => $work->workType?->name,
             'quantity' => $effectiveQuantity,
+            'technical_accepted_quantity' => $technicalQuantity,
             'acted_quantity' => round($actedQuantity, 4),
             'reserved_quantity' => round($reservedQuantity, 4),
             'approved_acted_quantity' => round($approvedActedQuantity, 4),

@@ -29,7 +29,36 @@ final class ActingQuantityConcurrencyTest extends TestCase
 
     public function test_two_independent_requests_cannot_reserve_seven_each_from_ten(): void
     {
+        $this->assertConcurrentReservations(false);
+    }
+
+    public function test_two_requests_share_technical_limit_even_when_physical_fact_is_larger(): void
+    {
+        $this->assertConcurrentReservations(true);
+    }
+
+    private function assertConcurrentReservations(bool $technicalAcceptanceOnly): void
+    {
         [$contract, $work] = $this->fixture();
+        if ($technicalAcceptanceOnly) {
+            $work->update(['quantity' => 20, 'completed_quantity' => 20, 'total_amount' => 1000]);
+            $scope = \App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope::query()->create([
+                'organization_id' => $contract->organization_id, 'project_id' => $contract->project_id,
+                'created_by_user_id' => $work->user_id, 'title' => 'Частичная приёмка', 'status' => 'accepted',
+            ]);
+            $scope->workQuantities()->create([
+                'organization_id' => $contract->organization_id, 'project_id' => $contract->project_id,
+                'completed_work_id' => $work->id, 'unit_id' => $work->workType->measurement_unit_id,
+                'presented_quantity' => '20', 'accepted_quantity' => '10', 'defect_quantity' => '10', 'defect_reason' => 'Требуется устранение замечания',
+            ]);
+            \App\Models\ActingPolicy::query()->create([
+                'organization_id' => $contract->organization_id, 'contract_id' => $contract->id,
+                'mode' => \App\Models\ActingPolicy::MODE_OPERATIONAL,
+                'settings' => ['technical_acceptance' => ['mode' => 'accepted_only']],
+            ]);
+            $available = app(ActingAvailabilityService::class)->getAvailableWorks($contract->id, '2026-09-01', '2026-09-30');
+            self::assertSame(10.0, $available[0]['available_quantity']);
+        }
         DB::commit();
         $connection = config('database.connections.pgsql');
         $raceName = 'acting-reserve-'.bin2hex(random_bytes(5));
@@ -281,6 +310,31 @@ final class ActingQuantityConcurrencyTest extends TestCase
             $locked = CompletedWork::query()->whereKey($work->id)->lockForUpdate()->get();
             self::assertSame((int) round($row['available_quantity'] * 10000), app(ActingQuantityReservationService::class)->availableQuantities($locked)[$work->id]);
         });
+    }
+
+    public function test_submit_and_approve_recheck_technical_acceptance_after_policy_change(): void
+    {
+        foreach (['submit', 'approve'] as $action) {
+            [$contract, $work] = $this->fixture();
+            $act = $this->act($contract, $work, '7');
+            $workflow = app(ActReportWorkflowService::class);
+            if ($action === 'approve') {
+                $workflow->submit($act, $work->user_id);
+            }
+            \App\Models\ActingPolicy::query()->create([
+                'organization_id' => $contract->organization_id, 'contract_id' => $contract->id,
+                'mode' => \App\Models\ActingPolicy::MODE_OPERATIONAL,
+                'settings' => ['technical_acceptance' => ['mode' => 'accepted_only']],
+            ]);
+            try {
+                $workflow->{$action}($act->fresh(), $work->user_id);
+                self::fail('Act must not pass without technically accepted work');
+            } catch (BusinessLogicException $exception) {
+                self::assertSame(422, $exception->getCode());
+            }
+            self::assertFalse((bool) $act->fresh()->is_approved);
+            self::assertSame($action === 'submit' ? 'draft' : 'pending_approval', $act->fresh()->status);
+        }
     }
 
     private function fixture(?\Tests\Support\AdminApiTestContext $context = null): array

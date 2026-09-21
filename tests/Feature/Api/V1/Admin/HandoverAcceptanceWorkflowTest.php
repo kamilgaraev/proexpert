@@ -7,12 +7,19 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceFinding;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackage;
+use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceChecklistItem;
+use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -66,8 +73,8 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
             ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/checklists", [
                 'title' => 'Apartment readiness',
                 'items' => [
-                    ['title' => 'Walls accepted', 'is_required' => true],
-                    ['title' => 'Keys prepared', 'is_required' => true],
+                    ['code' => 'walls_accepted', 'title' => 'Walls accepted', 'is_required' => true],
+                    ['code' => 'keys_prepared', 'title' => 'Keys prepared', 'is_required' => true],
                 ],
             ]);
 
@@ -120,6 +127,14 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         $resolveResponse->assertOk();
         $resolveResponse->assertJsonPath('data.status', 'resolved');
 
+        $checklistService = app(HandoverAcceptanceService::class);
+        foreach ($checklistResponse->json('data.items') as $item) {
+            $checklistService->reviewChecklistItem(
+                AcceptanceChecklistItem::query()->findOrFail((int) $item['id']),
+                ['status' => 'accepted'],
+            );
+        }
+
         $readyResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/ready-for-reinspection");
 
@@ -134,15 +149,52 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         $acceptResponse->assertOk();
         $acceptResponse->assertJsonPath('data.status', 'accepted');
 
+        Storage::fake('s3');
+        $executiveSet = ExecutiveDocumentSet::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'created_by' => $context->user->id,
+            'set_number' => 'SET-'.uniqid(),
+            'title' => 'Handover executive set',
+            'status' => 'draft',
+        ]);
+        $executiveDocument = ExecutiveDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'document_set_id' => $executiveSet->id,
+            'created_by' => $context->user->id,
+            'document_type' => 'working_drawing_set',
+            'title' => 'Handover working drawings',
+            'status' => 'draft',
+            'profile_data' => [
+                'drawing_set_code' => 'RD-1',
+                'drawing_section' => 'АР',
+                'sheet_list' => ['1'],
+                'compliance_mark' => 'Соответствует',
+                'responsible_person' => 'Инженер',
+                'authority_document' => 'Доверенность',
+                'drawing_set_status' => 'review',
+            ],
+        ]);
+        $documentationService = app(ExecutiveDocumentationService::class);
+        $version = $documentationService->addVersion($executiveDocument, $context->user->id, [
+            'version_number' => '1',
+            'file' => UploadedFile::fake()->createWithContent('working-drawings.pdf', 'working drawings'),
+        ]);
+        $documentationService->submit($executiveDocument->fresh(), $context->user->id, null, $version->id);
+        $documentationService->approve($executiveDocument->fresh(), $context->user->id, null, $version->id);
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover($executiveSet->fresh(), $version->fresh(), $context->user);
+
         $packageResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/package", [
                 'title' => 'Customer handover package',
+                'executive_document_set_id' => $executiveSet->id,
                 'documents' => [
                     [
                         'title' => 'Executive package',
-                        'document_type' => 'executive_document',
+                        'document_type' => 'working_drawing_set',
                         'is_required' => true,
-                        'status' => 'missing',
+                        'status' => 'draft',
                     ],
                 ],
             ]);
@@ -155,9 +207,16 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         $blockedHandoverResponse->assertStatus(422);
 
         $documentId = (int) $packageResponse->json('data.documents.0.id');
-        $approveDocumentResponse = $this->withHeaders($context->authHeaders())
+        $urlOnlyResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/handover-acceptance/package-documents/{$documentId}/approve", [
                 'external_url' => 's3://org-' . $context->organization->id . '/handover/executive.pdf',
+            ]);
+
+        $urlOnlyResponse->assertStatus(422);
+
+        $approveDocumentResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/handover-acceptance/package-documents/{$documentId}/approve", [
+                'executive_document_version_id' => $version->id,
             ]);
 
         $approveDocumentResponse->assertOk();
@@ -199,8 +258,16 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
             'current_organization_id' => $context->organization->id,
             'email_verified_at' => now(),
         ]);
-        $context->organization->users()->attach($customer->id, ['is_owner' => false, 'is_active' => true]);
-        $project->users()->attach($customer->id, ['role' => 'customer']);
+        $context->organization->users()->attach($customer->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'project_access_mode' => 'assigned_projects',
+        ]);
+        $project->users()->attach($customer->id, [
+            'role' => 'customer',
+            'is_active' => true,
+            'assigned_at' => now(),
+        ]);
         $this->allowAccess();
 
         $visibleScope = AcceptanceScope::query()->create([
@@ -238,8 +305,16 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
             'current_organization_id' => $context->organization->id,
             'email_verified_at' => now(),
         ]);
-        $context->organization->users()->attach($customer->id, ['is_owner' => false, 'is_active' => true]);
-        $project->users()->attach($customer->id, ['role' => 'customer']);
+        $context->organization->users()->attach($customer->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'project_access_mode' => 'assigned_projects',
+        ]);
+        $project->users()->attach($customer->id, [
+            'role' => 'customer',
+            'is_active' => true,
+            'assigned_at' => now(),
+        ]);
         $this->allowAccess();
 
         $scope = AcceptanceScope::query()->create([
@@ -249,6 +324,37 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
             'title' => 'Customer signable handover',
             'status' => 'accepted',
         ]);
+        Storage::fake('s3');
+        $executiveSet = ExecutiveDocumentSet::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'created_by' => $context->user->id,
+            'set_number' => 'SET-'.uniqid(),
+            'title' => 'Customer handover executive set',
+            'status' => 'draft',
+        ]);
+        $executiveDocument = ExecutiveDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'document_set_id' => $executiveSet->id,
+            'created_by' => $context->user->id,
+            'document_type' => 'working_drawing_set',
+            'title' => 'Customer working drawings',
+            'status' => 'draft',
+            'profile_data' => [
+                'drawing_set_code' => 'RD-1', 'drawing_section' => 'АР', 'sheet_list' => ['1'],
+                'compliance_mark' => 'Соответствует', 'responsible_person' => 'Инженер',
+                'authority_document' => 'Доверенность', 'drawing_set_status' => 'review',
+            ],
+        ]);
+        $documentationService = app(ExecutiveDocumentationService::class);
+        $version = $documentationService->addVersion($executiveDocument, $context->user->id, [
+            'version_number' => '1',
+            'file' => UploadedFile::fake()->createWithContent('working-drawings.pdf', 'working drawings'),
+        ]);
+        $documentationService->submit($executiveDocument->fresh(), $context->user->id, null, $version->id);
+        $documentationService->approve($executiveDocument->fresh(), $context->user->id, null, $version->id);
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover($executiveSet->fresh(), $version->fresh(), $context->user);
         $package = HandoverPackage::query()->create([
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
@@ -256,13 +362,16 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
             'created_by_user_id' => $context->user->id,
             'title' => 'Customer handover package',
             'status' => 'draft',
+            'executive_document_set_id' => $executiveSet->id,
         ]);
         $package->documents()->create([
             'title' => 'Executive package',
-            'document_type' => 'executive_document',
+            'document_type' => 'working_drawing_set',
             'is_required' => true,
             'status' => 'approved',
             'approved_at' => now(),
+            'executive_document_version_id' => $version->id,
+            'evidence_hash' => $version->content_hash,
         ]);
         $foreignScope = AcceptanceScope::query()->create([
             'organization_id' => $context->organization->id,

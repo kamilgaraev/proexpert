@@ -48,9 +48,12 @@ Route::prefix('api/v1/admin/handover-acceptance')
         Route::post('/scopes/{scope}/package', [HandoverAcceptanceController::class, 'storePackage'])
             ->whereNumber('scope')
             ->middleware('authorize:handover-acceptance.edit');
+        Route::put('/scopes/{scope}/work-quantities', [HandoverAcceptanceController::class, 'storeWorkQuantities'])
+            ->whereNumber('scope')
+            ->middleware('authorize:handover-acceptance.edit');
         Route::post('/package-documents/{document}/approve', [HandoverAcceptanceController::class, 'approvePackageDocument'])
             ->whereNumber('document')
-            ->middleware('authorize:handover-acceptance.edit');
+            ->middleware('authorize:handover-acceptance.approve');
     });
 
 Route::prefix('api/v1/customer/handover-acceptance')

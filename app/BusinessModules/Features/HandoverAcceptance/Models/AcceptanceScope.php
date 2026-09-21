@@ -72,4 +72,9 @@ final class AcceptanceScope extends Model
     {
         return $this->hasOne(HandoverPackage::class);
     }
+
+    public function workQuantities(): HasMany
+    {
+        return $this->hasMany(AcceptanceScopeWorkQuantity::class);
+    }
 }
