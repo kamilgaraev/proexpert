@@ -29,6 +29,7 @@ final class ExecutiveTransmittalLifecycleTest extends TestCase
         ]);
         $service->submit($document->fresh(), $context->user->id, null, $v1->id);
         $service->approve($document->fresh(), $context->user->id, null, $v1->id);
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover($set->fresh(), $v1->fresh(), $context->user);
         $first = $service->transmit($set->fresh(), $context->user->id, [
             'transmittal_number' => 'T1',
             'operation_key' => 'transmit-t1',
@@ -51,8 +52,10 @@ final class ExecutiveTransmittalLifecycleTest extends TestCase
             'version_number' => '2.0',
             'file' => UploadedFile::fake()->createWithContent('t2.pdf', 'version-two'),
         ]);
+        self::assertSame('draft', $set->fresh()->status->value);
         $service->submit($document->fresh(), $context->user->id, null, $v2->id);
         $service->approve($document->fresh(), $context->user->id, null, $v2->id);
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover($set->fresh(), $v2->fresh(), $context->user);
         $second = $service->transmit($set->fresh(), $context->user->id, [
             'transmittal_number' => 'T2',
             'operation_key' => 'transmit-t2',
@@ -166,6 +169,7 @@ final class ExecutiveTransmittalLifecycleTest extends TestCase
         $version = $service->addVersion($document, $context->user->id, ['version_number' => '1', 'file' => UploadedFile::fake()->createWithContent('one.pdf', 'one')]);
         $service->submit($document->fresh(), $context->user->id, null, $version->id);
         $service->approve($document->fresh(), $context->user->id, null, $version->id);
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover($set->fresh(), $version->fresh(), $context->user);
         try { $service->transmit($set, $context->user->id, ['transmittal_number' => 'T1', 'operation_key' => 'stale', 'expected_versions' => [['document_id' => $document->id, 'version_id' => $version->id + 1000]]]); self::fail('Stale manifest accepted'); } catch (\DomainException) {}
         self::assertSame(0, \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentTransmittal::query()->where('document_set_id', $set->id)->count());
         self::assertSame('approved', $document->fresh()->status->value);
@@ -207,11 +211,29 @@ final class ExecutiveTransmittalLifecycleTest extends TestCase
         $this->withHeaders($headers)->postJson($base.'/transmittals/'.$transmittal->id.'/accept', array_replace($data, ['operation_key' => 'http-accept']))->assertConflict();
     }
 
+    public function test_transmit_action_and_summary_reject_incomplete_extra_document(): void
+    {
+        [$context, $set, $document, $service] = $this->fixture();
+        $version = $service->addVersion($document, $context->user->id, ['version_number' => '1', 'file' => UploadedFile::fake()->createWithContent('ready.pdf', 'ready')]);
+        $service->submit($document->fresh(), $context->user->id, null, $version->id);
+        $service->approve($document->fresh(), $context->user->id, null, $version->id);
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover($set->fresh(), $version->fresh(), $context->user);
+        $extra = $document->fresh()->replicate();
+        $extra->title = 'Дополнительный документ без файла';
+        $extra->save();
+        $workflow = app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationWorkflowService::class);
+        self::assertFalse($workflow->readinessSummary($set->fresh())['ready_to_transmit']);
+        self::assertNotContains('transmit', $workflow->forSet($set->fresh())->availableActions);
+        $this->expectException(\DomainException::class);
+        $service->transmit($set->fresh(), $context->user->id, ['transmittal_number' => 'incomplete-extra']);
+    }
+
     private function publish($context, $set, $document, $service)
     {
         $version = $service->addVersion($document, $context->user->id, ['version_number' => '1', 'file' => UploadedFile::fake()->createWithContent('one.pdf', 'one')]);
         $service->submit($document->fresh(), $context->user->id, null, $version->id);
         $service->approve($document->fresh(), $context->user->id, null, $version->id);
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover($set->fresh(), $version->fresh(), $context->user);
         return $service->transmit($set->fresh(), $context->user->id, ['transmittal_number' => 'T1', 'operation_key' => 'publish-1'])->transmittal;
     }
 

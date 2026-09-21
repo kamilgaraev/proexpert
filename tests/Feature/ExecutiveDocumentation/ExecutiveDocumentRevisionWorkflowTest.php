@@ -52,6 +52,26 @@ final class ExecutiveDocumentRevisionWorkflowTest extends TestCase
         self::assertSame($v2->profile_snapshot, $document->fresh()->profile_data);
     }
 
+    public function test_one_review_cycle_keeps_three_remarks_independent_and_blocks_approval_until_all_are_resolved(): void
+    {
+        [$context, $document, $service] = $this->documentFixture();
+        $version = $service->addVersion($document, $context->user->id, [
+            'version_number' => '1.0',
+            'file' => UploadedFile::fake()->createWithContent('review.pdf', 'review'),
+        ]);
+        $service->submit($document->fresh(), $context->user->id, null, $version->id);
+        $remarks = collect(['one', 'two', 'three'])->map(fn (string $body) => $service->addRemark(
+            $document->fresh(),
+            $context->user->id,
+            ['body' => $body, 'version_id' => $version->id],
+        ));
+
+        self::assertCount(3, $remarks->unique('id'));
+        self::assertSame(3, $document->remarks()->where('version_id', $version->id)->where('status', 'open')->count());
+        $this->expectException(\DomainException::class);
+        $service->approve($document->fresh(), $context->user->id, null, $version->id);
+    }
+
     public function test_operation_key_replay_returns_same_version_without_creating_duplicate(): void
     {
         Storage::fake('s3');
@@ -147,6 +167,7 @@ final class ExecutiveDocumentRevisionWorkflowTest extends TestCase
         $service->submit($document->fresh(), $context->user->id, null, $version->id);
         $service->approve($document->fresh(), $context->user->id, null, $version->id);
         $set = ExecutiveDocumentSet::query()->findOrFail($document->document_set_id);
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover($set, $version->fresh(), $context->user);
         $service->transmit($set, $context->user->id, ['transmittal_number' => 'TR-'.uniqid()]);
 
         $this->expectException(\DomainException::class);

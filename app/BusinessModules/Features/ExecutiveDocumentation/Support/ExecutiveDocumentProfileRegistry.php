@@ -80,9 +80,10 @@ final class ExecutiveDocumentProfileRegistry
         return [
             'hidden_work_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр, приложение 3', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
-                'requires_journal_entry' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 3 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
                     $this->field('presented_works', 'textarea', true),
@@ -109,9 +110,10 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'axis_layout_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
-                'requires_journal_entry' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 2 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
                     $this->field('axis_layout_text', 'textarea', true),
@@ -134,8 +136,9 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'geodetic_base_acceptance_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр, приложение 1', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 1 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
                 'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
@@ -157,9 +160,10 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'responsible_structure_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр, приложение 4', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
-                'requires_journal_entry' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 4 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
                     $this->field('presented_structures', 'textarea', true),
@@ -185,9 +189,10 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'engineering_network_section_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр, приложение 5', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
-                'requires_journal_entry' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 5 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
                     $this->field('network_type', 'text', true),
@@ -243,7 +248,7 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'working_drawing_set' => [
                 'group' => 'drawings',
-                'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
+                'regulatory_basis' => ['344/пр', 'СП 48.13330.2019 с изменениями № 1, № 2', 'ГОСТ Р 21.101-2026 — оформление РД при применимости к проекту'],
                 'requires_work_type' => false,
                 'requires_journal_entry' => false,
                 'fields' => [
@@ -269,8 +274,9 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'geodetic_scheme' => [
                 'group' => 'schemes',
-                'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр', 'ГОСТ Р 51872-2024 — оформление схем при применимости к проекту'],
+                'requires_work_type' => false,
                 'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('scheme_number', 'text', true),

@@ -73,6 +73,11 @@ final class ExecutiveDocumentSet extends Model
         return $this->hasMany(ExecutiveDocument::class, 'document_set_id');
     }
 
+    public function requirements(): HasMany
+    {
+        return $this->hasMany(ExecutiveDocumentRequirement::class, 'document_set_id');
+    }
+
     public function transmittal(): HasOne
     {
         return $this->hasOne(ExecutiveDocumentTransmittal::class, 'document_set_id')->latestOfMany();

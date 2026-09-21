@@ -35,6 +35,10 @@
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentReviewCycleTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveTransmittalLifecycleTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentProfilesTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRequirementsTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRequirementAccessTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRequirementsReadTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRelationSnapshotTest.php</file>
             <file>tests/Unit/ExecutiveDocumentation/ExecutiveDocumentProfileRegistryTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRevisionIntegrityTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRevisionBoundaryTest.php</file>

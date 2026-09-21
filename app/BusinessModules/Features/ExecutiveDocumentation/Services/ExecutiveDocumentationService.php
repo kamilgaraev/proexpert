@@ -176,6 +176,148 @@ final class ExecutiveDocumentationService
         return $this->createVersion($document, $userId, $data, 'executive-documentation.edit');
     }
 
+    private function createVersion(ExecutiveDocument $document, int $userId, array $data, string $permission): ExecutiveDocumentVersion
+    {
+        $uploadedPath = null;
+        $organization = null;
+        try {
+            return DB::transaction(function () use ($document, $userId, $data, $permission, &$uploadedPath, &$organization): ExecutiveDocumentVersion {
+                $lockedSet = ExecutiveDocumentSet::query()->lockForUpdate()->findOrFail($document->document_set_id);
+                $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
+                if ((int) $lockedDocument->document_set_id !== (int) $lockedSet->id) {
+                    throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+                }
+                $this->mutationGuard->assertActor($lockedDocument, $userId, $permission);
+                $latestVersionId = $lockedDocument->versions()->value('id');
+                $file = $data['file'] ?? null;
+                if (! $file instanceof UploadedFile || ! $file->isValid() || $file->getSize() <= 0) {
+                    throw new DomainException(trans_message('executive_documentation.errors.version_file_required'));
+                }
+                if (isset($data['profile_data'], $data['profile_snapshot']) && $data['profile_data'] !== $data['profile_snapshot']) {
+                    throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+                }
+                $operationKey = $data['operation_key'] ?? null;
+                $requestedProfile = $data['profile_data'] ?? $data['profile_snapshot'] ?? null;
+                $contentHash = hash_file('sha256', $file->getRealPath());
+                $operationHash = hash('sha256', json_encode([
+                    'document_id' => $lockedDocument->id,
+                    'expected_version_id' => (int) ($data['expected_version_id'] ?? 0),
+                    'version_number' => $data['version_number'],
+                    'comment' => $data['comment'] ?? null,
+                    'content_hash' => $contentHash,
+                    'profile_snapshot' => $requestedProfile,
+                    'basis_snapshot' => $data['basis_snapshot'] ?? null,
+                    'metadata' => $data['metadata'] ?? null,
+                    'uploaded_at' => $data['uploaded_at'] ?? null,
+                ], JSON_THROW_ON_ERROR));
+                if ($operationKey !== null) {
+                    $existing = $lockedDocument->versions()->withTrashed()->where('operation_key', $operationKey)->first();
+                    if ($existing !== null) {
+                        if ($existing->trashed() || $existing->operation_hash !== $operationHash) {
+                            throw new DomainException(trans_message('executive_documentation.errors.operation_conflict'));
+                        }
+                        return $existing;
+                    }
+                }
+                if (isset($data['expected_version_id']) && (int) $data['expected_version_id'] !== (int) $latestVersionId) {
+                    throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+                }
+                $this->mutationGuard->assertReferences($lockedDocument);
+                $candidate = clone $lockedDocument;
+                $candidate->profile_data = $requestedProfile ?? $lockedDocument->profile_data;
+                app(ExecutiveMaterialProfileGuard::class)->assertValid($candidate);
+                $basisSnapshot = $this->versionBasis($lockedDocument);
+                foreach ($data['basis_snapshot'] ?? [] as $key => $value) {
+                    if (! in_array($key, ['project_id', 'completed_work_id', 'journal_entry_id'], true)
+                        || ($value === null ? null : (int) $value) !== ($basisSnapshot[$key] === null ? null : (int) $basisSnapshot[$key])) {
+                        throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+                    }
+                }
+                if ($lockedDocument->versions()->withTrashed()->where('version_number', $data['version_number'])->exists()) {
+                    throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+                }
+                $organization = Organization::query()->findOrFail($lockedDocument->organization_id);
+                $uploadedPath = $this->fileService->upload(
+                    $file,
+                    "executive-documentation/project-{$lockedDocument->project_id}/set-{$lockedDocument->document_set_id}",
+                    null,
+                    'private',
+                    $organization,
+                );
+                if ($uploadedPath === false) {
+                    throw new DomainException(trans_message('executive_documentation.errors.version_file_upload_failed'));
+                }
+                $profileSnapshot = $requestedProfile ?? $lockedDocument->profile_data;
+                $version = $lockedDocument->versions()->create([
+                    'organization_id' => $lockedDocument->organization_id,
+                    'uploaded_by' => $userId,
+                    'status' => 'draft',
+                    'version_number' => $data['version_number'],
+                    'file_url' => $uploadedPath,
+                    'content_hash' => $contentHash,
+                    'comment' => $data['comment'] ?? null,
+                    'uploaded_at' => $data['uploaded_at'] ?? now(),
+                    'metadata' => array_merge($data['metadata'] ?? [], ['draft_revision' => 0]),
+                    'profile_snapshot' => $profileSnapshot,
+                    'basis_snapshot' => $basisSnapshot,
+                    'operation_key' => $operationKey,
+                    'operation_hash' => $operationHash,
+                ]);
+                $lockedDocument->update([
+                    'profile_data' => $profileSnapshot,
+                    'status' => ExecutiveDocumentStatusEnum::DRAFT,
+                    'submitted_at' => null,
+                    'approved_at' => null,
+                ]);
+                if ($lockedSet->status === ExecutiveDocumentStatusEnum::TRANSMITTED) {
+                    $lockedSet->update(['status' => ExecutiveDocumentStatusEnum::DRAFT, 'transmitted_at' => null]);
+                }
+                return $version;
+            });
+        } catch (\Throwable $exception) {
+            if (is_string($uploadedPath)) {
+                $this->removeFailedUpload($uploadedPath, $organization, (int) $document->id);
+            }
+            throw $exception;
+        }
+    }
+
+    private function versionBasis(ExecutiveDocument $document): array
+    {
+        return [
+            'coverage' => app(ExecutiveDocumentCoverageSnapshot::class)->forDocument($document),
+            'profile' => $this->profileRegistry->find($document->document_type->value),
+            'material_delivery' => app(ExecutiveMaterialProfileGuard::class)->snapshot($document),
+            'relations' => app(ExecutiveDocumentRelationSnapshot::class)->forDocument($document),
+            'project_id' => $document->project_id,
+            'completed_work_id' => $document->completed_work_id,
+            'journal_entry_id' => $document->journal_entry_id,
+            'document' => $document->only([
+                'title', 'document_type', 'section_name', 'document_date', 'inspection_date',
+                'participants', 'signatories', 'work_type_id', 'work_type_name', 'copies_count', 'form_variant',
+            ]),
+        ];
+    }
+
+    private function removeFailedUpload(string $path, ?Organization $organization, int $documentId): void
+    {
+        try {
+            if (ExecutiveDocumentVersion::withTrashed()->where('file_url', $path)->exists()) {
+                return;
+            }
+        } catch (\Throwable) {
+            Log::error('executive_documentation.upload_cleanup_deferred', ['document_id' => $documentId, 'file_path' => $path]);
+            return;
+        }
+        if (! $this->fileService->delete($path, $organization)) {
+            Log::error('executive_documentation.upload_cleanup_failed', [
+                'document_id' => $documentId,
+                'organization_id' => $organization?->id,
+                'file_path' => $path,
+            ]);
+        }
+    }
+
     public function updateDraft(ExecutiveDocument $document, int $userId, array $data): ExecutiveDocument
     {
         return DB::transaction(function () use ($document, $userId, $data): ExecutiveDocument {
@@ -258,36 +400,6 @@ final class ExecutiveDocumentationService
             throw new DomainException(trans_message('executive_documentation.errors.transmittal_client_upgrade'));
         }
         return app(ExecutiveTransmittalService::class)->remark((int) $document->id, $userId, $data);
-    }
-
-    public function resolveRemark(ExecutiveDocumentRemark $remark, int $userId, string $comment, ?string $response = null, ?int $expectedRevision = null): ExecutiveDocumentRemark
-    {
-        return $this->reviewRemark($remark, $userId, 'accept', $comment, null, $expectedRevision);
-    }
-
-    public function approve(ExecutiveDocument $document, int $userId, ?string $comment = null, ?int $versionId = null): ExecutiveDocument
-    {
-        return DB::transaction(function () use ($document, $userId, $comment, $versionId): ExecutiveDocument {
-            $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
-            $this->mutationGuard->assertActor($lockedDocument, $userId, 'executive-documentation.approve');
-            if (!in_array($lockedDocument->status, [ExecutiveDocumentStatusEnum::UNDER_REVIEW, ExecutiveDocumentStatusEnum::REMARKS], true)) {
-                throw new DomainException(trans_message('executive_documentation.errors.approve_invalid_status'));
-            }
-            $version = $this->versionForAction($lockedDocument, $versionId);
-            if ($lockedDocument->remarks()->whereIn('status', ['open', 'answered', 'returned'])->exists()) {
-                throw new DomainException(trans_message('executive_documentation.errors.open_remarks_block_approval'));
-            }
-            $version->update(['status' => 'approved', 'approved_by' => $userId, 'approved_at' => now()]);
-            $lockedDocument->update([
-                'status' => ExecutiveDocumentStatusEnum::APPROVED,
-                'approved_at' => now(),
-                'metadata' => array_merge($lockedDocument->metadata ?? [], [
-                    'approved_by' => $userId,
-                    'approval_comment' => $comment,
-                ]),
-            ]);
-            return $lockedDocument->fresh(self::DOCUMENT_RELATIONS);
-        });
     }
 
     public function answerRemark(ExecutiveDocumentRemark $remark, int $userId, string $response, ?int $expectedVersionId = null, ?int $responseVersionId = null, ?int $expectedRevision = null): ExecutiveDocumentRemark
@@ -384,6 +496,36 @@ final class ExecutiveDocumentationService
         });
     }
 
+    public function resolveRemark(ExecutiveDocumentRemark $remark, int $userId, string $comment, ?string $response = null, ?int $expectedRevision = null): ExecutiveDocumentRemark
+    {
+        return $this->reviewRemark($remark, $userId, 'accept', $comment, null, $expectedRevision);
+    }
+
+    public function approve(ExecutiveDocument $document, int $userId, ?string $comment = null, ?int $versionId = null): ExecutiveDocument
+    {
+        return DB::transaction(function () use ($document, $userId, $comment, $versionId): ExecutiveDocument {
+            $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
+            $this->mutationGuard->assertActor($lockedDocument, $userId, 'executive-documentation.approve');
+            if (!in_array($lockedDocument->status, [ExecutiveDocumentStatusEnum::UNDER_REVIEW, ExecutiveDocumentStatusEnum::REMARKS], true)) {
+                throw new DomainException(trans_message('executive_documentation.errors.approve_invalid_status'));
+            }
+            $version = $this->versionForAction($lockedDocument, $versionId);
+            if ($lockedDocument->remarks()->whereIn('status', ['open', 'answered', 'returned'])->exists()) {
+                throw new DomainException(trans_message('executive_documentation.errors.open_remarks_block_approval'));
+            }
+            $version->update(['status' => 'approved', 'approved_by' => $userId, 'approved_at' => now()]);
+            $lockedDocument->update([
+                'status' => ExecutiveDocumentStatusEnum::APPROVED,
+                'approved_at' => now(),
+                'metadata' => array_merge($lockedDocument->metadata ?? [], [
+                    'approved_by' => $userId,
+                    'approval_comment' => $comment,
+                ]),
+            ]);
+            return $lockedDocument->fresh(self::DOCUMENT_RELATIONS);
+        });
+    }
+
     public function reject(ExecutiveDocument $document, int $userId, string $comment, ?int $versionId = null): ExecutiveDocument
     {
         return DB::transaction(function () use ($document, $userId, $comment, $versionId): ExecutiveDocument {
@@ -428,6 +570,8 @@ final class ExecutiveDocumentationService
             }
             return $set->fresh(self::SET_RELATIONS)->setRelation('transmittal', $existingTransmittal);
         }
+
+        app(ExecutiveDocumentRequirementsService::class)->assertReadyForTransmission($set);
 
         if ($set->documents->isEmpty()) {
             throw new DomainException(trans_message('executive_documentation.errors.transmit_without_documents'));
@@ -481,6 +625,7 @@ final class ExecutiveDocumentationService
                 'sender' => ['user_id' => $userId, 'organization_id' => $set->organization_id, 'name' => $set->organization->name],
                 'recipient' => ['organization_id' => $recipient['id'], 'name' => $recipient['name'], 'source' => $recipient['source']],
                 'documents' => $documentsManifest,
+                'requirements' => $set->requirements()->whereNull('superseded_at')->orderBy('id')->get()->toArray(),
             ];
             $operationHash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
             $set->update([
@@ -685,139 +830,5 @@ final class ExecutiveDocumentationService
             throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
         }
         return $version;
-    }
-
-    private function createVersion(ExecutiveDocument $document, int $userId, array $data, string $permission): ExecutiveDocumentVersion
-    {
-        $uploadedPath = null;
-        $organization = null;
-        try {
-            return DB::transaction(function () use ($document, $userId, $data, $permission, &$uploadedPath, &$organization): ExecutiveDocumentVersion {
-                $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
-                $this->mutationGuard->assertActor($lockedDocument, $userId, $permission);
-                $latestVersionId = $lockedDocument->versions()->value('id');
-                $file = $data['file'] ?? null;
-                if (! $file instanceof UploadedFile || ! $file->isValid() || $file->getSize() <= 0) {
-                    throw new DomainException(trans_message('executive_documentation.errors.version_file_required'));
-                }
-                if (isset($data['profile_data'], $data['profile_snapshot']) && $data['profile_data'] !== $data['profile_snapshot']) {
-                    throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
-                }
-                $operationKey = $data['operation_key'] ?? null;
-                $requestedProfile = $data['profile_data'] ?? $data['profile_snapshot'] ?? null;
-                $contentHash = hash_file('sha256', $file->getRealPath());
-                $operationHash = hash('sha256', json_encode([
-                    'document_id' => $lockedDocument->id,
-                    'expected_version_id' => (int) ($data['expected_version_id'] ?? 0),
-                    'version_number' => $data['version_number'],
-                    'comment' => $data['comment'] ?? null,
-                    'content_hash' => $contentHash,
-                    'profile_snapshot' => $requestedProfile,
-                    'basis_snapshot' => $data['basis_snapshot'] ?? null,
-                    'metadata' => $data['metadata'] ?? null,
-                    'uploaded_at' => $data['uploaded_at'] ?? null,
-                ], JSON_THROW_ON_ERROR));
-                if ($operationKey !== null) {
-                    $existing = $lockedDocument->versions()->withTrashed()->where('operation_key', $operationKey)->first();
-                    if ($existing !== null) {
-                        if ($existing->trashed() || $existing->operation_hash !== $operationHash) {
-                            throw new DomainException(trans_message('executive_documentation.errors.operation_conflict'));
-                        }
-                        return $existing;
-                    }
-                }
-                if (isset($data['expected_version_id']) && (int) $data['expected_version_id'] !== (int) $latestVersionId) {
-                    throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
-                }
-                $this->mutationGuard->assertReferences($lockedDocument);
-                $candidate = clone $lockedDocument;
-                $candidate->profile_data = $requestedProfile ?? $lockedDocument->profile_data;
-                app(ExecutiveMaterialProfileGuard::class)->assertValid($candidate);
-                $basisSnapshot = $this->versionBasis($lockedDocument);
-                foreach ($data['basis_snapshot'] ?? [] as $key => $value) {
-                    if (! in_array($key, ['project_id', 'completed_work_id', 'journal_entry_id'], true)
-                        || ($value === null ? null : (int) $value) !== ($basisSnapshot[$key] === null ? null : (int) $basisSnapshot[$key])) {
-                        throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
-                    }
-                }
-                if ($lockedDocument->versions()->withTrashed()->where('version_number', $data['version_number'])->exists()) {
-                    throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
-                }
-                $organization = Organization::query()->findOrFail($lockedDocument->organization_id);
-                $uploadedPath = $this->fileService->upload(
-                    $file,
-                    "executive-documentation/project-{$lockedDocument->project_id}/set-{$lockedDocument->document_set_id}",
-                    null,
-                    'private',
-                    $organization,
-                );
-                if ($uploadedPath === false) {
-                    throw new DomainException(trans_message('executive_documentation.errors.version_file_upload_failed'));
-                }
-                $profileSnapshot = $requestedProfile ?? $lockedDocument->profile_data;
-                $version = $lockedDocument->versions()->create([
-                    'organization_id' => $lockedDocument->organization_id,
-                    'uploaded_by' => $userId,
-                    'status' => 'draft',
-                    'version_number' => $data['version_number'],
-                    'file_url' => $uploadedPath,
-                    'content_hash' => $contentHash,
-                    'comment' => $data['comment'] ?? null,
-                    'uploaded_at' => $data['uploaded_at'] ?? now(),
-                    'metadata' => array_merge($data['metadata'] ?? [], ['draft_revision' => 0]),
-                    'profile_snapshot' => $profileSnapshot,
-                    'basis_snapshot' => $basisSnapshot,
-                    'operation_key' => $operationKey,
-                    'operation_hash' => $operationHash,
-                ]);
-                $lockedDocument->update([
-                    'profile_data' => $profileSnapshot,
-                    'status' => ExecutiveDocumentStatusEnum::DRAFT,
-                    'submitted_at' => null,
-                    'approved_at' => null,
-                ]);
-                return $version;
-            });
-        } catch (\Throwable $exception) {
-            if (is_string($uploadedPath)) {
-                $this->removeFailedUpload($uploadedPath, $organization, (int) $document->id);
-            }
-            throw $exception;
-        }
-    }
-
-    private function versionBasis(ExecutiveDocument $document): array
-    {
-        return [
-            'profile' => $this->profileRegistry->find($document->document_type->value),
-            'material_delivery' => app(ExecutiveMaterialProfileGuard::class)->snapshot($document),
-            'relations' => $document->relations()->get(['relation_type', 'target_type', 'target_id'])->toArray(),
-            'project_id' => $document->project_id,
-            'completed_work_id' => $document->completed_work_id,
-            'journal_entry_id' => $document->journal_entry_id,
-            'document' => $document->only([
-                'title', 'document_type', 'section_name', 'document_date', 'inspection_date',
-                'participants', 'signatories', 'work_type_id', 'work_type_name', 'copies_count', 'form_variant',
-            ]),
-        ];
-    }
-
-    private function removeFailedUpload(string $path, ?Organization $organization, int $documentId): void
-    {
-        try {
-            if (ExecutiveDocumentVersion::withTrashed()->where('file_url', $path)->exists()) {
-                return;
-            }
-        } catch (\Throwable) {
-            Log::error('executive_documentation.upload_cleanup_deferred', ['document_id' => $documentId, 'file_path' => $path]);
-            return;
-        }
-        if (! $this->fileService->delete($path, $organization)) {
-            Log::error('executive_documentation.upload_cleanup_failed', [
-                'document_id' => $documentId,
-                'organization_id' => $organization?->id,
-                'file_path' => $path,
-            ]);
-        }
     }
 }

@@ -17,6 +17,26 @@ final class ExecutiveDocumentProfilesTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_geodetic_acts_can_be_registered_before_daily_production_records_exist(): void
+    {
+        [$actor, $set, $service] = $this->fixture();
+        foreach ([
+            'geodetic_base_acceptance_act' => ['act_number' => 'ГРО-1', 'geodetic_base_description' => 'Реперы и пункты основы', 'base_acceptance_documents' => 'Схема передачи ГРО'],
+            'axis_layout_act' => ['act_number' => 'ОСИ-1', 'axis_layout_text' => 'Разбивка осей А-Д', 'axis_fixing_text' => 'Закреплены знаками'],
+        ] as $type => $profile) {
+            $data = [
+                'document_type' => $type, 'title' => 'Геодезический акт', 'profile_data' => $profile,
+                'initial_version' => ['version_number' => '1', 'file' => UploadedFile::fake()->createWithContent('geodetic.pdf', $type)],
+            ];
+            $data = app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentInput::class)->normalize($data, $set);
+            $document = $service->addDocument($set, $actor->user->id, $data);
+            self::assertNull($document->work_type_id);
+            self::assertNull($document->journal_entry_id);
+            $submitted = $service->submit($document, $actor->user->id, null, $document->versions->first()->id);
+            self::assertSame('under_review', $submitted->status->value);
+        }
+    }
+
     public function test_passport_registration_does_not_require_a_control_event_and_freezes_profile_identity(): void
     {
         [$actor, $set, $service] = $this->fixture();
