@@ -102,7 +102,10 @@ final class ExecutiveDocumentReferenceService
 
         $this->applyJournalEntryFilters($query, $filters);
 
-        return $query->latest('entry_date')->latest('id')->paginate($perPage, ['*'], 'page', $page)
+        return $query->select('construction_journal_entries.*')
+            ->latest('entry_date')
+            ->latest('id')
+            ->paginate($perPage, ['*'], 'page', $page)
             ->through(fn (ConstructionJournalEntry $entry): array => [
                 'id' => $entry->id,
                 'journal_id' => $entry->journal_id,
@@ -145,9 +148,12 @@ final class ExecutiveDocumentReferenceService
             }
             $builder
                 ->orWhere('work_description', 'ilike', $like)
-                ->orWhereHas('journal', static fn ($journal) => $journal
-                    ->where('name', 'ilike', $like)
-                    ->orWhere('journal_number', 'ilike', $like));
+                ->orWhereHas('journal', static function ($journal) use ($like): void {
+                    $journal->where(static function ($related) use ($like): void {
+                        $related->where('name', 'ilike', $like)
+                            ->orWhere('journal_number', 'ilike', $like);
+                    });
+                });
             if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $search) === 1) {
                 $builder->orWhereDate('entry_date', $search);
             }
