@@ -12,6 +12,7 @@
             <file>tests/Unit/ConstructionJournal/GeneralJournalDocumentRenderTest.php</file>
             <file>tests/Unit/ExecutiveDocumentation/SpecialJournalProfilesTest.php</file>
             <file>tests/Feature/Api/V1/Admin/ExecutiveDocumentationProfileContractTest.php</file>
+            <file>tests/Feature/HandoverAcceptance/AcceptanceRetargetTriggerTest.php</file>
             <file>tests/Feature/HandoverAcceptance/WorkReworkBoundaryTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRenderTest.php</file>
             <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentPrintPackageTest.php</file>
