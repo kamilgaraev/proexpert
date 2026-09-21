@@ -146,6 +146,7 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::post('/', [CompletedWorkController::class, 'store']);
         Route::post('/bulk', [CompletedWorkController::class, 'bulkCreate']);
         Route::get('/export/excel', [CompletedWorkController::class, 'exportExcel']);
+        require __DIR__.'/completed_work_reconciliation.php';
         Route::get('/{completed_work}', [CompletedWorkController::class, 'showProjectWork']);
         Route::post('/{completed_work}/confirm', [CompletedWorkController::class, 'confirmProjectWork']);
         Route::put('/{completed_work}', [CompletedWorkController::class, 'updateProjectWork']);

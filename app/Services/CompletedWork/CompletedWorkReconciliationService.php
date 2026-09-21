@@ -39,8 +39,8 @@ final class CompletedWorkReconciliationService
         $report = [];
 
         foreach ($rows as $id => $record) {
-            $quantity = $this->normalize($record['quantity'] ?? null);
-            $completed = $this->normalize($record['completed_quantity'] ?? null);
+            $quantity = self::normalizeQuantity($record['quantity'] ?? null);
+            $completed = self::normalizeQuantity($record['completed_quantity'] ?? null);
             $issues = [];
 
             if ($quantity === null
@@ -93,7 +93,7 @@ final class CompletedWorkReconciliationService
         return $report;
     }
 
-    private function normalize(mixed $value): ?string
+    public static function normalizeQuantity(mixed $value): ?string
     {
         if (! is_string($value) && ! is_int($value)) {
             return null;

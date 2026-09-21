@@ -70,6 +70,9 @@
             <file>tests/Feature/CompletedWork/CompletedWorkScopeRegressionTest.php</file>
             <file>tests/Feature/CompletedWork/JournalFactIdempotencyTest.php</file>
             <file>tests/Feature/CompletedWork/CompletedWorkCorrectionTest.php</file>
+            <file>tests/Feature/CompletedWork/ConstructionAccountingHistoryCompatibilityTest.php</file>
+            <file>tests/Unit/CompletedWork/CompletedWorkReconciliationTest.php</file>
+            <file>tests/Unit/CompletedWork/CompletedWorkHistoryTransformationRulesTest.php</file>
             <file>tests/Feature/Acting/ContractPeriodCertificateTest.php</file>
             <file>tests/Feature/ConstructionJournal/MaterialConsumptionStatementTest.php</file>
             <file>tests/Feature/Pto/PtoWorkspaceQueueTest.php</file>
