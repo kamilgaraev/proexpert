@@ -125,12 +125,32 @@ final class ExecutiveDocumentationProfileContractTest extends TestCase
             'quality_passport',
             'incoming_batch_control',
             'work_journal',
+            'welding_work_journal',
+            'concrete_work_journal',
+            'pile_work_journal',
+            'installation_work_journal',
+            'anticorrosion_work_journal',
+            'designer_supervision_journal',
         ], $profileTypes);
 
+        $workJournal = $profiles->firstWhere('type', 'work_journal');
+        $this->assertSame('external_manual_review', $workJournal['profile_mode']);
+        $this->assertNull($workJournal['print_template_version']);
+        $this->assertFalse($workJournal['requires_work_type']);
+
+        $weldingJournal = $profiles->firstWhere('type', 'welding_work_journal');
+        $this->assertSame('external_manual_review', $weldingJournal['profile_mode']);
+        $this->assertNull($weldingJournal['print_template_version']);
+        $this->assertTrue($weldingJournal['requires_work_type']);
+        $this->assertContains('applicability_basis', collect($weldingJournal['fields'])->pluck('key')->all());
+
+        $supervisionJournal = $profiles->firstWhere('type', 'designer_supervision_journal');
+        $this->assertFalse($supervisionJournal['requires_work_type']);
+
         $hiddenWorkProfile = $profiles->firstWhere('type', 'hidden_work_act');
-        $this->assertTrue($hiddenWorkProfile['requires_work_type']);
-        $this->assertTrue($hiddenWorkProfile['requires_journal_entry']);
-        $this->assertContains('344/пр, приложение 3', $hiddenWorkProfile['regulatory_basis']);
+        $this->assertFalse($hiddenWorkProfile['requires_work_type']);
+        $this->assertFalse($hiddenWorkProfile['requires_journal_entry']);
+        $this->assertContains('344/пр в редакции 369/пр: приложение № 3 к составу ИД', $hiddenWorkProfile['regulatory_basis']);
         $this->assertContains('presented_works', collect($hiddenWorkProfile['fields'])->pluck('key')->all());
         $this->assertContains('direct_work_executor', collect($hiddenWorkProfile['signatory_roles'])->pluck('key')->all());
 

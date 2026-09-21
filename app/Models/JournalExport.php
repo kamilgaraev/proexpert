@@ -10,6 +10,8 @@ use Illuminate\Support\Str;
 
 final class JournalExport extends Model
 {
+    protected $table = 'construction_journal_exports';
+
     public const STATUS_QUEUED = 'queued';
 
     public const STATUS_PROCESSING = 'processing';

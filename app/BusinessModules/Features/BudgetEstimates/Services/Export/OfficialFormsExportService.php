@@ -1072,7 +1072,7 @@ class OfficialFormsExportService
 
         $journalNumber = $journal->journal_number ?? $journal->id;
         $filename = $this->uniqueExportFilename(
-            "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.xlsx",
+            "WorkRegister_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.xlsx",
             $exportId
         );
         $path = "exports/journal/ks6/{$filename}";
@@ -1094,7 +1094,7 @@ class OfficialFormsExportService
 
         $journalNumber = $journal->journal_number ?? $journal->id;
         $filename = $this->uniqueExportFilename(
-            "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.pdf",
+            "WorkRegister_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.pdf",
             $exportId
         );
         $path = "exports/journal/ks6/{$filename}";
@@ -1228,11 +1228,11 @@ class OfficialFormsExportService
     {
         $row = 1;
 
-        $sheet->setCellValue("A{$row}", 'ОБЩИЙ ЖУРНАЛ РАБОТ (форма КС-6)');
+        $sheet->setCellValue("A{$row}", 'ОПЕРАТИВНЫЙ ОТЧЁТ О ВЫПОЛНЕНИИ РАБОТ');
         $sheet->mergeCells("A{$row}:H{$row}");
         $row++;
 
-        $sheet->setCellValue("A{$row}", 'Утверждена постановлением Госкомстата России от 11.11.99 № 100');
+        $sheet->setCellValue("A{$row}", 'Внутренний отчёт по записям журнала за выбранный период');
         $sheet->mergeCells("A{$row}:H{$row}");
         $row += 2;
 

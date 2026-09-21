@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\ConstructionJournalController;
 use App\Http\Controllers\Api\ConstructionJournalEntryController;
 use App\Http\Controllers\Api\JournalExportController;
+use App\Http\Controllers\Api\GeneralJournalDocumentController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -10,7 +11,7 @@ use Illuminate\Support\Facades\Route;
 | Construction Journal API Routes
 |--------------------------------------------------------------------------
 |
-| Маршруты для работы с Общим журналом работ (ОЖР, форма КС-6)
+| Маршруты оперативного журнала выполнения работ и подготовки полного общего журнала по 1026/пр
 |
 */
 
@@ -25,6 +26,9 @@ Route::middleware(['auth:api_admin'])->group(function () {
     });
 
     Route::prefix('construction-journals/{journal}')->group(function () {
+        Route::get('general-document', [GeneralJournalDocumentController::class, 'show']);
+        Route::get('general-document/versions/{versionId}', [GeneralJournalDocumentController::class, 'show'])->whereNumber('versionId');
+        Route::post('export/general', [GeneralJournalDocumentController::class, 'prepare']);
         Route::get('/', [ConstructionJournalController::class, 'show'])
             ->name('construction-journals.show');
         Route::put('/', [ConstructionJournalController::class, 'update'])

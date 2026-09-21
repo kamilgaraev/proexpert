@@ -499,6 +499,82 @@ final class ExecutiveDocumentProfileRegistry
                     'other',
                 ],
             ],
+            'welding_work_journal' => $this->specialJournalProfile([
+                $this->field('welding_process', 'text', true),
+                $this->field('welding_materials', 'textarea', true),
+                $this->field('welder_qualifications', 'textarea', true),
+                $this->field('welding_control_results', 'textarea', true),
+            ], true),
+            'concrete_work_journal' => $this->specialJournalProfile([
+                $this->field('concrete_class', 'text', true),
+                $this->field('concrete_mix', 'textarea', true),
+                $this->field('placement_conditions', 'textarea', true),
+                $this->field('curing_control', 'textarea', true),
+                $this->field('concrete_test_results', 'textarea', true),
+            ], true),
+            'pile_work_journal' => $this->specialJournalProfile([
+                $this->field('pile_type', 'text', true),
+                $this->field('pile_field', 'textarea', true),
+                $this->field('pile_installation_method', 'text', true),
+                $this->field('pile_depth_or_refusal', 'text', true),
+                $this->field('pile_acceptance_basis', 'textarea', true),
+            ], true),
+            'installation_work_journal' => $this->specialJournalProfile([
+                $this->field('structures_type', 'text', true),
+                $this->field('assembly_sequence', 'textarea', true),
+                $this->field('lifting_equipment', 'textarea', true),
+                $this->field('connections_control', 'textarea', true),
+                $this->field('installation_acceptance_basis', 'textarea', true),
+            ], true),
+            'anticorrosion_work_journal' => $this->specialJournalProfile([
+                $this->field('protection_system', 'text', true),
+                $this->field('surface_preparation', 'textarea', true),
+                $this->field('coating_materials', 'textarea', true),
+                $this->field('layer_thickness_control', 'textarea', true),
+                $this->field('anticorrosion_acceptance_basis', 'textarea', true),
+            ], true),
+            'designer_supervision_journal' => $this->specialJournalProfile([
+                $this->field('supervision_scope', 'textarea', true),
+                $this->field('site_visits', 'textarea', true),
+                $this->field('instructions_and_deviations', 'textarea', true),
+                $this->field('designer_decisions', 'textarea', true),
+            ], false),
+        ];
+    }
+
+    private function specialJournalProfile(array $subjectFields, bool $requiresWorkType): array
+    {
+        return [
+            'profile_mode' => 'external_manual_review',
+            'group' => 'journals',
+            'category' => 'journals',
+            'regulatory_basis' => ['Проектная и рабочая документация', 'Применимые требования нормативных документов по проекту'],
+            'requires_work_type' => $requiresWorkType,
+            'requires_journal_entry' => false,
+            'fields' => [
+                $this->field('journal_number', 'text', true),
+                $this->field('opened_at', 'date', true),
+                $this->field('closed_at', 'date'),
+                $this->field('journal_organization', 'text', true),
+                $this->field('responsible_person', 'text', true),
+                $this->field('journal_period', 'text', true),
+                $this->field('normative_basis', 'textarea', true),
+                $this->field('applicability_basis', 'textarea', true),
+                $this->field('project_documentation', 'textarea', true),
+                $this->field('journal_status', 'select', true, ['options' => ['active', 'review', 'closed', 'correction_required']]),
+                ...$subjectFields,
+            ],
+            'relations' => [
+                $this->relation('journal_entries', 'journal_entry', true),
+                $this->relation('related_documents', 'executive_document', true),
+            ],
+            'signatory_roles' => [
+                'journal_responsible_person',
+                'construction_representative',
+                'contractor_control_representative',
+                'developer_control_representative',
+                'other',
+            ],
         ];
     }
 

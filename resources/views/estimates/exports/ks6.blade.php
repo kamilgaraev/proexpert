@@ -41,7 +41,7 @@
 <html lang="ru">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-    <title>КС-6 № {{ $journalNumber }}</title>
+    <title>Оперативный отчёт о работах № {{ $journalNumber }}</title>
     <style>
         @include('pdf.partials.most-brand-styles')
         @page {
@@ -240,9 +240,8 @@
     @include('pdf.partials.most-brand-header')
     <div class="top-area">
         <div class="top-note">
-            <div>Типовая межотраслевая форма № КС-6</div>
-            <div>Утверждена постановлением Госкомстата России</div>
-            <div>от 11 ноября 1999 г. № 100</div>
+            <div>Оперативный отчёт о выполнении работ</div>
+            <div>Записи журнала за выбранный период</div>
         </div>
 
         <div class="code-area">
@@ -252,8 +251,8 @@
                     <td class="code-box code-head">Код</td>
                 </tr>
                 <tr>
-                    <td class="code-label">Форма по ОКУД</td>
-                    <td class="code-box">0322002</td>
+                    <td class="code-label">Внутренний отчёт</td>
+                    <td class="code-box"></td>
                 </tr>
                 <tr>
                     <td class="code-label">Дата составления</td>
@@ -274,7 +273,7 @@
             </table>
         </div>
 
-        <div class="main-heading">ОБЩИЙ ЖУРНАЛ РАБОТ № {{ $journalNumber }}</div>
+        <div class="main-heading">ОПЕРАТИВНЫЙ ОТЧЁТ О РАБОТАХ № {{ $journalNumber }}</div>
 
         <div class="party-block">
             <table class="party-table">
