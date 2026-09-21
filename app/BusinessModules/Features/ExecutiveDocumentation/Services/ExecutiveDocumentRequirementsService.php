@@ -338,7 +338,7 @@ final class ExecutiveDocumentRequirementsService
             $blockers[] = ['code' => 'requirements_not_configured', 'requirement_id' => null, 'scope_id' => $set->project_id, 'stage' => 'document_review', 'message' => trans_message('executive_requirements.not_configured'), 'target' => ['type' => 'document_set', 'id' => $set->id]];
         }
 
-        return ['requirements_total' => $requirements->count(), 'requirements_applicable' => $applicable->count(), 'requirements_satisfied' => max(0, $satisfied), 'missing_requirements' => count($blockers), 'blockers' => $blockers, 'ready' => $requirements->isNotEmpty() && $blockers === []];
+        return ['requirements_total' => $requirements->count(), 'requirements_applicable' => $applicable->count(), 'requirements_satisfied' => max(0, $satisfied), 'missing_requirements' => count($blockers), 'blockers' => $blockers, 'ready' => $requirements->isEmpty() || $blockers === []];
     }
 
     public function assertReadyForTransmission(ExecutiveDocumentSet $set): array
