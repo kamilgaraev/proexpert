@@ -9,6 +9,14 @@ use InvalidArgumentException;
 
 final readonly class OfficialDocumentDefinition
 {
+    private const TITLE_KEYS = [
+        'official_material_usage_m29' => 'reports.official.official_material_usage_m29',
+        'official_hidden_work_act' => 'reports.official.official_hidden_work_act',
+        'official_axis_layout_act' => 'reports.official.official_axis_layout_act',
+        'official_geodetic_base_acceptance_act' => 'reports.official.official_geodetic_base_acceptance_act',
+        'official_responsible_structure_act' => 'reports.official.official_responsible_structure_act',
+        'official_engineering_network_section_act' => 'reports.official.official_engineering_network_section_act',
+    ];
     public array $sealRequires;
 
     public function __construct(
@@ -19,8 +27,7 @@ final readonly class OfficialDocumentDefinition
         public string $legalRetentionPolicy,
         array $sealRequires,
     ) {
-        if ($code !== 'official_material_usage_m29'
-            || $titleKey !== 'reports.official.official_material_usage_m29') {
+        if (! isset(self::TITLE_KEYS[$code]) || self::TITLE_KEYS[$code] !== $titleKey) {
             throw new InvalidArgumentException('official_document_identity_invalid');
         }
 

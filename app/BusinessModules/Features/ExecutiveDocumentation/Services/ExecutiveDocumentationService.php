@@ -176,12 +176,17 @@ final class ExecutiveDocumentationService
         return $this->createVersion($document, $userId, $data, 'executive-documentation.edit');
     }
 
-    private function createVersion(ExecutiveDocument $document, int $userId, array $data, string $permission): ExecutiveDocumentVersion
+    public function addPreparedVersion(ExecutiveDocument $document, int $userId, array $data): ExecutiveDocumentVersion
+    {
+        return $this->createVersion($document, $userId, $data, 'executive-documentation.edit', true);
+    }
+
+    private function createVersion(ExecutiveDocument $document, int $userId, array $data, string $permission, bool $prepared = false): ExecutiveDocumentVersion
     {
         $uploadedPath = null;
         $organization = null;
         try {
-            return DB::transaction(function () use ($document, $userId, $data, $permission, &$uploadedPath, &$organization): ExecutiveDocumentVersion {
+            return DB::transaction(function () use ($document, $userId, $data, $permission, $prepared, &$uploadedPath, &$organization): ExecutiveDocumentVersion {
                 $lockedSet = ExecutiveDocumentSet::query()->lockForUpdate()->findOrFail($document->document_set_id);
                 $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
                 if ((int) $lockedDocument->document_set_id !== (int) $lockedSet->id) {
@@ -257,7 +262,7 @@ final class ExecutiveDocumentationService
                     'content_hash' => $contentHash,
                     'comment' => $data['comment'] ?? null,
                     'uploaded_at' => $data['uploaded_at'] ?? now(),
-                    'metadata' => array_merge($data['metadata'] ?? [], ['draft_revision' => 0]),
+                    'metadata' => array_merge($data['metadata'] ?? [], ['draft_revision' => 0, 'origin' => $prepared ? 'generated_preparation' : 'registered_external']),
                     'profile_snapshot' => $profileSnapshot,
                     'basis_snapshot' => $basisSnapshot,
                     'operation_key' => $operationKey,
@@ -285,6 +290,7 @@ final class ExecutiveDocumentationService
     private function versionBasis(ExecutiveDocument $document): array
     {
         return [
+            'project' => $document->project()->firstOrFail()->only(['id', 'name', 'address']),
             'coverage' => app(ExecutiveDocumentCoverageSnapshot::class)->forDocument($document),
             'profile' => $this->profileRegistry->find($document->document_type->value),
             'material_delivery' => app(ExecutiveMaterialProfileGuard::class)->snapshot($document),

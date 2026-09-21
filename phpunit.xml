@@ -8,6 +8,11 @@
     <testsuites>
         <testsuite name="ConstructionAccounting">
             <file>tests/Feature/HandoverAcceptance/WorkReworkBoundaryTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentRenderTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentPrintPackageTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentLegalArchiveTest.php</file>
+            <file>tests/Feature/ExecutiveDocumentation/ExecutiveDocumentPrintApiTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ExecutiveDocumentationWorkflowTest.php</file>
             <file>tests/Feature/HandoverAcceptance/WorkReworkAccountingTest.php</file>
             <file>tests/Feature/HandoverAcceptance/WorkReworkFinancialImpactTest.php</file>
             <file>tests/Unit/Acting/ActingAvailabilityServiceTest.php</file>

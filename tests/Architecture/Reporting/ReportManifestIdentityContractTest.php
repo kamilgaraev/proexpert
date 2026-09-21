@@ -135,7 +135,7 @@ final class ReportManifestIdentityContractTest extends TestCase
         $official = $this->officialDefinitions();
 
         self::assertNotContains('official_material_usage_m29', $managementCodes);
-        self::assertCount(1, $official);
+        self::assertCount(6, $official);
         self::assertSame('official_material_usage_m29', $official[0]['code']);
         self::assertNotContains($official[0]['code'], $managementCodes);
     }
@@ -168,6 +168,7 @@ final class ReportManifestIdentityContractTest extends TestCase
             'sorts',
             'formats',
             'versions',
+            'semantic_fingerprints',
             'permissions',
             'readiness',
             'capabilities',

@@ -22,6 +22,8 @@ final class ExecutiveDocumentVersionResource extends JsonResource
             'revision' => (int) ($version->metadata['draft_revision'] ?? 0),
             'version_number' => $version->version_number,
             'status' => $version->status,
+            'origin' => $version->metadata['origin'] ?? 'registered_external',
+            'template_version' => ($version->metadata['origin'] ?? null) === 'generated_preparation' ? ($version->metadata['template_version'] ?? null) : null,
             'file_url' => $version->file_url,
             'content_hash' => $version->content_hash,
             'profile_snapshot' => $version->profile_snapshot,

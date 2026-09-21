@@ -165,7 +165,6 @@ final class HiddenWorkActAutofillService
                 'finished_at' => $finishedAt,
                 'actual_volume' => $actualVolume,
                 'materials_summary' => $materials,
-                'next_works_permission' => 'Последующие работы разрешаются после приемки указанных скрытых работ.',
                 'journal_entry_id' => $firstEntry?->id,
                 'journal_entry_number' => $firstEntry?->entry_number,
                 'journal_entry_date' => $firstEntry?->entry_date?->format('Y-m-d'),

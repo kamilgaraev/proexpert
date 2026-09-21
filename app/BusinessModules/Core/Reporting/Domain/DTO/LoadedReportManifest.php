@@ -19,7 +19,7 @@ final readonly class LoadedReportManifest
     ) {
         $expectedCount = match ($catalog) {
             'management-catalog.v1' => 28,
-            'official-document-catalog.v1' => 1,
+            'official-document-catalog.v1' => 6,
             default => throw new InvalidArgumentException('report_manifest_catalog_invalid'),
         };
 

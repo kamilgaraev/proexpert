@@ -398,6 +398,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                 ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
                     'document_type' => 'hidden_work_act',
                     'title' => 'Акт бетонирования фундаментной плиты',
+                    'profile_data' => ['next_works_permission' => 'Разрешается устройство гидроизоляции'],
                     'work_type_id' => $workType->id,
                     'journal_entry_id' => $startEntry->id,
                     'completed_work_id' => $completedWork->id,
@@ -426,7 +427,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             $response->assertJsonPath('data.completed_work_id', $completedWork->id);
             $response->assertJsonPath('data.profile_data.started_at', '2026-05-10');
             $response->assertJsonPath('data.profile_data.finished_at', '2026-05-13');
-            $response->assertJsonPath('data.profile_data.next_works_permission', 'Последующие работы разрешаются после приемки указанных скрытых работ.');
+            $response->assertJsonPath('data.profile_data.next_works_permission', 'Разрешается устройство гидроизоляции');
             $this->assertStringStartsWith('АСР-202605-', (string) $response->json('data.profile_data.act_number'));
             $this->assertStringContainsString('Подготовка основания под плиту', (string) $response->json('data.profile_data.presented_works'));
             $this->assertStringContainsString('Бетонирование фундаментной плиты', (string) $response->json('data.profile_data.presented_works'));

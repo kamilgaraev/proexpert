@@ -38,6 +38,7 @@ final class ExecutiveDocumentRelationSnapshotTest extends TestCase
         $snapshot = app(ExecutiveDocumentRelationSnapshot::class)->forDocument($source);
         self::assertSame(['version_id' => $version->id, 'document_id' => $target->id, 'content_hash' => 'hash-1', 'status' => 'approved'], $snapshot[0]['target_version']);
         self::assertNull($snapshot[1]['target_version']);
+        self::assertSame(['title' => null, 'document_date' => null, 'number' => null, 'version_number' => '1'], $snapshot[0]['document_snapshot']);
     }
 
     public function test_cross_project_document_target_is_rejected(): void

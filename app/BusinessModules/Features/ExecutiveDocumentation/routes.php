@@ -11,6 +11,14 @@ Route::prefix('api/v1/admin/executive-documentation')
     ->name('admin.executive_documentation.')
     ->middleware(AdminRouteStack::middleware(['executive-documentation.active']))
     ->group(function (): void {
+        Route::get('/versions/{versionId}/print', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'render'])
+            ->middleware('authorize:executive-documentation.view')->name('versions.print');
+        Route::post('/documents/{documentId}/prepare', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'prepare'])
+            ->middleware('authorize:executive-documentation.edit')->name('documents.prepare');
+        Route::get('/transmittals/{transmittalId}/package', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'package'])
+            ->middleware('authorize:executive-documentation.view')->name('transmittals.package');
+        Route::post('/versions/{versionId}/legal-archive', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'legalArchive'])
+            ->middleware('authorize:executive-documentation.edit')->name('versions.legal_archive');
         Route::get('/sets', [ExecutiveDocumentationController::class, 'index'])
             ->middleware('authorize:executive-documentation.view')
             ->name('sets.index');

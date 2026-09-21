@@ -536,6 +536,21 @@ final class ExecutiveDocumentProfileRegistry
      */
     private function hydrateProfile(string $type, array $profile): array
     {
+        $printFields = match ($type) {
+            'hidden_work_act' => ['location', 'project_documentation', 'normative_basis', 'additional_information', 'appendices'],
+            'axis_layout_act' => ['location', 'project_documentation', 'normative_basis', 'additional_information', 'appendices'],
+            'geodetic_base_acceptance_act' => ['location', 'additional_information', 'appendices'],
+            'responsible_structure_act' => ['project_documentation', 'hidden_work_acts', 'materials_quality_documents', 'compliance_documents', 'inspection_results', 'normative_basis', 'usage_by_purpose', 'usage_load', 'full_load_conditions', 'next_works_permission', 'additional_information', 'appendices'],
+            'engineering_network_section_act' => ['location', 'project_documentation', 'hidden_work_acts', 'materials_quality_documents', 'compliance_documents', 'inspection_results', 'tests', 'network_technical_conditions', 'normative_basis', 'additional_information', 'appendices'],
+            default => [],
+        };
+        $existingKeys = array_column($profile['fields'], 'key');
+        foreach ($printFields as $key) {
+            if (! in_array($key, $existingKeys, true)) {
+                $profile['fields'][] = $this->field($key, 'textarea');
+            }
+        }
+        if ($printFields !== []) $profile['profile_revision'] = '2026-09-21.2';
         return [
             'type' => $type,
             'label' => trans_message("executive_documentation.document_types.{$type}"),
@@ -543,6 +558,7 @@ final class ExecutiveDocumentProfileRegistry
             'category_label' => trans_message("executive_documentation.profile_categories.".($profile['category'] ?? $profile['group'])),
             'profile_revision' => $profile['profile_revision'] ?? '2026-09-20.1',
             'profile_mode' => $profile['profile_mode'] ?? 'prepared',
+            'print_template_version' => $printFields !== [] ? '344-369-v1' : null,
             'legacy_type' => $profile['legacy_type'] ?? null,
             'group' => $profile['group'],
             'group_label' => trans_message("executive_documentation.profile_groups.{$profile['group']}"),

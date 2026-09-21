@@ -68,6 +68,12 @@ final class ExecutiveDocumentRelationSnapshot
                     'content_hash' => $version->content_hash,
                     'status' => $this->scalarStatus($version->status),
                 ];
+                $result['document_snapshot'] = $version === null ? null : [
+                    'title' => $version->basis_snapshot['document']['title'] ?? null,
+                    'document_date' => $version->basis_snapshot['document']['document_date'] ?? null,
+                    'number' => $version->profile_snapshot['act_number'] ?? $version->profile_snapshot['document_number'] ?? null,
+                    'version_number' => $version->version_number,
+                ];
             } else {
                 $result['domain_snapshot'] = $external[$key] ?? $this->targetNotFound();
             }
