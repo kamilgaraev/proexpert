@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ExecutiveDocumentation;
 
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Admin\Pto\PtoWorkspaceController;
 use App\Support\Routing\AdminRouteStack;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\ServiceProvider;
 
 final class ExecutiveDocumentationServiceProvider extends ServiceProvider
 {
@@ -19,6 +20,8 @@ final class ExecutiveDocumentationServiceProvider extends ServiceProvider
         $this->app->singleton(Services\ExecutiveDocumentRequirementsQueryService::class);
         $this->app->singleton(Services\ExecutiveDocumentationService::class);
         $this->app->singleton(Services\ExecutiveDocumentReferenceService::class);
+        $this->app->singleton(\App\Services\Pto\PtoWorkspaceQuery::class);
+        $this->app->singleton(\App\Services\Pto\PtoWorkspaceTaskSync::class);
     }
 
     public function boot(): void
@@ -48,6 +51,15 @@ final class ExecutiveDocumentationServiceProvider extends ServiceProvider
                 Route::post('/requirements/{requirement}/applicable', [Http\Controllers\ExecutiveDocumentRequirementsController::class, 'markApplicable'])->middleware('authorize:executive-documentation.approve');
                 Route::post('/requirements/{requirement}/conditions', [Http\Controllers\ExecutiveDocumentRequirementsController::class, 'conditions'])->middleware('authorize:executive-documentation.approve');
                 Route::post('/requirements/{requirement}/evidence', [Http\Controllers\ExecutiveDocumentRequirementsController::class, 'attachEvidence'])->middleware('authorize:executive-documentation.edit');
+            });
+
+        Route::middleware(AdminRouteStack::middleware(['executive-documentation.active']))
+            ->prefix('api/v1/admin/pto')
+            ->group(function (): void {
+                Route::get('/work-queue', [PtoWorkspaceController::class, 'queue'])->middleware('authorize:executive-documentation.view');
+                Route::get('/completeness', [PtoWorkspaceController::class, 'completeness'])->middleware('authorize:executive-documentation.view');
+                Route::post('/tasks', [PtoWorkspaceController::class, 'upsertTask'])->middleware('authorize:executive-documentation.edit');
+                Route::post('/tasks/{task}/complete', [PtoWorkspaceController::class, 'completeTask'])->middleware('authorize:executive-documentation.edit');
             });
 
         $this->app['router']->aliasMiddleware(
