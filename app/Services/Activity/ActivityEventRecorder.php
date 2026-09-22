@@ -6,6 +6,7 @@ namespace App\Services\Activity;
 
 use App\DTOs\Activity\ActivityEventData;
 use App\Models\Activity\ActivityEvent;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -27,7 +28,7 @@ final class ActivityEventRecorder
             $payload['changes'] = $this->redactor->redact($payload['changes'] ?? []);
             $payload['context'] = $this->redactor->redact($payload['context'] ?? []);
 
-            return ActivityEvent::query()->create($payload);
+            return DB::transaction(fn (): ActivityEvent => ActivityEvent::query()->create($payload));
         } catch (Throwable $e) {
             Log::error('activity.record_failed', [
                 'organization_id' => $data->organizationId,

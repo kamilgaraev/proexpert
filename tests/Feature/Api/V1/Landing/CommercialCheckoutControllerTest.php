@@ -24,7 +24,6 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\TestCase;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 class CommercialCheckoutControllerTest extends TestCase
 {
@@ -41,6 +40,7 @@ class CommercialCheckoutControllerTest extends TestCase
         parent::setUp();
 
         config()->set('services.yookassa.mode', 'mock');
+        config()->set('auth_tokens.sessions.enabled', false);
 
         $this->createSchema();
         $this->organization = Organization::withoutEvents(fn (): Organization => Organization::create([
@@ -64,8 +64,8 @@ class CommercialCheckoutControllerTest extends TestCase
         $response->assertCreated()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.status', 'pending_payment')
-            ->assertJsonPath('data.amount', '7900.00')
-            ->assertJsonPath('data.amount_minor', 790000)
+            ->assertJsonPath('data.amount', '45800.00')
+            ->assertJsonPath('data.amount_minor', 4580000)
             ->assertJsonPath('data.payment_status', 'pending')
             ->assertJsonPath('data.confirmation_url', 'https://yookassa.test/confirmation');
 
@@ -93,35 +93,34 @@ class CommercialCheckoutControllerTest extends TestCase
     public function test_quote_uses_only_server_current_contour_of_current_organization(): void
     {
         $account = $this->commercialAccount();
-        $this->package($account, 'machinery');
+        $this->package($account, 'working-entry');
         $foreign = Organization::withoutEvents(fn (): Organization => Organization::create([
             'name' => 'Foreign organization', 'is_active' => true, 'is_verified' => true,
         ]));
         $foreignAccount = OrganizationCommercialAccount::query()->create([
             'organization_id' => $foreign->id, 'status' => 'active', 'offer_type' => 'packages',
-            'quote_version' => 1, 'current_period_start_at' => now()->subDays(20),
+            'quote_version' => 2, 'current_period_start_at' => now()->subDays(20),
             'current_period_end_at' => now()->addDays(10), 'auto_renew_enabled' => true,
         ]);
-        $this->package($foreignAccount, 'planning-schedules');
+        $this->package($foreignAccount, 'supply-warehouse');
 
         $response = $this->authenticatedAs($this->owner)->postJson(
             '/api/v1/landing/billing/commercial/quote',
-            ['target_package_slugs' => ['machinery', 'planning-schedules'], 'full_suite' => false],
+            ['target_package_slugs' => ['working-entry', 'supply-warehouse'], 'full_suite' => false],
         );
 
         $response->assertOk()
-            ->assertJsonPath('data.current_package_slugs', ['machinery'])
-            ->assertJsonPath('data.added_package_slugs', ['planning-schedules'])
+            ->assertJsonPath('data.current_package_slugs', ['working-entry'])
+            ->assertJsonPath('data.added_package_slugs', ['supply-warehouse'])
             ->assertJsonPath('data.removed_package_slugs', [])
             ->assertJsonPath('data.offer_type', 'packages')
-            ->assertJsonPath('data.quote_version', 1);
+            ->assertJsonPath('data.quote_version', 2);
     }
 
-    public function test_quote_recommends_full_suite_at_eight_packages_but_never_selects_it_automatically(): void
+    public function test_quote_recommends_full_suite_from_the_ruble_threshold_but_never_selects_it_automatically(): void
     {
         $slugs = [
-            'machinery', 'estimates-norms', 'finance-contracts', 'planning-schedules',
-            'projects-processes', 'pto-handover', 'quality-safety', 'sales-contractors',
+            'working-entry', 'supply-warehouse', 'finance-contracts', 'pto-handover',
         ];
 
         $recommended = $this->authenticatedAs($this->owner)->postJson(
@@ -139,7 +138,7 @@ class CommercialCheckoutControllerTest extends TestCase
         $selected->assertOk()
             ->assertJsonPath('data.offer_type', 'full_suite')
             ->assertJsonPath('data.recommendation', null);
-        $this->assertCount(10, $selected->json('data.target_package_slugs'));
+        $this->assertCount(8, $selected->json('data.target_package_slugs'));
     }
 
     public function test_quote_rejects_client_current_contour_and_period_boundaries(): void
@@ -412,7 +411,7 @@ class CommercialCheckoutControllerTest extends TestCase
         ]));
         $foreignAccount = OrganizationCommercialAccount::query()->create([
             'organization_id' => $foreign->id, 'status' => 'active', 'offer_type' => 'packages',
-            'quote_version' => 1, 'auto_renew_enabled' => false,
+            'quote_version' => 2, 'auto_renew_enabled' => false,
         ]);
         [$foreignOrder] = $this->commercialOrder($foreign, $foreignAccount, 'paid');
         $this->authenticatedAs($this->owner)
@@ -482,7 +481,7 @@ class CommercialCheckoutControllerTest extends TestCase
         ]));
         $foreignAccount = OrganizationCommercialAccount::query()->create([
             'organization_id' => $foreign->id, 'status' => 'active', 'offer_type' => 'packages',
-            'quote_version' => 1, 'auto_renew_enabled' => false,
+            'quote_version' => 2, 'auto_renew_enabled' => false,
         ]);
         $this->commercialOrder($foreign, $foreignAccount, 'paid', '2026-07-04 10:00:00');
 
@@ -510,19 +509,19 @@ class CommercialCheckoutControllerTest extends TestCase
             'paid',
         );
         $order->forceFill([
-            'selected_package_slugs' => ['machinery', 'planning-schedules'],
-            'current_package_slugs' => ['machinery'],
+            'selected_package_slugs' => ['working-entry', 'supply-warehouse'],
+            'current_package_slugs' => ['working-entry'],
         ])->save();
 
         $this->authenticatedAs($this->owner)
             ->getJson('/api/v1/landing/billing/commercial/orders/'.$order->public_id)
             ->assertOk()
-            ->assertJsonPath('data.selected_package_slugs', ['planning-schedules'])
-            ->assertJsonPath('data.target_package_slugs', ['machinery', 'planning-schedules'])
-            ->assertJsonPath('data.current_package_slugs', ['machinery'])
-            ->assertJsonPath('data.paid_package_slugs', ['planning-schedules'])
+            ->assertJsonPath('data.selected_package_slugs', ['supply-warehouse'])
+            ->assertJsonPath('data.target_package_slugs', ['working-entry', 'supply-warehouse'])
+            ->assertJsonPath('data.current_package_slugs', ['working-entry'])
+            ->assertJsonPath('data.paid_package_slugs', ['supply-warehouse'])
             ->assertJsonPath('data.paid_composition_items.0.type', 'package')
-            ->assertJsonPath('data.paid_composition_items.0.label', 'Графики и планирование');
+            ->assertJsonPath('data.paid_composition_items.0.label', 'Снабжение и склад');
     }
 
     public function test_order_payload_exposes_resource_addons_without_current_packages_as_paid_packages(): void
@@ -533,8 +532,8 @@ class CommercialCheckoutControllerTest extends TestCase
             'paid',
         );
         $order->forceFill([
-            'selected_package_slugs' => ['machinery', 'planning-schedules'],
-            'current_package_slugs' => ['machinery', 'planning-schedules'],
+            'selected_package_slugs' => ['working-entry', 'supply-warehouse'],
+            'current_package_slugs' => ['working-entry', 'supply-warehouse'],
             'selected_resource_addons' => [[
                 'slug' => 'storage_gb',
                 'limit_key' => 'storage_gb',
@@ -551,8 +550,8 @@ class CommercialCheckoutControllerTest extends TestCase
             ->getJson('/api/v1/landing/billing/commercial/orders/'.$order->public_id)
             ->assertOk()
             ->assertJsonPath('data.selected_package_slugs', [])
-            ->assertJsonPath('data.target_package_slugs', ['machinery', 'planning-schedules'])
-            ->assertJsonPath('data.current_package_slugs', ['machinery', 'planning-schedules'])
+            ->assertJsonPath('data.target_package_slugs', ['working-entry', 'supply-warehouse'])
+            ->assertJsonPath('data.current_package_slugs', ['working-entry', 'supply-warehouse'])
             ->assertJsonPath('data.paid_package_slugs', [])
             ->assertJsonPath('data.selected_resource_addons.0.slug', 'storage_gb')
             ->assertJsonPath('data.selected_resource_addons.0.quantity', 10)
@@ -619,11 +618,11 @@ class CommercialCheckoutControllerTest extends TestCase
         $account = $this->commercialAccount();
         $anchor = CarbonImmutable::parse('2026-07-24 12:00:00');
         $account->forceFill(['current_period_end_at' => $anchor, 'billing_anchor_at' => $anchor])->save();
-        $kept = $this->package($account, 'machinery', $anchor);
-        $removed = $this->package($account, 'planning-schedules', $anchor);
+        $kept = $this->package($account, 'working-entry', $anchor);
+        $removed = $this->package($account, 'supply-warehouse', $anchor);
         $payload = [
-            'target_package_slugs' => ['machinery'], 'full_suite' => false,
-            'quote_version' => 1, 'client_idempotency_key' => 'schedule-removal-00000000000000000001',
+            'target_package_slugs' => ['working-entry'], 'full_suite' => false,
+            'quote_version' => 2, 'client_idempotency_key' => 'schedule-removal-00000000000000000001',
         ];
 
         $first = $this->authenticatedAs($this->owner)->postJson(
@@ -635,7 +634,7 @@ class CommercialCheckoutControllerTest extends TestCase
 
         $first->assertCreated()
             ->assertJsonPath('data.apply_at', $anchor->toJSON())
-            ->assertJsonPath('data.target_package_slugs', ['machinery']);
+            ->assertJsonPath('data.target_package_slugs', ['working-entry']);
         $second->assertOk()->assertJsonPath('data.change_id', $first->json('data.change_id'));
         $this->assertDatabaseCount('commercial_contour_changes', 1);
         $this->assertSame('active', $kept->fresh()->status->value);
@@ -668,7 +667,7 @@ class CommercialCheckoutControllerTest extends TestCase
             [
                 'target_package_slugs' => ['machinery'],
                 'full_suite' => false,
-                'quote_version' => 1,
+                'quote_version' => 2,
                 'client_idempotency_key' => 'corporate-schedule-000000000000000001',
             ],
         )->assertConflict()
@@ -683,12 +682,12 @@ class CommercialCheckoutControllerTest extends TestCase
         $account = $this->commercialAccount();
         $anchor = CarbonImmutable::parse('2026-07-24 12:00:00');
         $account->forceFill(['current_period_end_at' => $anchor])->save();
-        $this->package($account, 'machinery', $anchor);
-        $this->package($account, 'planning-schedules', $anchor);
+        $this->package($account, 'working-entry', $anchor);
+        $this->package($account, 'supply-warehouse', $anchor);
         $payload = [
-            'target_package_slugs' => ['machinery'],
+            'target_package_slugs' => ['working-entry'],
             'full_suite' => false,
-            'quote_version' => 1,
+            'quote_version' => 2,
             'client_idempotency_key' => 'corporate-repeat-000000000000000000001',
         ];
 
@@ -721,7 +720,7 @@ class CommercialCheckoutControllerTest extends TestCase
             [
                 'target_package_slugs' => ['machinery'],
                 'full_suite' => false,
-                'quote_version' => 1,
+                'quote_version' => 2,
                 'client_idempotency_key' => 'schedule-grace-000000000000000000001',
             ],
         )->assertConflict();
@@ -740,8 +739,8 @@ class CommercialCheckoutControllerTest extends TestCase
     public function test_postgres_deadlock_during_schedule_is_mapped_to_business_conflict(): void
     {
         $account = $this->commercialAccount();
-        $this->package($account, 'machinery');
-        $this->package($account, 'planning-schedules');
+        $this->package($account, 'working-entry');
+        $this->package($account, 'supply-warehouse');
         CommercialContourChange::creating(function (): void {
             $message = 'deadlock detected';
             $previous = new \PDOException($message, 40_001);
@@ -753,9 +752,9 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->authenticatedAs($this->owner)->postJson(
             '/api/v1/landing/billing/commercial/contour/schedule',
             [
-                'target_package_slugs' => ['machinery'],
+                'target_package_slugs' => ['working-entry'],
                 'full_suite' => false,
-                'quote_version' => 1,
+                'quote_version' => 2,
                 'client_idempotency_key' => 'schedule-deadlock-0000000000000000001',
             ],
         )->assertConflict();
@@ -817,7 +816,7 @@ class CommercialCheckoutControllerTest extends TestCase
             'user_id' => $this->owner->id,
             'status' => 'scheduled',
             'offer_type' => 'packages',
-            'quote_version' => 1,
+            'quote_version' => 2,
             'target_package_slugs' => ['machinery'],
             'current_package_slugs' => ['machinery', 'planning-schedules'],
             'apply_at' => $anchor,
@@ -872,7 +871,7 @@ class CommercialCheckoutControllerTest extends TestCase
     {
         return OrganizationCommercialAccount::query()->firstOrCreate(['organization_id' => $this->organization->id], [
             'responsible_user_id' => $this->owner->id, 'status' => 'active', 'offer_type' => 'packages',
-            'quote_version' => 1, 'billing_anchor_at' => now()->addDays(10),
+            'quote_version' => 2, 'billing_anchor_at' => now()->addDays(10),
             'current_period_start_at' => now()->subDays(20), 'current_period_end_at' => now()->addDays(10),
             'auto_renew_enabled' => true, 'saved_payment_method_id' => 'provider-method-audit',
             'saved_payment_method_active' => true,
@@ -922,7 +921,7 @@ class CommercialCheckoutControllerTest extends TestCase
             'target_package_slugs' => ['machinery'],
             'current_package_slugs' => [],
             'full_suite' => false,
-            'quote_version' => 1,
+            'quote_version' => 2,
             'client_idempotency_key' => '22222222-2222-4222-8222-222222222222',
             'auto_renew_consent' => true,
             'use_balance' => false,
@@ -960,7 +959,7 @@ class CommercialCheckoutControllerTest extends TestCase
             'kind' => 'purchase',
             'status' => $status,
             'offer_type' => 'packages',
-            'quote_version' => 1,
+            'quote_version' => 2,
             'selected_package_slugs' => ['machinery'],
             'current_package_slugs' => [],
             'amount_minor' => 790000,
@@ -986,9 +985,32 @@ class CommercialCheckoutControllerTest extends TestCase
 
     private function authenticatedAs(User $user): self
     {
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])->fromUser($user);
+        $sessionUuid = (string) \Illuminate\Support\Str::uuid();
+        \App\Models\UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $this->organization->id,
+            'session_uuid' => $sessionUuid,
+            'device_fingerprint' => hash('sha256', $sessionUuid),
+            'device_name' => 'Checkout test',
+            'ip_address' => '127.0.0.1',
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => \App\Enums\AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+        $tokens = app(\App\Services\Auth\WebAuthTokenService::class)->issue(
+            $user,
+            'lk',
+            $sessionUuid,
+            (int) $this->organization->id,
+            false,
+        );
 
-        return $this->withHeader('Authorization', 'Bearer '.$token);
+        return $this->withHeaders([
+            'Authorization' => 'Bearer '.$tokens->accessToken,
+            'Origin' => (string) config('web_auth.origins.lk.0'),
+        ]);
     }
 
     private function createUser(string $email): User
@@ -1026,7 +1048,7 @@ class CommercialCheckoutControllerTest extends TestCase
             'notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_contour_changes', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_subscriptions',
             'organization_commercial_accounts', 'organization_module_activations', 'modules',
             'role_conditions', 'user_role_assignments',
-            'organization_custom_roles', 'authorization_contexts', 'organization_user', 'users', 'organizations',
+            'organization_custom_roles', 'authorization_contexts', 'organization_user', 'user_auth_sessions', 'users', 'organizations',
         ] as $table) {
             Schema::dropIfExists($table);
         }
@@ -1105,6 +1127,25 @@ class CommercialCheckoutControllerTest extends TestCase
             $table->rememberToken();
             $table->timestamps();
             $table->softDeletes();
+        });
+        Schema::create('user_auth_sessions', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('user_id');
+            $table->foreignId('organization_id')->nullable();
+            $table->uuid('session_uuid')->unique();
+            $table->string('device_fingerprint', 64);
+            $table->string('device_name')->nullable();
+            $table->text('user_agent')->nullable();
+            $table->string('ip_address', 45)->nullable();
+            $table->unsignedSmallInteger('risk_score')->default(0);
+            $table->json('risk_flags')->nullable();
+            $table->string('status');
+            $table->boolean('is_trusted')->default(false);
+            $table->timestampTz('first_seen_at')->nullable();
+            $table->timestampTz('last_seen_at')->nullable();
+            $table->timestampTz('revoked_at')->nullable();
+            $table->string('revoked_reason')->nullable();
+            $table->timestampsTz();
         });
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
             $table->id();

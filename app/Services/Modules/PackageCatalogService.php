@@ -84,7 +84,7 @@ class PackageCatalogService
 
     public function tierModules(string $packageSlug, string $tier, bool $includeFoundation = false): array
     {
-        $package = $this->package($packageSlug);
+        $package = $this->package($this->canonicalizePackageSlug($packageSlug));
 
         if ($package === null || ! isset($package['tiers'][$tier])) {
             return [];
@@ -139,6 +139,25 @@ class PackageCatalogService
             fn (mixed $classification, mixed $slug): bool => is_string($slug) && is_string($classification),
             ARRAY_FILTER_USE_BOTH
         );
+    }
+
+    public function entryPackageSlug(): string
+    {
+        $slug = config('commercial_offers.entry_package', 'working-entry');
+
+        return is_string($slug) && $slug !== '' ? $slug : 'working-entry';
+    }
+
+    public function retiredEntryPackageSlugs(): array
+    {
+        return $this->uniqueStrings(config('commercial_offers.retired_entry_packages', []));
+    }
+
+    public function canonicalizePackageSlug(string $slug): string
+    {
+        return in_array($slug, $this->retiredEntryPackageSlugs(), true)
+            ? $this->entryPackageSlug()
+            : $slug;
     }
 
     public function hasStandardTierOnly(array $package): bool

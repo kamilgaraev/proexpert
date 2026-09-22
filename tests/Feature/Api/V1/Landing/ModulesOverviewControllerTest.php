@@ -64,9 +64,9 @@ class ModulesOverviewControllerTest extends TestCase
 
         $overview = app(ModulesOverviewService::class)->build($organization->id);
 
-        $this->assertSame(10, $overview['summary']['total_solutions_count']);
+        $this->assertSame(8, $overview['summary']['total_solutions_count']);
         $this->assertSame(1, $overview['summary']['active_solutions_count']);
-        $this->assertSame('7900.00', $overview['summary']['monthly_total']);
+        $this->assertSame('5900.00', $overview['summary']['monthly_total']);
         $machinery = collect($overview['solutions'])->firstWhere('slug', 'machinery');
         $this->assertIsArray($machinery);
         $this->assertTrue($machinery['is_active']);
@@ -80,6 +80,7 @@ class ModulesOverviewControllerTest extends TestCase
     private function createSchema(): void
     {
         Schema::dropIfExists('organization_module_activations');
+        Schema::dropIfExists('organization_package_trial_usages');
         Schema::dropIfExists('organization_package_subscriptions');
         Schema::dropIfExists('organization_commercial_accounts');
         Schema::dropIfExists('modules');
@@ -126,6 +127,9 @@ class ModulesOverviewControllerTest extends TestCase
             $table->timestamp('current_period_start_at')->nullable();
             $table->timestamp('current_period_end_at')->nullable();
             $table->boolean('auto_renew_enabled');
+            $table->string('saved_payment_method_id')->nullable();
+            $table->boolean('saved_payment_method_active')->default(false);
+            $table->timestamp('grace_ends_at')->nullable();
             $table->timestamps();
         });
         Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
@@ -143,6 +147,15 @@ class ModulesOverviewControllerTest extends TestCase
             $table->timestamp('cancel_at')->nullable();
             $table->timestamp('canceled_at')->nullable();
             $table->timestamps();
+        });
+        Schema::create('organization_package_trial_usages', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->string('package_slug', 100);
+            $table->timestampTz('started_at');
+            $table->timestampTz('ends_at');
+            $table->timestampsTz();
+            $table->unique(['organization_id', 'package_slug'], 'org_package_trial_usage_unique');
         });
         Schema::create('organization_module_activations', function (Blueprint $table): void {
             $table->id();

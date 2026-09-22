@@ -115,7 +115,7 @@ return [
             'max_self_service' => 1000,
             'pricing_model' => 'linear',
             'price_minor' => 50000,
-            'requires_package' => 'estimates-norms',
+            'requires_package' => 'working-entry',
             'requires_module' => 'ai-estimates',
             'sort_order' => 60,
         ],
@@ -128,7 +128,7 @@ return [
             'max_self_service' => 5000,
             'pricing_model' => 'linear',
             'price_minor' => 1000,
-            'requires_package' => 'estimates-norms',
+            'requires_package' => 'working-entry',
             'sort_order' => 70,
         ],
         'extra_exports' => [

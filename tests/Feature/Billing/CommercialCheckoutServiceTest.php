@@ -66,15 +66,15 @@ class CommercialCheckoutServiceTest extends TestCase
         $result = $this->checkout(['machinery']);
 
         $this->assertSame('pending_payment', $result['status']);
-        $this->assertSame('7900.00', $result['amount']);
-        $this->assertSame(790000, $result['amount_minor']);
+        $this->assertSame('45800.00', $result['amount']);
+        $this->assertSame(4580000, $result['amount_minor']);
         $this->assertSame('https://yookassa.test/confirmation', $result['confirmation_url']);
         $this->assertSame('pending', $result['payment_status']);
         $this->assertTrue($result['auto_renew_consent']);
         $this->assertSame(1, CommercialOrder::query()->count());
         $this->assertSame(1, CommercialPayment::query()->count());
         $this->assertSame(0, OrganizationPackageSubscription::query()->count());
-        $this->assertSame(790000, $this->gateway->payments[0]->amountMinor);
+        $this->assertSame(4580000, $this->gateway->payments[0]->amountMinor);
         $this->assertSame($this->organization->id, $this->gateway->payments[0]->metadata['organization_id']);
         $this->assertSame(
             trans_message('billing.checkout.payment_description'),
@@ -86,7 +86,7 @@ class CommercialCheckoutServiceTest extends TestCase
     {
         OrganizationBalance::query()->create([
             'organization_id' => $this->organization->id,
-            'balance' => 1_000_000,
+            'balance' => 5_000_000,
             'currency' => 'RUB',
         ]);
 
@@ -101,10 +101,10 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame('succeeded', $result['payment_status']);
         $this->assertSame('balance', $result['payment_source']);
         $this->assertNull($result['confirmation_url']);
-        $this->assertSame(210_000, OrganizationBalance::query()->sole()->balance);
+        $this->assertSame(420_000, OrganizationBalance::query()->sole()->balance);
         $this->assertDatabaseHas('balance_transactions', [
             'type' => 'debit',
-            'amount' => 790_000,
+            'amount' => 4_580_000,
         ]);
         $this->assertDatabaseHas('commercial_payments', [
             'provider' => 'balance',
@@ -129,8 +129,8 @@ class CommercialCheckoutServiceTest extends TestCase
 
         $order = CommercialOrder::query()->sole();
 
-        $this->assertSame(1_090_000, $result['amount_minor']);
-        $this->assertSame(1_090_000, $order->amount_minor);
+        $this->assertSame(4_880_000, $result['amount_minor']);
+        $this->assertSame(4_880_000, $order->amount_minor);
         $this->assertSame([
             [
                 'slug' => 'extra_users',
@@ -141,9 +141,10 @@ class CommercialCheckoutServiceTest extends TestCase
                 'currency' => 'RUB',
                 'status' => 'ok',
                 'requires_package' => null,
+                'requires_module' => null,
             ],
         ], $order->selected_resource_addons);
-        $this->assertSame(1_090_000, $this->gateway->payments[0]->amountMinor);
+        $this->assertSame(4_880_000, $this->gateway->payments[0]->amountMinor);
     }
 
     public function test_checkout_allows_resource_unlocked_by_package_bought_in_same_order(): void
@@ -158,8 +159,8 @@ class CommercialCheckoutServiceTest extends TestCase
 
         $order = CommercialOrder::query()->sole();
 
-        $this->assertSame(890_000, $result['amount_minor']);
-        $this->assertSame(890_000, $order->amount_minor);
+        $this->assertSame(4_880_000, $result['amount_minor']);
+        $this->assertSame(4_880_000, $order->amount_minor);
         $this->assertSame([
             [
                 'slug' => 'extra_contractors',
@@ -170,6 +171,7 @@ class CommercialCheckoutServiceTest extends TestCase
                 'currency' => 'RUB',
                 'status' => 'ok',
                 'requires_package' => 'sales-contractors',
+                'requires_module' => null,
             ],
         ], $order->selected_resource_addons);
     }
@@ -178,7 +180,7 @@ class CommercialCheckoutServiceTest extends TestCase
     {
         OrganizationBalance::query()->create([
             'organization_id' => $this->organization->id,
-            'balance' => 2_000_000,
+            'balance' => 6_000_000,
             'currency' => 'RUB',
         ]);
 
@@ -193,7 +195,7 @@ class CommercialCheckoutServiceTest extends TestCase
         ]);
 
         $this->assertSame('paid', $result['status']);
-        $this->assertSame(910_000, OrganizationBalance::query()->sole()->balance);
+        $this->assertSame(1_120_000, OrganizationBalance::query()->sole()->balance);
         $this->assertDatabaseHas('organization_package_subscriptions', [
             'package_slug' => 'machinery',
             'status' => 'active',
@@ -400,21 +402,21 @@ class CommercialCheckoutServiceTest extends TestCase
         OrganizationPackageSubscription::create([
             'organization_id' => $this->organization->id,
             'commercial_account_id' => $account->id,
-            'package_slug' => 'machinery',
+            'package_slug' => 'working-entry',
             'status' => 'active',
             'access_source' => 'paid_package',
-            'price_paid' => 7900,
+            'price_paid' => 39900,
             'current_period_start_at' => $now->subDays(15),
             'current_period_end_at' => $now->addDays(15),
         ]);
 
         $result = $this->checkoutPayload([
-            'target_package_slugs' => ['machinery', 'planning-schedules'],
-            'current_package_slugs' => ['machinery'],
+            'target_package_slugs' => ['working-entry', 'supply-warehouse'],
+            'current_package_slugs' => ['working-entry'],
             'client_idempotency_key' => fake()->uuid(),
         ]);
 
-        $this->assertSame(395000, $result['amount_minor']);
+        $this->assertSame(495000, $result['amount_minor']);
         CarbonImmutable::setTestNow();
     }
 
@@ -440,7 +442,7 @@ class CommercialCheckoutServiceTest extends TestCase
 
         $result = $this->checkout(['machinery']);
 
-        $this->assertSame(790000, $result['amount_minor']);
+        $this->assertSame(4580000, $result['amount_minor']);
         $this->assertSame(1, OrganizationPackageSubscription::query()->count());
         $this->assertSame('trialing', OrganizationPackageSubscription::query()->sole()->status->value);
     }
@@ -461,17 +463,17 @@ class CommercialCheckoutServiceTest extends TestCase
         OrganizationPackageSubscription::create([
             'organization_id' => $this->organization->id,
             'commercial_account_id' => $account->id,
-            'package_slug' => 'machinery',
+            'package_slug' => 'working-entry',
             'status' => 'active',
             'access_source' => 'paid_package',
-            'price_paid' => 7900,
+            'price_paid' => 39900,
             'current_period_start_at' => $now->subDays(15),
             'current_period_end_at' => $now->addDays(15),
         ]);
         $this->gateway->failNext = true;
         $payload = [
-            'target_package_slugs' => ['machinery', 'planning-schedules'],
-            'current_package_slugs' => ['machinery'],
+            'target_package_slugs' => ['working-entry', 'supply-warehouse'],
+            'current_package_slugs' => ['working-entry'],
             'client_idempotency_key' => '33333333-3333-4333-8333-333333333333',
         ];
 
@@ -508,7 +510,7 @@ class CommercialCheckoutServiceTest extends TestCase
                 'target_package_slugs' => ['machinery'],
                 'current_package_slugs' => [],
                 'full_suite' => false,
-                'quote_version' => 1,
+                'quote_version' => 2,
                 'client_idempotency_key' => fake()->uuid(),
                 'auto_renew_consent' => true,
                 'use_balance' => false,

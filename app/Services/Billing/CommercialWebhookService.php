@@ -240,6 +240,28 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'stale');
                 }
 
+                if ((int) $order->quote_version < (int) config('commercial_offers.quote_version', 1)) {
+                    $payment->forceFill([
+                        'provider_status' => 'succeeded',
+                        'confirmation_url' => null,
+                        'payment_method_id' => null,
+                        'payment_method_saved' => false,
+                        'safe_response' => $authoritative->safeResponse,
+                        'refunded_amount_minor' => $authoritative->refundedAmountMinor,
+                        'last_reconciled_at' => now(),
+                        'reconciliation_required' => true,
+                        'terminal_at' => now(),
+                    ])->save();
+
+                    return $this->record(
+                        $notification,
+                        $sourceIp,
+                        $fingerprint,
+                        $authoritative->status,
+                        'manual_review',
+                    );
+                }
+
                 if ($order->kind === 'purchase' && $account->status->value === 'grace') {
                     $payment->forceFill([
                         'provider_status' => 'succeeded',

@@ -119,6 +119,22 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertSame(10, $this->limit($summary, 'projects')['sources']['packages']);
     }
 
+    public function test_retired_entry_rows_do_not_triple_entry_limits(): void
+    {
+        $account = $this->account('active');
+        $this->package($account, 'projects-processes');
+        $this->package($account, 'planning-schedules');
+        $this->package($account, 'estimates-norms');
+
+        $summary = $this->quota()->getQuotaSummary($this->organization);
+
+        $this->assertSame(13, $this->limit($summary, 'users')['limit']);
+        $this->assertSame(12, $this->limit($summary, 'projects')['limit']);
+        $this->assertSame(22, $this->limit($summary, 'storage_gb')['limit']);
+        $this->assertSame(550, $this->limit($summary, 'ai_requests_month')['limit']);
+        $this->assertSame(500, $this->limit($summary, 'document_pages_month')['limit']);
+    }
+
     public function test_summary_returns_every_configured_limit_and_resource_addon_with_user_facing_payload(): void
     {
         $account = $this->account('active');
@@ -146,7 +162,7 @@ class CommercialQuotaServiceTest extends TestCase
 
         $expectedResourceSlugs = collect(config('commercial_limits.resources'))
             ->filter(static fn (array $resource): bool => ($resource['requires_module'] ?? null) === null
-                || ($resource['requires_module'] ?? null) === 'ai-assistant')
+                || in_array($resource['requires_module'] ?? null, ['ai-assistant', 'ai-estimates'], true))
             ->sortBy('sort_order')
             ->keys()
             ->values()
@@ -154,7 +170,6 @@ class CommercialQuotaServiceTest extends TestCase
 
         $this->assertSame($expectedResourceSlugs, array_column($summary['resource_addons'], 'slug'));
         $this->assertNotContains('extra_holding_organizations', array_column($summary['resource_addons'], 'slug'));
-        $this->assertNotContains('extra_ai_estimates', array_column($summary['resource_addons'], 'slug'));
         foreach ($summary['resource_addons'] as $resource) {
             $this->assertNotSame('', trim($resource['name']));
             $this->assertNotSame($resource['slug'], $resource['name']);
@@ -176,8 +191,8 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertTrue($storageResource['available']);
 
         $documentPages = $this->resourceAddon($summary, 'extra_document_pages');
-        $this->assertSame('estimates-norms', $documentPages['requires_package']);
-        $this->assertFalse($documentPages['available']);
+        $this->assertSame('working-entry', $documentPages['requires_package']);
+        $this->assertTrue($documentPages['available']);
 
         $aiRequests = $this->resourceAddon($summary, 'extra_ai_requests');
         $this->assertSame('ai-assistant', $aiRequests['requires_module']);
@@ -187,13 +202,13 @@ class CommercialQuotaServiceTest extends TestCase
     public function test_module_bound_resource_addons_are_available_only_with_active_modules(): void
     {
         $account = $this->account('active');
-        $this->package($account, 'estimates-norms');
+        $this->package($account, 'working-entry');
 
         $withPackageModules = $this->quota()->getQuotaSummary($this->organization);
         $withPackageModuleSlugs = array_column($withPackageModules['resource_addons'], 'slug');
 
         $this->assertNotContains('extra_holding_organizations', $withPackageModuleSlugs);
-        $this->assertNotContains('extra_ai_requests', $withPackageModuleSlugs);
+        $this->assertContains('extra_ai_requests', $withPackageModuleSlugs);
         $this->assertContains('extra_ai_estimates', $withPackageModuleSlugs);
 
         $this->activateModule('multi-organization');
@@ -214,7 +229,7 @@ class CommercialQuotaServiceTest extends TestCase
 
         $aiEstimates = $this->resourceAddon($withModules, 'extra_ai_estimates');
         $this->assertSame('ai-estimates', $aiEstimates['requires_module']);
-        $this->assertSame('estimates-norms', $aiEstimates['requires_package']);
+        $this->assertSame('working-entry', $aiEstimates['requires_package']);
         $this->assertTrue($aiEstimates['available']);
     }
 

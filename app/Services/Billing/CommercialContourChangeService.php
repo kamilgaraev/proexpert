@@ -116,10 +116,11 @@ final class CommercialContourChangeService
 
     private function assertSameRequest(CommercialContourChange $change, array $input): void
     {
-        $target = array_values($input['target_package_slugs']);
-        sort($target);
+        $target = $this->calculator->resolveTargetSlugs(
+            $input['target_package_slugs'],
+            (bool) $input['full_suite'],
+        );
         $stored = $change->target_package_slugs;
-        sort($stored);
 
         if ($target !== $stored
             || (bool) $input['full_suite'] !== ($change->offer_type->value === 'full_suite')
