@@ -71,7 +71,7 @@ class CommercialWebhookServiceTest extends TestCase
             'organization_id' => $this->organization->id,
             'commercial_account_id' => $this->account->id,
             'user_id' => $this->user->id,
-            'status' => 'pending_payment', 'offer_type' => 'packages', 'quote_version' => 2,
+            'status' => 'pending_payment', 'offer_type' => 'packages', 'quote_version' => 3,
             'selected_package_slugs' => ['machinery'], 'current_package_slugs' => [],
             'amount_minor' => 790000, 'amount' => '7900.00', 'currency' => 'RUB',
             'period_start_at' => '2026-07-14 10:00:00', 'period_end_at' => '2026-08-14 10:00:00',
@@ -377,7 +377,7 @@ class CommercialWebhookServiceTest extends TestCase
             '185.71.76.1',
         );
 
-        $this->assertSame(8, OrganizationPackageSubscription::query()->where('access_source', 'full_suite')->count());
+        $this->assertSame(7, OrganizationPackageSubscription::query()->where('access_source', 'full_suite')->count());
         $this->assertSame('active', OrganizationPackageSubscription::query()->where('package_slug', 'corporate-extra')->sole()->status->value);
         $this->assertSame('trialing', OrganizationPackageSubscription::query()->where('package_slug', 'trial-extra')->sole()->status->value);
     }

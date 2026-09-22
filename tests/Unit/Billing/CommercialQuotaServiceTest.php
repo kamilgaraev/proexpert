@@ -125,6 +125,7 @@ class CommercialQuotaServiceTest extends TestCase
         $this->package($account, 'projects-processes');
         $this->package($account, 'planning-schedules');
         $this->package($account, 'estimates-norms');
+        $this->package($account, 'pto-handover');
 
         $summary = $this->quota()->getQuotaSummary($this->organization);
 

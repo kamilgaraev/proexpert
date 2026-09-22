@@ -16,7 +16,6 @@ class CommercialOfferCalculatorTest extends TestCase
         'working-entry',
         'supply-warehouse',
         'finance-contracts',
-        'pto-handover',
         'quality-safety',
         'workforce-output',
         'machinery',
@@ -59,11 +58,11 @@ class CommercialOfferCalculatorTest extends TestCase
 
     public function test_selection_at_threshold_recommends_but_does_not_enable_full_suite(): void
     {
-        $quote = $this->calculator()->preview(['working-entry', 'supply-warehouse', 'finance-contracts', 'pto-handover']);
+        $quote = $this->calculator()->preview(['working-entry', 'supply-warehouse', 'finance-contracts', 'workforce-output']);
 
         $this->assertSame('full_suite', $quote['recommendation']);
         $this->assertSame('packages', $quote['offer_type']);
-        $this->assertSame('69600.00', $quote['monthly_total']);
+        $this->assertSame('67600.00', $quote['monthly_total']);
         $this->assertCount(4, $quote['target_package_slugs']);
     }
 
@@ -78,9 +77,12 @@ class CommercialOfferCalculatorTest extends TestCase
     public function test_retired_entry_slug_resolves_to_working_entry(): void
     {
         $quote = $this->calculator()->preview(['estimates-norms', 'estimates-norms']);
+        $retiredPto = $this->calculator()->preview(['pto-handover']);
 
         $this->assertSame(['working-entry'], $quote['target_package_slugs']);
         $this->assertSame('39900.00', $quote['monthly_total']);
+        $this->assertSame(['working-entry'], $retiredPto['target_package_slugs']);
+        $this->assertSame('39900.00', $retiredPto['monthly_total']);
     }
 
     public function test_explicit_full_suite_contains_all_catalog_packages_and_discount(): void
@@ -91,8 +93,8 @@ class CommercialOfferCalculatorTest extends TestCase
         $this->assertSame(self::PACKAGES, $quote['target_package_slugs']);
         $this->assertSame('79900.00', $quote['monthly_total']);
         $this->assertSame('79900.00', $quote['amount_due_now']);
-        $this->assertSame('18300.00', $quote['savings_amount']);
-        $this->assertSame(18.64, $quote['savings_percent']);
+        $this->assertSame('8400.00', $quote['savings_amount']);
+        $this->assertSame(9.51, $quote['savings_percent']);
     }
 
     public function test_duplicate_slugs_do_not_duplicate_price(): void

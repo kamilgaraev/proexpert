@@ -246,7 +246,7 @@ class PackageTrialServiceTest extends TestCase
     {
         $armed = true;
         OrganizationPackageTrialUsage::creating(function (OrganizationPackageTrialUsage $usage) use (&$armed): void {
-            if (! $armed || $usage->package_slug !== 'pto-handover') {
+            if (! $armed || $usage->package_slug !== 'machinery') {
                 return;
             }
 
@@ -257,7 +257,7 @@ class PackageTrialServiceTest extends TestCase
         $this->expectException(QueryException::class);
 
         $this->paidEntry($this->organization);
-        app(PackageTrialService::class)->start($this->organization->id, 'pto-handover');
+        app(PackageTrialService::class)->start($this->organization->id, 'machinery');
     }
 
     public function test_trial_usage_model_refuses_update_and_delete(): void

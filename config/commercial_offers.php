@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 return [
-    'quote_version' => 2,
+    'quote_version' => 3,
     'currency' => 'RUB',
     'billing_period_days' => 30,
     'renewal_processing_window_minutes' => 5,
@@ -13,6 +13,7 @@ return [
         'projects-processes',
         'planning-schedules',
         'estimates-norms',
+        'pto-handover',
     ],
     'full_suite_price' => 79900,
     'full_suite_recommendation_threshold' => 64000,

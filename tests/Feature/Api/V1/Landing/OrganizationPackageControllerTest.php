@@ -95,7 +95,7 @@ class OrganizationPackageControllerTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonCount(8, 'data')
+            ->assertJsonCount(7, 'data')
             ->assertJsonFragment([
                 'slug' => 'working-entry',
                 'price' => '39900.00',

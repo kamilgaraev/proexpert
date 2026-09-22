@@ -510,7 +510,7 @@ class CommercialCheckoutServiceTest extends TestCase
                 'target_package_slugs' => ['machinery'],
                 'current_package_slugs' => [],
                 'full_suite' => false,
-                'quote_version' => 2,
+                'quote_version' => 3,
                 'client_idempotency_key' => fake()->uuid(),
                 'auto_renew_consent' => true,
                 'use_balance' => false,
