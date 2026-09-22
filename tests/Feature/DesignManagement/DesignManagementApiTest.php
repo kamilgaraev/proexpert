@@ -2251,6 +2251,68 @@ final class DesignManagementApiTest extends TestCase
         $downloadResponse->assertStatus(422);
     }
 
+    public function test_package_payload_omits_coordinate_transformations_but_keeps_them_stored(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+        $version->load('artifact');
+        $packageId = (int) $version->artifact->package_id;
+
+        DesignModelDerivative::query()->create([
+            'organization_id' => $version->organization_id,
+            'project_id' => $version->project_id,
+            'version_id' => $version->id,
+            'created_by' => $context->user->id,
+            'updated_by' => $context->user->id,
+            'prepared_by' => $context->user->id,
+            'viewer_provider' => 'thatopen',
+            'derivative_format' => 'thatopen_frag',
+            'derivative_file_path' => "org-{$context->organization->id}/pir/projects/{$project->id}/packages/{$packageId}/models/{$version->id}/viewer/model.frag",
+            'status' => 'ready',
+            'progress_percent' => 100,
+            'processing_stage' => 'ready',
+            'metadata' => [
+                'converter_version' => 5,
+                'prepared_on' => 'server',
+                'indexed_element_count' => 4,
+                'coordinate_transformations' => [[1, 0, 0, 0]],
+                'ifc_metadata' => [
+                    'indexed_element_count' => 4,
+                    'transformations' => [[0, 1, 0, 0]],
+                ],
+                'geometry' => ['local_id_count' => 4],
+            ],
+        ]);
+
+        $headers = $context->authHeaders();
+        $show = $this->withHeaders($headers)->getJson("/api/v1/admin/design-management/packages/{$packageId}");
+        $list = $this->withHeaders($headers)->getJson('/api/v1/admin/design-management/packages?project_id='.$project->id);
+
+        $show->assertOk();
+        $list->assertOk();
+        $show->assertJsonPath('data.derivative.metadata.converter_version', 5);
+        $show->assertJsonPath('data.derivative.metadata.geometry.local_id_count', 4);
+        $show->assertJsonPath('data.derivative.metadata.indexed_element_count', 4);
+        $show->assertJsonMissingPath('data.derivative.metadata.coordinate_transformations');
+        $show->assertJsonMissingPath('data.derivative.metadata.ifc_metadata.transformations');
+        $this->assertStringNotContainsString('coordinate_transformations', (string) $show->getContent());
+        $this->assertStringNotContainsString('coordinate_transformations', (string) $list->getContent());
+        $this->assertStringNotContainsString('"transformations"', (string) $show->getContent());
+        $this->assertStringNotContainsString('"transformations"', (string) $list->getContent());
+
+        $stored = DesignModelDerivative::query()->where('version_id', $version->id)->firstOrFail();
+        $slim = DesignModelDerivative::query()->forResponse()->findOrFail($stored->id);
+        $this->assertSame([[1, 0, 0, 0]], $stored->metadata['coordinate_transformations']);
+        $this->assertSame([[0, 1, 0, 0]], $stored->metadata['ifc_metadata']['transformations']);
+        $this->assertArrayNotHasKey('coordinate_transformations', $slim->metadata);
+        $this->assertArrayNotHasKey('transformations', $slim->metadata['ifc_metadata']);
+        $this->assertSame(5, $slim->metadata['converter_version']);
+    }
+
     public function test_derivative_upload_accepts_frag_file(): void
     {
         $this->fakeFileStorage();

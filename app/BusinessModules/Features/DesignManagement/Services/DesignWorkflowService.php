@@ -163,9 +163,9 @@ final class DesignWorkflowService
     {
         return [
             'project:id,name,organization_id',
-            'artifacts.currentVersion.readyDerivative',
+            'artifacts.currentVersion.readyDerivative' => static fn ($query) => $query->forResponse(),
             'artifacts.currentVersion.sheets',
-            'artifacts.versions.derivatives',
+            'artifacts.versions.derivatives' => static fn ($query) => $query->forResponse(),
             'sections.artifacts.currentVersion.sheets',
             'sections.artifacts.versions.sheets',
             'reviewComments',

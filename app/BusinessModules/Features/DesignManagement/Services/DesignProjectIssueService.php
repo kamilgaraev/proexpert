@@ -236,7 +236,7 @@ final class DesignProjectIssueService
         } else {
             throw new DomainException(trans_message('design_issues.errors.target_not_found'));
         }
-        $versions = DesignArtifactVersion::query()->where('organization_id', $issue->organization_id)->where('project_id', $issue->project_id)->whereIn('id', $versionIds)->where('file_format', 'ifc')->with(['artifact', 'readyDerivative'])->get()->keyBy('id');
+        $versions = DesignArtifactVersion::query()->where('organization_id', $issue->organization_id)->where('project_id', $issue->project_id)->whereIn('id', $versionIds)->where('file_format', 'ifc')->with(['artifact', 'readyDerivative' => static fn ($query) => $query->forResponse()])->get()->keyBy('id');
         if (count($versionIds) === 0 || $versions->count() !== count($versionIds)) {
             throw new DomainException(trans_message('design_issues.errors.target_not_found'));
         }

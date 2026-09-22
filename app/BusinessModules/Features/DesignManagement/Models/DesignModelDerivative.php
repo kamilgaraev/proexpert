@@ -80,4 +80,34 @@ final class DesignModelDerivative extends Model
     {
         return $query->where('project_id', $projectId);
     }
+
+    public function scopeForResponse(Builder $query): Builder
+    {
+        $table = $query->getModel()->getTable();
+        $metadata = $table.'.metadata';
+
+        return $query->select([
+            $table.'.id',
+            $table.'.organization_id',
+            $table.'.project_id',
+            $table.'.version_id',
+            $table.'.created_by',
+            $table.'.updated_by',
+            $table.'.prepared_by',
+            $table.'.viewer_provider',
+            $table.'.derivative_format',
+            $table.'.derivative_file_path',
+            $table.'.status',
+            $table.'.progress_percent',
+            $table.'.processing_stage',
+            $table.'.prepared_at',
+            $table.'.processing_started_at',
+            $table.'.processing_finished_at',
+            $table.'.failed_reason',
+            $table.'.created_at',
+            $table.'.updated_at',
+        ])->selectRaw(
+            "CASE WHEN {$metadata} IS NULL THEN '{}'::jsonb WHEN jsonb_typeof({$metadata}->'ifc_metadata') = 'object' THEN jsonb_set({$metadata} - 'coordinate_transformations', '{ifc_metadata}', ({$metadata}->'ifc_metadata') - 'transformations') ELSE {$metadata} - 'coordinate_transformations' END as metadata"
+        );
+    }
 }
