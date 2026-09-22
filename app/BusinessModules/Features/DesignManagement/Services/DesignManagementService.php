@@ -29,27 +29,33 @@ use Illuminate\Support\Facades\DB;
 
 final class DesignManagementService implements Contracts\DesignModelRegistrationService
 {
-    private const PACKAGE_RELATIONS = [
-        'project:id,name,organization_id',
-        'artifacts.currentVersion.readyDerivative',
-        'artifacts.currentVersion.sheets',
-        'artifacts.versions.derivatives',
-        'artifacts.versions.sheets',
-        'sections.artifacts.currentVersion.sheets',
-        'sections.artifacts.versions.sheets',
-        'reviewComments',
-        'workflowEvents',
-        'latestCompletenessCheck',
-    ];
+    private static function packageRelations(): array
+    {
+        return [
+            'project:id,name,organization_id',
+            'artifacts.currentVersion.readyDerivative' => static fn ($query) => $query->forResponse(),
+            'artifacts.currentVersion.sheets',
+            'artifacts.versions.derivatives' => static fn ($query) => $query->forResponse(),
+            'artifacts.versions.sheets',
+            'sections.artifacts.currentVersion.sheets',
+            'sections.artifacts.versions.sheets',
+            'reviewComments',
+            'workflowEvents',
+            'latestCompletenessCheck',
+        ];
+    }
 
-    private const VERSION_RELATIONS = [
-        'artifact.project:id,name,organization_id',
-        'artifact.package.project:id,name,organization_id',
-        'artifact.section',
-        'sheets',
-        'derivatives',
-        'readyDerivative',
-    ];
+    private static function versionRelations(): array
+    {
+        return [
+            'artifact.project:id,name,organization_id',
+            'artifact.package.project:id,name,organization_id',
+            'artifact.section',
+            'sheets',
+            'derivatives' => static fn ($query) => $query->forResponse(),
+            'readyDerivative' => static fn ($query) => $query->forResponse(),
+        ];
+    }
 
     public function __construct(
         private readonly DesignStoragePathService $pathService,
@@ -63,7 +69,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
 
         return DesignPackage::forOrganization($organizationId)
             ->withOpenBlockingCount()
-            ->with(self::PACKAGE_RELATIONS)
+            ->with(self::packageRelations())
             ->when(! empty($filters['project_id']), static fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(! empty($filters['status']), static fn ($query) => $query->where('status', (string) $filters['status']))
             ->when(! empty($filters['discipline']), static fn ($query) => $query->where('discipline', (string) $filters['discipline']))
@@ -109,14 +115,14 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             return $package;
         });
 
-        return DesignPackage::forOrganization($organizationId)->withOpenBlockingCount()->with(self::PACKAGE_RELATIONS)->findOrFail($package->id);
+        return DesignPackage::forOrganization($organizationId)->withOpenBlockingCount()->with(self::packageRelations())->findOrFail($package->id);
     }
 
     public function findPackage(int $organizationId, int $packageId): ?DesignPackage
     {
         return DesignPackage::forOrganization($organizationId)
             ->withOpenBlockingCount()
-            ->with(self::PACKAGE_RELATIONS)
+            ->with(self::packageRelations())
             ->find($packageId);
     }
 
@@ -146,7 +152,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
     public function findVersion(int $organizationId, int $versionId): ?DesignArtifactVersion
     {
         return DesignArtifactVersion::forOrganization($organizationId)
-            ->with(self::VERSION_RELATIONS)
+            ->with(self::versionRelations())
             ->find($versionId);
     }
 
@@ -201,7 +207,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
                 $this->setCurrentVersion($version, $userId);
             }
 
-            return $version->fresh(self::VERSION_RELATIONS);
+            return $version->fresh(self::versionRelations());
         });
     }
 
@@ -246,7 +252,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
                 $this->setCurrentVersion($version, $userId);
             }
 
-            return $version->fresh(self::VERSION_RELATIONS);
+            return $version->fresh(self::versionRelations());
         });
     }
 
@@ -335,7 +341,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
 
     public function viewerPayload(DesignArtifactVersion $version): array
     {
-        $version->loadMissing(self::VERSION_RELATIONS);
+        $version->loadMissing(self::versionRelations());
 
         $organization = Organization::query()->find((int) $version->organization_id);
         $derivative = $version->derivatives
@@ -422,7 +428,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             $this->lockedPackageForModelChanges($package);
             $this->setCurrentVersion($version, $userId);
 
-            return $version->fresh(self::VERSION_RELATIONS);
+            return $version->fresh(self::versionRelations());
         });
     }
 
@@ -666,7 +672,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
                 'download_url' => null,
                 'progress_percent' => 0,
                 'processing_stage' => 'stale',
-                'metadata' => DesignViewerConverter::staleMetadata($derivative->metadata ?? []),
+                'metadata' => DesignViewerConverter::staleMetadata(DesignViewerConverter::publicMetadata(is_array($derivative->metadata) ? $derivative->metadata : [])),
                 'failed_reason' => null,
                 'prepared_at' => optional($derivative->prepared_at)?->toISOString(),
                 'processing_started_at' => optional($derivative->processing_started_at)?->toISOString(),
@@ -682,7 +688,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             'download_url' => $this->fileService->temporaryUrl($derivative->derivative_file_path, 60, $organization),
             'progress_percent' => (int) $derivative->progress_percent,
             'processing_stage' => $derivative->processing_stage,
-            'metadata' => $derivative->metadata ?? [],
+            'metadata' => DesignViewerConverter::publicMetadata(is_array($derivative->metadata) ? $derivative->metadata : []),
             'failed_reason' => $derivative->failed_reason,
             'prepared_at' => optional($derivative->prepared_at)?->toISOString(),
             'processing_started_at' => optional($derivative->processing_started_at)?->toISOString(),

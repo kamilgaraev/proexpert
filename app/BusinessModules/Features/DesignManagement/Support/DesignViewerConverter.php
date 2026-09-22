@@ -32,6 +32,17 @@ final class DesignViewerConverter
         return (int) ($metadata['converter_version'] ?? 0) >= self::version();
     }
 
+    public static function publicMetadata(array $metadata): array
+    {
+        unset($metadata['coordinate_transformations']);
+
+        if (isset($metadata['ifc_metadata']) && is_array($metadata['ifc_metadata'])) {
+            unset($metadata['ifc_metadata']['transformations']);
+        }
+
+        return $metadata;
+    }
+
     public static function isStale(DesignModelDerivative $derivative): bool
     {
         $status = $derivative->status instanceof BackedEnum

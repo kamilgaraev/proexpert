@@ -107,7 +107,7 @@ final class DesignModelSetService
             ->where('organization_id', $organizationId)
             ->where('project_id', $session->project_id)
             ->whereIn('id', $versionIds)
-            ->with(['artifact', 'readyDerivative'])
+            ->with(['artifact', 'readyDerivative' => static fn ($query) => $query->forResponse()])
             ->get()
             ->sortBy(static fn (DesignArtifactVersion $version): int => array_search((int) $version->id, $versionIds, true))
             ->values();
@@ -128,7 +128,7 @@ final class DesignModelSetService
             ->whereHas('artifact', fn ($query) => $query->where('organization_id', $organizationId)
                 ->where('project_id', $set->project_id)->whereHas('package', fn ($packages) => $packages
                     ->where('organization_id', $organizationId)->where('project_id', $set->project_id)))
-            ->with(['artifact', 'readyDerivative'])->get()->keyBy('id');
+            ->with(['artifact', 'readyDerivative' => static fn ($query) => $query->forResponse()])->get()->keyBy('id');
         if ($ids === [] || $versions->count() !== count($ids)) {
             throw new DomainException(trans_message('design_bim.errors.model_versions_invalid'));
         }

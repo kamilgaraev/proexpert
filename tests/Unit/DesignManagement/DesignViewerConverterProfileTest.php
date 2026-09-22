@@ -14,6 +14,26 @@ final class DesignViewerConverterProfileTest extends TestCase
         $this->assertSame(5, DesignViewerConverter::version());
     }
 
+    public function test_public_metadata_drops_coordinate_matrices_and_keeps_viewer_summary(): void
+    {
+        $metadata = DesignViewerConverter::publicMetadata([
+            'converter_version' => 5,
+            'indexed_element_count' => 4,
+            'coordinate_transformations' => [[1, 0, 0, 0]],
+            'geometry' => ['local_id_count' => 4],
+            'ifc_metadata' => [
+                'indexed_element_count' => 4,
+                'transformations' => [[0, 1, 0, 0]],
+            ],
+        ]);
+
+        $this->assertSame(5, $metadata['converter_version']);
+        $this->assertSame(4, $metadata['geometry']['local_id_count']);
+        $this->assertSame(4, $metadata['ifc_metadata']['indexed_element_count']);
+        $this->assertArrayNotHasKey('coordinate_transformations', $metadata);
+        $this->assertArrayNotHasKey('transformations', $metadata['ifc_metadata']);
+    }
+
     public function test_node_converter_preserves_properties_and_project_coordinates(): void
     {
         $script = file_get_contents(base_path('resources/js/design-management/convert-ifc-to-frag.mjs'));
