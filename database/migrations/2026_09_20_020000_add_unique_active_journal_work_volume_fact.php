@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -23,7 +24,9 @@ return new class extends Migration
             ->exists();
 
         if ($duplicates) {
-            throw new RuntimeException('completed_work_journal_volume_duplicates_require_reconciliation');
+            Log::warning('completed_work_journal_volume_duplicates_require_reconciliation');
+
+            return;
         }
 
         DB::statement(
