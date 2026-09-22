@@ -13,7 +13,12 @@ final class HandoverPackage extends Model
 {
     use SoftDeletes;
 
-    protected $fillable = ['organization_id', 'project_id', 'acceptance_scope_id', 'created_by_user_id', 'title', 'status'];
+    protected $fillable = ['organization_id', 'project_id', 'acceptance_scope_id', 'created_by_user_id', 'title', 'status', 'executive_document_set_id'];
+
+    public function executiveDocumentSet(): BelongsTo
+    {
+        return $this->belongsTo(\App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet::class);
+    }
 
     public function scope(): BelongsTo
     {

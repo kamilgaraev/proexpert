@@ -15,14 +15,15 @@ class ScheduleTaskCompletedWorkService
     {
         $total = CompletedWork::query()
             ->where('schedule_task_id', $task->id)
+            ->physicalFacts()
             ->effectiveForSchedule()
-            ->sum(DB::raw('COALESCE(completed_quantity, quantity, 0)'));
+            ->sum(DB::raw(CompletedWork::EFFECTIVE_QUANTITY_SQL));
 
         $task->completed_quantity = (float) $total;
         $task->saveQuietly();
 
         if ($task->quantity && $task->quantity > 0) {
-            $task->recalculateProgressFromQuantity();
+            ScheduleTaskSyncService::withoutReverseSync(fn () => $task->recalculateProgressFromQuantity());
         }
     }
 

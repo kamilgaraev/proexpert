@@ -6,6 +6,8 @@ namespace App\Services\CompletedWork;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\JournalContractCoverageService;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
+use App\DTOs\CompletedWork\CompletedWorkDTO;
+use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Contract;
@@ -18,10 +20,12 @@ use App\Models\JournalWorker;
 use App\Models\JournalWorkVolume;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Models\User;
 use App\Services\Schedule\ScheduleTaskCompletedWorkService;
 use App\Services\Schedule\ScheduleTaskService;
 use App\Services\Workflow\JournalScheduleTaskResolver;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CompletedWorkFactService
 {
@@ -30,23 +34,40 @@ class CompletedWorkFactService
         private readonly ScheduleTaskService $scheduleTaskService,
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly JournalScheduleTaskResolver $scheduleTaskResolver,
+        private readonly CompletedWorkScopeResolver $scopeResolver,
+        private readonly CompletedWorkMutationGuard $mutationGuard,
     ) {}
 
     public function syncFromJournalEntry(ConstructionJournalEntry $entry): void
     {
-        $entry->load([
-            'journal.contract',
-            'scheduleTask.estimateItem.contractLinks.contract.contractor',
-            'workVolumes.estimateItem.contractLinks.contract.contractor',
-            'workVolumes.workType',
-            'materials.estimateItem.contractLinks.contract.contractor',
-            'materials.material',
-            'equipment.estimateItem.contractLinks.contract.contractor',
-            'workers.estimateItem.contractLinks.contract.contractor',
-        ]);
-
         DB::transaction(function () use ($entry): void {
-            $existingWorks = $entry->completedWorks()->orderBy('id')->get();
+            $entry = ConstructionJournalEntry::query()
+                ->whereKey($entry->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $entry->load([
+                'journal.contract',
+                'scheduleTask.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
+                'workVolumes.workType',
+                'materials.estimateItem.contractLinks.contract.contractor',
+                'materials.material',
+                'equipment.estimateItem.contractLinks.contract.contractor',
+                'workers.estimateItem.contractLinks.contract.contractor',
+            ]);
+            $existingWorks = $entry->completedWorks()->orderBy('id')->lockForUpdate()->get();
+            $duplicateVolumeIds = $existingWorks
+                ->whereNotNull('journal_work_volume_id')
+                ->groupBy('journal_work_volume_id')
+                ->filter(static fn ($works): bool => $works->count() > 1)
+                ->keys();
+            if ($duplicateVolumeIds->isNotEmpty()) {
+                Log::warning('completed_work.journal_volume_duplicates_preserved', [
+                    'journal_entry_id' => $entry->id,
+                    'journal_work_volume_ids' => $duplicateVolumeIds->values()->all(),
+                ]);
+                throw new \App\Exceptions\BusinessLogicException(trans_message('completed_work.journal_duplicates_require_review'), 409);
+            }
             $worksByVolumeId = $existingWorks
                 ->whereNotNull('journal_work_volume_id')
                 ->keyBy('journal_work_volume_id');
@@ -92,6 +113,7 @@ class CompletedWorkFactService
                     ?? $legacyWorks->shift()
                     ?? new CompletedWork;
                 $completedWork->fill($payload);
+                $this->assertJournalFactChangeAllowed($completedWork);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
 
@@ -106,6 +128,7 @@ class CompletedWorkFactService
                 /** @var CompletedWork $completedWork */
                 $completedWork = $worksByMaterialId->get($material->id) ?? new CompletedWork;
                 $completedWork->fill($payload);
+                $this->assertJournalFactChangeAllowed($completedWork);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
             }
@@ -116,6 +139,7 @@ class CompletedWorkFactService
                 /** @var CompletedWork $completedWork */
                 $completedWork = $worksByEquipmentId->get($equipmentItem->id) ?? new CompletedWork;
                 $completedWork->fill($payload);
+                $this->assertJournalFactChangeAllowed($completedWork);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
             }
@@ -126,6 +150,7 @@ class CompletedWorkFactService
                 /** @var CompletedWork $completedWork */
                 $completedWork = $worksByWorkerId->get($worker->id) ?? new CompletedWork;
                 $completedWork->fill($payload);
+                $this->assertJournalFactChangeAllowed($completedWork);
                 $completedWork->save();
                 $syncedWorkIds->push((int) $completedWork->id);
             }
@@ -139,6 +164,7 @@ class CompletedWorkFactService
                         $syncedTaskIds->push((int) $completedWork->schedule_task_id);
                     }
 
+                    $this->mutationGuard->assertNotActed($completedWork);
                     $completedWork->delete();
                 });
 
@@ -151,13 +177,16 @@ class CompletedWorkFactService
 
     public function deleteJournalEntryFacts(ConstructionJournalEntry $entry): void
     {
-        $taskIds = $entry->completedWorks()
-            ->whereNotNull('schedule_task_id')
-            ->pluck('schedule_task_id')
-            ->map(fn ($id) => (int) $id)
-            ->unique();
-
-        DB::transaction(function () use ($entry, $taskIds): void {
+        DB::transaction(function () use ($entry): void {
+            $entry = ConstructionJournalEntry::query()->whereKey($entry->id)->lockForUpdate()->firstOrFail();
+            if ($entry->status !== JournalEntryStatusEnum::DRAFT || $entry->approvalEvents()->exists()) {
+                throw new BusinessLogicException(trans_message('completed_work.correction_required'), 422);
+            }
+            $works = $entry->completedWorks()->orderBy('id')->lockForUpdate()->get();
+            $works->each(function (CompletedWork $work): void {
+                $this->mutationGuard->assertNotActed($work);
+            });
+            $taskIds = $works->pluck('schedule_task_id')->filter()->map(fn ($id) => (int) $id)->unique();
             $entry->completedWorks()->delete();
 
             $taskIds->each(fn (int $taskId) => $this->syncTaskById($taskId));
@@ -337,75 +366,103 @@ class CompletedWorkFactService
         return $syncedCount;
     }
 
-    public function attachToTask(CompletedWork $completedWork, ScheduleTask $task): CompletedWork
+    public function attachToTask(CompletedWork $completedWork, ScheduleTask $task, User $actor): CompletedWork
     {
-        $completedWork->forceFill([
-            'schedule_task_id' => $task->id,
-            'estimate_item_id' => $completedWork->estimate_item_id ?? $task->estimate_item_id,
-            'project_id' => $task->schedule->project_id,
-            'organization_id' => $task->organization_id,
-            'planning_status' => CompletedWork::PLANNING_PLANNED,
-        ]);
+        return DB::transaction(function () use ($completedWork, $task, $actor): CompletedWork {
+            $completedWork = CompletedWork::query()->whereKey($completedWork->id)->lockForUpdate()->firstOrFail();
+            $candidate = clone $completedWork;
+            $candidate->forceFill([
+                'schedule_task_id' => $task->id,
+                'estimate_item_id' => $completedWork->estimate_item_id ?? $task->estimate_item_id,
+                'work_type_id' => $completedWork->work_type_id ?? $task->work_type_id,
+            ]);
+            $this->scopeResolver->assertUpdate($completedWork, CompletedWorkDTO::fromModel($candidate), $actor);
+            $this->mutationGuard->assertMutable($completedWork);
+            $previousTaskId = $completedWork->schedule_task_id;
+            $completedWork->forceFill([
+                'schedule_task_id' => $task->id,
+                'estimate_item_id' => $completedWork->estimate_item_id ?? $task->estimate_item_id,
+                'planning_status' => CompletedWork::PLANNING_PLANNED,
+            ]);
 
-        if (! $completedWork->work_type_id && $task->work_type_id) {
-            $completedWork->work_type_id = $task->work_type_id;
-        }
+            if (! $completedWork->work_type_id && $task->work_type_id) {
+                $completedWork->work_type_id = $task->work_type_id;
+            }
 
-        $completedWork->save();
-        $this->syncTaskById($task->id);
+            $completedWork->save();
+            if ($previousTaskId && (int) $previousTaskId !== (int) $task->id) {
+                $this->syncTaskById((int) $previousTaskId);
+            }
+            $this->syncTaskById($task->id);
 
-        return $completedWork->fresh([
-            'scheduleTask.schedule',
-            'estimateItem.measurementUnit',
-            'journalEntry',
-            'workType',
-            'user',
-            'project',
-            'contract.contractor',
-            'contractor',
-            'materials.measurementUnit',
-        ]);
+            return $completedWork->fresh([
+                'scheduleTask.schedule',
+                'estimateItem.measurementUnit',
+                'journalEntry',
+                'workType',
+                'user',
+                'project',
+                'contract.contractor',
+                'contractor',
+                'materials.measurementUnit',
+            ]);
+        });
     }
 
     public function createTaskFromWork(CompletedWork $completedWork, ProjectSchedule $schedule, int $userId): ScheduleTask
     {
-        $completedWork->loadMissing(['estimateItem.measurementUnit', 'workType']);
+        return DB::transaction(function () use ($completedWork, $schedule, $userId): ScheduleTask {
+            $completedWork = CompletedWork::query()->whereKey($completedWork->id)->lockForUpdate()->firstOrFail();
+            $actor = User::query()->find($userId);
+            if (! $actor) {
+                throw new BusinessLogicException(trans_message('completed_work.forbidden'), 403);
+            }
+            $schedule = ProjectSchedule::query()->whereKey($schedule->id)->firstOrFail();
+            if ((int) $schedule->project_id !== (int) $completedWork->project_id
+                || (int) $schedule->organization_id !== (int) $completedWork->organization_id) {
+                throw new BusinessLogicException(trans_message('completed_work.schedule_not_found'), 404);
+            }
+            $this->scopeResolver->assertUpdate($completedWork, CompletedWorkDTO::fromModel($completedWork), $actor);
+            $this->mutationGuard->assertMutable($completedWork);
+            $completedWork->loadMissing(['estimateItem.measurementUnit', 'workType']);
 
-        $quantity = (float) ($completedWork->quantity ?? $completedWork->completed_quantity ?? 0);
-        $completedQuantity = (float) ($completedWork->completed_quantity ?? $quantity);
-        $progressPercent = $quantity > 0 ? min(100, round(($completedQuantity / $quantity) * 100, 2)) : 0;
-        $sortOrder = $this->scheduleTaskService->getNextSortOrder($schedule->id, null);
+            $quantity = (float) ($completedWork->quantity ?? $completedWork->completed_quantity ?? 0);
+            $completedQuantity = (float) ($completedWork->completed_quantity ?? $quantity);
+            $progressPercent = $quantity > 0 ? min(100, round(($completedQuantity / $quantity) * 100, 2)) : 0;
+            $sortOrder = $this->scheduleTaskService->getNextSortOrder($schedule->id, null);
 
-        $task = ScheduleTask::create([
-            'schedule_id' => $schedule->id,
-            'organization_id' => $schedule->organization_id,
-            'estimate_item_id' => $completedWork->estimate_item_id,
-            'work_type_id' => $completedWork->work_type_id,
-            'created_by_user_id' => $userId,
-            'name' => $this->resolveTaskName($completedWork),
-            'description' => $completedWork->notes,
-            'task_type' => 'task',
-            'planned_start_date' => $completedWork->completion_date,
-            'planned_end_date' => $completedWork->completion_date,
-            'quantity' => $quantity > 0 ? $quantity : null,
-            'completed_quantity' => $completedQuantity > 0 ? $completedQuantity : null,
-            'measurement_unit_id' => $completedWork->estimateItem?->measurement_unit_id,
-            'progress_percent' => $progressPercent,
-            'status' => $progressPercent >= 100 ? 'completed' : ($progressPercent > 0 ? 'in_progress' : 'not_started'),
-            'priority' => 'normal',
-            'level' => 0,
-            'sort_order' => $sortOrder,
-        ]);
+            $task = ScheduleTask::create([
+                'schedule_id' => $schedule->id,
+                'organization_id' => $schedule->organization_id,
+                'estimate_item_id' => $completedWork->estimate_item_id,
+                'work_type_id' => $completedWork->work_type_id,
+                'created_by_user_id' => $userId,
+                'name' => $this->resolveTaskName($completedWork),
+                'description' => $completedWork->notes,
+                'task_type' => 'task',
+                'planned_start_date' => $completedWork->completion_date,
+                'planned_end_date' => $completedWork->completion_date,
+                'planned_duration_days' => 1,
+                'quantity' => $quantity > 0 ? $quantity : null,
+                'completed_quantity' => $completedQuantity > 0 ? $completedQuantity : null,
+                'measurement_unit_id' => $completedWork->estimateItem?->measurement_unit_id,
+                'progress_percent' => $progressPercent,
+                'status' => $progressPercent >= 100 ? 'completed' : ($progressPercent > 0 ? 'in_progress' : 'not_started'),
+                'priority' => 'normal',
+                'level' => 0,
+                'sort_order' => $sortOrder,
+            ]);
 
-        $this->attachToTask($completedWork, $task->load('schedule'));
+            $this->attachToTask($completedWork, $task->load('schedule'), $actor);
 
-        return $task->fresh([
-            'schedule',
-            'assignedUser',
-            'workType',
-            'measurementUnit',
-            'estimateItem',
-        ]);
+            return $task->fresh([
+                'schedule',
+                'assignedUser',
+                'workType',
+                'measurementUnit',
+                'estimateItem',
+            ]);
+        });
     }
 
     private function buildPayloadFromJournalVolume(
@@ -688,6 +745,13 @@ class CompletedWorkFactService
 
         if ($task) {
             $this->scheduleTaskCompletedWorkService->syncCompletedQuantity($task);
+        }
+    }
+
+    private function assertJournalFactChangeAllowed(CompletedWork $work): void
+    {
+        if ($work->exists && $work->isDirty()) {
+            $this->mutationGuard->assertNotActed($work);
         }
     }
 

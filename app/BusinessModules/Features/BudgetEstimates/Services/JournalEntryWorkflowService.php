@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
+use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
@@ -20,7 +21,8 @@ class JournalEntryWorkflowService
 
     public function create(ConstructionJournal $journal, array $data, User $user): ConstructionJournalEntry
     {
-        return DB::transaction(function () use ($journal, $data, $user): ConstructionJournalEntry {
+        $submitAfterCreate = (bool) ($data['submit_after_create'] ?? false);
+        $entry = DB::transaction(function () use ($journal, $data, $user): ConstructionJournalEntry {
             $journal = ConstructionJournal::query()
                 ->whereKey($journal->id)
                 ->lockForUpdate()
@@ -54,12 +56,29 @@ class JournalEntryWorkflowService
                 'payload_fingerprint' => $idempotencyKey !== null ? $payloadFingerprint : null,
             ], $user);
 
-            if ((bool) ($data['submit_after_create'] ?? false)) {
-                $entry = $this->approvalService->submitForApproval($entry, $user);
-            }
-
             return $entry;
         });
+
+        if ($submitAfterCreate) {
+            return DB::transaction(function () use ($entry, $user): ConstructionJournalEntry {
+                ConstructionJournal::query()
+                    ->whereKey($entry->journal_id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+                $entry = ConstructionJournalEntry::query()
+                    ->whereKey($entry->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                if ($entry->status !== JournalEntryStatusEnum::DRAFT) {
+                    return $entry;
+                }
+
+                return $this->approvalService->submitForApproval($entry, $user);
+            });
+        }
+
+        return $entry;
     }
 
     private function assertJournalActive(ConstructionJournal $journal): void

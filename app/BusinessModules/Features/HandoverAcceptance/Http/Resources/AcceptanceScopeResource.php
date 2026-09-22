@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\HandoverAcceptance\Http\Resources;
 
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
+use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceGate;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -29,6 +30,11 @@ final class AcceptanceScopeResource extends JsonResource
             default => [],
         };
 
+        $readiness = app(HandoverAcceptanceGate::class)->evaluate($scope, $scope->status === 'accepted');
+        if (! $readiness['ready']) {
+            $actions = array_values(array_diff($actions, ['accept', 'handover']));
+        }
+
         return [
             'id' => $scope->id,
             'organization_id' => $scope->organization_id,
@@ -41,10 +47,22 @@ final class AcceptanceScopeResource extends JsonResource
             'accepted_at' => $scope->accepted_at?->toIso8601String(),
             'handed_over_at' => $scope->handed_over_at?->toIso8601String(),
             'reopened_at' => $scope->reopened_at?->toIso8601String(),
+            'quantity_revision' => (int) $scope->workQuantities->max('revision'),
+            'work_quantities' => $scope->workQuantities->map(fn ($quantity) => [
+                'id' => $quantity->id,
+                'completed_work_id' => $quantity->completed_work_id,
+                'unit_id' => $quantity->unit_id,
+                'presented_quantity' => $quantity->presented_quantity,
+                'accepted_quantity' => $quantity->accepted_quantity,
+                'defect_quantity' => $quantity->defect_quantity,
+                'defect_reason' => $quantity->defect_reason,
+                'revision' => $quantity->revision,
+            ])->values()->all(),
             'workflow_summary' => [
                 'status' => $scope->status,
                 'available_actions' => $actions,
                 'problem_flags' => $this->problemFlags($scope),
+                'readiness' => array_diff_key($readiness, ['evidence_snapshot' => true]),
             ],
             'project' => $scope->relationLoaded('project') && $scope->project ? [
                 'id' => $scope->project->id,

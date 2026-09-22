@@ -56,6 +56,7 @@ final class GenerateJournalExportJob implements ShouldBeUnique, ShouldQueue
                 throw new \DomainException('journal_export_entry_missing');
             }
             $path = match ($export->type) {
+                'general' => app(\App\Services\ConstructionJournal\GeneralJournalDocumentExportService::class)->write($export),
                 'ks6' => $export->format === 'pdf'
                     ? $files->exportKS6ToPdf($export->journal, Carbon::parse($options['date_from']), Carbon::parse($options['date_to']), $options['estimate_id'] ?? null, $export->id)
                     : $files->exportKS6ToExcel($export->journal, Carbon::parse($options['date_from']), Carbon::parse($options['date_to']), $options['estimate_id'] ?? null, $export->id),

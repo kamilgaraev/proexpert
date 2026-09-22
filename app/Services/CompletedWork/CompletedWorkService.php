@@ -17,8 +17,8 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
+use App\Models\User;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
-use App\Rules\ProjectAccessibleRule;
 use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Logging\LoggingService;
 use App\Services\Project\ProjectContextService;
@@ -40,18 +40,23 @@ class CompletedWorkService
 
     protected ContractAuditedMutationService $contractMutations;
 
+    protected CompletedWorkScopeResolver $scopeResolver;
+
     public function __construct(
         CompletedWorkRepositoryInterface $completedWorkRepository,
         RateCoefficientService $rateCoefficientService,
         LoggingService $logging,
         ProjectContextService $projectContextService,
         ContractAuditedMutationService $contractMutations,
+        CompletedWorkScopeResolver $scopeResolver,
+        private readonly CompletedWorkMutationGuard $mutationGuard,
     ) {
         $this->completedWorkRepository = $completedWorkRepository;
         $this->rateCoefficientService = $rateCoefficientService;
         $this->logging = $logging;
         $this->projectContextService = $projectContextService;
         $this->contractMutations = $contractMutations;
+        $this->scopeResolver = $scopeResolver;
     }
 
     public function getAll(array $filters = [], int $perPage = 15, string $sortBy = 'completion_date', string $sortDirection = 'desc', array $relations = []): LengthAwarePaginator
@@ -70,8 +75,10 @@ class CompletedWorkService
         return $completedWork;
     }
 
-    public function create(CompletedWorkDTO $dto, ?ProjectContext $projectContext = null): CompletedWork
+    public function create(CompletedWorkDTO $dto, ?ProjectContext $projectContext = null, ?User $actor = null): CompletedWork
     {
+        $actor ??= request()->user();
+        $this->scopeResolver->assertCreate($dto, $actor, $projectContext);
         $this->assertCreateSourcePolicy($dto);
 
         // Project-Based RBAC: валидация прав и auto-fill contractor_org_id
@@ -160,20 +167,6 @@ class CompletedWorkService
         ]);
 
         return DB::transaction(function () use ($dto) {
-            // Проверяем, доступен ли проект для текущей организации безопасности
-            $rule = new ProjectAccessibleRule;
-            if (! $rule->passes('project_id', $dto->project_id)) {
-                // SECURITY: Попытка создать работу для недоступного проекта
-                $this->logging->security('completed_work.creation.unauthorized', [
-                    'project_id' => $dto->project_id,
-                    'organization_id' => $dto->organization_id,
-                    'user_id' => request()->user()?->id,
-                    'attempted_by_ip' => request()->ip(),
-                ], 'warning');
-
-                throw new BusinessLogicException('Проект недоступен для вашей организации.', 422);
-            }
-
             $data = $this->prepareFinancialData($dto);
 
             if ($dto->contract_id) {
@@ -237,19 +230,30 @@ class CompletedWorkService
         });
     }
 
-    public function update(int $id, CompletedWorkDTO $dto): CompletedWork
+    public function createMany(array $dtos, User $actor, ?ProjectContext $projectContext = null): array
     {
-        return DB::transaction(function () use ($id, $dto) {
-            $existingWork = $this->getById($id, $dto->organization_id);
+        return DB::transaction(function () use ($dtos, $actor, $projectContext): array {
+            $this->scopeResolver->assertBulk($dtos, $actor, $projectContext);
+            foreach ($dtos as $dto) {
+                $this->assertCreateSourcePolicy($dto);
+            }
+
+            return array_map(fn (CompletedWorkDTO $dto): CompletedWork => $this->create($dto, $projectContext, $actor), $dtos);
+        });
+    }
+
+    public function update(int $id, CompletedWorkDTO $dto, ?User $actor = null, ?ProjectContext $projectContext = null): CompletedWork
+    {
+        $actor ??= request()->user();
+        return DB::transaction(function () use ($id, $dto, $actor, $projectContext) {
+            $existingWork = $this->lockedWork($id, $dto->organization_id);
+
+            $this->scopeResolver->assertUpdate($existingWork, $dto, $actor, $projectContext);
+            $this->assertOrdinaryMutationAllowed($existingWork);
 
             $this->assertUpdateSourcePolicy($existingWork, $dto);
 
-            $financialInputsChanged = $this->financialInputsChanged($existingWork, $dto);
-            $data = $this->prepareFinancialData($dto, $financialInputsChanged);
-            if (! $financialInputsChanged) {
-                $data['price'] = $existingWork->price;
-                $data['total_amount'] = $existingWork->total_amount;
-            }
+            $data = $this->prepareUpdatedFinancialData($existingWork, $dto);
             $newContractId = $dto->contract_id;
             $contractChanged = (int) ($newContractId ?? 0) !== (int) ($existingWork->contract_id ?? 0);
             $contractorChanged = (int) ($dto->contractor_id ?? 0) !== (int) ($existingWork->contractor_id ?? 0);
@@ -293,22 +297,83 @@ class CompletedWorkService
         });
     }
 
-    public function delete(int $id, int $organizationId): bool
+    public function delete(int $id, int $organizationId, ?User $actor = null, ?ProjectContext $projectContext = null): bool
     {
-        $this->getById($id, $organizationId);
+        $actor ??= request()->user();
+        return DB::transaction(function () use ($id, $organizationId, $actor, $projectContext): bool {
+            $work = $this->lockedWork($id, $organizationId);
+            $this->scopeResolver->assertDelete($work, $actor, $projectContext);
+            $this->assertOrdinaryMutationAllowed($work);
 
-        $success = $this->completedWorkRepository->delete($id);
-        if (! $success) {
-            throw new BusinessLogicException('Не удалось удалить запись о выполненной работе.', 500);
-        }
+            if (! $this->completedWorkRepository->delete($id)) {
+                throw new BusinessLogicException('Не удалось удалить запись о выполненной работе.', 500);
+            }
 
-        return true;
+            return true;
+        });
     }
 
-    private function prepareFinancialData(CompletedWorkDTO $dto, bool $applyCoefficients = true): array
+    private function lockedWork(int $id, int $organizationId): CompletedWork
     {
-        $data = $dto->toArray();
+        return CompletedWork::query()->where('organization_id', $organizationId)->lockForUpdate()->find($id)
+            ?? throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
+    }
+
+    private function assertOrdinaryMutationAllowed(CompletedWork $work): void
+    {
+        $this->mutationGuard->assertMutable($work);
+    }
+
+    private function prepareUpdatedFinancialData(CompletedWork $work, CompletedWorkDTO $dto): array
+    {
+        $samePrice = ! $this->nullableFloatChanged($dto->price, $work->price);
+        $sameTotal = $dto->total_amount === null
+            || ! $this->nullableFloatChanged($dto->total_amount, $work->total_amount)
+            || ($samePrice && abs($dto->total_amount - round((float) $dto->price * $dto->quantity, 2)) < 0.0000001);
+        $sameQuantity = abs($dto->quantity - (float) $work->quantity) < 0.0000001;
+        $calculation = $work->additional_info['financial_calculation'] ?? null;
+
+        if ($samePrice && $sameTotal && $sameQuantity) {
+            $data = $this->prepareFinancialData($dto, false);
+            $data['price'] = $work->price;
+            $data['total_amount'] = $work->total_amount;
+            if ($calculation !== null) {
+                $data['additional_info']['financial_calculation'] = $calculation;
+            }
+
+            return $data;
+        }
+
+        if ($samePrice && $sameTotal) {
+            $basePrice = $calculation['base_unit_price'] ?? null;
+            if ($basePrice === null && isset($calculation['base_total_amount']) && (float) $work->quantity > 0) {
+                $basePrice = (float) $calculation['base_total_amount'] / (float) $work->quantity;
+            }
+
+            return $this->prepareFinancialData($dto, $basePrice !== null, [
+                'price' => $basePrice ?? $dto->price,
+                'total_amount' => null,
+            ]);
+        }
+
+        return $this->prepareFinancialData($dto);
+    }
+
+    private function prepareFinancialData(CompletedWorkDTO $dto, bool $applyCoefficients = true, array $financialOverrides = []): array
+    {
+        if (! is_finite($dto->quantity) || $dto->quantity < 0 || $dto->quantity >= 100000000000000
+            || round($dto->quantity, 4) !== $dto->quantity
+            || ($dto->completed_quantity !== null && ! is_finite($dto->completed_quantity))) {
+            throw new BusinessLogicException(trans_message('completed_work.quantity_invalid'), 422);
+        }
+        if ($dto->completed_quantity !== null && abs($dto->completed_quantity - $dto->quantity) > 0.0000001) {
+            throw new BusinessLogicException(trans_message('completed_work.quantity_conflict'), 422);
+        }
+        $data = array_replace($dto->toArray(), $financialOverrides);
+        $data['completed_quantity'] = $dto->quantity;
         unset($data['materials']);
+        $data['additional_info'] = $data['additional_info'] ?? [];
+        unset($data['additional_info']['financial_calculation'], $data['additional_info']['schedule_auto_draft']);
 
         if ($data['price'] === null && $data['total_amount'] !== null && $data['quantity'] > 0) {
             $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
@@ -337,6 +402,8 @@ class CompletedWorkService
         }
 
         if ($applyCoefficients && $data['total_amount'] !== null) {
+            $baseTotalAmount = (float) $data['total_amount'];
+            $baseUnitPrice = $data['price'];
             $coeff = $this->rateCoefficientService->calculateAdjustedValueDetailed(
                 $dto->organization_id,
                 (float) $data['total_amount'],
@@ -345,6 +412,12 @@ class CompletedWorkService
                 ['project_id' => $dto->project_id, 'work_type_id' => $dto->work_type_id]
             );
             $data['total_amount'] = $coeff['final'];
+            $data['additional_info']['financial_calculation'] = [
+                'base_total_amount' => $baseTotalAmount,
+                'base_unit_price' => $baseUnitPrice,
+                'adjusted_total_amount' => (float) $coeff['final'],
+                'applications' => $coeff['applications'] ?? [],
+            ];
             if ($data['quantity'] > 0) {
                 $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
             }
@@ -355,8 +428,7 @@ class CompletedWorkService
 
     private function financialInputsChanged(CompletedWork $existingWork, CompletedWorkDTO $dto): bool
     {
-        return $dto->materials !== null
-            || abs((float) $dto->quantity - (float) $existingWork->quantity) > 0.0000001
+        return abs((float) $dto->quantity - (float) $existingWork->quantity) > 0.0000001
             || $this->nullableFloatChanged($dto->price, $existingWork->price)
             || $this->nullableFloatChanged($dto->total_amount, $existingWork->total_amount);
     }
@@ -376,6 +448,9 @@ class CompletedWorkService
 
     private function assertCreateSourcePolicy(CompletedWorkDTO $dto): void
     {
+        if ($dto->work_origin_type === CompletedWork::ORIGIN_JOURNAL || $dto->journal_entry_id !== null) {
+            throw new BusinessLogicException(trans_message('completed_work.origin_immutable'), 422);
+        }
         if ($dto->status === CompletedWork::STATUS_CONFIRMED) {
             throw new BusinessLogicException(trans_message('completed_work.confirm_requires_operation'), 422);
         }
@@ -388,7 +463,7 @@ class CompletedWorkService
             throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
         }
 
-        if ($dto->work_origin_type === CompletedWork::ORIGIN_MANUAL && ($dto->schedule_task_id !== null || $dto->journal_entry_id !== null)) {
+        if ($dto->work_origin_type === CompletedWork::ORIGIN_MANUAL && $dto->journal_entry_id !== null) {
             throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
         }
 
@@ -409,10 +484,6 @@ class CompletedWorkService
 
         if ($dto->work_origin_type !== $existingOrigin || $dto->journal_entry_id !== $existingWork->journal_entry_id) {
             throw new BusinessLogicException(trans_message('completed_work.origin_immutable'), 422);
-        }
-
-        if ($existingOrigin === CompletedWork::ORIGIN_MANUAL && $dto->schedule_task_id !== null) {
-            throw new BusinessLogicException(trans_message('completed_work.invalid_origin'), 422);
         }
 
         if ($existingOrigin === CompletedWork::ORIGIN_SCHEDULE && $dto->schedule_task_id === null) {

@@ -200,7 +200,7 @@
         .main-title {
             font-size: 13pt;
             font-weight: bold;
-            margin: 1mm 0 7mm;
+            margin: 1mm 0 3mm;
             text-align: center;
             text-transform: uppercase;
         }
@@ -258,11 +258,11 @@
         }
 
         .work-row td {
-            height: 7mm;
+            height: 5mm;
         }
 
         .total-row td {
-            height: 6mm;
+            height: 4mm;
             vertical-align: middle;
         }
 
@@ -445,7 +445,7 @@
                 @endphp
                 <tr class="work-row">
                     <td class="text-center">{{ $index + 1 }}</td>
-                    <td class="text-center"></td>
+                    <td class="text-center">{{ $work['estimate_position'] ?? '' }}</td>
                     <td>{{ $work['title'] ?? '' }}</td>
                     <td class="text-center">{{ $work['code'] ?? '' }}</td>
                     <td class="text-center">{{ $work['unit'] ?? '' }}</td>
@@ -457,11 +457,19 @@
 
             <tr class="total-row">
                 <td colspan="5" class="text-right">Итого</td>
-                <td class="text-right">{{ $formatMoney($workRows->sum(fn (array $line): float => (float) ($line['quantity'] ?? 0))) }}</td>
+                <td class="text-center">X</td>
                 <td class="text-center">X</td>
                 <td class="text-right">{{ $formatMoney($total_amount ?? 0) }}</td>
             </tr>
+            <tr class="total-row">
+                <td colspan="7" class="text-right">В том числе НДС</td>
+                <td class="text-right">{{ $formatMoney($vat_amount ?? 0) }}</td>
+            </tr>
         </tbody>
+    </table>
+    <table style="width: 100%; margin-top: 3mm; font-size: 8pt; page-break-inside: avoid;">
+        <tr><td style="width: 50%;">Сдал: ____________________</td><td>Принял: ____________________</td></tr>
+        <tr><td>Должность, подпись, расшифровка подписи</td><td>Должность, подпись, расшифровка подписи</td></tr>
     </table>
 </body>
 </html>

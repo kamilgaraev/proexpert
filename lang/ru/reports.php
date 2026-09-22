@@ -3,6 +3,14 @@
 declare(strict_types=1);
 
 return [
+    'official' => [
+        'official_material_usage_m29' => 'Ведомость расхода материалов М-29',
+        'official_hidden_work_act' => 'Акт освидетельствования скрытых работ',
+        'official_axis_layout_act' => 'Акт разбивки осей',
+        'official_geodetic_base_acceptance_act' => 'Акт приёмки геодезической основы',
+        'official_responsible_structure_act' => 'Акт приёмки ответственных конструкций',
+        'official_engineering_network_section_act' => 'Акт приёмки участка инженерной сети',
+    ],
     'management_pnl' => [
         'currencies' => [
             'RUB' => 'Российский рубль',

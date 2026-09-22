@@ -14,7 +14,7 @@ use InvalidArgumentException;
 
 final class OfficialDocumentDefinitionRegistry
 {
-    private OfficialDocumentDefinition $definition;
+    private array $definitions;
 
     public function __construct(private LoadedReportManifest $manifest)
     {
@@ -22,34 +22,36 @@ final class OfficialDocumentDefinitionRegistry
             throw new InvalidArgumentException('official_document_manifest_invalid');
         }
 
-        $row = $manifest->definitions[0];
-        $sealRequires = $row['seal_requires'] ?? null;
-        if (! is_array($sealRequires) || ! array_is_list($sealRequires)) {
-            throw new InvalidArgumentException('official_document_manifest_invalid');
+        $this->definitions = [];
+        foreach ($manifest->definitions as $row) {
+            $sealRequires = $row['seal_requires'] ?? null;
+            if (! is_array($sealRequires) || ! array_is_list($sealRequires)) {
+                throw new InvalidArgumentException('official_document_manifest_invalid');
+            }
+            $definition = new OfficialDocumentDefinition(
+                code: $this->string($row, 'code'),
+                titleKey: $this->string($row, 'title_key'),
+                rendererVersion: $this->string($row, 'renderer_version'),
+                publicationReadiness: ReportPublicationReadiness::from($this->string($row, 'publication_readiness')),
+                legalRetentionPolicy: $this->string($row, 'legal_retention_policy'),
+                sealRequires: $sealRequires,
+            );
+            $this->definitions[$definition->code] = $definition;
         }
-
-        $this->definition = new OfficialDocumentDefinition(
-            code: $this->string($row, 'code'),
-            titleKey: $this->string($row, 'title_key'),
-            rendererVersion: $this->string($row, 'renderer_version'),
-            publicationReadiness: ReportPublicationReadiness::from($this->string($row, 'publication_readiness')),
-            legalRetentionPolicy: $this->string($row, 'legal_retention_policy'),
-            sealRequires: $sealRequires,
-        );
     }
 
     public function official(string $code): OfficialDocumentDefinition
     {
-        if ($code !== $this->definition->code) {
+        if (! isset($this->definitions[$code])) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
 
-        return $this->definition;
+        return $this->definitions[$code];
     }
 
     public function codes(): array
     {
-        return [$this->definition->code];
+        return array_keys($this->definitions);
     }
 
     public function manifestSha256(): Sha256Hash

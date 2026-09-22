@@ -57,22 +57,19 @@ final class ExecutiveDocumentProfileRegistry
      */
     public function missingRequiredFields(string $type, array $profileData): array
     {
-        $profile = $this->require($type);
-        $missing = [];
+        return (new ExecutiveDocumentProfileValidator())->missingRequiredFields($this->require($type), $profileData);
+    }
 
-        foreach ($profile['fields'] as $field) {
-            if (($field['required'] ?? false) !== true) {
-                continue;
-            }
+    /** @return array<int, array<string, mixed>> */
+    public function profilesForCategory(string $category): array
+    {
+        return array_values(array_filter($this->all(), static fn (array $profile): bool => $profile['category'] === $category));
+    }
 
-            $value = data_get($profileData, $field['key']);
-
-            if ($value === null || $value === '' || $value === []) {
-                $missing[$field['key']] = $field['label'];
-            }
-        }
-
-        return $missing;
+    /** @return array<string, string> */
+    public function validateProfileData(string $type, array $profileData): array
+    {
+        return (new ExecutiveDocumentProfileValidator())->validate($this->require($type), $profileData);
     }
 
     /**
@@ -83,9 +80,10 @@ final class ExecutiveDocumentProfileRegistry
         return [
             'hidden_work_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр, приложение 3', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
-                'requires_journal_entry' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 3 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
                     $this->field('presented_works', 'textarea', true),
@@ -112,9 +110,10 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'axis_layout_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
-                'requires_journal_entry' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 2 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
                     $this->field('axis_layout_text', 'textarea', true),
@@ -137,8 +136,9 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'geodetic_base_acceptance_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр, приложение 1', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 1 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
                 'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
@@ -160,9 +160,10 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'responsible_structure_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр, приложение 4', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
-                'requires_journal_entry' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 4 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
                     $this->field('presented_structures', 'textarea', true),
@@ -188,9 +189,10 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'engineering_network_section_act' => [
                 'group' => 'acts',
-                'regulatory_basis' => ['344/пр, приложение 5', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
-                'requires_journal_entry' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр в редакции 369/пр: приложение № 5 к составу ИД', 'СП 48.13330.2019 с изменениями № 1, № 2'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('act_number', 'text', true),
                     $this->field('network_type', 'text', true),
@@ -246,7 +248,7 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'working_drawing_set' => [
                 'group' => 'drawings',
-                'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
+                'regulatory_basis' => ['344/пр', 'СП 48.13330.2019 с изменениями № 1, № 2', 'ГОСТ Р 21.101-2026 — оформление РД при применимости к проекту'],
                 'requires_work_type' => false,
                 'requires_journal_entry' => false,
                 'fields' => [
@@ -272,8 +274,9 @@ final class ExecutiveDocumentProfileRegistry
             ],
             'geodetic_scheme' => [
                 'group' => 'schemes',
-                'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
-                'requires_work_type' => true,
+                'profile_revision' => '2026-09-21.1',
+                'regulatory_basis' => ['344/пр', 'ГОСТ Р 51872-2024 — оформление схем при применимости к проекту'],
+                'requires_work_type' => false,
                 'requires_journal_entry' => false,
                 'fields' => [
                     $this->field('scheme_number', 'text', true),
@@ -322,6 +325,7 @@ final class ExecutiveDocumentProfileRegistry
                 ],
             ],
             'system_test_act' => [
+                'profile_mode' => 'external_manual_review',
                 'group' => 'tests',
                 'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
                 'requires_work_type' => true,
@@ -334,6 +338,8 @@ final class ExecutiveDocumentProfileRegistry
                     $this->field('test_conditions', 'textarea', true),
                     $this->field('measuring_instruments', 'textarea', true),
                     $this->field('actual_results', 'textarea', true),
+                    $this->field('measured_value', 'number'),
+                    $this->field('measurement_unit', 'text'),
                     $this->field('test_conclusion', 'select', true, ['options' => ['passed', 'retest_required', 'accepted_with_conditions']]),
                 ],
                 'relations' => [
@@ -349,6 +355,7 @@ final class ExecutiveDocumentProfileRegistry
                 ],
             ],
             'inspection_result' => [
+                'profile_mode' => 'external_manual_review',
                 'group' => 'tests',
                 'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
                 'requires_work_type' => true,
@@ -361,6 +368,8 @@ final class ExecutiveDocumentProfileRegistry
                     $this->field('methodology', 'textarea', true),
                     $this->field('sampled_at', 'date'),
                     $this->field('indicators', 'table', true),
+                    $this->field('measured_value', 'number'),
+                    $this->field('measurement_unit', 'text'),
                     $this->field('compliance_conclusion', 'textarea', true),
                     $this->field('recommendations', 'textarea'),
                 ],
@@ -376,6 +385,8 @@ final class ExecutiveDocumentProfileRegistry
                 ],
             ],
             'incoming_control_document' => [
+                'profile_mode' => 'external_manual_review',
+                'legacy_type' => 'incoming_control_document',
                 'group' => 'materials',
                 'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
                 'requires_work_type' => false,
@@ -408,7 +419,60 @@ final class ExecutiveDocumentProfileRegistry
                     'other',
                 ],
             ],
+            'quality_passport' => [
+                'group' => 'materials',
+                'category' => 'quality_documents',
+                'profile_revision' => '2026-09-20.1',
+                'profile_mode' => 'external_manual_review',
+                'regulatory_basis' => ['344/пр, применимый состав ИД'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
+                'fields' => [
+                    $this->field('document_number', 'text', true),
+                    $this->field('quality_document_kind', 'select', true, ['options' => ['passport', 'certificate', 'declaration', 'test_protocol', 'other']]),
+                    $this->field('material_name', 'text', true),
+                    $this->field('manufacturer', 'text', true),
+                    $this->field('quality_document_date', 'date', true),
+                    $this->field('quality_document_details', 'textarea', true),
+                    $this->field('valid_until', 'date'),
+                ],
+                'relations' => [
+                    $this->relation('material_reference', 'material', false),
+                    $this->relation('supplier_document', 'supplier', false),
+                ],
+                'signatory_roles' => ['supplier_representative', 'contractor_control_representative', 'other'],
+            ],
+            'incoming_batch_control' => [
+                'group' => 'materials',
+                'category' => 'incoming_control',
+                'profile_revision' => '2026-09-20.1',
+                'profile_mode' => 'prepared',
+                'regulatory_basis' => ['344/пр, применимый состав ИД', 'СП 48.13330.2019'],
+                'requires_work_type' => false,
+                'requires_journal_entry' => false,
+                'fields' => [
+                    $this->field('control_number', 'text', true),
+                    $this->field('received_at', 'date', true),
+                    $this->field('checked_at', 'date', true),
+                    $this->field('material_name', 'text', true),
+                    $this->field('manufacturer', 'text'),
+                    $this->field('supplier', 'text', true),
+                    $this->field('batch_details', 'textarea', true),
+                    $this->field('quantity', 'text', true),
+                    $this->field('storage_place', 'text'),
+                    $this->field('control_result', 'select', true, ['options' => ['accepted', 'accepted_with_restrictions', 'rejected']]),
+                    $this->field('quality_remarks', 'textarea'),
+                ],
+                'relations' => [
+                    [...$this->relation('material_delivery', 'project_material_delivery', false), 'required' => true],
+                    $this->relation('quality_passport', 'quality_passport', true),
+                    $this->relation('material_reference', 'material', false),
+                    $this->relation('used_in_documents', 'executive_document', true),
+                ],
+                'signatory_roles' => ['construction_representative', 'contractor_control_representative', 'supplier_representative', 'other'],
+            ],
             'work_journal' => [
+                'profile_mode' => 'external_manual_review',
                 'group' => 'journals',
                 'regulatory_basis' => ['344/пр', 'СП 48.13330.2019'],
                 'requires_work_type' => false,
@@ -434,6 +498,82 @@ final class ExecutiveDocumentProfileRegistry
                     'developer_control_representative',
                     'other',
                 ],
+            ],
+            'welding_work_journal' => $this->specialJournalProfile([
+                $this->field('welding_process', 'text', true),
+                $this->field('welding_materials', 'textarea', true),
+                $this->field('welder_qualifications', 'textarea', true),
+                $this->field('welding_control_results', 'textarea', true),
+            ], true),
+            'concrete_work_journal' => $this->specialJournalProfile([
+                $this->field('concrete_class', 'text', true),
+                $this->field('concrete_mix', 'textarea', true),
+                $this->field('placement_conditions', 'textarea', true),
+                $this->field('curing_control', 'textarea', true),
+                $this->field('concrete_test_results', 'textarea', true),
+            ], true),
+            'pile_work_journal' => $this->specialJournalProfile([
+                $this->field('pile_type', 'text', true),
+                $this->field('pile_field', 'textarea', true),
+                $this->field('pile_installation_method', 'text', true),
+                $this->field('pile_depth_or_refusal', 'text', true),
+                $this->field('pile_acceptance_basis', 'textarea', true),
+            ], true),
+            'installation_work_journal' => $this->specialJournalProfile([
+                $this->field('structures_type', 'text', true),
+                $this->field('assembly_sequence', 'textarea', true),
+                $this->field('lifting_equipment', 'textarea', true),
+                $this->field('connections_control', 'textarea', true),
+                $this->field('installation_acceptance_basis', 'textarea', true),
+            ], true),
+            'anticorrosion_work_journal' => $this->specialJournalProfile([
+                $this->field('protection_system', 'text', true),
+                $this->field('surface_preparation', 'textarea', true),
+                $this->field('coating_materials', 'textarea', true),
+                $this->field('layer_thickness_control', 'textarea', true),
+                $this->field('anticorrosion_acceptance_basis', 'textarea', true),
+            ], true),
+            'designer_supervision_journal' => $this->specialJournalProfile([
+                $this->field('supervision_scope', 'textarea', true),
+                $this->field('site_visits', 'textarea', true),
+                $this->field('instructions_and_deviations', 'textarea', true),
+                $this->field('designer_decisions', 'textarea', true),
+            ], false),
+        ];
+    }
+
+    private function specialJournalProfile(array $subjectFields, bool $requiresWorkType): array
+    {
+        return [
+            'profile_mode' => 'external_manual_review',
+            'group' => 'journals',
+            'category' => 'journals',
+            'regulatory_basis' => ['Проектная и рабочая документация', 'Применимые требования нормативных документов по проекту'],
+            'requires_work_type' => $requiresWorkType,
+            'requires_journal_entry' => false,
+            'fields' => [
+                $this->field('journal_number', 'text', true),
+                $this->field('opened_at', 'date', true),
+                $this->field('closed_at', 'date'),
+                $this->field('journal_organization', 'text', true),
+                $this->field('responsible_person', 'text', true),
+                $this->field('journal_period', 'text', true),
+                $this->field('normative_basis', 'textarea', true),
+                $this->field('applicability_basis', 'textarea', true),
+                $this->field('project_documentation', 'textarea', true),
+                $this->field('journal_status', 'select', true, ['options' => ['active', 'review', 'closed', 'correction_required']]),
+                ...$subjectFields,
+            ],
+            'relations' => [
+                $this->relation('journal_entries', 'journal_entry', true),
+                $this->relation('related_documents', 'executive_document', true),
+            ],
+            'signatory_roles' => [
+                'journal_responsible_person',
+                'construction_representative',
+                'contractor_control_representative',
+                'developer_control_representative',
+                'other',
             ],
         ];
     }
@@ -472,9 +612,30 @@ final class ExecutiveDocumentProfileRegistry
      */
     private function hydrateProfile(string $type, array $profile): array
     {
+        $printFields = match ($type) {
+            'hidden_work_act' => ['location', 'project_documentation', 'normative_basis', 'additional_information', 'appendices'],
+            'axis_layout_act' => ['location', 'project_documentation', 'normative_basis', 'additional_information', 'appendices'],
+            'geodetic_base_acceptance_act' => ['location', 'additional_information', 'appendices'],
+            'responsible_structure_act' => ['project_documentation', 'hidden_work_acts', 'materials_quality_documents', 'compliance_documents', 'inspection_results', 'normative_basis', 'usage_by_purpose', 'usage_load', 'full_load_conditions', 'next_works_permission', 'additional_information', 'appendices'],
+            'engineering_network_section_act' => ['location', 'project_documentation', 'hidden_work_acts', 'materials_quality_documents', 'compliance_documents', 'inspection_results', 'tests', 'network_technical_conditions', 'normative_basis', 'additional_information', 'appendices'],
+            default => [],
+        };
+        $existingKeys = array_column($profile['fields'], 'key');
+        foreach ($printFields as $key) {
+            if (! in_array($key, $existingKeys, true)) {
+                $profile['fields'][] = $this->field($key, 'textarea');
+            }
+        }
+        if ($printFields !== []) $profile['profile_revision'] = '2026-09-21.2';
         return [
             'type' => $type,
             'label' => trans_message("executive_documentation.document_types.{$type}"),
+            'category' => $profile['category'] ?? $profile['group'],
+            'category_label' => trans_message("executive_documentation.profile_categories.".($profile['category'] ?? $profile['group'])),
+            'profile_revision' => $profile['profile_revision'] ?? '2026-09-20.1',
+            'profile_mode' => $profile['profile_mode'] ?? 'prepared',
+            'print_template_version' => $printFields !== [] ? '344-369-v1' : null,
+            'legacy_type' => $profile['legacy_type'] ?? null,
             'group' => $profile['group'],
             'group_label' => trans_message("executive_documentation.profile_groups.{$profile['group']}"),
             'regulatory_basis' => $profile['regulatory_basis'],

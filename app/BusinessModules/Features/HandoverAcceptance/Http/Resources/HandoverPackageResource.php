@@ -24,6 +24,7 @@ final class HandoverPackageResource extends JsonResource
             'acceptance_scope_id' => $package->acceptance_scope_id,
             'title' => $package->title,
             'status' => $package->status,
+            'executive_document_set_id' => $package->executive_document_set_id,
             'documents' => $package->relationLoaded('documents') ? $package->documents->map(fn ($document): array => [
                 'id' => $document->id,
                 'title' => $document->title,
@@ -32,7 +33,12 @@ final class HandoverPackageResource extends JsonResource
                 'status' => $document->status,
                 'external_url' => $document->external_url,
                 'approved_at' => $document->approved_at?->toIso8601String(),
-                'available_actions' => $document->status === 'approved' ? [] : ['upload'],
+                'executive_document_version_id' => $document->executive_document_version_id,
+                'evidence_hash' => $document->evidence_hash,
+                'available_actions' => $document->status === 'approved' ? [] : (
+                    app(\App\BusinessModules\Features\HandoverAcceptance\Services\HandoverExecutiveEvidenceService::class)->requiresCanonicalVersion($document->document_type)
+                        ? ['link_executive_version'] : ['upload', 'approve']
+                ),
             ])->values()->all() : [],
         ];
     }

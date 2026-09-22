@@ -865,11 +865,11 @@ class ActReportsPreviewTest extends TestCase
         $this->assertStringContainsString('<html lang="ru">', $ks6a);
         $this->assertStringContainsString('size: A4 landscape', $ks6);
         $this->assertStringContainsString('size: A4 landscape', $ks6a);
-        $this->assertStringContainsString('Типовая межотраслевая форма № КС-6', $ks6);
+        $this->assertStringContainsString('Оперативный отчёт о выполнении работ', $ks6);
         $this->assertStringContainsString('Унифицированная форма № КС-6а', $ks6a);
-        $this->assertStringContainsString('0322002', $ks6);
+        $this->assertStringContainsString('Внутренний отчёт', $ks6);
         $this->assertStringContainsString('0322006', $ks6a);
-        $this->assertStringContainsString('ОБЩИЙ ЖУРНАЛ РАБОТ', $ks6);
+        $this->assertStringContainsString('ОПЕРАТИВНЫЙ ОТЧЁТ О РАБОТАХ', $ks6);
         $this->assertStringContainsString('Журнал учета выполненных работ', $ks6a);
         $this->assertStringContainsString('Кладка стен из легкобетонных камней', $ks6a);
         $this->assertStringNotContainsString("\u{0420}\u{0459}", $ks6);

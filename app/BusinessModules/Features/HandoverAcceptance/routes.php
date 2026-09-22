@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Customer\HandoverAcceptanceController as CustomerHandoverAcceptanceController;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\HandoverAcceptanceController;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\WorkReworkController;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Mobile\HandoverAcceptanceController as MobileHandoverAcceptanceController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
@@ -12,6 +13,11 @@ Route::prefix('api/v1/admin/handover-acceptance')
     ->name('admin.handover_acceptance.')
     ->middleware(AdminRouteStack::middleware(['handover-acceptance.active']))
     ->group(function (): void {
+        Route::get('/scopes/{scope}/reworks', [WorkReworkController::class, 'index'])->whereNumber('scope')->middleware('authorize:handover-acceptance.view');
+        Route::post('/scopes/{scope}/reworks', [WorkReworkController::class, 'store'])->whereNumber('scope')->middleware('authorize:handover-acceptance.edit');
+        Route::post('/reworks/{rework}/submit', [WorkReworkController::class, 'submit'])->whereNumber('rework')->middleware('authorize:handover-acceptance.edit');
+        Route::post('/reworks/{rework}/verify', [WorkReworkController::class, 'verify'])->whereNumber('rework')->middleware('authorize:handover-acceptance.approve');
+        Route::get('/reworks/{rework}/history', [WorkReworkController::class, 'history'])->whereNumber('rework')->middleware('authorize:handover-acceptance.view');
         Route::get('/scopes', [HandoverAcceptanceController::class, 'index'])
             ->middleware('authorize:handover-acceptance.view');
         Route::post('/locations', [HandoverAcceptanceController::class, 'storeLocation'])
@@ -48,9 +54,12 @@ Route::prefix('api/v1/admin/handover-acceptance')
         Route::post('/scopes/{scope}/package', [HandoverAcceptanceController::class, 'storePackage'])
             ->whereNumber('scope')
             ->middleware('authorize:handover-acceptance.edit');
+        Route::put('/scopes/{scope}/work-quantities', [HandoverAcceptanceController::class, 'storeWorkQuantities'])
+            ->whereNumber('scope')
+            ->middleware('authorize:handover-acceptance.edit');
         Route::post('/package-documents/{document}/approve', [HandoverAcceptanceController::class, 'approvePackageDocument'])
             ->whereNumber('document')
-            ->middleware('authorize:handover-acceptance.edit');
+            ->middleware('authorize:handover-acceptance.approve');
     });
 
 Route::prefix('api/v1/customer/handover-acceptance')

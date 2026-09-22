@@ -18,11 +18,13 @@ final class AcceptanceSignoff extends Model
         'comment',
         'signed_at',
         'metadata',
+        'evidence_snapshot',
     ];
 
     protected $casts = [
         'signed_at' => 'datetime',
         'metadata' => 'array',
+        'evidence_snapshot' => 'array',
     ];
 
     public function scope(): BelongsTo

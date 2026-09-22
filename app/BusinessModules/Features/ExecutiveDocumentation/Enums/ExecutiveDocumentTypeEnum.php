@@ -18,7 +18,15 @@ enum ExecutiveDocumentTypeEnum: string
     case SYSTEM_TEST_ACT = 'system_test_act';
     case INSPECTION_RESULT = 'inspection_result';
     case INCOMING_CONTROL_DOCUMENT = 'incoming_control_document';
+    case QUALITY_PASSPORT = 'quality_passport';
+    case INCOMING_BATCH_CONTROL = 'incoming_batch_control';
     case WORK_JOURNAL = 'work_journal';
+    case WELDING_WORK_JOURNAL = 'welding_work_journal';
+    case CONCRETE_WORK_JOURNAL = 'concrete_work_journal';
+    case PILE_WORK_JOURNAL = 'pile_work_journal';
+    case INSTALLATION_WORK_JOURNAL = 'installation_work_journal';
+    case ANTICORROSION_WORK_JOURNAL = 'anticorrosion_work_journal';
+    case DESIGNER_SUPERVISION_JOURNAL = 'designer_supervision_journal';
     case EXECUTIVE_SCHEME = 'executive_scheme';
     case MATERIAL_CERTIFICATE = 'material_certificate';
     case TEST_PROTOCOL = 'test_protocol';

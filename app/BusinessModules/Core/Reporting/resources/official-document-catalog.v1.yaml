@@ -3,7 +3,37 @@ contract_version: 1.0.0
 definitions:
   - code: official_material_usage_m29
     title_key: reports.official.official_material_usage_m29
+    renderer_version: 1.1.0
+    publication_readiness: candidate
+    legal_retention_policy: project_material_consumption
+    seal_requires: [object_period, accepted_volume, approved_normative_consumption, actual_consumption, deviation_reason, source_refs, versioned_coefficients]
+  - code: official_hidden_work_act
+    title_key: reports.official.official_hidden_work_act
     renderer_version: 1.0.0
-    publication_readiness: blocked
-    legal_retention_policy: unassigned
-    seal_requires: [opening_balance, receipts, actual_consumption, approved_normative_consumption, closing_balance, source_refs, versioned_coefficients]
+    publication_readiness: candidate
+    legal_retention_policy: project_executive_documentation
+    seal_requires: [source_version, profile_snapshot, basis_snapshot, template_version, content_hash, signatory_authority, signature_evidence]
+  - code: official_axis_layout_act
+    title_key: reports.official.official_axis_layout_act
+    renderer_version: 1.0.0
+    publication_readiness: candidate
+    legal_retention_policy: project_executive_documentation
+    seal_requires: [source_version, profile_snapshot, basis_snapshot, template_version, content_hash, signatory_authority, signature_evidence]
+  - code: official_geodetic_base_acceptance_act
+    title_key: reports.official.official_geodetic_base_acceptance_act
+    renderer_version: 1.0.0
+    publication_readiness: candidate
+    legal_retention_policy: project_executive_documentation
+    seal_requires: [source_version, profile_snapshot, basis_snapshot, template_version, content_hash, signatory_authority, signature_evidence]
+  - code: official_responsible_structure_act
+    title_key: reports.official.official_responsible_structure_act
+    renderer_version: 1.0.0
+    publication_readiness: candidate
+    legal_retention_policy: project_executive_documentation
+    seal_requires: [source_version, profile_snapshot, basis_snapshot, template_version, content_hash, signatory_authority, signature_evidence]
+  - code: official_engineering_network_section_act
+    title_key: reports.official.official_engineering_network_section_act
+    renderer_version: 1.0.0
+    publication_readiness: candidate
+    legal_retention_policy: project_executive_documentation
+    seal_requires: [source_version, profile_snapshot, basis_snapshot, template_version, content_hash, signatory_authority, signature_evidence]

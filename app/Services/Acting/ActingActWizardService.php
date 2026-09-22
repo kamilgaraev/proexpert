@@ -134,7 +134,7 @@ class ActingActWizardService
         if ($selectedGroups->isEmpty()) {
             return;
         }
-        $availableQuantities = $this->quantityReservations->availableQuantities($works->values());
+        $availableQuantities = $this->quantityReservations->availableQuantities($works->values(), null, $this->policyResolver->resolveForContract($contract));
 
         foreach ($selectedGroups as $workId => $selectedWorks) {
             $workId = (int) $workId;

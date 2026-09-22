@@ -28,16 +28,31 @@ final class ExecutiveDocumentVersion extends Model
         'organization_id',
         'document_id',
         'uploaded_by',
+        'approved_by',
         'version_number',
+        'status',
         'file_url',
+        'content_hash',
         'comment',
         'uploaded_at',
+        'submitted_at',
+        'approved_at',
+        'transmitted_at',
         'metadata',
+        'profile_snapshot',
+        'basis_snapshot',
+        'operation_key',
+        'operation_hash',
     ];
 
     protected $casts = [
         'uploaded_at' => 'datetime',
+        'submitted_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'transmitted_at' => 'datetime',
         'metadata' => 'array',
+        'profile_snapshot' => 'array',
+        'basis_snapshot' => 'array',
     ];
 
     public function organization(): BelongsTo
@@ -53,5 +68,10 @@ final class ExecutiveDocumentVersion extends Model
     public function uploadedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'uploaded_by');
+    }
+
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
     }
 }

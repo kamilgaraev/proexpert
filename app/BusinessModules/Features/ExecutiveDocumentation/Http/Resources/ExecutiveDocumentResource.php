@@ -18,7 +18,9 @@ final class ExecutiveDocumentResource extends JsonResource
         /** @var ExecutiveDocument $document */
         $document = $this->resource;
         $workflow = app(ExecutiveDocumentationWorkflowService::class)->forDocument($document);
-        $profile = app(ExecutiveDocumentProfileRegistry::class)->find($document->document_type->value);
+        $latestVersion = $document->versions->sortByDesc('id')->first();
+        $savedProfile = $latestVersion?->basis_snapshot['profile'] ?? null;
+        $profile = $savedProfile ?? app(ExecutiveDocumentProfileRegistry::class)->find($document->document_type->value);
 
         return [
             'id' => $document->id,
@@ -32,6 +34,7 @@ final class ExecutiveDocumentResource extends JsonResource
             'status_label' => $document->status->label(),
             'status_color' => $document->status->color(),
             'profile' => $profile,
+            'profile_needs_review' => $savedProfile === null || ($profile['legacy_type'] ?? null) !== null,
             'work_type' => $document->workType ? [
                 'id' => $document->workType->id,
                 'name' => $document->workType->name,

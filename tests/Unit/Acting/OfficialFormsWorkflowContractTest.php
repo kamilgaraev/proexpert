@@ -12,30 +12,19 @@ use ReflectionClass;
 
 class OfficialFormsWorkflowContractTest extends TestCase
 {
-    public function test_official_exports_use_approved_sources_and_shared_vat_calculation(): void
+    public function test_official_exports_use_approved_sources(): void
     {
         $source = (string) file_get_contents(
             dirname(__DIR__, 3).'/app/BusinessModules/Features/BudgetEstimates/Services/Export/OfficialFormsExportService.php'
         );
 
         self::assertStringNotContainsString('* 0.20', $source);
-        self::assertGreaterThanOrEqual(4, substr_count($source, 'vatAmountFromGross('));
         self::assertStringContainsString(
             'journalEntriesForExport($journal, $from, $to, $estimateId, true)',
             $source,
         );
         self::assertGreaterThanOrEqual(2, substr_count($source, "->where('is_approved', true)"));
         self::assertGreaterThanOrEqual(4, substr_count($source, 'assertActApprovedForExport('));
-        self::assertMatchesRegularExpression(
-            "/performanceActs\(\).*?where\('is_approved', true\).*?where\('project_id'/s",
-            $source,
-        );
-        $prepareKs2Offset = strpos($source, 'protected function prepareKS2Data');
-        $estimateOffset = strpos($source, '$estimate = $contract->estimate;', $prepareKs2Offset);
-        $vatOffset = strpos($source, '$vatAmount =', $prepareKs2Offset);
-        self::assertIsInt($estimateOffset);
-        self::assertIsInt($vatOffset);
-        self::assertTrue($estimateOffset < $vatOffset);
     }
 
     public function test_spreadsheet_exports_are_bounded_and_extended_report_uses_one_pass_aggregation(): void

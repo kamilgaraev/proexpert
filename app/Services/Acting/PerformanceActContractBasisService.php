@@ -64,6 +64,7 @@ final class PerformanceActContractBasisService
                 'contract_id' => (int) $contract->id,
                 'estimate_id' => (int) $estimate->id,
                 'estimate_item_id' => (int) $item->id,
+                'estimate_item' => $item->only(['id', 'position_number', 'name', 'normative_rate_code', 'justification', 'code']),
                 'base_unit_price' => (string) $base,
                 'unit_price_with_vat' => (string) $gross,
                 'vat_rate' => $rate,

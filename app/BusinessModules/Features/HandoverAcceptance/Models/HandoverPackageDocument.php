@@ -18,6 +18,8 @@ final class HandoverPackageDocument extends Model
         'external_url',
         'approved_at',
         'approved_by_user_id',
+        'executive_document_version_id',
+        'evidence_hash',
     ];
 
     protected $casts = [
@@ -29,5 +31,10 @@ final class HandoverPackageDocument extends Model
     public function package(): BelongsTo
     {
         return $this->belongsTo(HandoverPackage::class, 'handover_package_id');
+    }
+
+    public function executiveDocumentVersion(): BelongsTo
+    {
+        return $this->belongsTo(\App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion::class);
     }
 }

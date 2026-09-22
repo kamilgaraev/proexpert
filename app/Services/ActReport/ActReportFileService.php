@@ -6,9 +6,11 @@ namespace App\Services\ActReport;
 
 use App\Exceptions\BusinessLogicException;
 use App\Models\ContractPerformanceAct;
+use App\Models\ContractPeriodCertificate;
 use App\Models\File;
 use App\Models\PersonalFile;
 use App\Models\User;
+use App\Services\Acting\ContractPeriodCertificateService;
 use App\Services\Storage\FileService;
 use App\Services\Storage\PersonalFileService;
 use Illuminate\Http\UploadedFile;
@@ -26,7 +28,8 @@ class ActReportFileService
         private readonly FileService $fileService,
         private readonly PersonalFileService $personalFiles,
         private readonly ActReportAccessService $accessService,
-        private readonly ActReportWorkflowService $workflowService
+        private readonly ActReportWorkflowService $workflowService,
+        private readonly ContractPeriodCertificateService $certificateService,
     ) {}
 
     public function upload(
@@ -103,6 +106,108 @@ class ActReportFileService
 
             throw $exception;
         }
+    }
+
+    public function uploadSignedCertificate(
+        ContractPeriodCertificate $certificate,
+        UploadedFile $uploadedFile,
+        ?User $user,
+        ?string $description
+    ): ContractPeriodCertificate {
+        $certificate->loadMissing('contract.organization');
+        $organization = $certificate->contract->organization;
+        $path = $this->fileService->upload(
+            $uploadedFile,
+            "certificates/{$certificate->id}/documents",
+            null,
+            'private',
+            $organization
+        );
+
+        if (! $path) {
+            throw new BusinessLogicException(trans_message('act_reports.file_upload_failed'), 500);
+        }
+
+        try {
+            $file = File::query()->create([
+                'organization_id' => $certificate->organization_id,
+                'fileable_id' => $certificate->id,
+                'fileable_type' => ContractPeriodCertificate::class,
+                'user_id' => $user?->id,
+                'name' => basename($path),
+                'original_name' => $uploadedFile->getClientOriginalName(),
+                'path' => $path,
+                'mime_type' => $uploadedFile->getClientMimeType(),
+                'size' => $uploadedFile->getSize(),
+                'disk' => 's3',
+                'type' => 'document',
+                'category' => 'signed_certificate',
+                'additional_info' => [
+                    'description' => $description ?? trans_message('act_reports.certificate_signed_file_description'),
+                ],
+            ]);
+        } catch (Throwable $exception) {
+            $this->fileService->delete($path, $organization);
+
+            throw $exception;
+        }
+
+        try {
+            return $this->certificateService->markSigned($certificate, (int) $file->id, (int) $user?->id);
+        } catch (Throwable $exception) {
+            $currentSignedFileId = ContractPeriodCertificate::query()
+                ->whereKey($certificate->id)
+                ->value('signed_file_id');
+            if ((int) $currentSignedFileId !== (int) $file->id
+                && $this->fileService->delete($file->path, $organization)
+            ) {
+                $file->delete();
+            }
+
+            throw $exception;
+        }
+    }
+
+    public function downloadSignedCertificate(ContractPeriodCertificate $certificate): StreamedResponse
+    {
+        $certificate->loadMissing('contract.organization');
+        if ($certificate->signed_file_id === null) {
+            throw new BusinessLogicException(trans_message('act_reports.file_not_found'), 404);
+        }
+
+        $file = File::query()
+            ->whereKey($certificate->signed_file_id)
+            ->where('organization_id', (int) $certificate->organization_id)
+            ->where('fileable_id', (int) $certificate->id)
+            ->where('fileable_type', ContractPeriodCertificate::class)
+            ->where('category', 'signed_certificate')
+            ->first();
+        if ($file === null) {
+            throw new BusinessLogicException(trans_message('act_reports.file_not_found'), 404);
+        }
+
+        $storage = $this->fileService->disk($certificate->contract->organization);
+        if (! $storage->exists($file->path)) {
+            throw new BusinessLogicException(trans_message('act_reports.file_not_found'), 404);
+        }
+
+        $stream = $storage->readStream($file->path);
+        if ($stream === false) {
+            throw new BusinessLogicException(trans_message('act_reports.file_not_found'), 404);
+        }
+
+        return Response::streamDownload(
+            static function () use ($stream): void {
+                fpassthru($stream);
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+            },
+            (string) ($file->original_name ?: $file->name ?: 'ks3-signed.pdf'),
+            [
+                'Content-Type' => $file->mime_type ?: 'application/pdf',
+            ]
+        );
     }
 
     public function list(ContractPerformanceAct $act): Collection

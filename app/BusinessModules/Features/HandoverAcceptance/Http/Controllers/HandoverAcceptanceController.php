@@ -137,12 +137,12 @@ final class HandoverAcceptanceController extends Controller
 
     public function start(Request $request, int $scope): JsonResponse
     {
-        return $this->scopeAction($request, $scope, fn ($model) => $this->service->startScope($model));
+        return $this->scopeAction($request, $scope, fn ($model) => $this->service->startScope($model, (int) $request->user()?->id));
     }
 
     public function readyForReinspection(Request $request, int $scope): JsonResponse
     {
-        return $this->scopeAction($request, $scope, fn ($model) => $this->service->markReadyForReinspection($model));
+        return $this->scopeAction($request, $scope, fn ($model) => $this->service->markReadyForReinspection($model, (int) $request->user()?->id));
     }
 
     public function accept(Request $request, int $scope): JsonResponse
@@ -173,6 +173,7 @@ final class HandoverAcceptanceController extends Controller
                 'severity' => ['required', 'string', Rule::in(['minor', 'major', 'critical'])],
                 'create_quality_defect' => ['required', 'boolean'],
                 'quality_defect_inspection_required' => ['required_if:create_quality_defect,true', 'boolean'],
+                'work_rework_id' => ['nullable', 'integer', 'min:1'],
             ], [
                 'title.required' => trans_message('handover_acceptance.validation.title_required'),
                 'severity.required' => trans_message('handover_acceptance.validation.severity_required'),
@@ -212,18 +213,27 @@ final class HandoverAcceptanceController extends Controller
         }
     }
 
-    public function storePackage(Request $request, int $scope): JsonResponse
+    public function storeWorkQuantities(\App\BusinessModules\Features\HandoverAcceptance\Http\Requests\StoreAcceptanceWorkQuantitiesRequest $request, int $scope): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'title' => ['required', 'string', 'max:255'],
-                'documents' => ['required', 'array', 'min:1'],
-                'documents.*.title' => ['required', 'string', 'max:255'],
-                'documents.*.document_type' => ['required', 'string', 'max:80'],
-                'documents.*.is_required' => ['required', 'boolean'],
-                'documents.*.status' => ['required', 'string', Rule::in(['missing', 'draft'])],
-                'documents.*.external_url' => ['nullable', 'string', 'max:1000'],
-            ]);
+            $data = $request->validated();
+            $rows = app(\App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService::class)->draft(
+                $this->organizationId($request), (int) $request->user()?->id, $scope,
+                $data['lines'], (int) $data['expected_revision'], $data['operation_key'],
+            );
+
+            return AdminResponse::success(['lines' => $rows->toArray(), 'revision' => (int) $rows->max('revision')]);
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('handover_acceptance.errors.validation_failed'), 422, $e->errors());
+        } catch (\Throwable $e) {
+            return $this->failed($request, $e, 'store_work_quantities');
+        }
+    }
+
+    public function storePackage(\App\BusinessModules\Features\HandoverAcceptance\Http\Requests\StoreHandoverPackageRequest $request, int $scope): JsonResponse
+    {
+        try {
+            $validated = $request->validated();
 
             return AdminResponse::success(
                 new HandoverPackageResource($this->service->createPackage($this->service->findScope($this->organizationId($request), $scope), (int) $request->user()?->id, $validated)),
@@ -239,10 +249,10 @@ final class HandoverAcceptanceController extends Controller
         }
     }
 
-    public function approvePackageDocument(Request $request, int $document): JsonResponse
+    public function approvePackageDocument(\App\BusinessModules\Features\HandoverAcceptance\Http\Requests\ApproveHandoverPackageDocumentRequest $request, int $document): JsonResponse
     {
         try {
-            $validated = $request->validate(['external_url' => ['required', 'string', 'max:1000']]);
+            $validated = $request->validated();
 
             return AdminResponse::success($this->service->approveDocument(
                 $this->service->findPackageDocument($this->organizationId($request), $document),
@@ -276,6 +286,14 @@ final class HandoverAcceptanceController extends Controller
 
     private function failed(Request $request, \Throwable $e, string $action): JsonResponse
     {
+        if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return AdminResponse::error(trans_message('handover_acceptance.errors.scope_not_found'), 404);
+        }
+        if ($e instanceof \App\Exceptions\BusinessLogicException && in_array($e->getCode(), [403, 404, 409, 422], true)) {
+            $key = match ($e->getCode()) { 403 => 'forbidden', 404 => 'scope_not_found', 422 => 'validation_failed', default => 'invalid_status' };
+
+            return AdminResponse::error(trans_message('handover_acceptance.errors.'.$key), $e->getCode());
+        }
         Log::error("handover_acceptance.admin.{$action}.error", [
             'user_id' => $request->user()?->id,
             'organization_id' => $request->attributes->get('current_organization_id'),

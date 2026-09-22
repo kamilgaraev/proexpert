@@ -11,6 +11,7 @@ use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\ProjectContextMiddleware;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
+use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkBulkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
@@ -127,7 +128,7 @@ class CompletedWorkController extends Controller
         try {
             $dto = $request->toDto();
             $projectContext = ProjectContextMiddleware::getProjectContext($request);
-            $completedWork = $this->completedWorkService->create($dto, $projectContext);
+            $completedWork = $this->completedWorkService->create($dto, $projectContext, Auth::user());
 
             return AdminResponse::success(
                 new CompletedWorkResource($this->loadWorkRelations($completedWork)),
@@ -223,7 +224,12 @@ class CompletedWorkController extends Controller
 
         try {
             $dto = $request->toDto();
-            $updatedWork = $this->completedWorkService->update($completed_work->id, $dto);
+            $updatedWork = $this->completedWorkService->update(
+                $completed_work->id,
+                $dto,
+                Auth::user(),
+                $projectContext,
+            );
 
             return AdminResponse::success(
                 new CompletedWorkResource($this->loadWorkRelations($updatedWork)),
@@ -264,7 +270,12 @@ class CompletedWorkController extends Controller
         }
 
         try {
-            $this->completedWorkService->delete($completed_work->id, $completed_work->organization_id);
+            $this->completedWorkService->delete(
+                $completed_work->id,
+                $completed_work->organization_id,
+                Auth::user(),
+                $projectContext,
+            );
 
             return AdminResponse::success(null, trans_message('completed_work.deleted'), Response::HTTP_NO_CONTENT);
         } catch (BusinessLogicException $e) {
@@ -356,12 +367,14 @@ class CompletedWorkController extends Controller
                 return AdminResponse::error(trans_message('completed_work.schedule_task_not_found'), 404);
             }
 
-            $updatedWork = $this->completedWorkFactService->attachToTask($completedWork, $task);
+            $updatedWork = $this->completedWorkFactService->attachToTask($completedWork, $task, $request->user());
 
             return AdminResponse::success(
                 new CompletedWorkResource($updatedWork),
                 trans_message('completed_work.attached_to_schedule')
             );
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
             Log::error('completed_work.attach_schedule_task.error', [
                 'completed_work_id' => $completedWork->id,
@@ -409,6 +422,8 @@ class CompletedWorkController extends Controller
                     'completed_quantity' => $task->completed_quantity !== null ? (float) $task->completed_quantity : null,
                 ],
             ], trans_message('completed_work.schedule_task_created'), Response::HTTP_CREATED);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
             Log::error('completed_work.create_schedule_task.error', [
                 'completed_work_id' => $completedWork->id,
@@ -421,104 +436,15 @@ class CompletedWorkController extends Controller
         }
     }
 
-    public function bulkCreate(Request $request): JsonResponse
+    public function bulkCreate(StoreCompletedWorkBulkRequest $request): JsonResponse
     {
         try {
-            $projectId = (int) $request->route('project');
-            $organizationId = (int) Auth::user()->current_organization_id;
-            $worksPayload = $request->input('works', []);
-
-            if (! is_array($worksPayload) || $worksPayload === []) {
-                return AdminResponse::error(trans_message('completed_work.bulk_payload_required'), Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-
-            $dtos = [];
+            $dtos = $request->toDtos();
             $projectContext = ProjectContextMiddleware::getProjectContext($request);
-
-            foreach ($worksPayload as $index => $workPayload) {
-                $validator = Validator::make($workPayload, [
-                    'work_type_id' => ['nullable', 'integer', Rule::exists('work_types', 'id')->where('organization_id', $organizationId)],
-                    'user_id' => ['nullable', 'integer', 'exists:users,id'],
-                    'schedule_task_id' => ['nullable', 'integer', 'exists:schedule_tasks,id'],
-                    'estimate_item_id' => ['nullable', 'integer', 'exists:estimate_items,id'],
-                    'contract_id' => ['nullable', 'integer', Rule::exists('contracts', 'id')->where('organization_id', $organizationId)],
-                    'contractor_id' => ['nullable', 'integer', Rule::exists('contractors', 'id')->where('organization_id', $organizationId)],
-                    'quantity' => ['required', 'numeric', 'min:0.001'],
-                    'completed_quantity' => ['nullable', 'numeric', 'min:0'],
-                    'price' => ['nullable', 'numeric', 'min:0'],
-                    'total_amount' => ['nullable', 'numeric', 'min:0'],
-                    'completion_date' => ['required', 'date_format:Y-m-d'],
-                    'notes' => ['nullable', 'string'],
-                    'description' => ['nullable', 'string', 'max:65535'],
-                    'status' => ['nullable', 'string', 'in:draft,pending,in_review,confirmed,cancelled,rejected'],
-                    'work_origin_type' => ['nullable', 'string', 'in:manual,schedule,journal'],
-                    'planning_status' => ['nullable', 'string', 'in:planned,requires_schedule'],
-                    'additional_info' => ['nullable', 'array'],
-                    'materials' => ['nullable', 'array'],
-                    'materials.*.material_id' => ['required_with:materials', 'integer', Rule::exists('materials', 'id')->where('organization_id', $organizationId)],
-                    'materials.*.quantity' => ['required_with:materials', 'numeric', 'min:0.0001'],
-                    'materials.*.unit_price' => ['nullable', 'numeric', 'min:0'],
-                    'materials.*.total_amount' => ['nullable', 'numeric', 'min:0'],
-                    'materials.*.notes' => ['nullable', 'string', 'max:1000'],
-                ]);
-
-                if ($validator->fails()) {
-                    return AdminResponse::error(
-                        trans_message('completed_work.bulk_validation_error'),
-                        Response::HTTP_UNPROCESSABLE_ENTITY,
-                        ['index' => $index, 'errors' => $validator->errors()]
-                    );
-                }
-
-                $validated = $validator->validated();
-                $materials = isset($validated['materials'])
-                    ? array_map(
-                        fn (array $material) => CompletedWorkMaterialDTO::fromArray($material),
-                        $validated['materials']
-                    )
-                    : null;
-
-                $dto = new CompletedWorkDTO(
-                    id: null,
-                    organization_id: $organizationId,
-                    project_id: $projectId,
-                    schedule_task_id: $validated['schedule_task_id'] ?? null,
-                    estimate_item_id: $validated['estimate_item_id'] ?? null,
-                    journal_entry_id: null,
-                    work_origin_type: $validated['work_origin_type'] ?? \App\Models\CompletedWork::ORIGIN_MANUAL,
-                    planning_status: $validated['planning_status'] ?? (($validated['schedule_task_id'] ?? null)
-                        ? \App\Models\CompletedWork::PLANNING_PLANNED
-                        : \App\Models\CompletedWork::PLANNING_REQUIRES_SCHEDULE),
-                    contract_id: $validated['contract_id'] ?? null,
-                    contractor_id: $validated['contractor_id'] ?? null,
-                    work_type_id: $validated['work_type_id'] ?? null,
-                    user_id: $validated['user_id'] ?? null,
-                    quantity: (float) $validated['quantity'],
-                    completed_quantity: isset($validated['completed_quantity']) ? (float) $validated['completed_quantity'] : null,
-                    price: isset($validated['price']) ? (float) $validated['price'] : null,
-                    total_amount: isset($validated['total_amount']) ? (float) $validated['total_amount'] : null,
-                    completion_date: Carbon::parse($validated['completion_date']),
-                    notes: $validated['notes'] ?? null,
-                    status: $validated['status'] ?? 'draft',
-                    additional_info: $validated['additional_info'] ?? null,
-                    materials: $materials,
-                    description: $validated['description'] ?? null,
-                );
-
-                $dtos[] = $dto;
-            }
-
-            $createdWorks = DB::transaction(function () use ($dtos, $projectContext): array {
-                $createdWorks = [];
-
-                foreach ($dtos as $dto) {
-                    $createdWorks[] = $this->loadWorkRelations(
-                        $this->completedWorkService->create($dto, $projectContext)
-                    );
-                }
-
-                return $createdWorks;
-            });
+            $createdWorks = array_map(
+                fn (CompletedWork $work) => $this->loadWorkRelations($work),
+                $this->completedWorkService->createMany($dtos, Auth::user(), $projectContext),
+            );
 
             return AdminResponse::success(
                 CompletedWorkResource::collection(collect($createdWorks)),

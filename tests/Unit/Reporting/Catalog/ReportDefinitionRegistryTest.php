@@ -268,7 +268,7 @@ final class ReportDefinitionRegistryTest extends TestCase
         new ManifestReportSchedulingCapabilityRegistry($differentManifest, $this->factory(), $this->publishedRegistry());
     }
 
-    public function test_official_registry_exposes_only_m29_definition_and_hash(): void
+    public function test_official_registry_exposes_all_definitions_and_hash(): void
     {
         $manifest = $this->loader()->loadOfficial(
             $this->fixture('official.valid.yaml'),
@@ -277,12 +277,15 @@ final class ReportDefinitionRegistryTest extends TestCase
         $registry = new OfficialDocumentDefinitionRegistry($manifest);
         $definition = $registry->official('official_material_usage_m29');
 
-        self::assertSame(['official_material_usage_m29'], $registry->codes());
+        self::assertSame([
+            'official_material_usage_m29', 'official_hidden_work_act', 'official_axis_layout_act',
+            'official_geodetic_base_acceptance_act', 'official_responsible_structure_act', 'official_engineering_network_section_act',
+        ], $registry->codes());
         self::assertSame('official_material_usage_m29', $definition->code);
         self::assertSame('reports.official.official_material_usage_m29', $definition->titleKey);
-        self::assertSame('blocked', $definition->publicationReadiness->value);
-        self::assertSame('1.0.0', $definition->rendererVersion);
-        self::assertSame('unassigned', $definition->legalRetentionPolicy);
+        self::assertSame('candidate', $definition->publicationReadiness->value);
+        self::assertSame('1.1.0', $definition->rendererVersion);
+        self::assertSame('project_material_consumption', $definition->legalRetentionPolicy);
         self::assertCount(7, $definition->sealRequires);
         self::assertSame($manifest->bytesHash->value, $registry->manifestSha256()->value);
 

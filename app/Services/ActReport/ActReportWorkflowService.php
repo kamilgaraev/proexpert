@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace App\Services\ActReport;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\BusinessModules\Core\Payments\Services\FinancialBalanceQuery;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -17,10 +18,11 @@ use App\Models\User;
 use App\Services\Acting\ActingActWizardService;
 use App\Services\Acting\ActingAvailabilityService;
 use App\Services\Acting\ActingPolicyResolver;
+use App\Services\Acting\ContractPeriodCertificateService;
 use App\Services\Acting\FixedContractActAmountGuard;
 use App\Services\Acting\KS3SummaryService;
-use App\Services\Acting\PerformanceActFinancialTotalsService;
 use App\Services\Acting\PerformanceActConditionGuard;
+use App\Services\Acting\PerformanceActFinancialTotalsService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
 use App\Services\Workflow\WorkflowGuardService;
 use Brick\Math\BigDecimal;
@@ -47,6 +49,7 @@ class ActReportWorkflowService
         private readonly FinancialBalanceQuery $financialBalances,
         private readonly PerformanceActConditionGuard $conditionGuard,
         private readonly \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard $financeQuantityGuard,
+        private readonly ContractPeriodCertificateService $periodCertificates,
     ) {}
 
     public function preview(int $organizationId, array $data, ?User $user): array
@@ -77,6 +80,42 @@ class ActReportWorkflowService
                 $data['period_end']
             ),
             'contract_amount_limit' => $this->contractAmountGuard->summary($contract),
+            'certificates' => $this->periodCertificates->previewForPeriod(
+                $contract->id,
+                $data['period_start'],
+                $data['period_end']
+            ),
+            'draft_act' => $this->openDraftAct($contract, $data['period_start'], $data['period_end'], $user),
+        ];
+    }
+
+    /**
+     * @return array{id: int, act_document_number: ?string, status: string, href: string}|null
+     */
+    private function openDraftAct(Contract $contract, string $periodStart, string $periodEnd, ?User $user): ?array
+    {
+        if ($user === null) {
+            return null;
+        }
+
+        $act = ContractPerformanceAct::query()
+            ->where('contract_id', $contract->id)
+            ->whereDate('period_start', $periodStart)
+            ->whereDate('period_end', $periodEnd)
+            ->where('created_by_user_id', $user->id)
+            ->where('status', ContractPerformanceAct::STATUS_DRAFT)
+            ->orderByDesc('id')
+            ->first(['id', 'act_document_number', 'status']);
+
+        if ($act === null) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $act->id,
+            'act_document_number' => $act->act_document_number,
+            'status' => (string) $act->status,
+            'href' => '/acts/'.$act->id,
         ];
     }
 
@@ -250,6 +289,8 @@ class ActReportWorkflowService
             }
             $this->assertMutable($lockedAct);
             $this->financeQuantityGuard->assertFits($lockedAct, $lockedContract);
+            app(\App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService::class)
+                ->assertActFits($lockedAct, $this->actingPolicyResolver->resolveForContract($lockedContract));
             $this->contractAmountGuard->assertActFits(
                 $lockedContract,
                 (string) $lockedAct->amount,
@@ -281,6 +322,9 @@ class ActReportWorkflowService
     public function approve(ContractPerformanceAct $act, int $userId): ContractPerformanceAct
     {
         [$updatedAct, $changed] = DB::transaction(function () use ($act, $userId): array {
+            \App\Models\Project::query()->where('id', Contract::query()->select('project_id')
+                ->where('id', ContractPerformanceAct::query()->whereKey($act->getKey())->select('contract_id')))
+                ->lockForUpdate()->first();
             $lockedAct = $this->lockAct($act);
             $lockedContract = $lockedAct->contract;
 
@@ -300,6 +344,8 @@ class ActReportWorkflowService
             $lockedAct = $this->recalculatePricedLines($lockedAct);
             $previousStatus = $this->acceptanceStatus($lockedAct);
             $this->financeQuantityGuard->assertFits($lockedAct, $lockedContract);
+            app(\App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService::class)
+                ->assertActFits($lockedAct, $this->actingPolicyResolver->resolveForContract($lockedContract));
             if ((float) $lockedAct->amount <= 0) {
                 throw new BusinessLogicException(trans_message('act_reports.empty_act'), 422);
             }
@@ -445,6 +491,21 @@ class ActReportWorkflowService
                 ->lockForUpdate()
                 ->get();
             foreach ($invoices as $invoice) {
+                $netPayments = [];
+                foreach ($invoice->transactions()->orderBy('id')->lockForUpdate()->get() as $transaction) {
+                    if (in_array($transaction->status, [PaymentTransactionStatus::PENDING, PaymentTransactionStatus::PROCESSING], true)) {
+                        throw new BusinessLogicException(trans_message('act_reports.pending_payment_blocks_annulment'), 409);
+                    }
+                    if (in_array($transaction->status, [PaymentTransactionStatus::COMPLETED, PaymentTransactionStatus::REFUNDED], true)) {
+                        $currency = (string) $transaction->currency;
+                        $netPayments[$currency] = ($netPayments[$currency] ?? BigDecimal::zero())->plus((string) $transaction->amount);
+                    }
+                }
+                foreach ($netPayments as $netPayment) {
+                    if ($netPayment->isPositive()) {
+                        throw new BusinessLogicException(trans_message('act_reports.paid_invoice_blocks_annulment'), 409);
+                    }
+                }
                 if (BigDecimal::of((string) $invoice->paid_amount)->isPositive()
                     || in_array($invoice->status, [
                         PaymentDocumentStatus::PAID,
@@ -481,6 +542,7 @@ class ActReportWorkflowService
                 'annulment_reason' => $reason,
             ])->save();
             $updatedAct = $lockedAct->fresh(['contract.project', 'contract.contractor', 'lines', 'files']);
+            $this->periodCertificates->markActAnnulled($updatedAct);
             $this->acceptanceEvents->recordTransitionIfApplicable(
                 $updatedAct,
                 $previousStatus,

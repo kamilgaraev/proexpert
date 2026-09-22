@@ -7,6 +7,7 @@ namespace App\Services\ActReport;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\Exceptions\BusinessLogicException;
 use App\Models\ContractPerformanceAct;
+use App\Models\ContractPeriodCertificate;
 use App\Models\Organization;
 use App\Services\Export\ExcelExporterService;
 use App\Services\Storage\FileService;
@@ -22,9 +23,8 @@ class ActReportExportService
         private readonly FileService $fileService,
         private readonly ActReportWorkflowService $workflowService,
         private readonly ActReportAccessService $accessService,
-        private readonly ExcelExporterService $excelExporter
-    ) {
-    }
+        private readonly ExcelExporterService $excelExporter,
+    ) {}
 
     public function exportPdf(ContractPerformanceAct $act): array
     {
@@ -58,6 +58,20 @@ class ActReportExportService
         return ['url' => $this->fileService->temporaryUrl($path, 15)];
     }
 
+    public function exportCertificateKS3Excel(ContractPeriodCertificate $certificate): array
+    {
+        $path = $this->officialExportService->exportCertificateKS3ToExcel($certificate);
+
+        return ['url' => $this->fileService->temporaryUrl($path, 15)];
+    }
+
+    public function exportCertificateKS3Pdf(ContractPeriodCertificate $certificate): array
+    {
+        $path = $this->officialExportService->exportCertificateKS3ToPdf($certificate);
+
+        return ['url' => $this->fileService->temporaryUrl($path, 15)];
+    }
+
     public function bulkExportExcel(int $organizationId, array $actIds): array
     {
         $acts = ContractPerformanceAct::query()
@@ -79,7 +93,7 @@ class ActReportExportService
 
         $organization = Organization::query()->find($organizationId);
 
-        if (!$organization) {
+        if (! $organization) {
             throw new BusinessLogicException(trans_message('act_reports.organization_not_found'), 400);
         }
 
@@ -123,7 +137,7 @@ class ActReportExportService
             }
         }
 
-        $filename = 'bulk_acts_' . now()->format('Ymd_His') . '.xlsx';
+        $filename = 'bulk_acts_'.now()->format('Ymd_His').'.xlsx';
         $spreadsheet = $this->excelExporter->createSpreadsheet($headers, $exportData);
         $writer = new Xlsx($spreadsheet);
 

@@ -4,6 +4,7 @@ use App\BusinessModules\Features\ScheduleManagement\Http\Controllers\LookaheadPl
 use App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController;
 use App\Http\Controllers\Api\V1\Admin\AgreementController;
 use App\Http\Controllers\Api\V1\Admin\CompletedWorkController;
+use App\Http\Controllers\Api\V1\Admin\CompletedWorkCorrectionController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
@@ -145,9 +146,11 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::post('/', [CompletedWorkController::class, 'store']);
         Route::post('/bulk', [CompletedWorkController::class, 'bulkCreate']);
         Route::get('/export/excel', [CompletedWorkController::class, 'exportExcel']);
+        require __DIR__.'/completed_work_reconciliation.php';
         Route::get('/{completed_work}', [CompletedWorkController::class, 'showProjectWork']);
         Route::post('/{completed_work}/confirm', [CompletedWorkController::class, 'confirmProjectWork']);
         Route::put('/{completed_work}', [CompletedWorkController::class, 'updateProjectWork']);
+        Route::post('/{completed_work}/correction', [CompletedWorkCorrectionController::class, 'store']);
         Route::delete('/{completed_work}', [CompletedWorkController::class, 'destroyProjectWork']);
         Route::post('/{completed_work}/attach-schedule-task', [CompletedWorkController::class, 'attachScheduleTask']);
         Route::post('/{completed_work}/create-schedule-task', [CompletedWorkController::class, 'createScheduleTaskFromWork']);

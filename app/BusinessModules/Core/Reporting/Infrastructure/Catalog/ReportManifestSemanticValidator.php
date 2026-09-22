@@ -8,6 +8,14 @@ use LogicException;
 
 final class ReportManifestSemanticValidator
 {
+    private const OFFICIAL_CODES = [
+        'official_material_usage_m29',
+        'official_hidden_work_act',
+        'official_axis_layout_act',
+        'official_geodetic_base_acceptance_act',
+        'official_responsible_structure_act',
+        'official_engineering_network_section_act',
+    ];
     private const GROUP_CODES = [
         'portfolio' => [
             'project_portfolio_health',
@@ -113,11 +121,18 @@ final class ReportManifestSemanticValidator
     public function assertOfficial(array $document): void
     {
         $definitions = $document['definitions'] ?? null;
-        if (! is_array($definitions)
-            || ! array_is_list($definitions)
-            || count($definitions) !== 1
-            || ! is_array($definitions[0])
-            || ($definitions[0]['code'] ?? null) !== 'official_material_usage_m29') {
+        if (! is_array($definitions) || ! array_is_list($definitions) || count($definitions) !== count(self::OFFICIAL_CODES)) {
+            throw new LogicException('report_manifest_official_identity_invalid');
+        }
+
+        $codes = array_values(array_filter(array_map(
+            static fn (mixed $definition): mixed => is_array($definition) ? ($definition['code'] ?? null) : null,
+            $definitions,
+        ), static fn (mixed $code): bool => is_string($code)));
+        sort($codes, SORT_STRING);
+        $expected = self::OFFICIAL_CODES;
+        sort($expected, SORT_STRING);
+        if ($codes !== $expected) {
             throw new LogicException('report_manifest_official_identity_invalid');
         }
     }

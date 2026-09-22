@@ -22,12 +22,23 @@ final class ExecutiveDocumentTransmittal extends Model
         'transmitted_at',
         'acknowledged_at',
         'metadata',
+        'manifest',
+        'manifest_hash',
+        'status',
+        'previous_transmittal_id',
+        'decision_by',
+        'decision_at',
+        'decision_comment',
+        'operation_key',
+        'operation_hash',
     ];
 
     protected $casts = [
         'transmitted_at' => 'datetime',
         'acknowledged_at' => 'datetime',
+        'decision_at' => 'datetime',
         'metadata' => 'array',
+        'manifest' => 'array',
     ];
 
     public function organization(): BelongsTo

@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
+use App\Exceptions\ActingQuantityConflictException;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\ActReport\AnnulActReportRequest;
+use App\Http\Requests\Api\V1\Admin\ActReport\ApproveContractPeriodCertificateRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\BulkExportActReportsRequest;
+use App\Http\Requests\Api\V1\Admin\ActReport\CreateContractPeriodCertificateRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\PreviewActRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\RejectActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\StoreActFromWizardRequest;
@@ -15,9 +18,13 @@ use App\Http\Requests\Api\V1\Admin\ActReport\StoreActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UpdateActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UploadActReportFileRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UploadSignedActFileRequest;
+use App\Http\Requests\Api\V1\Admin\ActReport\UploadSignedCertificateFileRequest;
+use App\Http\Resources\Api\V1\Admin\ActReport\ContractPeriodCertificateResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\ContractPerformanceAct;
+use App\Models\ContractPeriodCertificate;
+use App\Services\Acting\ContractPeriodCertificateService;
 use App\Services\ActReport\ActReportAccessService;
 use App\Services\ActReport\ActReportExportService;
 use App\Services\ActReport\ActReportFileService;
@@ -25,6 +32,7 @@ use App\Services\ActReport\ActReportService;
 use App\Services\ActReport\ActReportWorkflowService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
@@ -38,10 +46,197 @@ class ActReportsController extends Controller
         protected ActReportWorkflowService $workflowService,
         protected ActReportAccessService $accessService,
         protected ActReportFileService $fileService,
-        protected ActReportExportService $exportService
+        protected ActReportExportService $exportService,
+        protected ContractPeriodCertificateService $certificateService
     ) {
         $this->middleware('auth:api_admin');
         $this->middleware('organization.context');
+    }
+
+    public function createPeriodCertificate(CreateContractPeriodCertificateRequest $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->accessService->currentOrganizationId($request);
+            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_CREATE, $organizationId);
+            $data = $request->validated();
+            $contract = $this->accessService->findAccessibleContractOrFail($organizationId, (int) $data['contract_id']);
+            $certificate = $this->certificateService->create(
+                $contract,
+                $data['period_start'],
+                $data['period_end'],
+                isset($data['project_id']) ? (int) $data['project_id'] : null,
+                $data['idempotency_key'],
+                (int) $request->user()?->id,
+                $data['act_ids'] ?? null,
+                $data['document_date'] ?? null,
+            );
+
+            return AdminResponse::success(
+                new ContractPeriodCertificateResource($certificate),
+                trans_message('act_reports.certificate_created'),
+                201
+            );
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            Log::error('act_reports.certificate_create_failed', [
+                'contract_id' => $request->input('contract_id'),
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.create_failed'), 500);
+        }
+    }
+
+    public function showPeriodCertificate(Request $request, mixed $certificate): JsonResponse
+    {
+        try {
+            $certificate = $this->resolveCertificate($request, $certificate, ActReportAccessService::PERMISSION_VIEW);
+
+            return AdminResponse::success(new ContractPeriodCertificateResource($certificate->load('memberships')));
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            Log::error('act_reports.certificate_show_failed', [
+                'certificate_id' => is_object($certificate) ? ($certificate->id ?? null) : $certificate,
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.load_failed'), 500);
+        }
+    }
+
+    public function approvePeriodCertificate(ApproveContractPeriodCertificateRequest $request, mixed $certificate): JsonResponse
+    {
+        try {
+            $certificate = $this->resolveCertificate($request, $certificate, ActReportAccessService::PERMISSION_APPROVE);
+
+            return AdminResponse::success(
+                new ContractPeriodCertificateResource(
+                    $this->certificateService->approve($certificate, (int) $request->user()?->id)
+                ),
+                trans_message('act_reports.certificate_approved')
+            );
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            Log::error('act_reports.certificate_approve_failed', [
+                'certificate_id' => is_object($certificate) ? ($certificate->id ?? null) : $certificate,
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.update_failed'), 500);
+        }
+    }
+
+    public function exportPeriodCertificateKS3(Request $request, mixed $certificate): JsonResponse
+    {
+        try {
+            $certificate = $this->resolveCertificate($request, $certificate, ActReportAccessService::PERMISSION_EXPORT_EXCEL);
+
+            return AdminResponse::success($this->exportService->exportCertificateKS3Excel($certificate));
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            Log::error('act_reports.certificate_export_ks3_failed', [
+                'certificate_id' => is_object($certificate) ? ($certificate->id ?? null) : $certificate,
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.export_failed'), 500);
+        }
+    }
+
+    public function exportPeriodCertificateKS3Pdf(Request $request, mixed $certificate): JsonResponse
+    {
+        try {
+            $certificate = $this->resolveCertificate($request, $certificate, ActReportAccessService::PERMISSION_EXPORT_PDF);
+
+            return AdminResponse::success($this->exportService->exportCertificateKS3Pdf($certificate));
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            Log::error('act_reports.certificate_export_ks3_pdf_failed', [
+                'certificate_id' => is_object($certificate) ? ($certificate->id ?? null) : $certificate,
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.export_failed'), 500);
+        }
+    }
+
+    public function uploadSignedCertificateFile(UploadSignedCertificateFileRequest $request, mixed $certificate): JsonResponse
+    {
+        try {
+            $certificate = $this->resolveCertificate($request, $certificate, ActReportAccessService::PERMISSION_EDIT);
+            $file = $request->file('file');
+            if (! $file instanceof UploadedFile) {
+                throw new BusinessLogicException(trans_message('act_reports.file_upload_failed'), 422);
+            }
+            $user = $request->user();
+            if ($user === null) {
+                throw new BusinessLogicException(trans_message('act_reports.access_denied'), 403);
+            }
+
+            return AdminResponse::success(
+                new ContractPeriodCertificateResource(
+                    $this->fileService->uploadSignedCertificate(
+                        $certificate,
+                        $file,
+                        $user,
+                        $request->validated()['description'] ?? null
+                    )
+                ),
+                trans_message('act_reports.certificate_signed_file_uploaded')
+            );
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            Log::error('act_reports.certificate_signed_file_upload_failed', [
+                'certificate_id' => is_object($certificate) ? ($certificate->id ?? null) : $certificate,
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.file_upload_failed'), 500);
+        }
+    }
+
+    public function downloadSignedCertificateFile(Request $request, mixed $certificate): JsonResponse|StreamedResponse
+    {
+        try {
+            $certificate = $this->resolveCertificate($request, $certificate, ActReportAccessService::PERMISSION_VIEW);
+
+            return $this->fileService->downloadSignedCertificate($certificate);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            Log::error('act_reports.certificate_signed_file_download_failed', [
+                'certificate_id' => is_object($certificate) ? ($certificate->id ?? null) : $certificate,
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.file_not_found'), 404);
+        }
+    }
+
+    private function resolveCertificate(Request $request, mixed $certificate, string $permission): ContractPeriodCertificate
+    {
+        $organizationId = $this->accessService->currentOrganizationId($request);
+        $this->accessService->authorize($request, $permission, $organizationId);
+        $id = $certificate instanceof ContractPeriodCertificate ? (int) $certificate->id : (int) $certificate;
+        $model = ContractPeriodCertificate::query()->find($id);
+        if ($model === null || (int) $model->organization_id !== $organizationId) {
+            throw new BusinessLogicException(trans_message('act_reports.certificate_not_found'), 404);
+        }
+
+        return $model;
     }
 
     public function preview(PreviewActRequest $request): JsonResponse
@@ -507,6 +702,8 @@ class ActReportsController extends Controller
                 trans_message('act_reports.act_created'),
                 201
             );
+        } catch (ActingQuantityConflictException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode(), null, $e->payload());
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (Throwable $e) {

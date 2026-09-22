@@ -11,6 +11,14 @@ Route::prefix('api/v1/admin/executive-documentation')
     ->name('admin.executive_documentation.')
     ->middleware(AdminRouteStack::middleware(['executive-documentation.active']))
     ->group(function (): void {
+        Route::get('/versions/{versionId}/print', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'render'])
+            ->middleware('authorize:executive-documentation.view')->name('versions.print');
+        Route::post('/documents/{documentId}/prepare', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'prepare'])
+            ->middleware('authorize:executive-documentation.edit')->name('documents.prepare');
+        Route::get('/transmittals/{transmittalId}/package', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'package'])
+            ->middleware('authorize:executive-documentation.view')->name('transmittals.package');
+        Route::post('/versions/{versionId}/legal-archive', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'legalArchive'])
+            ->middleware('authorize:executive-documentation.edit')->name('versions.legal_archive');
         Route::get('/sets', [ExecutiveDocumentationController::class, 'index'])
             ->middleware('authorize:executive-documentation.view')
             ->name('sets.index');
@@ -26,6 +34,12 @@ Route::prefix('api/v1/admin/executive-documentation')
         Route::post('/sets/{id}/documents', [ExecutiveDocumentationController::class, 'storeDocument'])
             ->middleware('authorize:executive-documentation.create')
             ->name('documents.store');
+        Route::patch('/documents/{id}', [ExecutiveDocumentationController::class, 'updateDocument'])
+            ->middleware('authorize:executive-documentation.edit')
+            ->name('documents.update');
+        Route::post('/documents/{id}/versions', [ExecutiveDocumentationController::class, 'storeVersion'])
+            ->middleware('authorize:executive-documentation.edit')
+            ->name('versions.store');
         Route::post('/sets/{id}/transmit', [ExecutiveDocumentationController::class, 'transmit'])
             ->middleware('authorize:executive-documentation.approve')
             ->name('sets.transmit');
@@ -35,11 +49,20 @@ Route::prefix('api/v1/admin/executive-documentation')
         Route::post('/documents/{id}/remarks', [ExecutiveDocumentationController::class, 'storeRemark'])
             ->middleware('authorize:executive-documentation.review')
             ->name('remarks.store');
+        Route::post('/remarks/{id}/answer', [ExecutiveDocumentationController::class, 'answerRemark'])
+            ->middleware('authorize:executive-documentation.edit')
+            ->name('remarks.answer');
+        Route::post('/remarks/{id}/review', [ExecutiveDocumentationController::class, 'reviewRemark'])
+            ->middleware('authorize:executive-documentation.review')
+            ->name('remarks.review');
+        Route::post('/documents/{id}/reject', [ExecutiveDocumentationController::class, 'reject'])
+            ->middleware('authorize:executive-documentation.review')
+            ->name('documents.reject');
         Route::post('/documents/{id}/approve', [ExecutiveDocumentationController::class, 'approve'])
             ->middleware('authorize:executive-documentation.approve')
             ->name('documents.approve');
         Route::post('/remarks/{id}/resolve', [ExecutiveDocumentationController::class, 'resolveRemark'])
-            ->middleware('authorize:executive-documentation.edit')
+            ->middleware('authorize:executive-documentation.review')
             ->name('remarks.resolve');
         Route::delete('/documents/{documentId}/versions/{versionId}', [ExecutiveDocumentationController::class, 'deleteVersion'])
             ->middleware('authorize:executive-documentation.delete')
@@ -50,6 +73,11 @@ Route::prefix('api/v1/customer/executive-documentation')
     ->name('customer.executive_documentation.')
     ->middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'organization.context', 'executive-documentation.active'])
     ->group(function (): void {
+        Route::get('/transmittals', [CustomerExecutiveDocumentationController::class, 'index'])->middleware('authorize:executive-documentation.view')->name('transmittals.index');
+        Route::get('/transmittals/{id}/versions/{versionId}/download', [CustomerExecutiveDocumentationController::class, 'download'])->middleware('authorize:executive-documentation.view')->name('transmittals.download');
+        foreach (['receive', 'return', 'accept'] as $action) {
+            Route::post('/transmittals/{id}/'.$action, [CustomerExecutiveDocumentationController::class, 'decision'])->defaults('action', $action)->middleware('authorize:executive-documentation.approve')->name('transmittals.'.$action);
+        }
         Route::get('/sets', [CustomerExecutiveDocumentationController::class, 'index'])
             ->middleware('authorize:executive-documentation.view')
             ->name('sets.index');

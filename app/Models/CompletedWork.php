@@ -40,6 +40,8 @@ class CompletedWork extends Model
 
     public const PLANNING_REQUIRES_SCHEDULE = 'requires_schedule';
 
+    public const EFFECTIVE_QUANTITY_SQL = 'GREATEST(COALESCE(completed_works.completed_quantity, completed_works.quantity, 0), 0)';
+
     protected $fillable = [
         'organization_id',
         'project_id',
@@ -69,7 +71,7 @@ class CompletedWork extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'decimal:3',
+        'quantity' => 'decimal:4',
         'completed_quantity' => 'decimal:4',
         'price' => 'decimal:2',
         'total_amount' => 'decimal:2',
@@ -203,6 +205,12 @@ class CompletedWork extends Model
             || $this->journal_worker_id !== null;
     }
 
+    public function hasQuantityConflict(): bool
+    {
+        return $this->quantity !== null && $this->completed_quantity !== null
+            && (string) $this->quantity !== (string) $this->completed_quantity;
+    }
+
     public function isProductionFact(): bool
     {
         return ! $this->isResourceFact();
@@ -226,6 +234,20 @@ class CompletedWork extends Model
                                 $journalEntryQuery->where('status', JournalEntryStatusEnum::APPROVED);
                             });
                     });
+            });
+    }
+
+    public function scopePhysicalFacts($query)
+    {
+        return $query
+            ->whereNull('journal_material_id')
+            ->whereNull('journal_equipment_id')
+            ->whereNull('journal_worker_id')
+            ->where(function ($factQuery): void {
+                $factQuery
+                    ->whereNull('additional_info')
+                    ->orWhereRaw("additional_info->>'fact_kind' IS NULL")
+                    ->orWhereRaw("additional_info->>'fact_kind' NOT IN (?, ?, ?, ?)", ['material', 'equipment', 'labor', 'worker']);
             });
     }
 

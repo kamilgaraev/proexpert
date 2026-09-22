@@ -405,6 +405,10 @@ class AuthorizationService
         
         $authContext = $this->resolveAuthContext($context);
         $roles = $this->getUserRoles($user, $authContext);
+        if (($context['strict_project_scope'] ?? false) && $authContext?->type === AuthorizationContext::TYPE_PROJECT) {
+            $contextIds = $this->getContextHierarchy($authContext)->pluck('id')->all();
+            $roles = $roles->filter(static fn (UserRoleAssignment $assignment): bool => in_array($assignment->context_id, $contextIds, true));
+        }
         
         if ($roles->isEmpty()) {
             if (!str_contains($userAgent, 'Prometheus')) {

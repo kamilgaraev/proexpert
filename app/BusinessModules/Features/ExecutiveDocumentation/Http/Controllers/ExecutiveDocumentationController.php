@@ -17,6 +17,9 @@ use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\Http\Controllers\Controller;
+use App\Exceptions\BusinessLogicException;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\StoreExecutiveDocumentVersionRequest;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\UpdateExecutiveDocumentRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
@@ -27,6 +30,8 @@ use App\Models\WorkType;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\TransmitExecutiveDocumentSetRequest;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\RejectExecutiveDocumentRequest;
 use Illuminate\Validation\Rules\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
@@ -241,6 +246,7 @@ final class ExecutiveDocumentationController extends Controller
                         ),
                     ])
                     ->values(),
+                'material_deliveries' => app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveMaterialProfileGuard::class)->deliveryReferences($organizationId, $projectId),
                 'materials' => Material::query()
                     ->where('organization_id', $organizationId)
                     ->where('is_active', true)
@@ -279,37 +285,10 @@ final class ExecutiveDocumentationController extends Controller
         }
     }
 
-    public function storeDocument(Request $request, int $setId): JsonResponse
+    public function storeDocument(\App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\StoreExecutiveDocumentRequest $request, int $setId): JsonResponse
     {
         try {
-            $documentType = (string) $request->input('document_type');
-            $validated = $request->validate([
-                'document_type' => ['required', 'string', Rule::in($this->profileRegistry->types())],
-                'title' => ['required', 'string', 'max:255'],
-                'work_type_id' => ['nullable', 'integer'],
-                'work_type_name' => ['nullable', 'string', 'max:255'],
-                'section_name' => ['nullable', 'string', 'max:255'],
-                'completed_work_id' => ['nullable', 'integer'],
-                'document_date' => ['nullable', 'date'],
-                'copies_count' => ['nullable', 'integer', 'min:1', 'max:50'],
-                'form_variant' => ['nullable', 'string', Rule::in(['order_344', 'sp_48_13330_2019', 'custom'])],
-                'journal_entry_id' => ['nullable', 'integer'],
-                'inspection_date' => ['nullable', 'date'],
-                'participants' => ['nullable', 'array'],
-                'profile_data' => ['nullable', 'array'],
-                'signatories' => ['nullable', 'array'],
-                'relations' => ['nullable', 'array'],
-                'relations.*.relation_type' => ['required_with:relations', 'string', 'max:80'],
-                'relations.*.target_type' => ['required_with:relations', 'string', 'max:80'],
-                'relations.*.target_id' => ['required_with:relations', 'integer'],
-                'relations.*.label' => ['nullable', 'string', 'max:255'],
-                'relations.*.metadata' => ['nullable', 'array'],
-                'initial_version' => ['required', 'array'],
-                'initial_version.file' => ['required', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'])->max(25 * 1024)],
-                'initial_version.version_number' => ['required_with:initial_version', 'string', 'max:40'],
-                'initial_version.uploaded_at' => ['nullable', 'date'],
-                'metadata' => ['nullable', 'array'],
-            ]);
+            $validated = $request->validated();
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $set = $this->service->findSet($setId, $organizationId);
 
@@ -338,6 +317,37 @@ final class ExecutiveDocumentationController extends Controller
         return $this->documentAction($request, $id, 'submit');
     }
 
+    public function updateDocument(UpdateExecutiveDocumentRequest $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validated();
+            return AdminResponse::success(new ExecutiveDocumentResource(
+                $this->service->updateDraft($this->findDocument($request, $id), (int) auth()->id(), $validated)
+            ));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('update_document', $id, $e);
+        }
+    }
+
+    public function storeVersion(StoreExecutiveDocumentVersionRequest $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validated();
+            $version = $this->service->addVersion($this->findDocument($request, $id), (int) auth()->id(), $validated);
+            return AdminResponse::success(new \App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentVersionResource($version), null, 201);
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('store_version', $id, $e);
+        }
+    }
+
     public function approve(Request $request, int $id): JsonResponse
     {
         return $this->documentAction($request, $id, 'approve');
@@ -349,6 +359,7 @@ final class ExecutiveDocumentationController extends Controller
             $validated = $request->validate([
                 'body' => ['required', 'string', 'max:5000'],
                 'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'critical'])],
+                'version_id' => ['nullable', 'integer'],
             ]);
             $document = $this->findDocument($request, $id);
 
@@ -369,7 +380,7 @@ final class ExecutiveDocumentationController extends Controller
     public function resolveRemark(Request $request, int $id): JsonResponse
     {
         try {
-            $validated = $request->validate(['resolution_comment' => ['required', 'string', 'max:1000']]);
+            $validated = $request->validate(['resolution_comment' => ['required', 'string', 'max:1000'], 'expected_revision' => ['required', 'integer', 'min:0']]);
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $remark = $this->service->findRemark($id, $organizationId);
 
@@ -378,23 +389,85 @@ final class ExecutiveDocumentationController extends Controller
             }
 
             return AdminResponse::success(
-                new ExecutiveDocumentRemarkResource($this->service->resolveRemark($remark, (int) auth()->id(), $validated['resolution_comment']))
+                new ExecutiveDocumentRemarkResource($this->service->resolveRemark($remark, (int) auth()->id(), $validated['resolution_comment'], null, $validated['expected_revision']))
             );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
         } catch (\Throwable $e) {
             return $this->failed('resolve_remark', $id, $e);
         }
     }
 
-    public function transmit(Request $request, int $id): JsonResponse
+    public function answerRemark(Request $request, int $id): JsonResponse
     {
         try {
             $validated = $request->validate([
-                'transmittal_number' => ['required', 'string', 'max:80'],
-                'comment' => ['nullable', 'string', 'max:1000'],
-                'metadata' => ['nullable', 'array'],
+                'response' => ['required', 'string', 'max:5000'],
+                'expected_version_id' => ['nullable', 'integer'],
+                'expected_revision' => ['required', 'integer', 'min:0'],
+                'response_version_id' => ['nullable', 'integer', 'min:1'],
             ]);
+            $remark = $this->service->findRemark($id, (int) $request->attributes->get('current_organization_id'));
+            if ($remark === null) {
+                return AdminResponse::error(trans_message('executive_documentation.errors.remark_not_found'), 404);
+            }
+            return AdminResponse::success(new ExecutiveDocumentRemarkResource(
+                $this->service->answerRemark($remark, (int) auth()->id(), $validated['response'], $validated['expected_version_id'] ?? null, $validated['response_version_id'] ?? null, $validated['expected_revision'])
+            ));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('answer_remark', $id, $e);
+        }
+    }
+
+    public function reviewRemark(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'decision' => ['required', Rule::in(['accept', 'return'])],
+                'comment' => ['required', 'string', 'max:1000'],
+                'expected_version_id' => ['nullable', 'integer'],
+                'expected_revision' => ['required', 'integer', 'min:0'],
+            ]);
+            $remark = $this->service->findRemark($id, (int) $request->attributes->get('current_organization_id'));
+            if ($remark === null) {
+                return AdminResponse::error(trans_message('executive_documentation.errors.remark_not_found'), 404);
+            }
+            return AdminResponse::success(new ExecutiveDocumentRemarkResource(
+                $this->service->reviewRemark($remark, (int) auth()->id(), $validated['decision'], $validated['comment'], $validated['expected_version_id'] ?? null, $validated['expected_revision'])
+            ));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('review_remark', $id, $e);
+        }
+    }
+
+    public function reject(RejectExecutiveDocumentRequest $request, int $id): JsonResponse
+    {
+        try {
+            $data = $request->validated();
+            return AdminResponse::success(new ExecutiveDocumentResource($this->service->reject(
+                $this->findDocument($request, $id), (int) auth()->id(), $data['comment'], $data['version_id']
+            )));
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('reject', $id, $e);
+        }
+    }
+
+    public function transmit(TransmitExecutiveDocumentSetRequest $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validated();
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $set = $this->service->findSet($id, $organizationId);
 
@@ -404,7 +477,9 @@ final class ExecutiveDocumentationController extends Controller
 
             return AdminResponse::success(new ExecutiveDocumentSetResource($this->service->transmit($set, (int) auth()->id(), $validated)));
         } catch (ValidationException $e) {
-            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+            $message = collect($e->errors())->flatten()->first();
+
+            return AdminResponse::error(is_string($message) && $message !== '' ? $message : $e->getMessage(), 422, $e->errors());
         } catch (DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
@@ -425,7 +500,7 @@ final class ExecutiveDocumentationController extends Controller
                 return AdminResponse::error(trans_message('executive_documentation.errors.version_not_found'), 404);
             }
 
-            $this->service->deleteVersion($document, $version);
+            $this->service->deleteVersion($document, $version, (int) auth()->id());
 
             return AdminResponse::success(null, trans_message('executive_documentation.messages.version_deleted'));
         } catch (DomainException $e) {
@@ -438,11 +513,14 @@ final class ExecutiveDocumentationController extends Controller
     private function documentAction(Request $request, int $id, string $action): JsonResponse
     {
         try {
-            $validated = $request->validate(['comment' => ['nullable', 'string', 'max:1000']]);
+            $validated = $request->validate([
+                'comment' => ['nullable', 'string', 'max:1000'],
+                'version_id' => ['nullable', 'integer'],
+            ]);
             $document = $this->findDocument($request, $id);
             $updated = $action === 'submit'
-                ? $this->service->submit($document, (int) auth()->id(), $validated['comment'] ?? null)
-                : $this->service->approve($document, (int) auth()->id(), $validated['comment'] ?? null);
+                ? $this->service->submit($document, (int) auth()->id(), $validated['comment'] ?? null, $validated['version_id'] ?? null)
+                : $this->service->approve($document, (int) auth()->id(), $validated['comment'] ?? null, $validated['version_id'] ?? null);
 
             return AdminResponse::success(new ExecutiveDocumentResource($updated));
         } catch (ValidationException $e) {
@@ -459,7 +537,7 @@ final class ExecutiveDocumentationController extends Controller
         $document = $this->service->findDocument($id, (int) $request->attributes->get('current_organization_id'));
 
         if ($document === null) {
-            throw new DomainException(trans_message('executive_documentation.errors.document_not_found'));
+            throw new BusinessLogicException(trans_message('executive_documentation.errors.document_not_found'), 404);
         }
 
         return $document;
@@ -471,360 +549,17 @@ final class ExecutiveDocumentationController extends Controller
      */
     private function normalizeDocumentReferences(array $validated, ExecutiveDocumentSet $set): array
     {
-        $validated = $this->normalizeWorkTypeReference($validated, $set);
-        $validated = $this->normalizeProjectLocationReference($validated, $set);
-        $validated = $this->normalizeCompletedWorkReference($validated, $set);
-        $validated = $this->hiddenWorkActAutofillService->applyToDocumentPayload($validated, $set);
-        $validated = $this->normalizeJournalEntryReference($validated, $set);
-        $validated = $this->normalizeQualityDefectReference($validated, $set);
-        $validated = $this->normalizeAcceptanceScopeReference($validated, $set);
-        $validated = $this->normalizeDocumentRelations($validated, $set);
-        $validated = $this->validateDocumentProfile($validated);
-
-        return $validated;
-    }
-
-    /**
-     * @param array<string, mixed> $validated
-     * @return array<string, mixed>
-     */
-    private function validateDocumentProfile(array $validated): array
-    {
-        $documentType = (string) ($validated['document_type'] ?? '');
-        $profile = $this->profileRegistry->require($documentType);
-        $errors = [];
-
-        if (($profile['requires_work_type'] ?? false) === true && empty($validated['work_type_id'])) {
-            $errors['work_type_id'] = [trans_message('executive_documentation.errors.work_type_required')];
-        }
-
-        if (($profile['requires_journal_entry'] ?? false) === true && empty($validated['journal_entry_id'])) {
-            $errors['journal_entry_id'] = [trans_message('executive_documentation.errors.journal_entry_required')];
-        }
-
-        foreach ($this->profileRegistry->missingRequiredFields($documentType, $validated['profile_data'] ?? []) as $fieldKey => $fieldLabel) {
-            $errors["profile_data.{$fieldKey}"] = [trans_message('executive_documentation.errors.profile_field_required', ['field' => $fieldLabel])];
-        }
-
-        if ($errors !== []) {
-            throw ValidationException::withMessages($errors);
-        }
-
-        return $validated;
-    }
-
-    /**
-     * @param array<string, mixed> $validated
-     * @return array<string, mixed>
-     */
-    private function normalizeWorkTypeReference(array $validated, ExecutiveDocumentSet $set): array
-    {
-        $workTypeId = (int) ($validated['work_type_id'] ?? 0);
-
-        if ($workTypeId <= 0) {
-            return $validated;
-        }
-
-        $workType = WorkType::query()
-            ->where('organization_id', $set->organization_id)
-            ->where('category', 'Исполнительная документация')
-            ->where('is_active', true)
-            ->find($workTypeId);
-
-        if ($workType === null) {
-            throw ValidationException::withMessages([
-                'work_type_id' => trans_message('executive_documentation.errors.work_type_not_found'),
-            ]);
-        }
-
-        $validated['work_type_id'] = $workType->id;
-        $validated['work_type_name'] = $workType->name;
-
-        return $validated;
-    }
-
-    /**
-     * @param array<string, mixed> $validated
-     * @return array<string, mixed>
-     */
-    private function normalizeJournalEntryReference(array $validated, ExecutiveDocumentSet $set): array
-    {
-        $entryId = (int) ($validated['journal_entry_id'] ?? 0);
-
-        if ($entryId <= 0) {
-            return $validated;
-        }
-
-        $entry = ConstructionJournalEntry::query()
-            ->whereHas('journal', static fn ($query) => $query
-                ->where('organization_id', $set->organization_id)
-                ->where('project_id', $set->project_id))
-            ->with('journal:id,name,journal_number')
-            ->find($entryId);
-
-        if ($entry === null) {
-            throw ValidationException::withMessages([
-                'journal_entry_id' => trans_message('executive_documentation.errors.journal_entry_not_found'),
-            ]);
-        }
-
-        $profileData = is_array($validated['profile_data'] ?? null) ? $validated['profile_data'] : [];
-        $profileData['journal_entry_id'] = $entry->id;
-        $profileData['journal_entry_number'] = $entry->entry_number;
-        $profileData['journal_entry_date'] = $entry->entry_date?->format('Y-m-d');
-        $profileData['journal_name'] = $entry->journal?->name;
-        $profileData['journal_number'] = $entry->journal?->journal_number;
-        $profileData['work_description'] = $entry->work_description;
-        $validated['profile_data'] = $profileData;
-
-        return $validated;
-    }
-
-    /**
-     * @param array<string, mixed> $validated
-     * @return array<string, mixed>
-     */
-    private function normalizeDocumentRelations(array $validated, ExecutiveDocumentSet $set): array
-    {
-        $relations = $validated['relations'] ?? [];
-
-        if (!is_array($relations) || $relations === []) {
-            return $validated;
-        }
-
-        $allowedTargets = $this->allowedRelationTargets((string) ($validated['document_type'] ?? ''));
-
-        foreach ($relations as $index => $relation) {
-            $relationType = (string) ($relation['relation_type'] ?? '');
-            $targetType = (string) ($relation['target_type'] ?? '');
-            $targetId = (int) ($relation['target_id'] ?? 0);
-
-            if ($targetId <= 0) {
-                continue;
-            }
-
-            $hasProfileRelation = array_key_exists($relationType, $allowedTargets);
-            $expectedTarget = $allowedTargets[$relationType] ?? '';
-            $targetMatchesProfile = $hasProfileRelation
-                && (
-                    $targetType === $expectedTarget
-                    || ($expectedTarget === 'executive_document' && $this->profileRegistry->find($targetType) !== null)
-                );
-            $exists = $targetMatchesProfile && $this->relationTargetExists($targetType, $targetId, $set);
-
-            if (!$exists) {
-                throw ValidationException::withMessages([
-                    "relations.{$index}.target_id" => trans_message('executive_documentation.errors.relation_target_not_found'),
-                ]);
-            }
-        }
-
-        return $validated;
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private function allowedRelationTargets(string $documentType): array
-    {
-        $profile = $this->profileRegistry->find($documentType);
-
-        if ($profile === null) {
-            return [];
-        }
-
-        $targets = [];
-
-        foreach ($profile['relations'] ?? [] as $relation) {
-            $targets[(string) $relation['key']] = (string) $relation['target'];
-        }
-
-        foreach ($profile['fields'] ?? [] as $field) {
-            if (($field['type'] ?? null) === 'relation' && isset($field['target'])) {
-                $targets[(string) $field['key']] = (string) $field['target'];
-            }
-        }
-
-        return $targets;
-    }
-
-    private function relationTargetExists(string $targetType, int $targetId, ExecutiveDocumentSet $set): bool
-    {
-        if ($targetType === 'journal_entry') {
-            return ConstructionJournalEntry::query()
-                ->whereHas('journal', static fn ($query) => $query
-                    ->where('organization_id', $set->organization_id)
-                    ->where('project_id', $set->project_id))
-                ->whereKey($targetId)
-                ->exists();
-        }
-
-        if ($targetType === 'material') {
-            return Material::query()
-                ->where('organization_id', $set->organization_id)
-                ->where('is_active', true)
-                ->whereKey($targetId)
-                ->exists();
-        }
-
-        if ($targetType === 'supplier') {
-            return Supplier::query()
-                ->where('organization_id', $set->organization_id)
-                ->where('is_active', true)
-                ->whereKey($targetId)
-                ->exists();
-        }
-
-        $query = ExecutiveDocument::query()
-            ->where('organization_id', $set->organization_id)
-            ->where('project_id', $set->project_id)
-            ->whereKey($targetId);
-
-        if ($targetType !== 'executive_document') {
-            $query->where('document_type', $targetType);
-        }
-
-        return $query->exists();
-    }
-
-    /**
-     * @param array<string, mixed> $validated
-     * @return array<string, mixed>
-     */
-    private function normalizeProjectLocationReference(array $validated, ExecutiveDocumentSet $set): array
-    {
-        $locationId = (int) data_get($validated, 'metadata.project_location_id');
-
-        if ($locationId <= 0) {
-            return $validated;
-        }
-
-        $location = ProjectLocation::query()
-            ->where('organization_id', $set->organization_id)
-            ->where('project_id', $set->project_id)
-            ->find($locationId);
-
-        if ($location === null) {
-            throw ValidationException::withMessages([
-                'metadata.project_location_id' => trans_message('executive_documentation.errors.project_location_not_found'),
-            ]);
-        }
-
-        $metadata = is_array($validated['metadata'] ?? null) ? $validated['metadata'] : [];
-        $metadata['project_location_id'] = $location->id;
-        $metadata['project_location_name'] = $location->name;
-        $metadata['project_location_code'] = $location->code;
-        $validated['metadata'] = $metadata;
-        $validated['section_name'] = $validated['section_name'] ?? $location->name;
-
-        return $validated;
-    }
-
-    /**
-     * @param array<string, mixed> $validated
-     * @return array<string, mixed>
-     */
-    private function normalizeCompletedWorkReference(array $validated, ExecutiveDocumentSet $set): array
-    {
-        $completedWorkId = (int) ($validated['completed_work_id'] ?? 0);
-
-        if ($completedWorkId <= 0) {
-            return $validated;
-        }
-
-        $work = CompletedWork::query()
-            ->where('organization_id', $set->organization_id)
-            ->where('project_id', $set->project_id)
-            ->with(['workType:id,name', 'journalEntry:id,entry_number,entry_date'])
-            ->find($completedWorkId);
-
-        if ($work === null) {
-            throw ValidationException::withMessages([
-                'completed_work_id' => trans_message('executive_documentation.errors.completed_work_not_found'),
-            ]);
-        }
-
-        $metadata = is_array($validated['metadata'] ?? null) ? $validated['metadata'] : [];
-        $metadata['completed_work_id'] = $work->id;
-        $metadata['completed_work_date'] = $work->completion_date?->format('Y-m-d');
-        $metadata['completed_work_quantity'] = (string) $work->quantity;
-        $metadata['journal_entry_id'] = $metadata['journal_entry_id'] ?? $work->journal_entry_id;
-        $metadata['journal_entry_number'] = $metadata['journal_entry_number'] ?? $work->journalEntry?->entry_number;
-        $validated['metadata'] = $metadata;
-        $validated['work_type_name'] = $validated['work_type_name'] ?? $work->workType?->name;
-
-        return $validated;
-    }
-
-    /**
-     * @param array<string, mixed> $validated
-     * @return array<string, mixed>
-     */
-    private function normalizeQualityDefectReference(array $validated, ExecutiveDocumentSet $set): array
-    {
-        $defectId = (int) data_get($validated, 'metadata.quality_defect_id');
-
-        if ($defectId <= 0) {
-            return $validated;
-        }
-
-        $defect = QualityDefect::query()
-            ->where('organization_id', $set->organization_id)
-            ->where('project_id', $set->project_id)
-            ->find($defectId);
-
-        if ($defect === null) {
-            throw ValidationException::withMessages([
-                'metadata.quality_defect_id' => trans_message('executive_documentation.errors.quality_defect_not_found'),
-            ]);
-        }
-
-        $metadata = is_array($validated['metadata'] ?? null) ? $validated['metadata'] : [];
-        $metadata['quality_defect_id'] = $defect->id;
-        $metadata['quality_defect_number'] = $defect->defect_number;
-        $metadata['quality_defect_title'] = $defect->title;
-        $validated['metadata'] = $metadata;
-
-        return $validated;
-    }
-
-    /**
-     * @param array<string, mixed> $validated
-     * @return array<string, mixed>
-     */
-    private function normalizeAcceptanceScopeReference(array $validated, ExecutiveDocumentSet $set): array
-    {
-        $scopeId = (int) data_get($validated, 'metadata.acceptance_scope_id');
-
-        if ($scopeId <= 0) {
-            return $validated;
-        }
-
-        $scope = AcceptanceScope::query()
-            ->where('organization_id', $set->organization_id)
-            ->where('project_id', $set->project_id)
-            ->with('location:id,name,code')
-            ->find($scopeId);
-
-        if ($scope === null) {
-            throw ValidationException::withMessages([
-                'metadata.acceptance_scope_id' => trans_message('executive_documentation.errors.acceptance_scope_not_found'),
-            ]);
-        }
-
-        $metadata = is_array($validated['metadata'] ?? null) ? $validated['metadata'] : [];
-        $metadata['acceptance_scope_id'] = $scope->id;
-        $metadata['acceptance_scope_title'] = $scope->title;
-        $metadata['project_location_id'] = $metadata['project_location_id'] ?? $scope->project_location_id;
-        $metadata['project_location_name'] = $metadata['project_location_name'] ?? $scope->location?->name;
-        $validated['metadata'] = $metadata;
-        $validated['section_name'] = $validated['section_name'] ?? $scope->location?->name ?? $scope->title;
-
-        return $validated;
+        return app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentInput::class)->normalize($validated, $set);
     }
 
     private function failed(string $action, ?int $id, \Throwable $e): JsonResponse
     {
+        if ($e instanceof BusinessLogicException) {
+            $status = in_array($e->getCode(), [403, 404], true) ? $e->getCode() : 409;
+            return AdminResponse::error(trans_message($status === 403
+                ? 'executive_documentation.errors.forbidden'
+                : 'executive_documentation.errors.document_not_found'), $status);
+        }
         Log::error("executive_documentation.{$action}.error", [
             'id' => $id,
             'user_id' => auth()->id(),

@@ -160,6 +160,7 @@ final class HandoverAcceptanceController extends Controller
                 'severity' => ['required', 'string', Rule::in(['minor', 'major', 'critical'])],
                 'create_quality_defect' => ['required', 'boolean'],
                 'quality_defect_inspection_required' => ['required_if:create_quality_defect,true', 'boolean'],
+                'work_rework_id' => ['nullable', 'integer', 'min:1'],
             ]);
 
             return MobileResponse::success(
@@ -217,12 +218,12 @@ final class HandoverAcceptanceController extends Controller
 
     public function readyForReinspection(Request $request, int $scope): JsonResponse
     {
-        return $this->scopeAction($request, $scope, fn ($model) => $this->service->markReadyForReinspection($model), 'ready_for_reinspection');
+        return $this->scopeAction($request, $scope, fn ($model) => $this->service->markReadyForReinspection($model, (int) $request->user()?->id), 'ready_for_reinspection');
     }
 
     public function start(Request $request, int $scope): JsonResponse
     {
-        return $this->scopeAction($request, $scope, fn ($model) => $this->service->startScope($model), 'start');
+        return $this->scopeAction($request, $scope, fn ($model) => $this->service->startScope($model, (int) $request->user()?->id), 'start');
     }
 
     public function accept(Request $request, int $scope): JsonResponse
@@ -315,7 +316,8 @@ final class HandoverAcceptanceController extends Controller
                     $document,
                     $this->accessibleProjectIds($request),
                 ),
-                $file
+                $file,
+                (int) $request->user()?->id,
             );
 
             return MobileResponse::success(
@@ -369,6 +371,11 @@ final class HandoverAcceptanceController extends Controller
 
     private function failed(Request $request, \Throwable $exception, string $action): JsonResponse
     {
+        if ($exception instanceof \App\Exceptions\BusinessLogicException && in_array($exception->getCode(), [403, 404, 409], true)) {
+            $key = $exception->getCode() === 403 ? 'forbidden' : ($exception->getCode() === 404 ? 'scope_not_found' : 'invalid_status');
+
+            return MobileResponse::error(trans_message('handover_acceptance.errors.'.$key), $exception->getCode());
+        }
         Log::error('handover_acceptance.mobile_failed', [
             'action' => $action,
             'organization_id' => $request->attributes->get('current_organization_id'),

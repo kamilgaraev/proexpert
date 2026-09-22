@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\Acting;
 
+use App\Exceptions\ActingQuantityConflictException;
 use App\Exceptions\BusinessLogicException;
+use App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService;
 use App\Models\CompletedWork;
 use App\Models\PerformanceActLine;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionQuantity;
@@ -15,7 +17,7 @@ use LogicException;
 final readonly class ActingQuantityReservationService
 {
     /** @return array<int, int> */
-    public function availableQuantities(Collection $lockedWorks, ?int $excludedActId = null): array
+    public function availableQuantities(Collection $lockedWorks, ?int $excludedActId = null, array $policy = []): array
     {
         if (DB::transactionLevel() < 1) {
             throw new LogicException('acting_quantity_reservation_requires_transaction');
@@ -86,12 +88,19 @@ final readonly class ActingQuantityReservationService
         }
 
         $available = [];
+        $technicalQuantities = [];
+        if (data_get($policy, 'settings.technical_acceptance.mode') === 'accepted_only') {
+            $technicalQuantities = app(TechnicalAcceptanceQuantityService::class)->acceptedQuantities($lockedWorks, $policy);
+        }
         foreach ($lockedWorks as $work) {
             $workId = (int) $work->id;
             $effective = AcceptedProductionQuantity::scaled(
                 (string) $work->effectiveCompletedQuantity(),
                 'acting_quantity_source_invalid',
             );
+            if (array_key_exists($workId, $technicalQuantities)) {
+                $effective = min($effective, $technicalQuantities[$workId]);
+            }
             $alreadyReserved = $reserved[$workId] ?? 0;
             $available[$workId] = max(0, $effective - $alreadyReserved);
         }
@@ -196,10 +205,19 @@ final readonly class ActingQuantityReservationService
     public function assertScaledAvailable(array $requestedQuantities, array $availableQuantities): void
     {
         foreach ($requestedQuantities as $workId => $requested) {
-            if ($requested <= 0 || $requested > ($availableQuantities[(int) $workId] ?? -1)) {
+            $workId = (int) $workId;
+            if ($requested <= 0) {
                 throw new BusinessLogicException(
                     trans_message('act_reports.invalid_acting_quantity'),
                     422,
+                );
+            }
+            $available = $availableQuantities[$workId] ?? 0;
+            if ($requested > $available) {
+                throw new ActingQuantityConflictException(
+                    $workId,
+                    AcceptedProductionQuantity::decimal(max(0, $available)),
+                    AcceptedProductionQuantity::decimal($requested),
                 );
             }
         }

@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
 Schedule::command('contracts:apply-due-revisions')->everyMinute()->withoutOverlapping(5)->onOneServer();
+Schedule::call(fn () => app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentImportService::class)->expireStagedFiles())
+    ->name('executive-document-imports:expire-staging')->hourly()->withoutOverlapping(30)->onOneServer();
 
 Schedule::call(fn () => app(\App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateRevisionQueueService::class)->recover())
     ->name('estimate-revisions:recover')->everyMinute()->withoutOverlapping(5)->onOneServer();

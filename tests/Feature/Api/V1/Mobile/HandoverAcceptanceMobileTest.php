@@ -8,6 +8,9 @@ use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceFinding;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceSession;
 use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackage;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
@@ -16,6 +19,7 @@ use App\Modules\Core\AccessController;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -30,7 +34,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $session = $this->createSession($context);
         $this->allowAccess();
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/sessions/{$session->id}/findings", [
                 'title' => 'Door scratch',
             ]);
@@ -47,7 +51,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $session = $this->createSession($context);
         $this->allowAccess();
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/sessions/{$session->id}/findings", [
                 'title' => 'Door scratch',
                 'severity' => 'critical',
@@ -69,7 +73,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $scope = $session->scope()->firstOrFail();
         $this->allowAccess();
 
-        $findingResponse = $this->withHeaders($context->authHeaders())
+        $findingResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/sessions/{$session->id}/findings", [
                 'title' => 'Door scratch',
                 'description' => 'Repair before handover',
@@ -94,14 +98,14 @@ final class HandoverAcceptanceMobileTest extends TestCase
             'inspection_required' => false,
         ]);
 
-        $blockedResolveResponse = $this->withHeaders($context->authHeaders())
+        $blockedResolveResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/findings/{$findingId}/resolve");
 
         $blockedResolveResponse->assertStatus(422)
             ->assertJsonPath('message', trans_message('handover_acceptance.errors.validation_failed'))
             ->assertJsonPath('errors.resolution_comment.0', trans_message('handover_acceptance.validation.resolution_comment_required'));
 
-        $resolveResponse = $this->withHeaders($context->authHeaders())
+        $resolveResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/findings/{$findingId}/resolve", [
                 'resolution_comment' => 'Door frame repaired',
             ]);
@@ -109,7 +113,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $resolveResponse->assertOk()
             ->assertJsonPath('data.status', 'resolved');
 
-        $readyResponse = $this->withHeaders($context->authHeaders())
+        $readyResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/ready-for-reinspection");
 
         $readyResponse->assertOk()
@@ -124,13 +128,13 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $scope = $this->createScope($context, 'planned');
         $this->allowAccess();
 
-        $startResponse = $this->withHeaders($context->authHeaders())
+        $startResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/start");
 
         $startResponse->assertOk()
             ->assertJsonPath('data.status', 'in_progress');
 
-        $acceptResponse = $this->withHeaders($context->authHeaders())
+        $acceptResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/accept", [
                 'comment' => 'Осмотр выполнен без замечаний',
             ]);
@@ -144,6 +148,38 @@ final class HandoverAcceptanceMobileTest extends TestCase
             'comment' => 'Осмотр выполнен без замечаний',
         ]);
 
+        Storage::fake('s3');
+        $executiveSet = ExecutiveDocumentSet::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $scope->project_id,
+            'created_by' => $context->user->id,
+            'set_number' => 'SET-'.uniqid(),
+            'title' => 'Mobile handover executive set',
+            'status' => 'draft',
+        ]);
+        $executiveDocument = ExecutiveDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $scope->project_id,
+            'document_set_id' => $executiveSet->id,
+            'created_by' => $context->user->id,
+            'document_type' => 'working_drawing_set',
+            'title' => 'Mobile working drawings',
+            'status' => 'draft',
+            'profile_data' => [
+                'drawing_set_code' => 'RD-1', 'drawing_section' => 'АР', 'sheet_list' => ['1'],
+                'compliance_mark' => 'Соответствует', 'responsible_person' => 'Инженер',
+                'authority_document' => 'Доверенность', 'drawing_set_status' => 'review',
+            ],
+        ]);
+        $documentationService = app(ExecutiveDocumentationService::class);
+        $version = $documentationService->addVersion($executiveDocument, $context->user->id, [
+            'version_number' => '1',
+            'file' => UploadedFile::fake()->createWithContent('working-drawings.pdf', 'working drawings'),
+        ]);
+        $documentationService->submit($executiveDocument->fresh(), $context->user->id, null, $version->id);
+        $documentationService->approve($executiveDocument->fresh(), $context->user->id, null, $version->id);
+        \Tests\Support\ExecutiveDocumentRequirementFixture::cover($executiveSet->fresh(), $version->fresh(), $context->user);
+
         $package = HandoverPackage::query()->create([
             'organization_id' => $context->organization->id,
             'project_id' => $scope->project_id,
@@ -151,16 +187,19 @@ final class HandoverAcceptanceMobileTest extends TestCase
             'created_by_user_id' => $context->user->id,
             'title' => 'Комплект передачи',
             'status' => 'draft',
+            'executive_document_set_id' => $executiveSet->id,
         ]);
         $package->documents()->create([
             'title' => 'Исполнительная документация',
-            'document_type' => 'executive_document',
+            'document_type' => 'working_drawing_set',
             'is_required' => true,
             'status' => 'approved',
             'approved_at' => now(),
+            'executive_document_version_id' => $version->id,
+            'evidence_hash' => $version->content_hash,
         ]);
 
-        $handoverResponse = $this->withHeaders($context->authHeaders())
+        $handoverResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/handover");
 
         $handoverResponse->assertOk()
@@ -171,7 +210,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
             'status' => 'handed_over',
         ]);
 
-        $reopenResponse = $this->withHeaders($context->authHeaders())
+        $reopenResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/reopen", [
                 'reason' => 'Нужно обновить комплект документов',
             ]);
@@ -192,14 +231,14 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $scope = $this->createScope($context, 'in_progress');
         $this->allowAccess();
 
-        $blockedResponse = $this->withHeaders($context->authHeaders())
+        $blockedResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/reject");
 
         $blockedResponse->assertStatus(422)
             ->assertJsonPath('message', trans_message('handover_acceptance.errors.validation_failed'))
             ->assertJsonPath('errors.reason.0', trans_message('handover_acceptance.validation.reason_required'));
 
-        $rejectResponse = $this->withHeaders($context->authHeaders())
+        $rejectResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/reject", [
                 'reason' => 'Есть замечания заказчика',
             ]);
@@ -251,7 +290,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
             'approved_at' => now(),
         ]);
 
-        $listResponse = $this->withHeaders($context->authHeaders())
+        $listResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/handover-acceptance/scopes?status=planned&planned_from=2026-06-01&planned_to=2026-06-30');
 
         $listResponse->assertOk()
@@ -263,7 +302,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
 
         $this->assertNotSame($otherScope->id, (int) $listResponse->json('data.items.0.id'));
 
-        $detailResponse = $this->withHeaders($context->authHeaders())
+        $detailResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}");
 
         $detailResponse->assertOk()
@@ -297,14 +336,14 @@ final class HandoverAcceptanceMobileTest extends TestCase
             'status' => 'pending',
         ]);
 
-        $missingStatusResponse = $this->withHeaders($context->authHeaders())
+        $missingStatusResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/checklist-items/{$acceptedItem->id}/review");
 
         $missingStatusResponse->assertStatus(422)
             ->assertJsonPath('message', trans_message('handover_acceptance.errors.validation_failed'))
             ->assertJsonPath('errors.status.0', trans_message('handover_acceptance.validation.checklist_status_required'));
 
-        $missingCommentResponse = $this->withHeaders($context->authHeaders())
+        $missingCommentResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/checklist-items/{$rejectedItem->id}/review", [
                 'status' => 'rejected',
             ]);
@@ -312,7 +351,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $missingCommentResponse->assertStatus(422)
             ->assertJsonPath('errors.comment.0', trans_message('handover_acceptance.validation.checklist_rejection_comment_required'));
 
-        $acceptedResponse = $this->withHeaders($context->authHeaders())
+        $acceptedResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/checklist-items/{$acceptedItem->id}/review", [
                 'status' => 'accepted',
             ]);
@@ -324,7 +363,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
             'status' => 'accepted',
         ]);
 
-        $rejectedResponse = $this->withHeaders($context->authHeaders())
+        $rejectedResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/checklist-items/{$rejectedItem->id}/review", [
                 'status' => 'rejected',
                 'comment' => 'Нужно заменить уплотнитель',
@@ -371,29 +410,30 @@ final class HandoverAcceptanceMobileTest extends TestCase
             $mock->shouldReceive('upload')->once()->andReturn($storedPath);
         });
 
-        $missingFileResponse = $this->withHeaders($context->authHeaders())
+        $missingFileResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/handover-acceptance/package-documents/{$document->id}/upload");
 
         $missingFileResponse->assertStatus(422)
             ->assertJsonPath('message', trans_message('handover_acceptance.errors.validation_failed'))
             ->assertJsonPath('errors.file.0', trans_message('handover_acceptance.validation.document_file_required'));
 
-        $uploadResponse = $this->withHeaders($context->authHeaders())
+        $uploadResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->post("/api/v1/mobile/handover-acceptance/package-documents/{$document->id}/upload", [
                 'file' => UploadedFile::fake()->image('photo.jpg'),
             ]);
 
         $uploadResponse->assertOk()
             ->assertJsonPath('message', trans_message('handover_acceptance.messages.document_uploaded'))
-            ->assertJsonPath('data.documents.0.status', 'approved')
+            ->assertJsonPath('data.documents.0.status', 'draft')
             ->assertJsonPath('data.documents.0.external_url', $storedPath)
-            ->assertJsonPath('data.documents.0.available_actions', []);
+            ->assertJsonPath('data.documents.0.available_actions', ['upload', 'approve']);
 
         $this->assertDatabaseHas('handover_package_documents', [
             'id' => $document->id,
-            'status' => 'approved',
+            'status' => 'draft',
             'external_url' => $storedPath,
         ]);
+        self::assertNull($document->fresh()->approved_at);
     }
 
     private function createSession(AdminApiTestContext $context): AcceptanceSession

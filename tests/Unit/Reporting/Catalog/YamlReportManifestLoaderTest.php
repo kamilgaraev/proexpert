@@ -43,7 +43,7 @@ final class YamlReportManifestLoaderTest extends TestCase
         self::assertSame('partners_customers', $manifest->definitions[27]['catalog_group']);
     }
 
-    public function test_official_manifest_loads_only_m29(): void
+    public function test_official_manifest_loads_all_six_definitions(): void
     {
         $path = $this->fixture('official.valid.yaml');
         $manifest = $this->loader()->loadOfficial($path, $this->schema('official-document-catalog.v1.schema.json'));
@@ -52,11 +52,14 @@ final class YamlReportManifestLoaderTest extends TestCase
         self::assertSame('1.0.0', $manifest->contractVersion);
         self::assertInstanceOf(Sha256Hash::class, $manifest->bytesHash);
         self::assertSame(hash_file('sha256', $path), $manifest->bytesHash->value);
-        self::assertCount(1, $manifest->definitions);
-        self::assertSame('official_material_usage_m29', $manifest->definitions[0]['code']);
-        self::assertSame('reports.official.official_material_usage_m29', $manifest->definitions[0]['title_key']);
-        self::assertSame('blocked', $manifest->definitions[0]['publication_readiness']);
+        self::assertCount(6, $manifest->definitions);
+        self::assertSame([
+            'official_material_usage_m29', 'official_hidden_work_act', 'official_axis_layout_act',
+            'official_geodetic_base_acceptance_act', 'official_responsible_structure_act', 'official_engineering_network_section_act',
+        ], array_column($manifest->definitions, 'code'));
+        self::assertSame('candidate', $manifest->definitions[0]['publication_readiness']);
         self::assertCount(7, $manifest->definitions[0]['seal_requires']);
+        self::assertSame('candidate', $manifest->definitions[1]['publication_readiness']);
     }
 
     public function test_invalid_utf8_fails_before_yaml_parsing(): void

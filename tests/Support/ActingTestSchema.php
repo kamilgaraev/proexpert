@@ -69,6 +69,8 @@ trait ActingTestSchema
             'specifications',
             'supplementary_agreements',
             'contract_project',
+            'contract_organization_view_events',
+            'contract_organization_views',
             'contracts',
             'contractors',
             'projects',
@@ -209,6 +211,31 @@ trait ActingTestSchema
             $table->boolean('is_multi_project')->default(false);
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('contract_organization_views', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('contract_id');
+            $table->foreignId('organization_id');
+            $table->text('private_notes')->nullable();
+            $table->string('visibility', 16)->default('active');
+            $table->timestampTz('access_revoked_at')->nullable();
+            $table->unsignedInteger('version')->default(1);
+            $table->timestampsTz();
+            $table->unique(['contract_id', 'organization_id']);
+        });
+
+        Schema::create('contract_organization_view_events', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('view_id');
+            $table->foreignId('actor_id')->nullable();
+            $table->string('actor_name')->nullable();
+            $table->string('action', 16);
+            $table->string('from_visibility', 16);
+            $table->string('to_visibility', 16);
+            $table->unsignedInteger('version');
+            $table->timestampTz('created_at');
+            $table->unique(['view_id', 'version']);
         });
 
         Schema::create('contract_settlement_owner_versions', function (Blueprint $table): void {
@@ -451,11 +478,13 @@ trait ActingTestSchema
 
         Schema::create('estimate_finance_allocations', function (Blueprint $table): void {
             $table->id();
+            $table->foreignId('organization_id')->nullable();
             $table->foreignId('estimate_id');
             $table->foreignId('estimate_item_id');
             $table->foreignId('resource_id')->nullable();
             $table->foreignId('contract_id')->nullable();
             $table->foreignId('contract_estimate_item_id')->nullable();
+            $table->decimal('quantity', 20, 8)->nullable();
         });
 
         Schema::create('construction_journals', function (Blueprint $table): void {

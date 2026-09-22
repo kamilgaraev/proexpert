@@ -5,7 +5,6 @@ namespace App\Models;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Enums\Contract\ContractPartySideEnum;
-use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
@@ -174,6 +173,11 @@ class Contract extends Model
     public function performanceActs(): HasMany
     {
         return $this->hasMany(ContractPerformanceAct::class);
+    }
+
+    public function periodCertificates(): HasMany
+    {
+        return $this->hasMany(ContractPeriodCertificate::class);
     }
 
     public function payments(): HasMany

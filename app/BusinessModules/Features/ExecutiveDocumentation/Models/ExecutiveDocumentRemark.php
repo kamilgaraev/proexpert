@@ -30,18 +30,29 @@ final class ExecutiveDocumentRemark extends Model
     protected $fillable = [
         'organization_id',
         'document_id',
+        'version_id',
         'created_by',
         'resolved_by',
+        'answered_by',
+        'answered_at',
+        'reviewed_by',
+        'reviewed_at',
         'body',
         'severity',
         'status',
         'resolution_comment',
+        'response',
+        'review_comment',
+        'metadata',
         'resolved_at',
     ];
 
     protected $casts = [
         'status' => ExecutiveRemarkStatusEnum::class,
         'resolved_at' => 'datetime',
+        'answered_at' => 'datetime',
+        'reviewed_at' => 'datetime',
+        'metadata' => 'array',
     ];
 
     public function organization(): BelongsTo
@@ -54,6 +65,11 @@ final class ExecutiveDocumentRemark extends Model
         return $this->belongsTo(ExecutiveDocument::class, 'document_id');
     }
 
+    public function version(): BelongsTo
+    {
+        return $this->belongsTo(ExecutiveDocumentVersion::class, 'version_id');
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
@@ -62,5 +78,15 @@ final class ExecutiveDocumentRemark extends Model
     public function resolvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'resolved_by');
+    }
+
+    public function answeredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'answered_by');
+    }
+
+    public function reviewedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reviewed_by');
     }
 }

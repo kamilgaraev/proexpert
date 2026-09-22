@@ -8,18 +8,34 @@ use App\Enums\Schedule\TaskStatusEnum;
 use App\Models\CompletedWork;
 use App\Models\ContractEstimateItem;
 use App\Models\ScheduleTask;
+use App\Services\CompletedWork\CompletedWorkMutationGuard;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ScheduleTaskSyncService
 {
+    private static int $derivedProgressDepth = 0;
+
+    public static function withoutReverseSync(callable $callback): void
+    {
+        self::$derivedProgressDepth++;
+        try {
+            $callback();
+        } finally {
+            self::$derivedProgressDepth--;
+        }
+    }
+
     public function __construct(
-        private readonly ScheduleTaskCompletedWorkService $syncService
+        private readonly CompletedWorkMutationGuard $mutationGuard
     ) {
     }
 
     public function onTaskStatusChanged(ScheduleTask $task, string $oldStatus): void
     {
+        if (self::$derivedProgressDepth > 0) {
+            return;
+        }
         $newStatus = $task->status instanceof TaskStatusEnum
             ? $task->status
             : TaskStatusEnum::from($task->status);
@@ -27,13 +43,15 @@ class ScheduleTaskSyncService
         match ($newStatus) {
             TaskStatusEnum::IN_PROGRESS => $this->autoCreateCompletedWork($task),
             TaskStatusEnum::COMPLETED => $this->onTaskCompleted($task),
-            TaskStatusEnum::CANCELLED => $this->onTaskCancelled($task),
             default => null,
         };
     }
 
     public function autoCreateCompletedWork(ScheduleTask $task): ?CompletedWork
     {
+        if (! $this->shouldCreateFactFromTask($task)) {
+            return null;
+        }
         $hasActive = CompletedWork::where('schedule_task_id', $task->id)
             ->where('status', '!=', 'cancelled')
             ->whereNull('deleted_at')
@@ -55,7 +73,11 @@ class ScheduleTaskSyncService
         $userId = $task->assigned_user_id ?? auth()->id();
 
         try {
-            return DB::transaction(function () use ($task, $schedule, $userId): CompletedWork {
+            return DB::transaction(function () use ($task, $schedule, $userId): ?CompletedWork {
+                $task = ScheduleTask::query()->whereKey($task->id)->lockForUpdate()->firstOrFail();
+                if (CompletedWork::query()->where('schedule_task_id', $task->id)->where('status', '!=', 'cancelled')->exists()) {
+                    return null;
+                }
                 $payload = $this->buildCompletedWorkPayload($task, $schedule->project_id, $userId);
 
                 $work = CompletedWork::create([
@@ -76,6 +98,7 @@ class ScheduleTaskSyncService
                     'total_amount' => $payload['total_amount'],
                     'completion_date' => now()->toDateString(),
                     'status' => 'draft',
+                    'additional_info' => ['schedule_auto_draft' => true],
                 ]);
 
                 Log::info('[ScheduleTaskSyncService] Создана выполненная работа для задачи', [
@@ -97,6 +120,9 @@ class ScheduleTaskSyncService
 
     public function syncActiveCompletedWork(ScheduleTask $task): void
     {
+        if (self::$derivedProgressDepth > 0) {
+            return;
+        }
         $task->loadMissing([
             'schedule',
             'workType',
@@ -112,105 +138,46 @@ class ScheduleTaskSyncService
         $userId = $task->assigned_user_id ?? auth()->id();
         $payload = $this->buildCompletedWorkPayload($task, $projectId, $userId);
 
-        $activeWorks = CompletedWork::query()
-            ->where('schedule_task_id', $task->id)
-            ->whereIn('status', ['draft', 'pending', 'in_review'])
-            ->whereNull('deleted_at')
-            ->get();
+        DB::transaction(function () use ($task, $payload): void {
+            ScheduleTask::query()->whereKey($task->id)->lockForUpdate()->firstOrFail();
+            $activeWorks = CompletedWork::query()
+                ->where('schedule_task_id', $task->id)
+                ->where('work_origin_type', CompletedWork::ORIGIN_SCHEDULE)
+                ->where('additional_info->schedule_auto_draft', true)
+                ->where('status', CompletedWork::STATUS_DRAFT)
+                ->whereNull('deleted_at')
+                ->lockForUpdate()
+                ->get();
 
-        $activeWorks->each(function (CompletedWork $work) use ($payload, $task): void {
-            $work->fill([
-                'estimate_item_id' => $task->estimate_item_id,
-                'work_origin_type' => CompletedWork::ORIGIN_SCHEDULE,
-                'planning_status' => CompletedWork::PLANNING_PLANNED,
-                'work_type_id' => $payload['work_type_id'] ?? $work->work_type_id,
-                'contract_id' => $payload['contract_id'] ?? $work->contract_id,
-                'contractor_id' => $payload['contractor_id'] ?? $work->contractor_id,
-                'quantity' => $payload['quantity'],
-                'completed_quantity' => $payload['completed_quantity'],
-                'price' => $payload['price'],
-                'total_amount' => $payload['total_amount'],
-            ]);
+            $activeWorks->each(function (CompletedWork $work) use ($payload, $task): void {
+                $this->mutationGuard->assertMutable($work);
+                $work->fill([
+                    'estimate_item_id' => $task->estimate_item_id,
+                    'work_origin_type' => CompletedWork::ORIGIN_SCHEDULE,
+                    'planning_status' => CompletedWork::PLANNING_PLANNED,
+                    'work_type_id' => $payload['work_type_id'] ?? $work->work_type_id,
+                    'contract_id' => $payload['contract_id'] ?? $work->contract_id,
+                    'contractor_id' => $payload['contractor_id'] ?? $work->contractor_id,
+                    'quantity' => $payload['quantity'],
+                    'completed_quantity' => $payload['completed_quantity'],
+                    'price' => $payload['price'],
+                    'total_amount' => $payload['total_amount'],
+                ]);
 
-            if ($work->isDirty()) {
-                $work->saveQuietly();
+                if ($work->isDirty()) {
+                    $work->saveQuietly();
+                }
+            });
+
+            if ($activeWorks->isEmpty() && $this->shouldCreateFactFromTask($task)) {
+                $this->autoCreateCompletedWork($task);
             }
-        });
-
-        if ($activeWorks->isEmpty() && $this->shouldCreateFactFromTask($task)) {
-            $this->autoCreateCompletedWork($task);
-        }
+        }, 3);
     }
 
     public function onTaskCompleted(ScheduleTask $task): void
     {
-        try {
-            DB::transaction(function () use ($task): void {
-                $openStatuses = ['draft', 'pending', 'in_review'];
-
-                $openWorks = CompletedWork::where('schedule_task_id', $task->id)
-                    ->whereIn('status', $openStatuses)
-                    ->whereNull('deleted_at')
-                    ->orderBy('id')
-                    ->get();
-
-                if ($openWorks->isEmpty()) {
-                    return;
-                }
-
-                $openWorks->each(fn (CompletedWork $w) => $w->updateQuietly(['status' => 'confirmed']));
-
-                $taskQuantity = (float) ($task->quantity ?? 0);
-                if ($taskQuantity <= 0) {
-                    return;
-                }
-
-                $sumCompleted = (float) CompletedWork::where('schedule_task_id', $task->id)
-                    ->whereNull('deleted_at')
-                    ->sum(DB::raw('COALESCE(completed_quantity, quantity, 0)'));
-
-                if ($sumCompleted < $taskQuantity) {
-                    $diff = round($taskQuantity - $sumCompleted, 4);
-                    $lastWork = $openWorks->last();
-                    $lastWork->updateQuietly([
-                        'completed_quantity' => round((float) $lastWork->completed_quantity + $diff, 4),
-                    ]);
-                }
-
-                $task->refresh();
-                $this->syncService->syncCompletedQuantity($task);
-
-                Log::info('[ScheduleTaskSyncService] Выполненные работы задачи подтверждены', [
-                    'task_id' => $task->id,
-                    'confirmed_count' => $openWorks->count(),
-                ]);
-            });
-        } catch (\Exception $e) {
-            Log::error('[ScheduleTaskSyncService] Ошибка при завершении задачи', [
-                'task_id' => $task->id,
-                'error' => $e->getMessage(),
-            ]);
-        }
-    }
-
-    public function onTaskCancelled(ScheduleTask $task): void
-    {
-        try {
-            $count = CompletedWork::where('schedule_task_id', $task->id)
-                ->whereIn('status', ['draft', 'pending'])
-                ->whereNull('deleted_at')
-                ->update(['status' => 'cancelled']);
-
-            Log::info('[ScheduleTaskSyncService] Выполненные работы задачи отменены', [
-                'task_id' => $task->id,
-                'cancelled_count' => $count,
-            ]);
-        } catch (\Exception $e) {
-            Log::error('[ScheduleTaskSyncService] Ошибка при отмене задачи', [
-                'task_id' => $task->id,
-                'error' => $e->getMessage(),
-            ]);
-        }
+        $this->syncActiveCompletedWork($task);
     }
 
     private function buildCompletedWorkPayload(ScheduleTask $task, int $projectId, ?int $userId): array
@@ -239,7 +206,7 @@ class ScheduleTaskSyncService
             'contract_id' => $contractLink?->contract_id,
             'contractor_id' => $contractLink?->contract?->contractor_id,
             'user_id' => $userId,
-            'quantity' => $quantity,
+            'quantity' => $completedQuantity,
             'completed_quantity' => $completedQuantity,
             'price' => $price,
             'total_amount' => $price !== null ? round($price * $completedQuantity, 2) : null,
@@ -306,8 +273,11 @@ class ScheduleTaskSyncService
 
     private function shouldCreateFactFromTask(ScheduleTask $task): bool
     {
+        if ($task->status === TaskStatusEnum::CANCELLED) {
+            return false;
+        }
         return (float) ($task->completed_quantity ?? 0) > 0
             || (float) ($task->progress_percent ?? 0) > 0
-            || in_array($task->status?->value ?? (string) $task->status, ['in_progress', 'completed'], true);
+            || ($task->status?->value ?? (string) $task->status) === 'completed';
     }
 }
