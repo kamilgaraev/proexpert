@@ -74,6 +74,7 @@
             <file>tests/Unit/CompletedWork/CompletedWorkReconciliationTest.php</file>
             <file>tests/Unit/CompletedWork/CompletedWorkHistoryTransformationRulesTest.php</file>
             <file>tests/Feature/Acting/ContractPeriodCertificateTest.php</file>
+            <file>tests/Feature/Acting/ActingWizardPartialAcceptanceTest.php</file>
             <file>tests/Feature/ConstructionJournal/MaterialConsumptionStatementTest.php</file>
             <file>tests/Feature/Pto/PtoWorkspaceQueueTest.php</file>
             <file>tests/Unit/MaterialConsumption/MaterialConsumptionUnitConversionTest.php</file>

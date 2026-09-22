@@ -80,6 +80,42 @@ class ActReportWorkflowService
                 $data['period_end']
             ),
             'contract_amount_limit' => $this->contractAmountGuard->summary($contract),
+            'certificates' => $this->periodCertificates->previewForPeriod(
+                $contract->id,
+                $data['period_start'],
+                $data['period_end']
+            ),
+            'draft_act' => $this->openDraftAct($contract, $data['period_start'], $data['period_end'], $user),
+        ];
+    }
+
+    /**
+     * @return array{id: int, act_document_number: ?string, status: string, href: string}|null
+     */
+    private function openDraftAct(Contract $contract, string $periodStart, string $periodEnd, ?User $user): ?array
+    {
+        if ($user === null) {
+            return null;
+        }
+
+        $act = ContractPerformanceAct::query()
+            ->where('contract_id', $contract->id)
+            ->whereDate('period_start', $periodStart)
+            ->whereDate('period_end', $periodEnd)
+            ->where('created_by_user_id', $user->id)
+            ->where('status', ContractPerformanceAct::STATUS_DRAFT)
+            ->orderByDesc('id')
+            ->first(['id', 'act_document_number', 'status']);
+
+        if ($act === null) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $act->id,
+            'act_document_number' => $act->act_document_number,
+            'status' => (string) $act->status,
+            'href' => '/acts/'.$act->id,
         ];
     }
 

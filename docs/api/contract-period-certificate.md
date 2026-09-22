@@ -38,6 +38,8 @@
 - `POST contract-period-certificates/{id}/approve` — утвердить и заморозить снимок. Право `act_reports.approve`.
 - `GET contract-period-certificates/{id}/export/ks3` — Excel из снимка (для черновика — из текущего расчёта). Право `act_reports.export.excel`.
 - `GET contract-period-certificates/{id}/export/ks3/pdf` — PDF из того же набора данных. Право `act_reports.export.pdf`.
+- `POST contract-period-certificates/{id}/signed-file` — загрузить подписанный оригинал (PDF). Право `act_reports.edit`. Снимок и суммы не пересчитываются.
+- `GET contract-period-certificates/{id}/signed-file` — скачать подписанный оригинал. Право `act_reports.view`. Это отдельное действие от черновика печати.
 
 Ключ идемпотентности обязателен: поле `idempotency_key` или заголовок `Idempotency-Key` (8–128 символов). Повтор с тем же телом возвращает исходную справку. Изменённое тело с тем же ключом — 409.
 
@@ -59,7 +61,9 @@
 
 Ответ — `AdminResponse` с ресурсом справки: статус, состав, снимок, итоги, даты, `has_annulled_acts`, `is_frozen`.
 
-Регистрация подписанного файла выполняется сервисом `ContractPeriodCertificateService::markSigned`: файл организации с категорией `signed_certificate`, привязанный к справке. HTTP-загрузка оригинала для UI — отдельный шаг рабочего места (T25). Печатные КС-2 актов по-прежнему используют существующий `POST {act}/signed-file`.
+Регистрация подписанного файла выполняется сервисом `ContractPeriodCertificateService::markSigned`: файл организации с категорией `signed_certificate`, привязанный к справке. Печатные КС-2 актов по-прежнему используют существующий `POST {act}/signed-file`. Предпросмотр мастера актирования (`POST preview`) отдаёт `certificates` за период и `draft_act`, если у пользователя уже есть черновик акта.
+
+Строка доступных работ в предпросмотре содержит `presented_quantity`, `accepted_quantity`, `with_remarks_quantity` и серверный `available_to_act` (тот же остаток, что `available_quantity`). Если остаток изменился, создание акта возвращает 422 с полем `conflict` (`completed_work_id`, `available_to_act`, `requested_quantity`); строки не записываются.
 
 ## Аннулирование актов
 

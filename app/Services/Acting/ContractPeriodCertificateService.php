@@ -176,6 +176,50 @@ final class ContractPeriodCertificateService
         });
     }
 
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function previewForPeriod(int $contractId, string $periodStart, string $periodEnd): array
+    {
+        return ContractPeriodCertificate::query()
+            ->where('contract_id', $contractId)
+            ->whereDate('period_start', $periodStart)
+            ->whereDate('period_end', $periodEnd)
+            ->whereNotIn('status', [ContractPeriodCertificate::STATUS_ANNULLED])
+            ->orderByDesc('version_number')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (ContractPeriodCertificate $certificate): array {
+                $id = (int) $certificate->id;
+                $isDraft = $certificate->status === ContractPeriodCertificate::STATUS_DRAFT;
+
+                return [
+                    'id' => $id,
+                    'number' => $certificate->number,
+                    'version_number' => (int) $certificate->version_number,
+                    'status' => $certificate->status,
+                    'calculation_version' => $certificate->calculation_version,
+                    'composition' => $certificate->composition,
+                    'totals' => $certificate->totals,
+                    'has_annulled_acts' => (bool) $certificate->has_annulled_acts,
+                    'is_frozen' => $certificate->isFrozen(),
+                    'is_draft' => $isDraft,
+                    'signed_file_id' => $certificate->signed_file_id !== null ? (int) $certificate->signed_file_id : null,
+                    'print' => [
+                        'xlsx' => '/act-reports/contract-period-certificates/'.$id.'/export/ks3',
+                        'pdf' => '/act-reports/contract-period-certificates/'.$id.'/export/ks3/pdf',
+                        'is_draft' => $isDraft,
+                    ],
+                    'signed_file' => $certificate->signed_file_id === null ? null : [
+                        'id' => (int) $certificate->signed_file_id,
+                        'href' => '/act-reports/contract-period-certificates/'.$id.'/signed-file',
+                    ],
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
     public function markActAnnulled(ContractPerformanceAct $act): void
     {
         ContractPeriodCertificate::query()

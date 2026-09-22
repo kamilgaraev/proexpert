@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
+use App\Exceptions\ActingQuantityConflictException;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\ActReport\AnnulActReportRequest;
@@ -17,6 +18,7 @@ use App\Http\Requests\Api\V1\Admin\ActReport\StoreActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UpdateActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UploadActReportFileRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\UploadSignedActFileRequest;
+use App\Http\Requests\Api\V1\Admin\ActReport\UploadSignedCertificateFileRequest;
 use App\Http\Resources\Api\V1\Admin\ActReport\ContractPeriodCertificateResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Responses\AdminResponse;
@@ -30,6 +32,7 @@ use App\Services\ActReport\ActReportService;
 use App\Services\ActReport\ActReportWorkflowService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
@@ -164,6 +167,62 @@ class ActReportsController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('act_reports.export_failed'), 500);
+        }
+    }
+
+    public function uploadSignedCertificateFile(UploadSignedCertificateFileRequest $request, mixed $certificate): JsonResponse
+    {
+        try {
+            $certificate = $this->resolveCertificate($request, $certificate, ActReportAccessService::PERMISSION_EDIT);
+            $file = $request->file('file');
+            if (! $file instanceof UploadedFile) {
+                throw new BusinessLogicException(trans_message('act_reports.file_upload_failed'), 422);
+            }
+            $user = $request->user();
+            if ($user === null) {
+                throw new BusinessLogicException(trans_message('act_reports.access_denied'), 403);
+            }
+
+            return AdminResponse::success(
+                new ContractPeriodCertificateResource(
+                    $this->fileService->uploadSignedCertificate(
+                        $certificate,
+                        $file,
+                        $user,
+                        $request->validated()['description'] ?? null
+                    )
+                ),
+                trans_message('act_reports.certificate_signed_file_uploaded')
+            );
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            Log::error('act_reports.certificate_signed_file_upload_failed', [
+                'certificate_id' => is_object($certificate) ? ($certificate->id ?? null) : $certificate,
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.file_upload_failed'), 500);
+        }
+    }
+
+    public function downloadSignedCertificateFile(Request $request, mixed $certificate): JsonResponse|StreamedResponse
+    {
+        try {
+            $certificate = $this->resolveCertificate($request, $certificate, ActReportAccessService::PERMISSION_VIEW);
+
+            return $this->fileService->downloadSignedCertificate($certificate);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
+        } catch (Throwable $e) {
+            Log::error('act_reports.certificate_signed_file_download_failed', [
+                'certificate_id' => is_object($certificate) ? ($certificate->id ?? null) : $certificate,
+                'user_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('act_reports.file_not_found'), 404);
         }
     }
 
@@ -643,6 +702,8 @@ class ActReportsController extends Controller
                 trans_message('act_reports.act_created'),
                 201
             );
+        } catch (ActingQuantityConflictException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode(), null, $e->payload());
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (Throwable $e) {

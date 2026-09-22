@@ -15,6 +15,10 @@ Route::prefix('act-reports')->group(function () {
         ->middleware('authorize:act_reports.export.excel')->name('act-reports.certificates.export.ks3');
     Route::get('contract-period-certificates/{certificate}/export/ks3/pdf', [ActReportsController::class, 'exportPeriodCertificateKS3Pdf'])
         ->middleware('authorize:act_reports.export.pdf')->name('act-reports.certificates.export.ks3.pdf');
+    Route::post('contract-period-certificates/{certificate}/signed-file', [ActReportsController::class, 'uploadSignedCertificateFile'])
+        ->middleware('authorize:act_reports.edit')->name('act-reports.certificates.signed-file.upload');
+    Route::get('contract-period-certificates/{certificate}/signed-file', [ActReportsController::class, 'downloadSignedCertificateFile'])
+        ->middleware('authorize:act_reports.view')->name('act-reports.certificates.signed-file.download');
     // Получить все акты организации с фильтрацией
     Route::get('/', [ActReportsController::class, 'index'])
         ->name('act-reports.index');

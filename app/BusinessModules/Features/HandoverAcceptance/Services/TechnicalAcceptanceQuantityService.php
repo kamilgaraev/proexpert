@@ -14,6 +14,7 @@ use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 
 use function trans_message;
@@ -188,6 +189,30 @@ final readonly class TechnicalAcceptanceQuantityService
         if (! $this->acceptedOnly($policy) || $works->isEmpty()) {
             return [];
         }
+        $breakdown = $this->acceptanceBreakdown($works);
+
+        return $works->mapWithKeys(static fn (CompletedWork $work): array => [
+            (int) $work->id => $breakdown[(int) $work->id]['accepted_quantity'] ?? '0',
+        ])->all();
+    }
+
+    /**
+     * @return array<int, array{presented_quantity: string, accepted_quantity: string, with_remarks_quantity: string}>
+     */
+    public function acceptanceBreakdown(Collection $works): array
+    {
+        if ($works->isEmpty()) {
+            return [];
+        }
+        if (! Schema::hasTable('acceptance_scope_work_quantities') || ! Schema::hasTable('acceptance_scopes')) {
+            return $works->mapWithKeys(static fn (CompletedWork $work): array => [
+                (int) $work->id => [
+                    'presented_quantity' => (string) $work->effectiveCompletedQuantity(),
+                    'accepted_quantity' => '0',
+                    'with_remarks_quantity' => '0',
+                ],
+            ])->all();
+        }
         $rows = AcceptanceScopeWorkQuantity::query()
             ->join('acceptance_scopes', 'acceptance_scopes.id', '=', 'acceptance_scope_work_quantities.acceptance_scope_id')
             ->whereIn('acceptance_scope_work_quantities.completed_work_id', $works->pluck('id')->all())
@@ -196,12 +221,26 @@ final readonly class TechnicalAcceptanceQuantityService
             ->whereIn('acceptance_scopes.status', ['accepted', 'handed_over'])
             ->whereNull('acceptance_scopes.deleted_at')
             ->groupBy('acceptance_scope_work_quantities.completed_work_id')
-            ->selectRaw('acceptance_scope_work_quantities.completed_work_id, COALESCE(SUM(acceptance_scope_work_quantities.accepted_quantity), 0) AS quantity')
-            ->pluck('quantity', 'acceptance_scope_work_quantities.completed_work_id');
+            ->selectRaw(
+                'acceptance_scope_work_quantities.completed_work_id,
+                COALESCE(SUM(acceptance_scope_work_quantities.presented_quantity), 0) AS presented_quantity,
+                COALESCE(SUM(acceptance_scope_work_quantities.accepted_quantity), 0) AS accepted_quantity,
+                COALESCE(SUM(acceptance_scope_work_quantities.defect_quantity), 0) AS with_remarks_quantity'
+            )
+            ->get()
+            ->keyBy('completed_work_id');
 
-        return $works->mapWithKeys(static fn (CompletedWork $work): array => [
-            (int) $work->id => (string) $rows->get($work->id, '0'),
-        ])->all();
+        return $works->mapWithKeys(static function (CompletedWork $work) use ($rows): array {
+            $row = $rows->get($work->id);
+
+            return [(int) $work->id => [
+                'presented_quantity' => $row !== null
+                    ? (string) $row->presented_quantity
+                    : (string) $work->effectiveCompletedQuantity(),
+                'accepted_quantity' => $row !== null ? (string) $row->accepted_quantity : '0',
+                'with_remarks_quantity' => $row !== null ? (string) $row->with_remarks_quantity : '0',
+            ]];
+        })->all();
     }
 
     private function acceptedOnly(array $policy): bool

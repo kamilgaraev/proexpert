@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Acting;
 
+use App\Exceptions\ActingQuantityConflictException;
 use App\Exceptions\BusinessLogicException;
 use App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService;
 use App\Models\CompletedWork;
@@ -204,10 +205,19 @@ final readonly class ActingQuantityReservationService
     public function assertScaledAvailable(array $requestedQuantities, array $availableQuantities): void
     {
         foreach ($requestedQuantities as $workId => $requested) {
-            if ($requested <= 0 || $requested > ($availableQuantities[(int) $workId] ?? -1)) {
+            $workId = (int) $workId;
+            if ($requested <= 0) {
                 throw new BusinessLogicException(
                     trans_message('act_reports.invalid_acting_quantity'),
                     422,
+                );
+            }
+            $available = $availableQuantities[$workId] ?? 0;
+            if ($requested > $available) {
+                throw new ActingQuantityConflictException(
+                    $workId,
+                    AcceptedProductionQuantity::decimal(max(0, $available)),
+                    AcceptedProductionQuantity::decimal($requested),
                 );
             }
         }

@@ -82,6 +82,8 @@ return [
     'invalid_line_type' => 'Неверный тип строки акта',
     'work_not_available_for_acting' => 'Выбранная работа недоступна для актирования',
     'invalid_acting_quantity' => 'Указан недоступный объем для актирования',
+    'acting_quantity_conflict' => 'Остаток по строке изменился. Сейчас доступно к включению в акт: :available. Исправьте эту строку; остальные введённые значения сохранены.',
+    'certificate_signed_file_uploaded' => 'Подписанный оригинал справки КС-3 загружен',
     'completed_work_line_title' => 'Работа по журналу №:id',
 
     'export_pdf_success' => 'PDF-документ успешно сформирован',
