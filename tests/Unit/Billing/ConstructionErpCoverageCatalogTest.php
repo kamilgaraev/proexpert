@@ -21,7 +21,7 @@ class ConstructionErpCoverageCatalogTest extends TestCase
 
     private const CONSTRUCTION_PACKAGES = [
         'quality-safety',
-        'pto-handover',
+        'working-entry',
         'machinery',
         'workforce-output',
         'finance-contracts',
@@ -65,7 +65,7 @@ class ConstructionErpCoverageCatalogTest extends TestCase
             'quality-control',
             'safety-management',
         ]);
-        $this->assertTierContains($catalog, 'pto-handover', 'standard', [
+        $this->assertTierContains($catalog, 'working-entry', 'standard', [
             'quality-control',
             'executive-documentation',
             'handover-acceptance',
@@ -138,7 +138,9 @@ class ConstructionErpCoverageCatalogTest extends TestCase
 
     private function assertTierContains(PackageCatalogService $catalog, string $packageSlug, string $tier, array $expectedModules): void
     {
-        $modules = $catalog->tierModules($packageSlug, $tier);
+        $package = collect($catalog->allPackages())->firstWhere('slug', $packageSlug);
+        $this->assertIsArray($package);
+        $modules = $package['tiers'][$tier]['modules'] ?? [];
 
         foreach ($expectedModules as $moduleSlug) {
             $this->assertContains($moduleSlug, $modules, "{$packageSlug}/{$tier} misses {$moduleSlug}");

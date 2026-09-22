@@ -64,7 +64,7 @@ class ModulesOverviewControllerTest extends TestCase
 
         $overview = app(ModulesOverviewService::class)->build($organization->id);
 
-        $this->assertSame(8, $overview['summary']['total_solutions_count']);
+        $this->assertSame(7, $overview['summary']['total_solutions_count']);
         $this->assertSame(1, $overview['summary']['active_solutions_count']);
         $this->assertSame('5900.00', $overview['summary']['monthly_total']);
         $machinery = collect($overview['solutions'])->firstWhere('slug', 'machinery');
