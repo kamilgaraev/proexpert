@@ -42,15 +42,42 @@ final class ActingQuantityConcurrencyTest extends TestCase
         [$contract, $work] = $this->fixture();
         if ($technicalAcceptanceOnly) {
             $work->update(['quantity' => 20, 'completed_quantity' => 20, 'total_amount' => 1000]);
+            $actor = User::query()->findOrFail($work->user_id);
+            $organization = Organization::query()->findOrFail($contract->organization_id);
+            $project = Project::query()->findOrFail($contract->project_id);
+            $organization->users()->syncWithoutDetaching([
+                $actor->id => ['is_active' => true, 'is_owner' => true, 'project_access_mode' => 'all_projects'],
+            ]);
+            $project->users()->syncWithoutDetaching([
+                $actor->id => ['role' => 'member', 'is_active' => true],
+            ]);
+            $this->app->forgetInstance(\App\Domain\Authorization\Services\ModulePermissionChecker::class);
+            $this->app->forgetInstance(\App\Domain\Authorization\Services\PermissionResolver::class);
+            $this->app->forgetInstance(\App\Domain\Authorization\Services\AuthorizationService::class);
+            $this->mock(\App\Modules\Core\AccessController::class)->shouldReceive('hasModuleAccess')->andReturnTrue();
+            $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)->shouldReceive('can')->andReturnTrue();
             $scope = \App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope::query()->create([
                 'organization_id' => $contract->organization_id, 'project_id' => $contract->project_id,
-                'created_by_user_id' => $work->user_id, 'title' => 'Частичная приёмка', 'status' => 'accepted',
+                'created_by_user_id' => $work->user_id, 'title' => 'Частичная приёмка', 'status' => 'in_progress',
             ]);
-            $scope->workQuantities()->create([
-                'organization_id' => $contract->organization_id, 'project_id' => $contract->project_id,
-                'completed_work_id' => $work->id, 'unit_id' => $work->workType->measurement_unit_id,
-                'presented_quantity' => '20', 'accepted_quantity' => '10', 'defect_quantity' => '10', 'defect_reason' => 'Требуется устранение замечания',
-            ]);
+            app(\App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService::class)->draft(
+                (int) $contract->organization_id,
+                (int) $work->user_id,
+                $scope->id,
+                [[
+                    'completed_work_id' => $work->id,
+                    'unit_id' => $work->workType->measurement_unit_id,
+                    'presented_quantity' => '20',
+                    'accepted_quantity' => '10',
+                    'defect_quantity' => '10',
+                    'defect_reason' => 'Требуется устранение замечания',
+                ]],
+                0,
+                'acting-concurrency-technical-acceptance',
+            );
+            $accepted = app(\App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService::class)
+                ->acceptScope($scope->fresh(), (int) $work->user_id, null);
+            self::assertSame('accepted', $accepted->status);
             \App\Models\ActingPolicy::query()->create([
                 'organization_id' => $contract->organization_id, 'contract_id' => $contract->id,
                 'mode' => \App\Models\ActingPolicy::MODE_OPERATIONAL,
