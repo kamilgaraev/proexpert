@@ -31,24 +31,31 @@ class UpdateContractRequest extends FormRequest
             return false;
         }
 
-        if ($routeProjectId !== null && ! $this->contractBelongsToProject($this->resolveContract(), $routeProjectId)) {
+        $contract = $this->resolveContract();
+        $organizationId = (int) (
+            $this->attributes->get('current_organization_id')
+            ?? $user->current_organization_id
+            ?? 0
+        );
+
+        if ($organizationId < 1 || (int) $contract->organization_id !== $organizationId) {
+            return false;
+        }
+
+        if ($routeProjectId !== null && ! $this->contractBelongsToProject($contract, $routeProjectId)) {
             return false;
         }
 
         $baseContext = [
-            'organization_id' => (int) (
-                $this->attributes->get('current_organization_id')
-                ?? $user?->current_organization_id
-            ),
+            'organization_id' => $organizationId,
         ];
-        $projectIds = $routeProjectId !== null ? [$routeProjectId] : [];
-        $contract = $this->resolveContract();
+        $projectIds = $this->contractProjectIds($contract);
 
         if ($routeProjectId !== null) {
-            $projectIds = array_merge($projectIds, $this->contractProjectIds($contract));
-            if ($this->scopeUpdateRequested && $this->requestedMultiProjectState($contract)) {
-                $projectIds = array_merge($projectIds, $this->numericProjectIds($this->input('project_ids', [])));
-            }
+            $projectIds[] = $routeProjectId;
+        }
+        if ($this->scopeUpdateRequested && $this->requestedMultiProjectState($contract)) {
+            $projectIds = array_merge($projectIds, $this->numericProjectIds($this->input('project_ids', [])));
         }
 
         $authorization = app(AuthorizationService::class);

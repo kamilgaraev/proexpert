@@ -48,4 +48,12 @@ final class ContractLegalDocumentEditorAccessTest extends TestCase
         self::assertStringContainsString('api_editor_current_version_editable', $controller);
         self::assertStringContainsString("'current_version_editable'", $resource);
     }
+
+    public function test_contract_document_metadata_uses_document_view_authorization(): void
+    {
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveDocumentController.php');
+
+        self::assertIsString($controller);
+        self::assertStringContainsString('$this->access->authorize($actor, $found, \'view\');', $controller);
+    }
 }

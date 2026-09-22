@@ -27,6 +27,7 @@ use App\Services\Contract\ContractReadService;
 use App\Services\Contract\ContractService;
 use App\Services\Contract\Exceptions\ContractPaymentWorkflowException;
 use Exception;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -195,11 +196,19 @@ class ContractController extends Controller
             $accessibleContract = $this->contractAccessService()->findAccessibleOrFail($contractId, $organizationId, $projectId);
             $updatedContract = $this->contractService->updateContract(
                 $contractId,
-                (int) $accessibleContract->organization_id,
+                $organizationId,
                 $request->toDto()
             );
 
             return AdminResponse::success(new ContractResource($updatedContract));
+        } catch (AuthorizationException $exception) {
+            $this->logFailure('contract.update.forbidden', $request, $exception, [
+                'contract_id' => $contractId,
+                'organization_id' => $organizationId,
+                'user_id' => $user->id,
+            ], 'warning');
+
+            return AdminResponse::error(trans_message('contract.access_denied'), Response::HTTP_FORBIDDEN);
         } catch (ModelNotFoundException $exception) {
             $this->logFailure('contract.update.not_found', $request, $exception, [
                 'contract_id' => $contractId,
