@@ -42,6 +42,9 @@ class SupplementaryAgreementService
 
     public function create(SupplementaryAgreementDTO $dto): SupplementaryAgreement
     {
+        $contract = Contract::query()->whereKey($dto->contract_id)->firstOrFail();
+        app(ContractBuilderMutationGuard::class)->assertLegacy($contract);
+
         return $this->repository->create($dto->toArray());
     }
 

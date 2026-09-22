@@ -140,6 +140,8 @@ class AgreementController extends Controller
                 trans_message('agreements.created'),
                 Response::HTTP_CREATED
             );
+        } catch (\App\Exceptions\ContractBuilderException $e) {
+            throw $e;
         } catch (Throwable $e) {
             Log::error('agreements.store.failed', [
                 'user_id' => $request->user()?->id,

@@ -19,7 +19,8 @@ final class ContractBuilderMutationGuard
 
     public function assertUpdate(Contract $contract, array $attributes, string $event): void
     {
-        if ($event === 'revision_activated' || !DB::table('contract_builder_instances')->where('contract_id', $contract->id)->exists()) {
+        if ($event === 'revision_activated' || $event === 'supplementary_document_activated'
+            || !DB::table('contract_builder_instances')->where('contract_id', $contract->id)->exists()) {
             return;
         }
         $candidate = clone $contract;

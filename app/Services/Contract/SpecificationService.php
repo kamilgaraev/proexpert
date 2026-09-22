@@ -89,6 +89,37 @@ class SpecificationService
         });
     }
 
+    public function applyAgreementPlan(Contract $contract, int $documentId, string $date, array $rows): Specification
+    {
+        return DB::transaction(function () use ($contract, $documentId, $date, $rows): Specification {
+            $locked = Contract::whereKey($contract->id)->lockForUpdate()->firstOrFail();
+            if (!DB::table('contract_supplementary_documents')->where('id', $documentId)->where('contract_id', $locked->id)->exists()) {
+                throw new \App\Exceptions\ContractBuilderException('contracts.activation_conflict', 409);
+            }
+            $existing = Specification::where('supplementary_document_id', $documentId)->first();
+            if ($existing !== null) {
+                if (!$locked->specifications()->whereKey($existing->id)->exists()) {
+                    throw new \App\Exceptions\ContractBuilderException('contracts.activation_conflict', 409);
+                }
+
+                return $existing;
+            }
+            $total = \Brick\Math\BigDecimal::of('0');
+            foreach ($rows as $row) {
+                $total = $total->plus($row['amount']);
+            }
+            $specification = new Specification;
+            $specification->forceFill([
+                'supplementary_document_id' => $documentId, 'number' => 'SA-'.$contract->id.'-'.$documentId,
+                'spec_date' => $date, 'total_amount' => (string) $total, 'scope_items' => $rows, 'status' => 'approved',
+            ])->save();
+            $locked->specifications()->updateExistingPivot($locked->specifications()->pluck('specifications.id')->all(), ['is_active' => false]);
+            $locked->specifications()->attach($specification->id, ['attached_at' => now(), 'is_active' => true]);
+
+            return $specification;
+        });
+    }
+
     public function updateForOrganization(int $id, int $organizationId, array $data): ?Specification
     {
         return DB::transaction(function () use ($id, $organizationId, $data): ?Specification {

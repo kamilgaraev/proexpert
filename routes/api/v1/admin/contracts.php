@@ -94,6 +94,24 @@ Route::prefix('contracts/{contract}/builder')->whereNumber('contract')->name('co
         ->whereNumber('revision')->middleware('authorize:contracts.view')->name('export');
 });
 
+Route::prefix('contracts/{contract}/supplementary-documents')->whereNumber('contract')->name('contracts.supplementary.')->group(function (): void {
+    $controller = \App\Http\Controllers\Api\V1\Admin\Contract\ContractSupplementaryDocumentController::class;
+    Route::get('', [$controller, 'index'])->middleware('authorize:contracts.view')->name('index');
+    Route::post('', [$controller, 'store'])->middleware('authorize:contracts.edit')->name('store');
+    Route::get('{document}', [$controller, 'show'])->whereNumber('document')->middleware('authorize:contracts.view')->name('show');
+    Route::put('{document}/draft', [$controller, 'draft'])->whereNumber('document')->middleware('authorize:contracts.edit')->name('draft');
+    Route::get('{document}/preview', [$controller, 'preview'])->whereNumber('document')->middleware('authorize:contracts.view')->name('preview');
+    Route::get('{document}/confirmations', [$controller, 'confirmations'])->whereNumber('document')->middleware('authorize:contracts.view')->name('confirmations');
+    Route::post('{document}/confirmations', [$controller, 'confirm'])->whereNumber('document')->middleware('authorize:contracts.revisions.confirm')->name('confirm');
+    Route::post('{document}/external-confirmation', [$controller, 'externalConfirmation'])->whereNumber('document')->middleware('authorize:contracts.revisions.record_external')->name('external');
+    Route::get('{document}/legal-archive', [$controller, 'legalArchiveShow'])->whereNumber('document')->middleware('authorize:contracts.view')->name('legal-archive.show');
+    Route::post('{document}/legal-archive', [$controller, 'legalArchiveStore'])->whereNumber('document')->middleware('authorize:contracts.edit')->name('legal-archive.store');
+    Route::get('{document}/activation-preview', [$controller, 'activationPreview'])->whereNumber('document')->middleware('authorize:contracts.view')->name('activation-preview');
+    Route::post('{document}/activate', [$controller, 'activate'])->whereNumber('document')->middleware('authorize:contracts.revisions.activate')->name('activate');
+    Route::post('{document}/activations/{activation}/retry', [$controller, 'retry'])->whereNumber('document')->whereNumber('activation')->middleware('authorize:contracts.revisions.activate')->name('retry');
+    Route::post('{document}/activations/{activation}/cancel', [$controller, 'cancelActivation'])->whereNumber('document')->whereNumber('activation')->middleware('authorize:contracts.revisions.activate')->name('cancel');
+});
+
 // ContractPaymentController удален - используйте модуль Payments
 
 // Маршруты для Контрактов

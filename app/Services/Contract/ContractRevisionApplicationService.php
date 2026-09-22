@@ -109,6 +109,11 @@ final class ContractRevisionApplicationService
         }
     }
 
+    public function assertTermsCompatible(Contract $contract, array $terms): void
+    {
+        $this->compatible($contract, $terms);
+    }
+
     private function compatible(Contract $contract, array $terms): void
     {
         $documents = \App\BusinessModules\Core\Payments\Models\PaymentDocument::withTrashed()

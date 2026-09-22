@@ -1246,6 +1246,23 @@ class CustomerPortalService
         $acts = $contract->relationLoaded('performanceActs') ? $contract->performanceActs : collect();
         $payments = $contract->relationLoaded('payments') ? $contract->payments : collect();
         $events = $contract->relationLoaded('stateEvents') ? $contract->stateEvents : collect();
+        $supplementary = \Illuminate\Support\Facades\DB::table('contract_supplementary_documents')
+            ->where('contract_id', $contract->id)->where('status', 'applied')
+            ->orderBy('id')->get(['id', 'number', 'agreement_date', 'change_amount']);
+        $legacyItems = $agreements->map(fn ($agreement): array => [
+            'id' => $agreement->id,
+            'number' => $agreement->number,
+            'date' => optional($agreement->agreement_date)?->format('Y-m-d'),
+            'change_amount' => $agreement->change_amount !== null ? (float) $agreement->change_amount : null,
+        ]);
+        $builderItems = $supplementary->map(fn (object $row): array => [
+            'id' => (int) $row->id,
+            'number' => $row->number,
+            'date' => $row->agreement_date,
+            'change_amount' => $row->change_amount !== null ? (float) $row->change_amount : null,
+        ]);
+        $agreementItems = $legacyItems->concat($builderItems)->values();
+        $totalChange = round((float) $agreements->sum('change_amount') + (float) $supplementary->sum('change_amount'), 2);
 
         return array_merge($base, [
             'financial_summary' => [
@@ -1266,14 +1283,9 @@ class CustomerPortalService
                 'warranty_retention_amount' => (string) $this->money($contract->warranty_retention_amount),
             ],
             'agreements_summary' => [
-                'count' => $agreements->count(),
-                'total_change' => round((float) $agreements->sum('change_amount'), 2),
-                'items' => $agreements->map(fn ($agreement): array => [
-                    'id' => $agreement->id,
-                    'number' => $agreement->number,
-                    'date' => optional($agreement->agreement_date)?->format('Y-m-d'),
-                    'change_amount' => $agreement->change_amount !== null ? (float) $agreement->change_amount : null,
-                ])->values()->all(),
+                'count' => $agreementItems->count(),
+                'total_change' => $totalChange,
+                'items' => $agreementItems->all(),
             ],
             'acts_summary' => [
                 'count' => $acts->count(),
@@ -1296,7 +1308,7 @@ class CustomerPortalService
                     'reference' => $payment->metadata['reference_document_number'] ?? $payment->document_number,
                 ])->values()->all(),
             ],
-            'timeline' => $this->buildContractTimeline($contract, $agreements, $acts, $payments, $events),
+            'timeline' => $this->buildContractTimeline($contract, $agreements, $acts, $payments, $events, $supplementary),
         ]);
     }
 
@@ -2068,8 +2080,10 @@ class CustomerPortalService
         Collection $agreements,
         Collection $acts,
         Collection $payments,
-        Collection $events
+        Collection $events,
+        ?Collection $supplementaryDocuments = null
     ): array {
+        $supplementaryDocuments ??= collect();
         $items = collect([
             [
                 'type' => 'contract_created',
@@ -2083,6 +2097,11 @@ class CustomerPortalService
                 'type' => 'agreement',
                 'title' => 'Дополнительное соглашение '.$agreement->number,
                 'date' => optional($agreement->agreement_date)?->format('Y-m-d'),
+            ]))
+            ->merge($supplementaryDocuments->map(fn (object $row): array => [
+                'type' => 'agreement',
+                'title' => trans_message('contracts.customer_timeline_agreement', ['number' => $row->number]),
+                'date' => $row->agreement_date,
             ]))
             ->merge($acts->map(fn ($act): array => [
                 'type' => 'approval',

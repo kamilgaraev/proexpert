@@ -178,6 +178,11 @@ final class ContractDocumentRenderer
         return '<'.$tag.$attributes.'>'.$children.'</'.$tag.'>';
     }
 
+    public function formatValue(array $definition, mixed $value, array $entitySnapshots = []): string
+    {
+        return $this->format($definition, $value, $entitySnapshots);
+    }
+
     private function format(array $definition, mixed $value, array $entitySnapshots): string
     {
         if ($value === null) {
@@ -193,6 +198,7 @@ final class ContractDocumentRenderer
             'date' => implode('.', array_reverse(explode('-', $value))),
             'choice' => array_column($definition['options'], 'label', 'id')[$value],
             'entity' => $entitySnapshots[$value['type'].':'.$value['id']]['label'],
+            'table' => json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
             default => $this->invalid(),
         };
     }
