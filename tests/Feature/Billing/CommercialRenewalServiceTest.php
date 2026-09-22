@@ -79,8 +79,8 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertSame('2026-07-31', $cycle->target_period_start_at->format('Y-m-d'));
         $this->assertSame('2026-08-30', $cycle->target_period_end_at->format('Y-m-d'));
         $this->assertSame('renewal', $order->kind);
-        $this->assertSame(['machinery'], $order->selected_package_slugs);
-        $this->assertSame(790000, $order->amount_minor);
+        $this->assertSame(['working-entry', 'machinery'], $order->selected_package_slugs);
+        $this->assertSame(4580000, $order->amount_minor);
         $this->assertSame(1, $payment->attempt_number);
         $this->assertSame(1, $this->gateway->creates);
     }
@@ -110,8 +110,8 @@ final class CommercialRenewalServiceTest extends TestCase
 
         $this->assertDatabaseCount('commercial_orders', 1);
         $order = CommercialOrder::query()->sole();
-        $this->assertEqualsCanonicalizing(['machinery', 'planning-schedules'], $order->selected_package_slugs);
-        $this->assertEqualsCanonicalizing(['machinery', 'planning-schedules'], $order->current_package_slugs);
+        $this->assertEqualsCanonicalizing(['working-entry', 'machinery'], $order->selected_package_slugs);
+        $this->assertEqualsCanonicalizing(['working-entry', 'machinery'], $order->current_package_slugs);
         $this->assertDatabaseCount('commercial_payments', 1);
         $this->assertSame('grace', $this->account->fresh()->status->value);
         $this->assertSame(
@@ -141,8 +141,9 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertDatabaseCount('commercial_orders', 1);
         $order = CommercialOrder::query()->sole();
         $this->assertSame('full_suite', $order->offer_type->value);
-        $this->assertEqualsCanonicalizing($slugs, $order->selected_package_slugs);
-        $this->assertEqualsCanonicalizing($slugs, $order->current_package_slugs);
+        $expectedSlugs = app(CommercialOfferCalculator::class)->preview([], [], true)['target_package_slugs'];
+        $this->assertEqualsCanonicalizing($expectedSlugs, $order->selected_package_slugs);
+        $this->assertEqualsCanonicalizing($expectedSlugs, $order->current_package_slugs);
         $this->assertDatabaseCount('commercial_payments', 1);
         Carbon::setTestNow();
     }
@@ -364,7 +365,7 @@ final class CommercialRenewalServiceTest extends TestCase
         $order = CommercialOrder::query()->sole();
         $this->assertSame('packages', $order->offer_type->value);
         $this->assertSame($expected['monthly_total_minor'], $order->amount_minor);
-        $this->assertEqualsCanonicalizing($slugs, $order->selected_package_slugs);
+        $this->assertEqualsCanonicalizing($expected['target_package_slugs'], $order->selected_package_slugs);
     }
 
     public function test_full_suite_renews_full_catalog_at_current_full_suite_price(): void
@@ -379,7 +380,10 @@ final class CommercialRenewalServiceTest extends TestCase
         $order = CommercialOrder::query()->sole();
         $this->assertSame('full_suite', $order->offer_type->value);
         $this->assertSame(7_990_000, $order->amount_minor);
-        $this->assertEqualsCanonicalizing($slugs, $order->selected_package_slugs);
+        $this->assertEqualsCanonicalizing(
+            app(CommercialOfferCalculator::class)->preview([], [], true)['target_package_slugs'],
+            $order->selected_package_slugs,
+        );
     }
 
     public function test_scheduled_reduced_contour_is_used_once_at_fixed_anchor(): void
@@ -396,8 +400,8 @@ final class CommercialRenewalServiceTest extends TestCase
             'current_period_start_at' => $anchor->subDays(30)->utc(),
             'current_period_end_at' => $anchor->utc(),
         ]);
-        $this->addPackageRows(['planning-schedules']);
-        OrganizationPackageSubscription::query()->where('package_slug', 'planning-schedules')->update([
+        $this->addPackageRows(['supply-warehouse']);
+        OrganizationPackageSubscription::query()->where('package_slug', 'supply-warehouse')->update([
             'current_period_start_at' => $anchor->subDays(30)->utc(),
             'current_period_end_at' => $anchor->utc(),
         ]);
@@ -410,7 +414,7 @@ final class CommercialRenewalServiceTest extends TestCase
             'offer_type' => 'packages',
             'quote_version' => 1,
             'target_package_slugs' => ['machinery'],
-            'current_package_slugs' => ['machinery', 'planning-schedules'],
+            'current_package_slugs' => ['machinery', 'supply-warehouse'],
             'apply_at' => $this->account->current_period_end_at,
             'client_idempotency_key' => 'scheduled-reduction-at-anchor-0000001',
         ]);
@@ -441,8 +445,8 @@ final class CommercialRenewalServiceTest extends TestCase
         );
 
         $order = CommercialOrder::query()->sole();
-        $this->assertSame(['machinery'], $order->selected_package_slugs);
-        $this->assertSame(790000, $order->amount_minor);
+        $this->assertSame(['working-entry', 'machinery'], $order->selected_package_slugs);
+        $this->assertSame(4580000, $order->amount_minor);
         $this->assertSame('applied', $change->fresh()->status);
         $this->assertSame($order->id, $change->fresh()->commercial_order_id);
         $this->assertNotNull($change->fresh()->applied_at);
@@ -452,7 +456,7 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertSame(
             'expired',
             OrganizationPackageSubscription::query()
-                ->where('package_slug', 'planning-schedules')
+                ->where('package_slug', 'supply-warehouse')
                 ->firstOrFail()
                 ->status
                 ->value,

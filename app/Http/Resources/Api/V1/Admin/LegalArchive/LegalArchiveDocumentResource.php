@@ -122,7 +122,9 @@ final class LegalArchiveDocumentResource extends JsonResource
             'editor' => [
                 'enabled' => (bool) config('legal-document-editor.enabled', false)
                     && (string) config('legal-document-editor.driver', 'onlyoffice') === 'onlyoffice',
-                'current_version_editable' => (bool) $this->resource->getAttribute('api_editor_current_version_editable'),
+                'editing_enabled' => (bool) config('legal-document-editor.editing_enabled', false),
+                'current_version_editable' => (bool) config('legal-document-editor.editing_enabled', false)
+                    && (bool) $this->resource->getAttribute('api_editor_current_version_editable'),
             ],
             'signature_capabilities' => [
                 'electronic_signing_available' => $signatureDriver !== 'disabled'

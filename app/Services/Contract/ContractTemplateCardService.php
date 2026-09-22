@@ -40,7 +40,7 @@ final class ContractTemplateCardService
         $snapshots = $catalog->snapshots($actor, $organizationId, $types, $values);
         $sources = $catalog->sourceValues($actor, $organizationId, $types, $values, null, $context);
         if (($input['resolve_only'] ?? false) === true) {
-            return [...$resolved, 'values' => $values + $sources, 'entity_snapshots' => $snapshots,
+            return [...$resolved, 'values' => $sources + $values, 'entity_snapshots' => $snapshots,
                 'template_id' => $template['template_id'], 'template_version' => $template['template_version'],
                 'parties' => [$parties['first_party'], $parties['second_party']],
                 'card' => null, 'html' => null, 'source_hash' => $this->fingerprint([$context, $sources, $snapshots])];

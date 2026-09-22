@@ -10,22 +10,27 @@ use Tests\TestCase;
 class PackageConfigurationIntegrityTest extends TestCase
 {
     private const EXPECTED_PACKAGES = [
-        'projects-processes' => 9900,
-        'planning-schedules' => 7900,
-        'estimates-norms' => 12900,
-        'quality-safety' => 9900,
-        'pto-handover' => 11900,
-        'supply-warehouse' => 11900,
-        'finance-contracts' => 12900,
-        'workforce-output' => 9900,
-        'machinery' => 7900,
+        'working-entry' => 39900,
+        'supply-warehouse' => 9900,
+        'finance-contracts' => 9900,
+        'pto-handover' => 9900,
+        'quality-safety' => 6900,
+        'workforce-output' => 7900,
+        'machinery' => 5900,
         'sales-contractors' => 7900,
     ];
 
     private const EXPECTED_MODULES = [
-        'projects-processes' => ['site-requests', 'file-management', 'ai-assistant', 'data-export'],
-        'planning-schedules' => ['schedule-management'],
-        'estimates-norms' => ['budget-estimates', 'rate-management', 'ai-estimates'],
+        'working-entry' => [
+            'site-requests',
+            'file-management',
+            'ai-assistant',
+            'data-export',
+            'schedule-management',
+            'budget-estimates',
+            'rate-management',
+            'ai-estimates',
+        ],
         'quality-safety' => [
             'budget-estimates',
             'file-management',
@@ -78,7 +83,7 @@ class PackageConfigurationIntegrityTest extends TestCase
             array_values(self::EXPECTED_PACKAGES),
             array_map(static fn (array $package): int => $package['tiers']['standard']['price'], $packages)
         );
-        $this->assertSame(103000, array_sum(self::EXPECTED_PACKAGES));
+        $this->assertSame(98200, array_sum(self::EXPECTED_PACKAGES));
 
         foreach ($packages as $index => $package) {
             $this->assertSame($index + 1, $package['sort_order']);

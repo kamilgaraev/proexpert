@@ -27,8 +27,8 @@ class CommercialOfferCalculator
         ?CarbonInterface $currentPeriodEndAt = null,
     ): array {
         $catalog = $this->catalogPrices();
-        $target = $this->normalizeSlugs($targetPackageSlugs, $catalog);
-        $current = $this->normalizeSlugs($currentPackageSlugs, $catalog);
+        $target = $this->normalizeSlugs($targetPackageSlugs, $catalog, true);
+        $current = $this->normalizeSlugs($currentPackageSlugs, $catalog, false);
 
         if ($fullSuite) {
             $target = array_keys($catalog);
@@ -84,7 +84,7 @@ class CommercialOfferCalculator
             'savings_percent' => $catalogTotal > 0
                 ? round(($savingsAmount / $catalogTotal) * 100, 2)
                 : 0.0,
-            'recommendation' => ! $fullSuite && count($target) >= $this->recommendationThreshold()
+            'recommendation' => ! $fullSuite && intdiv($monthlyTotal, 100) >= $this->recommendationThreshold()
                 ? 'full_suite'
                 : null,
             'period_start_at' => $periodStart,
@@ -97,6 +97,22 @@ class CommercialOfferCalculator
         if ($quoteVersion !== $this->quoteVersion()) {
             throw new StaleCommercialOfferException('Commercial offer has changed.');
         }
+    }
+
+    public function resolveTargetSlugs(array $slugs, bool $fullSuite): array
+    {
+        $catalog = $this->catalogPrices();
+
+        if ($fullSuite) {
+            return array_keys($catalog);
+        }
+
+        return $this->normalizeSlugs($slugs, $catalog, true);
+    }
+
+    public function resolveCurrentSlugs(array $slugs): array
+    {
+        return $this->normalizeSlugs($slugs, $this->catalogPrices(), false);
     }
 
     private function catalogPrices(): array
@@ -117,8 +133,9 @@ class CommercialOfferCalculator
         return $prices;
     }
 
-    private function normalizeSlugs(array $slugs, array $catalog): array
+    private function normalizeSlugs(array $slugs, array $catalog, bool $attachEntry): array
     {
+        $entry = $this->packageCatalog->entryPackageSlug();
         $selected = [];
 
         foreach ($slugs as $slug) {
@@ -126,7 +143,7 @@ class CommercialOfferCalculator
                 throw new InvalidArgumentException('Package slug must be a string.');
             }
 
-            $slug = trim($slug);
+            $slug = $this->packageCatalog->canonicalizePackageSlug(trim($slug));
 
             if (! array_key_exists($slug, $catalog)) {
                 throw new InvalidArgumentException("Unknown package '{$slug}'.");
@@ -135,10 +152,25 @@ class CommercialOfferCalculator
             $selected[$slug] = true;
         }
 
+        if ($attachEntry && $this->containsContour($selected, $entry) && array_key_exists($entry, $catalog)) {
+            $selected[$entry] = true;
+        }
+
         return array_values(array_filter(
             array_keys($catalog),
             static fn (string $slug): bool => isset($selected[$slug]),
         ));
+    }
+
+    private function containsContour(array $selected, string $entry): bool
+    {
+        foreach ($selected as $slug => $present) {
+            if ($present && $slug !== $entry) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function sumPrices(array $slugs, array $catalog): int
@@ -200,7 +232,7 @@ class CommercialOfferCalculator
 
     private function recommendationThreshold(): int
     {
-        return (int) config('commercial_offers.full_suite_recommendation_threshold', 8);
+        return (int) config('commercial_offers.full_suite_recommendation_threshold', 64000);
     }
 
     private function prorate(int $amountMinor, int $remainingSeconds, int $periodSeconds): int

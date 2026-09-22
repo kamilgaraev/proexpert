@@ -136,7 +136,7 @@ final class CommercialBillingQueryService
             ->pluck('package_slug')
             ->all();
 
-        return array_values($slugs);
+        return $this->calculator->resolveCurrentSlugs(array_values($slugs));
     }
 
     private function orderPayload(CommercialOrder $order, bool $includeAttempts): array

@@ -1,0 +1,39 @@
+{
+    "slug": "working-entry",
+    "name": "Рабочий вход",
+    "description": "Объекты, заявки, графики и сметы в одном платном минимуме.",
+    "sort_order": 1,
+    "schema_version": 2,
+    "business_outcomes": [
+        "Единый порядок работы по объектам",
+        "Управляемые сроки",
+        "Единая сметно-нормативная база"
+    ],
+    "limits": {
+        "users": 10,
+        "projects": 10,
+        "storage_gb": 20,
+        "ai_requests_month": 500,
+        "document_pages_month": 500
+    },
+    "tiers": {
+        "standard": {
+            "label": "Рабочий вход",
+            "description": "Проекты, графики и сметы.",
+            "price": 39900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": [
+                "site-requests",
+                "file-management",
+                "ai-assistant",
+                "data-export",
+                "schedule-management",
+                "budget-estimates",
+                "rate-management",
+                "ai-estimates"
+            ],
+            "highlights": ["Заявки с объекта", "Графики", "Сметы и нормы", "Помощник"]
+        }
+    }
+}

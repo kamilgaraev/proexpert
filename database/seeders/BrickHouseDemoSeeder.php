@@ -604,10 +604,7 @@ class BrickHouseDemoSeeder extends Seeder
     /** @return array<int, string> */
     private function commercialPackageSlugs(): array
     {
-        return [
-            'projects-processes', 'planning-schedules', 'estimates-norms', 'quality-safety', 'pto-handover',
-            'supply-warehouse', 'finance-contracts', 'workforce-output', 'machinery', 'sales-contractors',
-        ];
+        return array_column(app(\App\Services\Modules\PackageCatalogService::class)->allPackages(), 'slug');
     }
 
     /**

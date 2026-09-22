@@ -78,8 +78,10 @@ class CommercialQuotaService
                 continue;
             }
 
-            $package = $this->packageCatalog->package((string) $subscription->package_slug);
-            $packageLimits[$organizationId] += (float) ($package['limits']['ai_estimates_month'] ?? 0);
+            $package = $this->packageCatalog->package(
+                $this->packageCatalog->canonicalizePackageSlug((string) $subscription->package_slug),
+            );
+            $packageLimits[$organizationId] += (float) (is_array($package) ? ($package['limits']['ai_estimates_month'] ?? 0) : 0);
         }
 
         $allocations = OrganizationResourceAllocation::query()
@@ -302,7 +304,10 @@ class CommercialQuotaService
     private function resourceAddons(Organization $organization): array
     {
         $organizationId = (int) $organization->getKey();
-        $activePackages = $this->activePackageSlugs($organizationId);
+        $activePackages = array_values(array_unique(array_map(
+            fn (string $slug): string => $this->packageCatalog->canonicalizePackageSlug($slug),
+            $this->activePackageSlugs($organizationId),
+        )));
         $activeModules = $this->activeModuleSlugs($organizationId, $activePackages);
         $currentQuantities = $this->allocationTotals($organizationId, 'paid_addon');
         $resources = array_values($this->configuredResources());
@@ -360,9 +365,23 @@ class CommercialQuotaService
     private function packageLimits(int $organizationId): array
     {
         $limits = [];
+        $entryCounted = false;
+        $entrySlug = $this->packageCatalog->entryPackageSlug();
 
         foreach ($this->activePackageSlugs($organizationId) as $slug) {
-            $package = $this->packageCatalog->package($slug);
+            $resolved = $this->packageCatalog->canonicalizePackageSlug($slug);
+            if ($resolved === $entrySlug) {
+                if ($entryCounted) {
+                    continue;
+                }
+
+                $entryCounted = true;
+            }
+
+            $package = $this->packageCatalog->package($resolved);
+            if (! is_array($package)) {
+                continue;
+            }
 
             foreach (($package['limits'] ?? []) as $key => $value) {
                 $limits[$key] = ($limits[$key] ?? 0) + (float) $value;
@@ -385,8 +404,13 @@ class CommercialQuotaService
         $normalized = [];
 
         foreach ($packageSlugs as $slug) {
-            if (is_string($slug) && isset($available[$slug])) {
-                $normalized[$slug] = true;
+            if (! is_string($slug)) {
+                continue;
+            }
+
+            $resolved = $this->packageCatalog->canonicalizePackageSlug($slug);
+            if (isset($available[$resolved])) {
+                $normalized[$resolved] = true;
             }
         }
 
@@ -517,9 +541,24 @@ class CommercialQuotaService
     private function packageMonthlyAmountMinor(Organization $organization): int
     {
         $total = 0;
+        $entryCounted = false;
+        $entrySlug = $this->packageCatalog->entryPackageSlug();
 
         foreach ($this->activePackageSlugs((int) $organization->getKey()) as $slug) {
-            $package = $this->packageCatalog->package($slug);
+            $resolved = $this->packageCatalog->canonicalizePackageSlug($slug);
+            if ($resolved === $entrySlug) {
+                if ($entryCounted) {
+                    continue;
+                }
+
+                $entryCounted = true;
+            }
+
+            $package = $this->packageCatalog->package($resolved);
+            if (! is_array($package)) {
+                continue;
+            }
+
             $total += (int) (($package['tiers']['standard']['price'] ?? 0) * 100);
         }
 

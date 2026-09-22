@@ -5,6 +5,7 @@ declare(strict_types=1);
 return [
     'driver' => env('LEGAL_DOCUMENT_EDITOR_DRIVER', 'onlyoffice'),
     'enabled' => filter_var(env('LEGAL_DOCUMENT_EDITOR_ENABLED', false), FILTER_VALIDATE_BOOL),
+    'editing_enabled' => false,
     'url' => env('LEGAL_DOCUMENT_EDITOR_URL'),
     'jwt_secret' => env('LEGAL_DOCUMENT_EDITOR_JWT_SECRET'),
     'callback_base_url' => env('LEGAL_DOCUMENT_EDITOR_CALLBACK_BASE_URL', env('APP_URL')),

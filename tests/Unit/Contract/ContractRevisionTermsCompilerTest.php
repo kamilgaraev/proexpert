@@ -73,7 +73,8 @@ final class ContractRevisionTermsCompilerTest extends TestCase
                 self::fail('Invalid assignment accepted: '.$index);
             } catch (ContractBuilderException $exception) {
                 self::assertSame(422, $exception->getCode());
-                self::assertStringContainsString('Не удалось применить условия редакции', $exception->getMessage());
+                self::assertStringStartsWith('contracts.revision_terms_invalid_', $exception->messageKey());
+                self::assertStringNotContainsString(self::id(0), $exception->getMessage());
             }
         }
     }

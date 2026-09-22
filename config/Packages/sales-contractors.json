@@ -2,7 +2,7 @@
     "slug": "sales-contractors",
     "name": "Продажи и подрядчики",
     "description": "Тендеры, CRM, коммерческие предложения и совместная работа с подрядчиками.",
-    "sort_order": 10,
+    "sort_order": 8,
     "schema_version": 2,
     "business_outcomes": ["Единая воронка от тендера до проекта", "Управляемая работа с подрядчиками"],
     "limits": {

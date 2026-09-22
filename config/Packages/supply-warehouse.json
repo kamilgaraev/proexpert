@@ -2,14 +2,14 @@
     "slug": "supply-warehouse",
     "name": "Снабжение и склад",
     "description": "Закупки, складской учёт и материальный контроль по объектам.",
-    "sort_order": 6,
+    "sort_order": 2,
     "schema_version": 2,
     "business_outcomes": ["Прозрачное снабжение", "Контроль остатков и движения материалов"],
     "tiers": {
         "standard": {
             "label": "Снабжение и склад",
             "description": "Закупки, склад и материальный контроль.",
-            "price": 11900,
+            "price": 9900,
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": ["site-requests", "basic-warehouse", "procurement", "material-analytics"],

@@ -44,6 +44,28 @@ final class ContractStandardTemplateService
         });
     }
 
+    public function systemFields(User $actor, int $organizationId): array
+    {
+        $this->authorize($actor, $organizationId, 'view');
+
+        return (new ContractSystemFields)->catalogue();
+    }
+
+    public function installSystemField(User $actor, int $organizationId, string $code): array
+    {
+        $this->authorize($actor, $organizationId, 'create');
+        $definition = (new ContractSystemFields)->definition($code);
+        (new ContractVariableDefinitionValidator)->validate($definition);
+
+        return DB::transaction(function () use ($actor, $organizationId, $code, $definition): array {
+            Organization::whereKey($organizationId)->lockForUpdate()->firstOrFail();
+            $id = $this->materialize($actor, $organizationId, 'context:field:'.$code, 'variable',
+                trans_message('contract_system_fields.'.str_replace('.', '_', $code)), $definition);
+
+            return app(ContractLibraryService::class)->read($actor, $organizationId, $id, ContractStandardTemplates::VERSION);
+        });
+    }
+
     private function materialize(User $actor, int $organizationId, string $identity, string $kind, string $title, array $content): string
     {
         $key = ContractStandardTemplates::PREFIX.$identity;

@@ -122,6 +122,19 @@ final class ContractDocumentLayoutTest extends TestCase
             $document->loadXML($xml);
             $query = new \DOMXPath($document);
             $query->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+            $query->registerNamespace('v', 'urn:schemas-microsoft-com:vml');
+            $shapes = $query->query('//v:shape');
+            self::assertGreaterThanOrEqual(2, $shapes->length);
+            $horizontalOffsets = [];
+            foreach ($shapes as $shape) {
+                $style = $shape->getAttribute('style');
+                self::assertStringContainsString('mso-position-horizontal:absolute', $style);
+                self::assertStringContainsString('mso-position-vertical:absolute', $style);
+                self::assertMatchesRegularExpression('/margin-top:[1-9][0-9.]*pt/', $style);
+                preg_match('/margin-left:([0-9.]+)pt/', $style, $offset);
+                $horizontalOffsets[] = $offset[1];
+            }
+            self::assertGreaterThanOrEqual(2, count(array_unique($horizontalOffsets)));
             self::assertSame(1, $query->query('/w:document/w:body/w:p')->length);
             self::assertStringContainsString('w:embedRegular', $zip->getFromName('word/fontTable.xml'));
             self::assertNotFalse($zip->getFromName('word/fonts/regular.odttf'));

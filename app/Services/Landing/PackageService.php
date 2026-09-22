@@ -36,8 +36,23 @@ class PackageService
             ->unique()
             ->flip();
 
+        $entrySlug = $this->packageCatalog->entryPackageSlug();
+        $retiredSlugs = $this->packageCatalog->retiredEntryPackageSlugs();
+        $subscriptions = $subscriptions->mapWithKeys(function ($subscription, $slug) {
+            return [$this->packageCatalog->canonicalizePackageSlug((string) $slug) => $subscription];
+        });
+        $entryUsed = $usedTrials->has($entrySlug) || collect($retiredSlugs)->contains(
+            static fn (string $slug): bool => $usedTrials->has($slug),
+        );
+        $paidEntry = $subscriptions->contains(function ($subscription) use ($entrySlug): bool {
+            $source = $subscription->access_source->value ?? $subscription->access_source;
+
+            return $this->packageCatalog->canonicalizePackageSlug((string) $subscription->package_slug) === $entrySlug
+                && in_array($source, ['paid_package', 'full_suite', 'corporate'], true);
+        });
+
         return collect($this->packageCatalog->allPackages())
-            ->map(function (array $package) use ($subscriptions, $usedTrials): array {
+            ->map(function (array $package) use ($subscriptions, $usedTrials, $entrySlug, $entryUsed, $paidEntry): array {
                 $subscription = $subscriptions->get($package['slug']);
                 $standard = $package['tiers']['standard'];
                 $priceMinor = (int) $standard['price'] * 100;
@@ -62,8 +77,12 @@ class PackageService
                     'current_period_start_at' => $subscription?->current_period_start_at?->toISOString(),
                     'current_period_end_at' => $subscription?->current_period_end_at?->toISOString(),
                     'trial_ends_at' => $subscription?->trial_ends_at?->toISOString(),
-                    'trial_used' => $usedTrials->has($package['slug']),
-                    'trial_available' => ! $usedTrials->has($package['slug']),
+                    'trial_used' => $package['slug'] === $entrySlug
+                        ? $entryUsed
+                        : $usedTrials->has($package['slug']),
+                    'trial_available' => $package['slug'] === $entrySlug
+                        ? ! $entryUsed
+                        : (! $usedTrials->has($package['slug']) && $paidEntry),
                 ];
             })
             ->values()

@@ -16,6 +16,10 @@ Route::get('contracts/{contract}/template-card', [\App\Http\Controllers\Api\V1\A
     ->whereNumber('contract')->middleware('authorize:contracts.view')->name('contracts.template-card.show');
 
 Route::prefix('contract-library')->name('contracts.library.')->group(function (): void {
+    Route::get('system-fields', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractStandardTemplateController::class, 'systemFields'])
+        ->middleware('authorize:contracts.library.view')->name('system-fields.index');
+    Route::post('system-fields/install', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractStandardTemplateController::class, 'installSystemField'])
+        ->middleware('authorize:contracts.library.create')->name('system-fields.install');
     Route::get('standard-templates', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractStandardTemplateController::class, 'index'])
         ->middleware('authorize:contracts.library.view')->name('standard-templates.index');
     Route::post('standard-templates/install', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractStandardTemplateController::class, 'install'])
@@ -57,6 +61,9 @@ Route::prefix('contracts/{contract}/builder')->whereNumber('contract')->name('co
     Route::post('assets', [$assets, 'store'])->middleware('authorize:contracts.view')->name('assets.store');
     Route::get('assets/{asset}/download', [$assets, 'download'])->whereNumber('asset')->middleware('authorize:contracts.view')->name('assets.download');
     $draftController = \App\Http\Controllers\Api\V1\Admin\Contract\ContractBuilderDraftController::class;
+    $templateUpdate = \App\Http\Controllers\Api\V1\Admin\Contract\ContractTemplateUpdateController::class;
+    Route::get('template-update', [$templateUpdate, 'preview'])->middleware('authorize:contracts.edit')->name('template-update.preview');
+    Route::post('template-update', [$templateUpdate, 'apply'])->middleware('authorize:contracts.edit')->name('template-update.apply');
     Route::get('draft', [$draftController, 'show'])->middleware('authorize:contracts.view')->name('draft.show');
     Route::put('draft', [$draftController, 'store'])->middleware('authorize:contracts.edit')->name('draft.store');
     Route::get('draft/preview', [$draftController, 'preview'])->middleware('authorize:contracts.view')->name('draft.preview');
@@ -67,6 +74,9 @@ Route::prefix('contracts/{contract}/builder')->whereNumber('contract')->name('co
     Route::post('revisions/{revision}/confirmations', [$confirmations, 'store'])->whereNumber('revision')->middleware('authorize:contracts.revisions.confirm')->name('confirmations.store');
     Route::post('revisions/{revision}/external-confirmation', [$confirmations, 'external'])->whereNumber('revision')->middleware('authorize:contracts.revisions.record_external')->name('confirmations.external');
     $archive = \App\Http\Controllers\Api\V1\Admin\Contract\ContractRevisionArchiveController::class;
+    $revisionDocument = \App\Http\Controllers\Api\V1\Admin\Contract\ContractRevisionDocumentController::class;
+    Route::get('revisions/{revision}/document', [$revisionDocument, 'show'])->whereNumber('revision')->middleware('authorize:contracts.view')->name('document.show');
+    Route::post('revisions/{revision}/document/retry', [$revisionDocument, 'retry'])->whereNumber('revision')->middleware('authorize:contracts.edit')->name('document.retry');
     $activation = \App\Http\Controllers\Api\V1\Admin\Contract\ContractRevisionActivationController::class;
     Route::get('activations', [$activation, 'index'])->middleware('authorize:contracts.view')->name('activations.index');
     Route::get('activations/{activation}', [$activation, 'show'])->whereNumber('activation')->middleware('authorize:contracts.view')->name('activations.show');

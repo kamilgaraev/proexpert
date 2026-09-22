@@ -31,13 +31,16 @@ final class ContractBuilderDraftService
         });
     }
 
-    public function save(User $actor, int $organizationId, int $contractId, int $baseRevision, int $expectedVersion, array $document, array $values, string $key, ?string $sourceRefreshHash = null, ?array $attachmentIds = null): array
+    public function save(User $actor, int $organizationId, int $contractId, int $baseRevision, int $expectedVersion, array $document, array $values, string $key, ?string $sourceRefreshHash = null, ?array $attachmentIds = null, ?array $templateUpdate = null): array
     {
         if ((int) $actor->current_organization_id !== $organizationId
             || !$this->authorization->can($actor, 'contracts.edit', ['organization_id' => $organizationId])) {
             throw new AuthorizationException;
         }
         $payload = [$baseRevision, $expectedVersion, $document, (object) $values];
+        if ($templateUpdate !== null) {
+            $payload[] = $templateUpdate;
+        }
         if ($sourceRefreshHash !== null) {
             if (preg_match('/^[a-f0-9]{64}$/D', $sourceRefreshHash) !== 1) {
                 throw new ContractBuilderException('contracts.builder_input_invalid', 422);
@@ -52,9 +55,9 @@ final class ContractBuilderDraftService
             || count($values) > 500 || strlen($request) > 10 * 1024 * 1024) {
             throw new ContractBuilderException('contracts.builder_input_invalid', 422);
         }
-        $fingerprint = hash('sha256', $request);
+        $fingerprint = $templateUpdate['request_fingerprint'] ?? hash('sha256', $request);
 
-        return DB::transaction(function () use ($actor, $organizationId, $contractId, $baseRevision, $expectedVersion, $document, $values, $key, $fingerprint, $sourceRefreshHash, $attachmentIds): array {
+        return DB::transaction(function () use ($actor, $organizationId, $contractId, $baseRevision, $expectedVersion, $document, $values, $key, $fingerprint, $sourceRefreshHash, $attachmentIds, $templateUpdate): array {
             $contract = Contract::whereKey($contractId)->lockForUpdate()->firstOrFail();
             $this->views->find($actor, $organizationId, $contractId);
             if (!$contract->parties()->where('linked_organization_id', $organizationId)->exists()) {
@@ -79,9 +82,11 @@ final class ContractBuilderDraftService
                 || ($draft === null ? $expectedVersion !== 0 : (int) $draft->version !== $expectedVersion)) {
                 $this->conflict();
             }
-            $definitions = json_decode($base->definitions, true, 512, JSON_THROW_ON_ERROR);
-            $types = array_column($definitions, 'definition', 'id');
             $sourceBasis = $draft !== null && (int) $draft->base_revision_id === (int) $base->id ? $draft : $base;
+            $definitions = $templateUpdate['definitions'] ?? json_decode($sourceBasis->definitions ?? $base->definitions, true, 512, JSON_THROW_ON_ERROR);
+            $blocks = $templateUpdate['blocks'] ?? json_decode($sourceBasis->blocks ?? $base->blocks, true, 512, JSON_THROW_ON_ERROR);
+            $templateVersionId = $templateUpdate['template_version_id'] ?? $sourceBasis->template_version_id ?? $base->template_version_id;
+            $types = array_column($definitions, 'definition', 'id');
             $attachments = json_decode($sourceBasis->attachments ?? $base->attachments, true, 512, JSON_THROW_ON_ERROR);
             if ($attachmentIds !== null) {
                 $attachments = app(ContractBuilderAssetService::class)->attachments($actor, $organizationId, $contractId, $attachmentIds,
@@ -93,6 +98,14 @@ final class ContractBuilderDraftService
             }
             $entitySnapshots = app(ContractEntityCatalog::class)->snapshots($actor, $organizationId, $types, $values, $frozen);
             $frozenValues = $sourceRefreshHash === null ? json_decode($sourceBasis->values, true, 512, JSON_THROW_ON_ERROR) : null;
+            if ($templateUpdate !== null && $frozenValues !== null) {
+                $previousDefinitions = json_decode($sourceBasis->definitions ?? $base->definitions, true, 512, JSON_THROW_ON_ERROR);
+                foreach (array_keys($frozenValues) as $id) {
+                    if (($previousDefinitions[$id]['definition']['source'] ?? null) !== ($definitions[$id]['definition']['source'] ?? null)) {
+                        unset($frozenValues[$id]);
+                    }
+                }
+            }
             $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $values, $frozenValues, ContractContextSourceFields::forContract($contract));
             if ($sourceRefreshHash !== null && !hash_equals($sourceRefreshHash, $this->sourceHash($entitySnapshots, $sourceValues))) {
                 $this->conflict();
@@ -102,6 +115,8 @@ final class ContractBuilderDraftService
                 'values' => $resolved, 'entity_snapshots' => $entitySnapshots]);
             $data = [
                 'base_revision_id' => $base->id, 'version' => $expectedVersion + 1,
+                'template_version_id' => $templateVersionId,
+                'definitions' => $this->json((object) $definitions), 'blocks' => $this->json((object) $blocks),
                 'document' => $this->json($document), 'values' => $this->json((object) $resolved),
                 'entity_snapshots' => $this->json((object) $entitySnapshots),
                 'attachments' => $this->json($attachments),
@@ -184,10 +199,12 @@ final class ContractBuilderDraftService
         return [
             'id' => $draft->id, 'contract_id' => $contractId, 'organization_id' => $organizationId,
             'base_revision' => (int) $base->revision_number, 'version' => (int) $draft->version,
+            'template_version_id' => (int) ($draft->template_version_id ?? $base->template_version_id),
             'document' => json_decode($draft->document, true, 512, JSON_THROW_ON_ERROR),
             'values' => json_decode($draft->values, true, 512, JSON_THROW_ON_ERROR),
             'entity_snapshots' => json_decode($draft->entity_snapshots, true, 512, JSON_THROW_ON_ERROR),
-            'definitions' => $revision['definitions'], 'blocks' => $revision['blocks'],
+            'definitions' => $draft->definitions === null ? $revision['definitions'] : json_decode($draft->definitions, true, 512, JSON_THROW_ON_ERROR),
+            'blocks' => $draft->blocks === null ? $revision['blocks'] : json_decode($draft->blocks, true, 512, JSON_THROW_ON_ERROR),
             'parties' => $revision['parties'], 'attachments' => $draft->attachments === null ? $revision['attachments'] : json_decode($draft->attachments, true, 512, JSON_THROW_ON_ERROR),
         ];
     }

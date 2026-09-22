@@ -49,7 +49,7 @@ class PackageTrialServiceTest extends TestCase
 
         $subscription = app(PackageTrialService::class)->start(
             $this->organization->id,
-            'estimates-norms',
+            'working-entry',
         );
 
         $account = OrganizationCommercialAccount::query()->sole();
@@ -82,7 +82,7 @@ class PackageTrialServiceTest extends TestCase
     {
         $now = CarbonImmutable::parse('2026-07-14 10:00:00', 'UTC');
         CarbonImmutable::setTestNow($now);
-        app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+        app(PackageTrialService::class)->start($this->organization->id, 'working-entry');
 
         $usage = OrganizationPackageTrialUsage::query()->sole();
         $subscription = OrganizationPackageSubscription::query()->sole();
@@ -90,7 +90,7 @@ class PackageTrialServiceTest extends TestCase
         CarbonImmutable::setTestNow($now->addDay());
 
         try {
-            app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+            app(PackageTrialService::class)->start($this->organization->id, 'working-entry');
             $this->fail('Повторный пробный доступ должен быть отклонен.');
         } catch (BusinessLogicException $exception) {
             $this->assertSame(409, $exception->getCode());
@@ -112,7 +112,7 @@ class PackageTrialServiceTest extends TestCase
         $this->expectException(CorporateSelfServiceMutationException::class);
 
         try {
-            app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+            app(PackageTrialService::class)->start($this->organization->id, 'working-entry');
         } finally {
             $this->assertDatabaseCount('organization_package_trial_usages', 0);
             $this->assertDatabaseCount('organization_package_subscriptions', 0);
@@ -125,29 +125,45 @@ class PackageTrialServiceTest extends TestCase
         OrganizationPackageSubscription::create([
             'organization_id' => $this->organization->id,
             'commercial_account_id' => $account->id,
-            'package_slug' => 'machinery',
+            'package_slug' => 'estimates-norms',
             'status' => 'canceled',
             'access_source' => 'paid_package',
-            'price_paid' => 7900,
+            'price_paid' => 12900,
             'canceled_at' => now()->subDay(),
         ]);
 
         $this->expectException(BusinessLogicException::class);
         $this->expectExceptionCode(409);
 
-        app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+        app(PackageTrialService::class)->start($this->organization->id, 'working-entry');
     }
 
-    public function test_allows_different_packages_and_same_package_for_another_organization(): void
+    public function test_contour_trial_requires_paid_entry_and_entry_trial_is_per_organization(): void
     {
         $other = $this->createOrganization('Другая организация');
 
-        app(PackageTrialService::class)->start($this->organization->id, 'machinery');
-        app(PackageTrialService::class)->start($this->organization->id, 'estimates-norms');
-        app(PackageTrialService::class)->start($other->id, 'machinery');
+        try {
+            app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+            $this->fail('Контур без оплаченного входа должен быть отклонен.');
+        } catch (BusinessLogicException $exception) {
+            $this->assertSame(409, $exception->getCode());
+        }
 
-        $this->assertSame(3, OrganizationPackageTrialUsage::query()->count());
-        $this->assertSame(3, OrganizationPackageSubscription::query()->count());
+        app(PackageTrialService::class)->start($this->organization->id, 'working-entry');
+        app(PackageTrialService::class)->start($other->id, 'working-entry');
+
+        $this->assertSame(2, OrganizationPackageTrialUsage::query()->count());
+        $this->assertSame(0, OrganizationPackageSubscription::query()->where('package_slug', 'machinery')->count());
+    }
+
+    public function test_paid_entry_allows_one_contour_trial(): void
+    {
+        $this->paidEntry($this->organization);
+
+        $subscription = app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+
+        $this->assertSame('trialing', $subscription->status->value);
+        $this->assertSame('machinery', $subscription->package_slug);
     }
 
     public function test_rejects_unknown_package_without_creating_commercial_state(): void
@@ -168,7 +184,7 @@ class PackageTrialServiceTest extends TestCase
     {
         $armed = true;
         OrganizationPackageTrialUsage::creating(function (OrganizationPackageTrialUsage $usage) use (&$armed): void {
-            if (! $armed || $usage->package_slug !== 'machinery') {
+            if (! $armed || $usage->package_slug !== 'working-entry') {
                 return;
             }
 
@@ -186,14 +202,14 @@ class PackageTrialServiceTest extends TestCase
         $this->expectException(BusinessLogicException::class);
         $this->expectExceptionCode(409);
 
-        app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+        app(PackageTrialService::class)->start($this->organization->id, 'working-entry');
     }
 
     public function test_does_not_map_unrelated_unique_violation_to_trial_conflict(): void
     {
         $armed = true;
         OrganizationPackageTrialUsage::creating(function (OrganizationPackageTrialUsage $usage) use (&$armed): void {
-            if (! $armed || $usage->package_slug !== 'estimates-norms') {
+            if (! $armed || $usage->package_slug !== 'working-entry') {
                 return;
             }
 
@@ -204,7 +220,7 @@ class PackageTrialServiceTest extends TestCase
 
         $this->expectException(QueryException::class);
 
-        app(PackageTrialService::class)->start($this->organization->id, 'estimates-norms');
+        app(PackageTrialService::class)->start($this->organization->id, 'working-entry');
     }
 
     public function test_maps_named_postgresql_trial_constraint_to_business_conflict(): void
@@ -222,6 +238,7 @@ class PackageTrialServiceTest extends TestCase
         $this->expectException(BusinessLogicException::class);
         $this->expectExceptionCode(409);
 
+        $this->paidEntry($this->organization);
         app(PackageTrialService::class)->start($this->organization->id, 'quality-safety');
     }
 
@@ -239,12 +256,13 @@ class PackageTrialServiceTest extends TestCase
 
         $this->expectException(QueryException::class);
 
+        $this->paidEntry($this->organization);
         app(PackageTrialService::class)->start($this->organization->id, 'pto-handover');
     }
 
     public function test_trial_usage_model_refuses_update_and_delete(): void
     {
-        app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+        app(PackageTrialService::class)->start($this->organization->id, 'working-entry');
         $usage = OrganizationPackageTrialUsage::query()->sole();
         $originalEndsAt = $usage->ends_at->format('Y-m-d H:i:s');
 
@@ -278,6 +296,20 @@ class PackageTrialServiceTest extends TestCase
         $previous->errorInfo = ['23505', '7', $message];
 
         return new QueryException('pgsql', 'insert into organization_package_trial_usages', [], $previous);
+    }
+
+    private function paidEntry(Organization $organization): void
+    {
+        $account = $this->createAccount($organization);
+        OrganizationPackageSubscription::create([
+            'organization_id' => $organization->id,
+            'commercial_account_id' => $account->id,
+            'package_slug' => 'working-entry',
+            'status' => 'active',
+            'access_source' => 'paid_package',
+            'price_paid' => 39900,
+            'current_period_end_at' => now()->addDays(20),
+        ]);
     }
 
     private function createAccount(Organization $organization): OrganizationCommercialAccount
@@ -346,7 +378,7 @@ class PackageTrialServiceTest extends TestCase
             $table->timestamp('started_at');
             $table->timestamp('ends_at');
             $table->timestamps();
-            $table->unique(['organization_id', 'package_slug']);
+            $table->unique(['organization_id', 'package_slug'], 'org_package_trial_usage_unique');
         });
 
         Schema::create('unrelated_unique_guards', function (Blueprint $table): void {

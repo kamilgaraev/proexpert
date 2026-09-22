@@ -42,6 +42,14 @@ class PackageTrialService
             throw new BusinessLogicException(trans_message('landing.packages.trial_package_not_found'), 404);
         }
 
+        $this->selfServiceGuard->assertCanMutate(
+            OrganizationCommercialAccount::query()->where('organization_id', $organizationId)->first(),
+        );
+
+        if ($packageSlug !== $this->packageCatalog->entryPackageSlug() && ! $this->hasPaidEntry($organizationId)) {
+            throw new BusinessLogicException(trans_message('landing.packages.trial_entry_required'), 409);
+        }
+
         try {
             $subscription = DB::transaction(function () use ($organizationId, $packageSlug, $responsibleUserId): OrganizationPackageSubscription {
                 $organization = Organization::query()
@@ -119,14 +127,35 @@ class PackageTrialService
 
     private function trialWasUsed(int $organizationId, string $packageSlug): bool
     {
+        $slugs = $packageSlug === $this->packageCatalog->entryPackageSlug()
+            ? array_merge([$packageSlug], $this->packageCatalog->retiredEntryPackageSlugs())
+            : [$packageSlug];
+
         return OrganizationPackageTrialUsage::query()
             ->where('organization_id', $organizationId)
-            ->where('package_slug', $packageSlug)
+            ->whereIn('package_slug', $slugs)
             ->exists()
             || OrganizationPackageSubscription::query()
                 ->where('organization_id', $organizationId)
-                ->where('package_slug', $packageSlug)
+                ->whereIn('package_slug', $slugs)
                 ->exists();
+    }
+
+    private function hasPaidEntry(int $organizationId): bool
+    {
+        return OrganizationPackageSubscription::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('package_slug', array_merge(
+                [$this->packageCatalog->entryPackageSlug()],
+                $this->packageCatalog->retiredEntryPackageSlugs(),
+            ))
+            ->whereIn('access_source', ['paid_package', 'full_suite', 'corporate'])
+            ->whereIn('status', ['active', 'grace', 'scheduled_for_removal'])
+            ->where(function ($query): void {
+                $query->whereNull('current_period_end_at')
+                    ->orWhere('current_period_end_at', '>', now());
+            })
+            ->exists();
     }
 
     private function trialHours(): int

@@ -10,8 +10,32 @@ use Brick\Math\RoundingMode;
 
 final class ContractRevisionTermsCompiler
 {
+    private array $fieldTitles = [];
+
+    public function validateBasis(array $resolved): void
+    {
+        $this->fieldTitles = array_column($resolved['definitions'], 'title', 'id');
+        $based = [];
+        $walk = function (array $node, bool $inClause = false) use (&$walk, &$based): void {
+            $inClause = $inClause || $node['type'] === 'clause';
+            if ($inClause && in_array($node['type'], ['variable', 'repeatRows'], true)) {
+                $based[$node['attrs']['variableId']] = true;
+            }
+            foreach ($node['content'] ?? [] as $child) {
+                $walk($child, $inClause);
+            }
+        };
+        $walk($resolved['document']);
+        foreach ($resolved['definitions'] as $entry) {
+            if (isset($entry['definition']['assignment']) && !isset($based[$entry['id']])) {
+                $this->invalid($entry['id'], 'basis');
+            }
+        }
+    }
+
     public function compile(array $revision): array
     {
+        $this->fieldTitles = array_column($revision['definitions'], 'title', 'id');
         (new ContractDocumentRenderer)->render($revision['document'], $revision['definitions'], $revision['values'], $revision['entity_snapshots'] ?? []);
         $references = [];
         $visible = [];
@@ -55,8 +79,11 @@ final class ContractRevisionTermsCompiler
             if (!isset($visible[$id])) {
                 continue;
             }
-            if ($visible[$id] === [] || ($revision['values'][$id] ?? null) === null) {
+            if ($visible[$id] === []) {
                 $this->invalid($id, 'basis');
+            }
+            if (($revision['values'][$id] ?? null) === null) {
+                $this->invalid($id, 'missing_value');
             }
             $value = $revision['values'][$id];
             $target = $assignment['target'];
@@ -160,6 +187,8 @@ final class ContractRevisionTermsCompiler
 
     private function invalid(string $id, string $reason): never
     {
-        throw new ContractBuilderException('contracts.revision_terms_invalid', 422, ['variable_id' => $id, 'reason' => $reason]);
+        throw new ContractBuilderException('contracts.revision_terms_invalid_'.$reason, 422,
+            ['field_title' => $this->fieldTitles[$id] ?? trans_message('contracts.revision_terms_field')],
+            $id !== '' ? 'values.'.$id : null);
     }
 }
