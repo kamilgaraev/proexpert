@@ -220,6 +220,7 @@ final class CommercialRenewalService
                     ->orderBy('package_slug')
                     ->pluck('package_slug')
                     ->all();
+                $currentSlugs = $this->calculator->resolveCurrentSlugs($currentSlugs);
                 $slugs = $scheduledChange?->target_package_slugs ?? $currentSlugs;
                 if ($slugs === []) {
                     return [];
@@ -347,7 +348,9 @@ final class CommercialRenewalService
             ->whereIn('access_source', ['paid_package', 'full_suite', 'corporate'])
             ->where('current_period_end_at', $periodStart)
             ->each(function (OrganizationPackageSubscription $subscription) use ($targetPackageSlugs, $periodStart): void {
-                if (in_array($subscription->package_slug, $targetPackageSlugs, true)) {
+                $resolvedSlug = $this->calculator->resolveCurrentSlugs([(string) $subscription->package_slug])[0]
+                    ?? (string) $subscription->package_slug;
+                if (in_array($resolvedSlug, $targetPackageSlugs, true)) {
                     $subscription->forceFill(['status' => 'grace'])->save();
 
                     return;

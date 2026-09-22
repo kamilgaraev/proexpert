@@ -71,7 +71,7 @@ class CommercialWebhookServiceTest extends TestCase
             'organization_id' => $this->organization->id,
             'commercial_account_id' => $this->account->id,
             'user_id' => $this->user->id,
-            'status' => 'pending_payment', 'offer_type' => 'packages', 'quote_version' => 1,
+            'status' => 'pending_payment', 'offer_type' => 'packages', 'quote_version' => 2,
             'selected_package_slugs' => ['machinery'], 'current_package_slugs' => [],
             'amount_minor' => 790000, 'amount' => '7900.00', 'currency' => 'RUB',
             'period_start_at' => '2026-07-14 10:00:00', 'period_end_at' => '2026-08-14 10:00:00',
@@ -129,6 +129,23 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame(1, Notification::query()->count());
         $this->assertSame(['in_app'], Notification::query()->sole()->channels);
         $this->assertSame(1, CommercialWebhookEvent::query()->count());
+    }
+
+    public function test_outdated_quote_version_goes_to_manual_review_without_activation(): void
+    {
+        $this->order->forceFill(['quote_version' => 1])->save();
+        $this->gateway->payment = $this->paymentResult(saved: true);
+
+        $result = app(CommercialWebhookService::class)->process(
+            $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+            '185.71.76.1',
+        );
+
+        $this->assertSame('manual_review', $result);
+        $this->assertSame('pending_payment', $this->order->fresh()->status->value);
+        $this->assertTrue($this->payment->fresh()->reconciliation_required);
+        $this->assertSame(0, OrganizationPackageSubscription::query()->count());
+        $this->assertSame('free', $this->account->fresh()->status->value);
     }
 
     public function test_late_purchase_success_during_grace_requires_manual_reconciliation_without_activation(): void
@@ -360,7 +377,7 @@ class CommercialWebhookServiceTest extends TestCase
             '185.71.76.1',
         );
 
-        $this->assertSame(10, OrganizationPackageSubscription::query()->where('access_source', 'full_suite')->count());
+        $this->assertSame(8, OrganizationPackageSubscription::query()->where('access_source', 'full_suite')->count());
         $this->assertSame('active', OrganizationPackageSubscription::query()->where('package_slug', 'corporate-extra')->sole()->status->value);
         $this->assertSame('trialing', OrganizationPackageSubscription::query()->where('package_slug', 'trial-extra')->sole()->status->value);
     }
@@ -972,7 +989,7 @@ class CommercialWebhookServiceTest extends TestCase
             'provider_status' => 'created',
             'amount_minor' => 790000,
             'currency' => 'RUB',
-            'provider_idempotency_key' => 'attempt-'.$attempt,
+            'provider_idempotency_key' => sprintf('22222222-2222-4222-8222-%012d', $attempt),
             'payment_method_saved' => false,
             'refunded_amount_minor' => 0,
         ]);

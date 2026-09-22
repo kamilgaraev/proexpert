@@ -106,7 +106,7 @@ class OrganizationEntitlementService
         array &$sources,
         OrganizationPackageSubscription $packageSubscription
     ): void {
-        $packageSlug = $packageSubscription->package_slug;
+        $packageSlug = $this->packageCatalog->canonicalizePackageSlug($packageSubscription->package_slug);
 
         if ($this->packageCatalog->package($packageSlug) === null) {
             return;

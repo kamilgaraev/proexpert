@@ -78,8 +78,10 @@ class CommercialCheckoutService
                 throw new InvalidArgumentException('Resource quote version is stale.');
             }
 
-            $serverCurrent = $this->currentPackageSlugs((int) $organization->getKey());
-            $clientCurrent = $this->normalizeClientSlugs($input['current_package_slugs'] ?? []);
+            $serverCurrent = $this->calculator->resolveCurrentSlugs(
+                $this->currentPackageSlugs((int) $organization->getKey()),
+            );
+            $clientCurrent = $this->calculator->resolveCurrentSlugs($input['current_package_slugs'] ?? []);
 
             if ($clientCurrent !== $serverCurrent) {
                 throw new CommercialCheckoutConflictException('Current commercial contour has changed.');
@@ -234,10 +236,10 @@ class CommercialCheckoutService
         $requestedTargets = $this->normalizeClientSlugs($input['target_package_slugs']);
         $sameTarget = $requestedFullSuite
             ? $requestedTargets === []
-            : $requestedTargets
-                === $this->normalizeClientSlugs($order->selected_package_slugs);
-        $sameCurrent = $this->normalizeClientSlugs($input['current_package_slugs'] ?? [])
-            === $this->normalizeClientSlugs($order->current_package_slugs);
+            : $this->calculator->resolveTargetSlugs($input['target_package_slugs'], false)
+                === $this->calculator->resolveTargetSlugs($order->selected_package_slugs ?? [], false);
+        $sameCurrent = $this->calculator->resolveCurrentSlugs($input['current_package_slugs'] ?? [])
+            === $this->calculator->resolveCurrentSlugs($order->current_package_slugs ?? []);
         $sameResources = $this->normalizeResourceRequest($input['resources'] ?? [])
             === $this->normalizeResourceRequest($order->selected_resource_addons ?? []);
 

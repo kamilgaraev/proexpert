@@ -10,12 +10,15 @@ use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationPackageTrialUsage;
+use App\Enums\AuthSessionStatus;
 use App\Models\User;
+use App\Models\UserAuthSession;
+use App\Services\Auth\WebAuthTokenService;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Str;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 class OrganizationPackageControllerTest extends TestCase
 {
@@ -29,6 +32,7 @@ class OrganizationPackageControllerTest extends TestCase
     {
         parent::setUp();
 
+        config()->set('auth_tokens.sessions.enabled', false);
         $this->createSchema();
         $this->organization = Organization::withoutEvents(static fn (): Organization => Organization::create([
             'name' => 'Runtime package organization',
@@ -86,26 +90,23 @@ class OrganizationPackageControllerTest extends TestCase
             'current_period_end_at' => now()->addDays(30),
         ]);
 
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
-            ->fromUser($this->user);
-
-        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+        $response = $this->asLanding($this->user)
             ->getJson('/api/v1/landing/packages');
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonCount(10, 'data')
+            ->assertJsonCount(8, 'data')
             ->assertJsonFragment([
-                'slug' => 'estimates-norms',
-                'price' => '12900.00',
-                'price_minor' => 1290000,
+                'slug' => 'working-entry',
+                'price' => '39900.00',
+                'price_minor' => 3990000,
                 'is_active' => true,
                 'status' => 'active',
                 'access_source' => 'paid_package',
             ]);
 
         $payload = $response->json('data');
-        $active = collect($payload)->firstWhere('slug', 'estimates-norms');
+        $active = collect($payload)->firstWhere('slug', 'working-entry');
         $this->assertIsArray($active);
         $module = collect($active['modules'])->firstWhere('slug', 'budget-estimates');
         $this->assertIsArray($module);
@@ -124,9 +125,7 @@ class OrganizationPackageControllerTest extends TestCase
             'started_at' => now()->subDays(5),
             'ends_at' => now()->subDays(2),
         ]);
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])->fromUser($this->user);
-
-        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+        $response = $this->asLanding($this->user)
             ->getJson('/api/v1/landing/packages');
 
         $response->assertOk()
@@ -136,7 +135,12 @@ class OrganizationPackageControllerTest extends TestCase
                 'trial_used' => true,
             ])
             ->assertJsonFragment([
-                'slug' => 'planning-schedules',
+                'slug' => 'supply-warehouse',
+                'trial_available' => false,
+                'trial_used' => false,
+            ])
+            ->assertJsonFragment([
+                'slug' => 'working-entry',
                 'trial_available' => true,
                 'trial_used' => false,
             ]);
@@ -161,9 +165,7 @@ class OrganizationPackageControllerTest extends TestCase
             'trial_started_at' => now()->subDays(5),
             'trial_ends_at' => now()->subDays(2),
         ]);
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])->fromUser($this->user);
-
-        $this->withHeader('Authorization', 'Bearer '.$token)
+        $this->asLanding($this->user)
             ->getJson('/api/v1/landing/packages')
             ->assertOk()
             ->assertJsonFragment([
@@ -196,24 +198,18 @@ class OrganizationPackageControllerTest extends TestCase
             'is_active' => true,
         ]);
 
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
-            ->fromUser($user);
-
-        $this->withHeader('Authorization', 'Bearer '.$token)
+        $this->asLanding($user)
             ->getJson('/api/v1/landing/packages')
             ->assertForbidden()
-            ->assertJsonPath('message', trans_message('landing.organization_context_missing'));
+            ->assertJsonPath('message', trans_message('auth.access_denied'));
     }
 
     public function test_owner_can_start_trial_with_server_dates_and_without_payment_fields(): void
     {
         $now = CarbonImmutable::parse('2026-07-14 12:00:00', 'UTC');
         CarbonImmutable::setTestNow($now);
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
-            ->fromUser($this->user);
-
-        $response = $this->withHeader('Authorization', 'Bearer '.$token)
-            ->postJson('/api/v1/landing/packages/machinery/trial', [
+        $response = $this->asLanding($this->user)
+            ->postJson('/api/v1/landing/packages/working-entry/trial', [
                 'trial_started_at' => '2030-01-01T00:00:00Z',
                 'trial_ends_at' => '2031-01-01T00:00:00Z',
                 'auto_renew_enabled' => true,
@@ -221,7 +217,7 @@ class OrganizationPackageControllerTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.package_slug', 'machinery')
+            ->assertJsonPath('data.package_slug', 'working-entry')
             ->assertJsonPath('data.status', 'trialing')
             ->assertJsonPath('data.access_source', 'trial')
             ->assertJsonPath('data.duration_hours', 72)
@@ -230,7 +226,7 @@ class OrganizationPackageControllerTest extends TestCase
 
         $this->assertDatabaseHas('organization_package_subscriptions', [
             'organization_id' => $this->organization->id,
-            'package_slug' => 'machinery',
+            'package_slug' => 'working-entry',
             'status' => 'trialing',
             'access_source' => 'trial',
             'price_paid' => 0,
@@ -269,10 +265,7 @@ class OrganizationPackageControllerTest extends TestCase
             'context_id' => AuthorizationContext::getOrganizationContext($this->organization->id)->id,
             'is_active' => true,
         ]);
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
-            ->fromUser($accountant);
-
-        $this->withHeader('Authorization', 'Bearer '.$token)
+        $this->asLanding($accountant)
             ->postJson('/api/v1/landing/packages/machinery/trial')
             ->assertForbidden();
     }
@@ -293,31 +286,23 @@ class OrganizationPackageControllerTest extends TestCase
             'context_id' => AuthorizationContext::getSystemContext()->id,
             'is_active' => true,
         ]);
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
-            ->fromUser($user);
-
-        $this->withHeader('Authorization', 'Bearer '.$token)
+        $this->asLanding($user)
             ->postJson('/api/v1/landing/packages/machinery/trial')
             ->assertForbidden();
     }
 
     public function test_start_trial_maps_unknown_and_repeat_requests_to_business_errors(): void
     {
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
-            ->fromUser($this->user);
-
-        $this->withHeader('Authorization', 'Bearer '.$token)
+        $this->asLanding($this->user)
             ->postJson('/api/v1/landing/packages/unknown-package/trial')
             ->assertNotFound()
             ->assertJsonPath('success', false)
             ->assertJsonPath('message', trans_message('landing.packages.trial_package_not_found'));
 
-        $this->withHeader('Authorization', 'Bearer '.$token)
-            ->postJson('/api/v1/landing/packages/machinery/trial')
+        $this->postJson('/api/v1/landing/packages/working-entry/trial')
             ->assertCreated();
 
-        $this->withHeader('Authorization', 'Bearer '.$token)
-            ->postJson('/api/v1/landing/packages/machinery/trial')
+        $this->postJson('/api/v1/landing/packages/working-entry/trial')
             ->assertConflict()
             ->assertJsonPath('success', false)
             ->assertJsonPath('message', trans_message('landing.packages.trial_already_used'));
@@ -333,10 +318,7 @@ class OrganizationPackageControllerTest extends TestCase
             'quote_version' => 1,
             'auto_renew_enabled' => false,
         ]);
-        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
-            ->fromUser($this->user);
-
-        $this->withHeader('Authorization', 'Bearer '.$token)
+        $this->asLanding($this->user)
             ->postJson('/api/v1/landing/packages/machinery/trial')
             ->assertConflict()
             ->assertJsonPath('message', trans_message('billing.commercial.corporate_self_service_disabled'));
@@ -364,6 +346,36 @@ class OrganizationPackageControllerTest extends TestCase
         $this->assertNull($routes->getByName('api.v1.landing.billing.enterprise_constructor.checkout'));
     }
 
+    private function asLanding(User $user): self
+    {
+        $sessionUuid = (string) Str::uuid();
+        UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $this->organization->id,
+            'session_uuid' => $sessionUuid,
+            'device_fingerprint' => hash('sha256', $sessionUuid),
+            'device_name' => 'Package test',
+            'ip_address' => '127.0.0.1',
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+        $tokens = app(WebAuthTokenService::class)->issue(
+            $user,
+            'lk',
+            $sessionUuid,
+            (int) $this->organization->id,
+            false,
+        );
+
+        return $this->withHeaders([
+            'Authorization' => 'Bearer '.$tokens->accessToken,
+            'Origin' => (string) config('web_auth.origins.lk.0'),
+        ]);
+    }
+
     private function createSchema(): void
     {
         Schema::dropIfExists('organization_package_trial_usages');
@@ -376,6 +388,7 @@ class OrganizationPackageControllerTest extends TestCase
         Schema::dropIfExists('organization_custom_roles');
         Schema::dropIfExists('authorization_contexts');
         Schema::dropIfExists('organization_user');
+        Schema::dropIfExists('user_auth_sessions');
         Schema::dropIfExists('users');
         Schema::dropIfExists('organizations');
 
@@ -459,6 +472,26 @@ class OrganizationPackageControllerTest extends TestCase
             $table->rememberToken();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('user_auth_sessions', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('user_id');
+            $table->foreignId('organization_id')->nullable();
+            $table->uuid('session_uuid')->unique();
+            $table->string('device_fingerprint', 64);
+            $table->string('device_name')->nullable();
+            $table->text('user_agent')->nullable();
+            $table->string('ip_address', 45)->nullable();
+            $table->unsignedSmallInteger('risk_score')->default(0);
+            $table->json('risk_flags')->nullable();
+            $table->string('status');
+            $table->boolean('is_trusted')->default(false);
+            $table->timestampTz('first_seen_at')->nullable();
+            $table->timestampTz('last_seen_at')->nullable();
+            $table->timestampTz('revoked_at')->nullable();
+            $table->string('revoked_reason')->nullable();
+            $table->timestampsTz();
         });
 
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
