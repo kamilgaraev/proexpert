@@ -326,6 +326,72 @@ class ProjectOrganizationController extends Controller
         }
     }
 
+    public function hierarchy(Request $request): JsonResponse
+    {
+        try {
+            [$project] = $this->getProjectWithAccess($request);
+
+            return AdminResponse::success($this->projectParticipantService->getHierarchy($project));
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
+        } catch (\RuntimeException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 500);
+        } catch (\Throwable $exception) {
+            Log::error('project.participants.hierarchy.failed', [
+                'project_id' => $request->route('project'),
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('project.hierarchy_load_error'), 500);
+        }
+    }
+
+    public function updateHierarchy(Request $request): JsonResponse
+    {
+        try {
+            [$project, , $projectContext] = $this->getProjectWithAccess($request);
+            if (!$projectContext->roleConfig->canInviteParticipants) {
+                return AdminResponse::error(trans_message('project.no_role_change_permission'), 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'root_organization_id' => 'required|integer|min:1',
+                'parents' => 'required|array',
+                'parents.*.organization_id' => 'required|integer|min:1|distinct',
+                'parents.*.parent_organization_id' => 'required|integer|min:1',
+            ]);
+            if ($validator->fails()) {
+                return AdminResponse::error(
+                    trans_message('project.validation_failed'),
+                    422,
+                    $validator->errors()
+                );
+            }
+
+            $hierarchy = $this->projectParticipantService->saveHierarchy(
+                $project,
+                (int) $request->input('root_organization_id'),
+                $request->input('parents'),
+                $request->user()
+            );
+
+            return AdminResponse::success($hierarchy, trans_message('project.hierarchy_saved'));
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
+        } catch (\RuntimeException $exception) {
+            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 500);
+        } catch (\Throwable $exception) {
+            Log::error('project.participants.hierarchy.update.failed', [
+                'project_id' => $request->route('project'),
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('project.hierarchy_save_error'), 500);
+        }
+    }
+
     private function getProjectWithAccess(Request $request): array
     {
         $project = $this->getProjectModel($request);

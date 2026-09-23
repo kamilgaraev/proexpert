@@ -90,6 +90,12 @@ Route::get('/projects/{project}/work-types', [ProjectController::class, 'getProj
 Route::get('/projects/{project}/organizations', [ProjectOrganizationController::class, 'index'])
     ->middleware('project.context')
     ->name('projects.organizations.index');
+Route::get('/projects/{project}/participants/hierarchy', [ProjectOrganizationController::class, 'hierarchy'])
+    ->middleware('project.context')
+    ->name('projects.participants.hierarchy');
+Route::put('/projects/{project}/participants/hierarchy', [ProjectOrganizationController::class, 'updateHierarchy'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.participants.hierarchy.update');
 Route::post('/projects/{project}/organizations', [ProjectOrganizationController::class, 'store'])
     ->middleware(['project.context', 'authorize:projects.organizations.manage'])
     ->name('projects.organizations.store');

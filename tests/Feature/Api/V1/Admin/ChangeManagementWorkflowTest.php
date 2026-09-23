@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Features\ChangeManagement\Http\Resources\ChangeRfiResource;
+use App\BusinessModules\Features\ChangeManagement\Models\ChangeManagementRfi;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
 use App\BusinessModules\Features\ChangeManagement\Services\ChangeManagementService;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -13,7 +15,11 @@ use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Auth\WebAuthTokenService;
+use App\Services\Project\ProjectParticipantService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -27,6 +33,23 @@ final class ChangeManagementWorkflowTest extends TestCase
     {
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $recipientContext = AdminApiTestContext::create();
+        DB::table('project_organization')->insert([
+            'project_id' => $project->id,
+            'organization_id' => $recipientContext->organization->id,
+            'role' => 'contractor',
+            'role_new' => 'contractor',
+            'is_active' => true,
+            'added_by_user_id' => $context->user->id,
+            'invited_at' => now(),
+            'accepted_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        app(ProjectParticipantService::class)->saveHierarchy($project, (int) $context->organization->id, [[
+            'organization_id' => (int) $recipientContext->organization->id,
+            'parent_organization_id' => (int) $context->organization->id,
+        ]], $context->user);
         $contractor = Contractor::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Подрядчик допработ',
@@ -59,6 +82,7 @@ final class ChangeManagementWorkflowTest extends TestCase
                 'subject' => 'Уточнить узел армирования',
                 'question' => 'Нужен ли дополнительный выпуск арматуры?',
                 'addressee_type' => 'designer',
+                'recipient_organization_id' => $recipientContext->organization->id,
                 'response_due_date' => now()->addDays(3)->toDateString(),
             ]);
 
@@ -68,13 +92,80 @@ final class ChangeManagementWorkflowTest extends TestCase
         $rfiId = (int) $rfi->json('data.id');
 
         $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/admin/change-management/rfis/{$rfiId}/attachments", [
+                'file' => UploadedFile::fake()->create('payload.exe', 1, 'application/octet-stream'),
+            ])
+            ->assertStatus(422);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/change-management/rfis?project_id='.$project->id)
+            ->assertOk()
+            ->assertJsonPath('data.0.history', []);
+
+        $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/change-management/rfis/{$rfiId}/send")
             ->assertOk()
             ->assertJsonPath('data.status', 'sent');
 
-        $this->withHeaders($context->authHeaders())
+        $authorRfis = app(ChangeManagementService::class)->paginateRfis(
+            (int) $context->organization->id,
+            20,
+            ['project_id' => $project->id],
+            true,
+            (int) $context->user->id,
+        );
+        $this->assertContains($rfiId, array_map(static fn (ChangeManagementRfi $item): int => (int) $item->id, $authorRfis->items()));
+
+        $recipientRfis = app(ChangeManagementService::class)->paginateRfis(
+            (int) $recipientContext->organization->id,
+            20,
+            ['project_id' => $project->id, 'direction' => 'incoming'],
+            true,
+            (int) $recipientContext->user->id,
+        );
+        $this->assertContains($rfiId, array_map(static fn (ChangeManagementRfi $item): int => (int) $item->id, $recipientRfis->items()));
+
+        $legacyRfi = ChangeManagementRfi::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'created_by_user_id' => $context->user->id,
+            'rfi_number' => 'RFI-LEGACY',
+            'subject' => 'Старый запрос без адресата',
+            'question' => 'Вопрос из старой записи.',
+            'addressee_type' => 'organization',
+            'status' => 'sent',
+            'attachments' => [],
+            'metadata' => [],
+        ]);
+        $authorRfisAfterLegacy = app(ChangeManagementService::class)->paginateRfis(
+            (int) $context->organization->id,
+            20,
+            ['project_id' => $project->id],
+            true,
+            (int) $context->user->id,
+        );
+        $this->assertNotContains(
+            (int) $legacyRfi->id,
+            array_map(static fn (ChangeManagementRfi $item): int => (int) $item->id, $authorRfisAfterLegacy->items()),
+        );
+
+        $this->withHeaders($recipientContext->authHeaders())
             ->postJson("/api/v1/admin/change-management/rfis/{$rfiId}/answer", [
                 'answer' => 'Выпуск нужен по оси Б.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'answered');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/change-management/rfis/{$rfiId}/clarification", [
+                'message' => 'Укажите точную отметку.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'clarification_requested');
+
+        $this->withHeaders($recipientContext->authHeaders())
+            ->postJson("/api/v1/admin/change-management/rfis/{$rfiId}/answer", [
+                'answer' => 'Отметка +3.200.',
             ])
             ->assertOk()
             ->assertJsonPath('data.status', 'answered');
@@ -83,6 +174,16 @@ final class ChangeManagementWorkflowTest extends TestCase
             ->postJson("/api/v1/admin/change-management/rfis/{$rfiId}/accept")
             ->assertOk()
             ->assertJsonPath('data.status', 'accepted');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/change-management/rfis/{$rfiId}/close")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'closed')
+            ->assertJsonPath('data.history.6.event', 'closed');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/change-management/rfis/{$rfiId}/send")
+            ->assertStatus(409);
 
         $change = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/change-management/changes', [
@@ -219,6 +320,30 @@ final class ChangeManagementWorkflowTest extends TestCase
         $foreignContext = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Подрядчик локального изменения',
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $contractor->id,
+            'number' => 'CHG-SCOPE-001',
+            'date' => '2026-08-01',
+            'subject' => 'Работы по проекту',
+            'total_amount' => 1000,
+            'currency' => 'RUB',
+            'status' => 'active',
+        ]);
+        $allocationId = DB::table('contract_project_allocations')->insertGetId([
+            'contract_id' => $contract->id,
+            'project_id' => $project->id,
+            'allocation_type' => 'fixed',
+            'allocated_amount' => 1000,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $this->allowAccess();
 
         $foreign = $this->withHeaders($context->authHeaders())
@@ -238,6 +363,13 @@ final class ChangeManagementWorkflowTest extends TestCase
                 'reason' => 'field_condition',
                 'description' => 'Без согласования заказчика.',
                 'initiator_type' => 'contractor',
+                'monetary_context' => [
+                    'currency' => 'RUB',
+                    'contract_project_allocation_id' => $allocationId,
+                    'contingency_opening_amount' => '0.00',
+                    'contingency_allocation_amount' => '0.00',
+                    'contingency_release_amount' => '0.00',
+                ],
             ]);
         $change->assertCreated();
         $changeId = (int) $change->json('data.id');
@@ -256,18 +388,131 @@ final class ChangeManagementWorkflowTest extends TestCase
             ->postJson("/api/v1/admin/change-management/changes/{$changeId}/impact", [
                 'cost_delta' => 0,
                 'schedule_delta_days' => 0,
-                'requires_customer_approval' => false,
+                'requires_customer_approval' => true,
             ])
             ->assertOk();
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/change-management/changes/{$changeId}/internal-review")
             ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/change-management/changes/{$changeId}/customer-review")
+            ->assertOk();
+
+        $customerSession = DB::table('user_auth_sessions')
+            ->where('user_id', $context->user->id)
+            ->where('organization_id', $context->organization->id)
+            ->value('session_uuid');
+        $customerToken = app(WebAuthTokenService::class)->issue(
+            $context->user,
+            'customer',
+            (string) $customerSession,
+            (int) $context->organization->id,
+            false,
+        );
+        $this->withHeaders([
+            'Authorization' => 'Bearer '.$customerToken->accessToken,
+            'Accept' => 'application/json',
+            'Origin' => 'https://customer.1мост.рф',
+        ])->postJson("/api/v1/customer/change-management/changes/{$changeId}/approve", [
+            'approved_cost_amount' => '0.00',
+            'comment' => 'Согласовано.',
+        ])->assertOk()
+            ->assertJsonPath('data.status', 'approved');
 
         $customerApproval = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/customer/change-management/changes/{$changeId}/approve", [
-                'comment' => 'Trying to approve when customer approval is not required.',
+                'approved_cost_amount' => '0.00',
+                'comment' => 'Запрос с токеном админки должен быть отклонён.',
             ]);
-        $customerApproval->assertStatus(422);
+        $this->assertContains($customerApproval->getStatusCode(), [401, 403]);
+    }
+
+    public function test_change_management_rfi_routes_reject_tokens_from_the_other_interface(): void
+    {
+        $adminContext = AdminApiTestContext::create();
+        $customerContext = AdminApiTestContext::create(roleSlug: 'customer_owner');
+        $foreignContext = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $adminContext->organization->id]);
+        $this->allowAccess();
+        $customerSession = DB::table('user_auth_sessions')
+            ->where('user_id', $customerContext->user->id)
+            ->where('organization_id', $customerContext->organization->id)
+            ->value('session_uuid');
+        $customerToken = app(WebAuthTokenService::class)->issue(
+            $customerContext->user,
+            'customer',
+            (string) $customerSession,
+            (int) $customerContext->organization->id,
+            false,
+        );
+
+        $adminOnCustomer = $this->withHeaders($adminContext->authHeaders())
+            ->getJson('/api/v1/customer/change-management/rfis?project_id=1')
+            ->getStatusCode();
+        $this->assertContains($adminOnCustomer, [401, 403]);
+
+        $customerOnAdmin = $this->withHeaders([
+            'Authorization' => 'Bearer '.$customerToken->accessToken,
+            'Accept' => 'application/json',
+        ])->getJson('/api/v1/admin/change-management/rfis')
+            ->getStatusCode();
+        $this->assertContains($customerOnAdmin, [401, 403]);
+
+        $rfi = $this->withHeaders($adminContext->authHeaders())
+            ->postJson('/api/v1/admin/change-management/rfis', [
+                'project_id' => $project->id,
+                'subject' => 'Изоляция RFI',
+                'question' => 'Чужая организация не должна видеть вопрос.',
+            ])
+            ->assertCreated();
+        $rfiId = (int) $rfi->json('data.id');
+
+        $this->withHeaders($foreignContext->authHeaders())
+            ->getJson("/api/v1/admin/change-management/rfis/{$rfiId}")
+            ->assertStatus(404);
+
+        $this->withHeaders($foreignContext->authHeaders())
+            ->getJson("/api/v1/admin/change-management/rfis/{$rfiId}/attachments/00000000-0000-4000-8000-000000000000/download")
+            ->assertStatus(404);
+
+        $this->withHeaders($foreignContext->authHeaders())
+            ->getJson('/api/v1/admin/change-management/rfis?project_id='.$project->id)
+            ->assertStatus(403);
+    }
+
+    public function test_rfi_service_and_available_actions_enforce_actor_permissions(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'customer_viewer');
+        $this->instance(AuthorizationService::class, \Mockery::mock(AuthorizationService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('can')->andReturn(false);
+        }));
+        $rfi = new ChangeManagementRfi([
+            'organization_id' => $context->organization->id,
+            'recipient_organization_id' => 2,
+            'project_id' => 1,
+            'status' => 'draft',
+            'attachments' => [],
+            'metadata' => [],
+        ]);
+
+        $request = Request::create('/api/v1/admin/change-management/rfis/1', 'GET');
+        $request->setUserResolver(static fn (): User => $context->user);
+        $request->attributes->set('current_organization_id', $context->organization->id);
+        $resource = (new ChangeRfiResource($rfi))->toArray($request);
+        $this->assertSame([], $resource['available_actions']);
+
+        $service = app(ChangeManagementService::class);
+        foreach ([
+            fn () => $service->sendRfi($rfi, (int) $context->organization->id, (int) $context->user->id, 2),
+            fn () => $service->rfiAttachmentUrl($rfi, (int) $context->organization->id, (int) $context->user->id, 'attachment-id'),
+        ] as $action) {
+            try {
+                $action();
+                $this->fail('Direct RFI service invocation must enforce actor permissions.');
+            } catch (\DomainException) {
+                $this->assertTrue(true);
+            }
+        }
     }
 
     private function allowAccess(): void

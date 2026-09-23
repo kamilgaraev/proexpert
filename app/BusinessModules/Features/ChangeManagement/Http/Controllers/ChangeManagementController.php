@@ -19,6 +19,7 @@ use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 final class ChangeManagementController extends Controller
 {
@@ -30,10 +31,46 @@ final class ChangeManagementController extends Controller
             return $this->paginated($this->service->paginateRfis(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
-                $request->only(['project_id', 'status'])
+                $request->only(['project_id', 'status']),
+                false,
+                (int) $request->user()?->id,
             ), ChangeRfiResource::class);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'rfis.index');
+        }
+    }
+
+    public function rfiRecipients(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate(['project_id' => ['required', 'integer', 'min:1']]);
+
+            return AdminResponse::success(['items' => $this->service->rfiRecipients(
+                (int) $validated['project_id'],
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+            )]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'rfis.recipients');
+        }
+    }
+
+    public function showRfi(Request $request, int $id): JsonResponse
+    {
+        try {
+            return AdminResponse::success(new ChangeRfiResource($this->service->findVisibleRfi(
+                (int) $request->attributes->get('current_organization_id'), $id, (int) $request->user()?->id,
+            )));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 404);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'rfis.show');
         }
     }
 
@@ -45,9 +82,10 @@ final class ChangeManagementController extends Controller
                 'rfi_number' => ['nullable', 'string', 'max:80'],
                 'subject' => ['required', 'string', 'max:255'],
                 'question' => ['required', 'string', 'max:5000'],
-                'addressee_type' => ['required', 'string', 'max:80'],
+                'addressee_type' => ['nullable', 'string', 'max:80'],
+                'recipient_organization_id' => ['nullable', 'integer', 'min:1'],
+                'due_date' => ['nullable', 'date'],
                 'response_due_date' => ['nullable', 'date'],
-                'attachments' => ['nullable', 'array'],
                 'metadata' => ['nullable', 'array'],
             ]);
 
@@ -71,7 +109,18 @@ final class ChangeManagementController extends Controller
 
     public function sendRfi(Request $request, int $id): JsonResponse
     {
-        return $this->rfiAction($request, $id, fn ($rfi) => $this->service->sendRfi($rfi));
+        try {
+            $validated = $request->validate(['recipient_organization_id' => ['nullable', 'integer', 'min:1']]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->rfiAction($request, $id, fn ($rfi, int $organizationId) => $this->service->sendRfi(
+            $rfi,
+            $organizationId,
+            (int) $request->user()?->id,
+            isset($validated['recipient_organization_id']) ? (int) $validated['recipient_organization_id'] : null,
+        ));
     }
 
     public function answerRfi(Request $request, int $id): JsonResponse
@@ -82,12 +131,71 @@ final class ChangeManagementController extends Controller
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
         }
 
-        return $this->rfiAction($request, $id, fn ($rfi) => $this->service->answerRfi($rfi, $validated['answer']));
+        return $this->rfiAction($request, $id, fn ($rfi, int $organizationId) => $this->service->answerRfi($rfi, $organizationId, (int) $request->user()?->id, $validated['answer']));
     }
 
     public function acceptRfi(Request $request, int $id): JsonResponse
     {
-        return $this->rfiAction($request, $id, fn ($rfi) => $this->service->acceptRfi($rfi));
+        return $this->rfiAction($request, $id, fn ($rfi, int $organizationId) => $this->service->acceptRfi($rfi, $organizationId, (int) $request->user()?->id));
+    }
+
+    public function requestRfiClarification(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate(['message' => ['required', 'string', 'max:5000']]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->rfiAction($request, $id, fn ($rfi, int $organizationId) => $this->service->requestRfiClarification($rfi, $organizationId, (int) $request->user()?->id, $validated['message']));
+    }
+
+    public function closeRfi(Request $request, int $id): JsonResponse
+    {
+        return $this->rfiAction($request, $id, fn ($rfi, int $organizationId) => $this->service->closeRfi($rfi, $organizationId, (int) $request->user()?->id));
+    }
+
+    public function reassignRfi(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'recipient_organization_id' => ['required', 'integer', 'min:1'],
+                'reason' => ['required', 'string', 'max:2000'],
+            ]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->rfiAction($request, $id, fn ($rfi, int $organizationId) => $this->service->reassignRfi($rfi, $organizationId, (int) $request->user()?->id, (int) $validated['recipient_organization_id'], $validated['reason']));
+    }
+
+    public function uploadRfiAttachment(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate(['file' => ['required', 'file', 'max:20480', 'mimes:pdf,doc,docx,xls,xlsx,png,jpg,jpeg']]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->rfiAction($request, $id, fn ($rfi, int $organizationId) => $this->service->attachRfiFile($rfi, $organizationId, (int) $request->user()?->id, $validated['file']));
+    }
+
+    public function downloadRfiAttachment(Request $request, int $id, string $attachmentId): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $userId = (int) $request->user()?->id;
+            $url = $this->service->rfiAttachmentUrl($this->service->findVisibleRfi($organizationId, $id, $userId), $organizationId, $userId, $attachmentId);
+            if ($url === null) {
+                return AdminResponse::error(trans_message('change_management.errors.rfi_attachment_unavailable'), 503);
+            }
+
+            return AdminResponse::success(['url' => $url, 'expires_in' => 300]);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 404);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'rfis.attachment.download');
+        }
     }
 
     public function changes(Request $request): JsonResponse
@@ -261,12 +369,14 @@ final class ChangeManagementController extends Controller
     private function rfiAction(Request $request, int $id, callable $callback): JsonResponse
     {
         try {
-            return AdminResponse::success(new ChangeRfiResource($callback($this->service->findRfi(
-                (int) $request->attributes->get('current_organization_id'),
-                $id
-            ))));
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $rfi = $this->service->findVisibleRfi($organizationId, $id, (int) $request->user()?->id);
+
+            return AdminResponse::success(new ChangeRfiResource($callback($rfi, $organizationId)));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
+        } catch (HttpExceptionInterface $exception) {
+            return AdminResponse::error($exception->getMessage(), $exception->getStatusCode());
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'rfis.action');
         }
