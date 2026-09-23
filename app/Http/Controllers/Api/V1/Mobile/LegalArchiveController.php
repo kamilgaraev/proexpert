@@ -33,11 +33,48 @@ final class LegalArchiveController extends Controller
             if ($actor === null || $request->integer('project_id') < 1) {
                 return MobileResponse::error(trans_message('project.validation_failed'), 422);
             }
-            $documents = $this->archive->documents($actor, (int) $actor->current_organization_id, $request->integer('project_id'));
+            $validated = $request->validate([
+                'page' => ['sometimes', 'integer', 'min:1'],
+                'per_page' => ['sometimes', 'integer', 'min:10', 'max:100'],
+                'sync_after_id' => ['sometimes', 'integer', 'min:0'],
+                'sync_max_id' => ['sometimes', 'integer', 'min:0'],
+            ]);
+            if (isset($validated['sync_max_id']) && ! array_key_exists('sync_after_id', $validated)) {
+                return MobileResponse::error(trans_message('legal_archive.messages.validation_error'), 422);
+            }
+            $cursorMode = array_key_exists('sync_after_id', $validated);
+            if ($cursorMode && ($validated['page'] ?? 1) > 1) {
+                return MobileResponse::error(trans_message('legal_archive.messages.validation_error'), 422);
+            }
+            $syncMaxId = $cursorMode
+                ? (int) ($validated['sync_max_id'] ?? $this->archive->syncMaximumId($actor, (int) $actor->current_organization_id, $request->integer('project_id')))
+                : null;
+            $documents = $this->archive->documents(
+                $actor,
+                (int) $actor->current_organization_id,
+                $request->integer('project_id'),
+                $cursorMode ? 1 : ($validated['page'] ?? null),
+                $validated['per_page'] ?? null,
+                $cursorMode ? (int) $validated['sync_after_id'] : null,
+                $syncMaxId,
+            );
             $summaries = $this->archive->summaries($actor, $documents->getCollection());
             $data = $documents->getCollection()->map(fn ($document): array => (new LegalArchiveDocumentResource($document, $summaries[(int) $document->id] ?? []))->resolve())->all();
 
-            return MobileResponse::success(['data' => $data]);
+            $hasMore = $documents->currentPage() < $documents->lastPage();
+            $meta = $cursorMode ? [
+                'next_cursor' => $data === [] ? (int) $validated['sync_after_id'] : (int) end($data)['id'],
+                'has_more' => $hasMore,
+                'sync_max_id' => $syncMaxId,
+                'per_page' => $documents->perPage(),
+            ] : [
+                'current_page' => $documents->currentPage(),
+                'last_page' => $documents->lastPage(),
+                'total' => $documents->total(),
+                'has_more' => $hasMore,
+            ];
+
+            return MobileResponse::success(['data' => $data, 'meta' => $meta]);
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'index');
         }

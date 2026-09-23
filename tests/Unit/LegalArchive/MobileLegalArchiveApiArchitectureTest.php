@@ -66,6 +66,29 @@ final class MobileLegalArchiveApiArchitectureTest extends TestCase
         }
     }
 
+    public function test_mobile_document_list_keeps_legacy_data_and_exposes_stable_sync_cursor_metadata(): void
+    {
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Mobile/LegalArchiveController.php');
+        $service = file_get_contents(__DIR__.'/../../../app/Services/Mobile/MobileLegalArchiveService.php');
+        $registry = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/LegalArchiveRegistryService.php');
+        self::assertIsString($controller);
+        self::assertIsString($service);
+        self::assertIsString($registry);
+
+        foreach (["'sync_after_id'", "'sync_max_id'", "'per_page'"] as $parameter) {
+            self::assertStringContainsString($parameter, $controller);
+        }
+        foreach (["'next_cursor'", "'has_more'", "'sync_max_id'", "'current_page'", "'last_page'", "'total'"] as $metaKey) {
+            self::assertStringContainsString($metaKey, $controller);
+        }
+        self::assertStringContainsString('\'data\' => $data', $controller);
+        self::assertStringContainsString('\'sort_by\' => $syncAfterId === null ? \'updated_at\' : \'id\'', $service);
+        self::assertStringContainsString("if (\$cursorMode && (\$validated['page'] ?? 1) > 1)", $controller);
+        self::assertStringContainsString("->paginate(\$perPage, ['*'], 'page', isset(\$filters['page']) ? (int) \$filters['page'] : null)", $registry);
+        self::assertStringContainsString('$query->where(\'id\', \'>\', (int) $filters[\'sync_after_id\'])', $registry);
+        self::assertStringContainsString('$query->where(\'id\', \'<=\', (int) $filters[\'sync_max_id\'])', $registry);
+    }
+
     public function test_mobile_failure_mapping_preserves_validation_authorization_and_lock_contracts(): void
     {
         $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Mobile/LegalArchiveController.php');

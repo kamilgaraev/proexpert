@@ -16,6 +16,7 @@ use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\ContractorType;
 use App\Enums\ProjectOrganizationRole;
 use App\Models\Contract;
+use App\Models\ContractOrganizationView;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
@@ -519,13 +520,45 @@ class ContractCoreExperienceControllerTest extends TestCase
             ->putJson("/api/v1/admin/projects/{$project->id}/contracts/{$otherContract->id}", [
                 'number' => 'LEAKED-UPDATE',
             ]);
-        $otherUpdateResponse->assertNotFound();
+        $otherUpdateResponse->assertForbidden();
         $this->assertSame('OTHER-CONTRACT', $otherContract->fresh()->number);
 
         $otherDeleteResponse = $this->withHeaders($participantContext->authHeaders())
             ->deleteJson("/api/v1/admin/projects/{$project->id}/contracts/{$otherContract->id}");
         $otherDeleteResponse->assertConflict();
         $this->assertNotSoftDeleted('contracts', ['id' => $otherContract->id]);
+    }
+
+    public function test_shared_view_contract_cannot_be_updated_by_another_organization_with_edit_permission(): void
+    {
+        $actorContext = AdminApiTestContext::create();
+        $ownerOrganization = Organization::factory()->verified()->create();
+        $project = Project::factory()->create(['organization_id' => $ownerOrganization->id]);
+        $contractor = $this->createContractor($ownerOrganization, 'Shared View Contractor');
+        $contract = $this->createContract($ownerOrganization, $project, $contractor, [
+            'number' => 'SHARED-VIEW-LOCKED',
+        ]);
+        ContractOrganizationView::query()->create([
+            'contract_id' => $contract->id,
+            'organization_id' => $actorContext->organization->id,
+        ]);
+        $this->allowAdminAccess();
+
+        self::assertNotNull(app(\App\Services\Contract\ContractAccessService::class)
+            ->findAccessible($contract->id, $actorContext->organization->id, $project->id));
+        self::assertTrue(app(AuthorizationService::class)->can(
+            $actorContext->user,
+            'contracts.edit',
+            ['organization_id' => $actorContext->organization->id, 'project_id' => $project->id],
+        ));
+
+        $response = $this->withHeaders($actorContext->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}", [
+                'number' => 'SHARED-VIEW-LEAKED-UPDATE',
+            ]);
+
+        $response->assertForbidden();
+        self::assertSame('SHARED-VIEW-LOCKED', $contract->fresh()->number);
     }
 
     public function test_contractor_participant_can_open_contract_owned_by_current_organization(): void

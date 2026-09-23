@@ -6,6 +6,7 @@ namespace Tests\Unit\BusinessModules\Core\Payments;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
+use App\BusinessModules\Core\Payments\Services\ContractPaymentLockService;
 use App\BusinessModules\Core\Payments\Services\PaymentAuditService;
 use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
@@ -81,6 +82,7 @@ final class PaymentDocumentServiceTest extends TestCase
             Mockery::mock(PaymentAuditService::class),
             new PurchaseOrderContractRequirementService,
             new PaymentScheduleLedgerReconciliationService,
+            new ContractPaymentLockService,
         );
 
         $this->expectException(DomainException::class);

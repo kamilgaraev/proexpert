@@ -35,6 +35,7 @@ class PaymentDocumentService
         private readonly PaymentAuditService $auditService,
         private readonly PurchaseOrderContractRequirementService $contractRequirement,
         private readonly PaymentScheduleLedgerReconciliationService $scheduleReconciliation,
+        private readonly ContractPaymentLockService $contractPaymentLock,
     ) {}
 
     /**
@@ -443,6 +444,7 @@ class PaymentDocumentService
         DB::beginTransaction();
 
         try {
+            $this->contractPaymentLock->lockForPaymentDocument($document);
             $document = PaymentDocument::query()
                 ->whereKey($document->id)
                 ->lockForUpdate()
@@ -631,6 +633,10 @@ class PaymentDocumentService
             $this->scheduleReconciliation->reconcile($freshDocument, $transactionModel);
             $this->budgetLimitService->convertAfterPayment($freshDocument, $transactionModel);
             $this->synchronizeEstimateItemsPaymentProgress($document);
+            $this->contractPaymentLock->synchronizeActualAdvanceAmount(
+                $freshDocument,
+                isset($paymentData['created_by_user_id']) ? (int) $paymentData['created_by_user_id'] : null,
+            );
             DB::afterCommit(fn () => $this->notifyPaymentRecipientAfterCommit($document->id, $transaction));
 
             Log::info('payment_document.payment_registered', [

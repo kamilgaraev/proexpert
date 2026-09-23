@@ -22,6 +22,7 @@ class PaymentTransactionService
         private readonly PaymentBudgetLimitService $budgetLimitService,
         private readonly PurchaseOrderContractRequirementService $contractRequirement,
         private readonly PaymentScheduleLedgerReconciliationService $scheduleReconciliation,
+        private readonly ContractPaymentLockService $contractPaymentLock,
     ) {}
 
     /**
@@ -39,6 +40,7 @@ class PaymentTransactionService
         }
 
         return DB::transaction(function () use ($document, $data) {
+            $this->contractPaymentLock->lockForPaymentDocument($document);
             $document = PaymentDocument::query()
                 ->whereKey($document->id)
                 ->lockForUpdate()
@@ -74,6 +76,10 @@ class PaymentTransactionService
             $freshDocument = $document->fresh();
             $this->scheduleReconciliation->reconcile($freshDocument, $transaction);
             $this->budgetLimitService->convertAfterPayment($freshDocument, $transaction);
+            $this->contractPaymentLock->synchronizeActualAdvanceAmount(
+                $freshDocument,
+                isset($data['created_by_user_id']) ? (int) $data['created_by_user_id'] : auth()->id(),
+            );
 
             \Log::info('payments.transaction.registered', [
                 'transaction_id' => $transaction->id,

@@ -43,10 +43,12 @@ final class LegalDocumentDownloadService
             throw new AuthorizationException($this->message('file_access_denied'));
         }
 
-        return $this->issueTemporaryUrl($version, $actor, $purpose, $ttlMinutes, static function (LegalArchiveDocument $document) use ($contract): void {
+        return $this->issueTemporaryUrl($version, $actor, $purpose, $ttlMinutes, function (LegalArchiveDocument $document) use ($contract, $actor, $purpose): void {
             if ((int) $document->id !== (int) $contract->legal_archive_document_id) {
                 throw new AuthorizationException('legal_contract_document_mismatch');
             }
+
+            $this->access->authorize($actor, $document, $purpose === 'download' ? 'download' : 'view');
         });
     }
 

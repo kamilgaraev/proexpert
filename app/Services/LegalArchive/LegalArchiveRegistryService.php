@@ -76,10 +76,15 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             ])
             ->orderBy($sortBy, $sortDirection)
             ->orderBy('id', $sortDirection)
-            ->paginate($perPage);
+            ->paginate($perPage, ['*'], 'page', isset($filters['page']) ? (int) $filters['page'] : null);
         $this->attachResolvedProfiles($documents->getCollection());
 
         return $documents;
+    }
+
+    public function maximumId(User $actor, int $organizationId, array $filters): int
+    {
+        return (int) $this->baseQuery($actor, $organizationId, $filters)->max('id');
     }
 
     public function summary(User $actor, int $organizationId, array $filters): array
@@ -514,6 +519,13 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
 
         if (! empty($filters['project_id'])) {
             $query->where('primary_project_id', (int) $filters['project_id']);
+        }
+
+        if (isset($filters['sync_after_id'])) {
+            $query->where('id', '>', (int) $filters['sync_after_id']);
+        }
+        if (isset($filters['sync_max_id'])) {
+            $query->where('id', '<=', (int) $filters['sync_max_id']);
         }
 
         if (! empty($filters['counterparty'])) {

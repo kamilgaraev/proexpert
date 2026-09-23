@@ -237,6 +237,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             }
             $actor = $this->actor($request);
             $found = $context->document;
+            $this->access->authorize($actor, $found, 'view');
             $this->registry->attachResolvedProfiles(collect([$found]));
             $summary = $this->actions->forMany($actor, collect([$found]))[(int) $found->id];
             $found->setAttribute(
