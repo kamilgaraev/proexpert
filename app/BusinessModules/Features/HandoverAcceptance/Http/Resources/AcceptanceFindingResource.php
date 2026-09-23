@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\HandoverAcceptance\Http\Resources;
 
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceFinding;
 use App\BusinessModules\Features\QualityControl\Http\Resources\QualityDefectResource;
+use App\Http\Resources\MobileEvidencePhotoPresenter;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -32,6 +33,7 @@ final class AcceptanceFindingResource extends JsonResource
             'status' => $finding->status,
             'resolution_comment' => $finding->resolution_comment,
             'resolved_at' => $finding->resolved_at?->toIso8601String(),
+            'photos' => $finding->relationLoaded('files') ? MobileEvidencePhotoPresenter::present($finding->files) : [],
             'quality_defect' => $finding->relationLoaded('qualityDefect') && $finding->qualityDefect ? new QualityDefectResource($finding->qualityDefect) : null,
         ];
     }

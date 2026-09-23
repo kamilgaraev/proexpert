@@ -25,7 +25,7 @@ final class TimeTrackingMobileTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAccess(['time_tracking.view', 'time_tracking.create', 'time_tracking.edit', 'time_tracking.submit']);
 
-        $timer = $this->withHeaders($context->authHeaders())
+        $timer = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/time-tracking/timer/start', [
                 'project_id' => $project->id,
                 'work_date' => '2026-05-22',
@@ -38,13 +38,13 @@ final class TimeTrackingMobileTest extends TestCase
             ->assertJsonPath('data.hours_worked', null)
             ->json('data');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/time-tracking/daily-summary?date=2026-05-22&project_id=' . $project->id)
             ->assertOk()
             ->assertJsonPath('data.active_timer.id', $timer['id'])
             ->assertJsonPath('data.totals.by_status.draft', 1);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/time-tracking/entries/' . $timer['id'] . '/stop', [
                 'end_time' => '12:00',
                 'break_time' => 0.5,
@@ -53,7 +53,7 @@ final class TimeTrackingMobileTest extends TestCase
             ->assertJsonPath('data.is_active_timer', false)
             ->assertJsonPath('data.hours_worked', 3.5);
 
-        $manual = $this->withHeaders($context->authHeaders())
+        $manual = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/time-tracking/entries', [
                 'project_id' => $project->id,
                 'work_date' => '2026-05-22',
@@ -65,7 +65,7 @@ final class TimeTrackingMobileTest extends TestCase
             ->assertJsonPath('data.status', 'draft')
             ->json('data');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/time-tracking/entries/' . $manual['id'] . '/submit')
             ->assertOk()
             ->assertJsonPath('data.status', 'submitted')
@@ -93,7 +93,7 @@ final class TimeTrackingMobileTest extends TestCase
         ]);
         $this->allowAccess(['time_tracking.view', 'time_tracking.edit', 'time_tracking.submit']);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/correction', [
                 'hours_worked' => 5.5,
                 'correction_reason' => 'Добавлен фактический демонтаж',
@@ -116,7 +116,7 @@ final class TimeTrackingMobileTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAccess(['time_tracking.view']);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/time-tracking/timer/start', [
                 'project_id' => $project->id,
                 'work_date' => '2026-05-22',
@@ -126,6 +126,42 @@ final class TimeTrackingMobileTest extends TestCase
             ])
             ->assertStatus(403)
             ->assertJsonPath('error_code', 'PERMISSION_DENIED');
+    }
+
+    public function test_mobile_rejection_requires_its_permission_and_submitted_state(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'worker');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $entry = $this->timeEntry($context, $project, ['status' => 'submitted']);
+        $this->allowAccess(['time_tracking.view', 'time_tracking.reject']);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/reject', [
+                'reason' => 'Не совпадают подтвержденные часы',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'rejected')
+            ->assertJsonPath('data.rejection_reason', 'Не совпадают подтвержденные часы');
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/reject', [
+                'reason' => 'Повторное отклонение',
+            ])
+            ->assertStatus(409);
+    }
+
+    public function test_mobile_rejection_requires_its_separate_permission(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'worker');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $entry = $this->timeEntry($context, $project, ['status' => 'submitted']);
+        $this->allowAccess(['time_tracking.view']);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/reject', [
+                'reason' => 'Не совпадают подтвержденные часы',
+            ])
+            ->assertStatus(403);
     }
 
     private function timeEntry(AdminApiTestContext $context, Project $project, array $attributes = []): TimeEntry

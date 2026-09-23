@@ -29,6 +29,8 @@ class SiteRequestGroup extends Model
         'title',
         'status',
         'description',
+        'idempotency_key',
+        'idempotency_hash',
     ];
 
     protected $casts = [

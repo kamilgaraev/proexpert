@@ -19,6 +19,7 @@ use App\Models\Project;
 use App\Services\Storage\FileService;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
@@ -32,6 +33,13 @@ final class HandoverAcceptanceService
         'findings.qualityDefect',
         'signoffs',
         'handoverPackage.documents',
+    ];
+
+    private const SCOPE_EVIDENCE_RELATIONS = [
+        'files.organization',
+        'checklists.items.files.organization',
+        'sessions.findings.files.organization',
+        'findings.files.organization',
     ];
 
     public function __construct(
@@ -102,7 +110,7 @@ final class HandoverAcceptanceService
             'description' => $data['description'] ?? null,
             'status' => 'planned',
             'planned_acceptance_date' => $data['planned_acceptance_date'] ?? null,
-        ])->fresh(self::SCOPE_RELATIONS);
+        ])->fresh($this->scopeRelationsWithEvidence());
     }
 
     public function addChecklist(AcceptanceScope $scope, array $data): AcceptanceChecklist
@@ -152,7 +160,7 @@ final class HandoverAcceptanceService
             $this->assertStatus($scope, ['planned', 'reopened', 'rejected']);
             $scope->update(['status' => 'in_progress']);
 
-            return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh($this->scopeRelationsWithEvidence());
         });
     }
 
@@ -205,13 +213,14 @@ final class HandoverAcceptanceService
                 'severity' => $data['severity'],
                 'status' => 'open',
             ]);
+            $this->storePhotoEvidence($finding, $data['photos'] ?? [], $userId);
 
             if ($rework === null || ! in_array($scope->status, ['accepted', 'handed_over'], true)) {
                 $scope->update(['status' => 'findings_open']);
             }
             $session->update(['status' => 'findings_open']);
 
-            return $finding->fresh(['qualityDefect']);
+            return $finding->fresh(['qualityDefect', 'files.organization']);
         });
     }
 
@@ -234,8 +243,9 @@ final class HandoverAcceptanceService
                 'status' => 'resolved', 'resolved_by_user_id' => $userId,
                 'resolution_comment' => $data['resolution_comment'], 'resolved_at' => now(),
             ]);
+            $this->storePhotoEvidence($finding, $data['photos'] ?? [], $userId);
 
-            return $finding->fresh(['qualityDefect']);
+            return $finding->fresh(['qualityDefect', 'files.organization']);
         });
     }
 
@@ -246,10 +256,14 @@ final class HandoverAcceptanceService
             $scope = $checklist->scope()->lockForUpdate()->firstOrFail();
             $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.inspect');
             $this->assertStatus($scope, ['planned', 'in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened']);
+            if ($item->status !== 'pending') {
+                throw new DomainException(trans_message('handover_acceptance.errors.invalid_status'));
+            }
             $item->update(['status' => $data['status'], 'comment' => $data['comment'] ?? null]);
+            $this->storePhotoEvidence($item, $data['photos'] ?? [], $userId);
             $this->refreshChecklistStatus($checklist);
 
-            return $item->fresh(['checklist.items']);
+            return $item->fresh(['checklist.items.files.organization', 'files.organization']);
         });
     }
 
@@ -265,13 +279,13 @@ final class HandoverAcceptanceService
             $this->assertStatus($scope, ['findings_open', 'in_progress', 'rejected']);
             $scope->update(['status' => 'ready_for_reinspection']);
 
-            return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh($this->scopeRelationsWithEvidence());
         });
     }
 
-    public function acceptScope(AcceptanceScope $scope, int $userId, ?string $comment): AcceptanceScope
+    public function acceptScope(AcceptanceScope $scope, int $userId, ?string $comment, array $photos = []): AcceptanceScope
     {
-        return DB::transaction(function () use ($scope, $userId, $comment): AcceptanceScope {
+        return DB::transaction(function () use ($scope, $userId, $comment, $photos): AcceptanceScope {
             $locked = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($scope);
             $this->mutationGuard->assertActor($locked, $userId, 'handover-acceptance.approve');
             $this->lockExecutiveEvidence($locked);
@@ -280,23 +294,25 @@ final class HandoverAcceptanceService
             if (! $readiness['ready']) {
                 throw new DomainException($readiness['blockers'][0]['message']);
             }
+            $this->storePhotoEvidence($locked, $photos, $userId);
             $locked->update(['status' => 'accepted', 'accepted_at' => now()]);
             $this->sign($locked, $userId, 'accepted', $comment, $readiness['evidence_snapshot']);
 
-            return $locked->fresh(self::SCOPE_RELATIONS);
+            return $locked->fresh($this->scopeRelationsWithEvidence());
         });
     }
 
-    public function rejectScope(AcceptanceScope $scope, int $userId, string $reason): AcceptanceScope
+    public function rejectScope(AcceptanceScope $scope, int $userId, string $reason, array $photos = []): AcceptanceScope
     {
-        return DB::transaction(function () use ($scope, $userId, $reason): AcceptanceScope {
+        return DB::transaction(function () use ($scope, $userId, $reason, $photos): AcceptanceScope {
             $scope = app(TechnicalAcceptanceQuantityService::class)->lockScopeForDecision($scope);
             $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.reject');
             $this->assertStatus($scope, ['in_progress', 'findings_open', 'ready_for_reinspection']);
+            $this->storePhotoEvidence($scope, $photos, $userId);
             $scope->update(['status' => 'rejected']);
             $this->sign($scope, $userId, 'rejected', $reason);
 
-            return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh($this->scopeRelationsWithEvidence());
         });
     }
 
@@ -425,7 +441,7 @@ final class HandoverAcceptanceService
             $scope->update(['status' => 'handed_over', 'handed_over_at' => now()]);
             $this->sign($scope, $userId, 'handed_over', null, $readiness['evidence_snapshot']);
 
-            return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh($this->scopeRelationsWithEvidence());
         });
     }
 
@@ -438,7 +454,7 @@ final class HandoverAcceptanceService
             $scope->update(['status' => 'reopened', 'reopened_at' => now()]);
             $this->sign($scope, $userId, 'reopened', $reason);
 
-            return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh($this->scopeRelationsWithEvidence());
         });
     }
 
@@ -447,7 +463,7 @@ final class HandoverAcceptanceService
         return AcceptanceScope::query()
             ->where('organization_id', $organizationId)
             ->when($projectIds !== null, fn ($query) => $query->whereIn('project_id', $projectIds))
-            ->with(self::SCOPE_RELATIONS)
+            ->with($this->scopeRelationsWithEvidence())
             ->find($id)
             ?? throw new DomainException(trans_message('handover_acceptance.errors.scope_not_found'));
     }
@@ -561,5 +577,71 @@ final class HandoverAcceptanceService
             'signed_at' => now(),
             'evidence_snapshot' => $evidenceSnapshot,
         ]);
+    }
+
+    private function storePhotoEvidence(Model $owner, array $photos, int $userId): void
+    {
+        if ($photos === []) {
+            return;
+        }
+        if (count($photos) > 5) {
+            throw new DomainException(trans_message('handover_acceptance.errors.validation_failed'));
+        }
+
+        $organization = Organization::query()->find((int) $owner->getAttribute('organization_id'));
+        if ($organization === null) {
+            throw new DomainException(trans_message('handover_acceptance.errors.organization_not_found'));
+        }
+
+        $uploadedPaths = [];
+        try {
+            foreach ($photos as $photo) {
+                if (! $photo instanceof UploadedFile
+                    || ! $photo->isValid()
+                    || ! in_array(strtolower($photo->getClientOriginalExtension()), ['jpg', 'jpeg', 'png'], true)
+                    || ! in_array($photo->getMimeType(), ['image/jpeg', 'image/png'], true)
+                    || (int) $photo->getSize() > 10 * 1024 * 1024) {
+                    throw new DomainException(trans_message('handover_acceptance.errors.validation_failed'));
+                }
+
+                $path = $this->fileService->upload(
+                    $photo,
+                    'handover-acceptance/'.$owner->getTable().'/'.$owner->getKey(),
+                    null,
+                    'private',
+                    $organization,
+                );
+                if ($path === false) {
+                    throw new DomainException(trans_message('handover_acceptance.errors.photo_upload_failed'));
+                }
+                $uploadedPaths[] = $path;
+
+                $owner->files()->create([
+                    'organization_id' => $organization->id,
+                    'user_id' => $userId,
+                    'name' => basename($path),
+                    'original_name' => $photo->getClientOriginalName(),
+                    'path' => $path,
+                    'mime_type' => $photo->getMimeType() ?? 'application/octet-stream',
+                    'size' => $photo->getSize() ?? 0,
+                    'disk' => 's3',
+                    'type' => 'photo',
+                    'category' => 'evidence',
+                ]);
+            }
+        } catch (\Throwable $exception) {
+            foreach ($uploadedPaths as $path) {
+                try {
+                    $this->fileService->delete($path, $organization);
+                } catch (\Throwable) {
+                }
+            }
+            throw $exception;
+        }
+    }
+
+    private function scopeRelationsWithEvidence(): array
+    {
+        return array_merge(self::SCOPE_RELATIONS, self::SCOPE_EVIDENCE_RELATIONS);
     }
 }

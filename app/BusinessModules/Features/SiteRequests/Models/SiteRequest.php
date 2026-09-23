@@ -98,6 +98,8 @@ class SiteRequest extends Model
         'template_id',
         'site_request_group_id',
         'payment_document_id',
+        'idempotency_key',
+        'idempotency_hash',
     ];
 
     protected $casts = [

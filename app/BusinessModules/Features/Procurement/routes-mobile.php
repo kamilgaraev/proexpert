@@ -11,6 +11,7 @@ Route::prefix('api/v1/mobile/procurement')
     ->group(function (): void {
         Route::get('/summary', [ProcurementController::class, 'summary'])->name('summary');
         Route::get('/purchase-requests', [ProcurementController::class, 'purchaseRequests'])->name('purchase_requests.index');
+        Route::post('/purchase-requests', [ProcurementController::class, 'storePurchaseRequest'])->middleware('authorize:procurement.purchase_requests.create')->name('purchase_requests.store');
         Route::get('/purchase-requests/{purchaseRequest}', [ProcurementController::class, 'purchaseRequest'])->name('purchase_requests.show');
         Route::get('/purchase-orders', [ProcurementController::class, 'purchaseOrders'])->name('purchase_orders.index');
         Route::get('/purchase-orders/{purchaseOrder}', [ProcurementController::class, 'purchaseOrder'])->name('purchase_orders.show');

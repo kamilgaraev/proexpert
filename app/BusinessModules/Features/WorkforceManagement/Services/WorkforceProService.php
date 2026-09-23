@@ -25,11 +25,25 @@ final class WorkforceProService
         private readonly WorkforceCapacityOwnerMutationBridge $capacityCapture,
     ) {}
 
-    public function paginateList(string $table, int $organizationId, int $perPage, ?string $search = null): LengthAwarePaginator
+    public function paginateList(string $table, int $organizationId, int $perPage, ?string $search = null, ?int $projectId = null): LengthAwarePaginator
     {
         $query = $this->listQuery($table, $organizationId);
 
         $this->applyListSearch($query, $table, $search);
+        if ($projectId !== null && in_array($table, ['workforce_absences', 'workforce_orders'], true)) {
+            $today = CarbonImmutable::today()->toDateString();
+            $employeeColumn = $table === 'workforce_absences' ? 'absence.employee_id' : 'employee_id';
+            $query->whereIn($employeeColumn, DB::table('workforce_employee_assignments')
+                ->select('employee_id')
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->where('status', 'active')
+                ->whereNull('deleted_at')
+                ->whereDate('valid_from', '<=', $today)
+                ->where(static function (Builder $dates) use ($today): void {
+                    $dates->whereNull('valid_to')->orWhereDate('valid_to', '>=', $today);
+                }));
+        }
 
         return $query
             ->paginate($perPage)

@@ -28,12 +28,40 @@ class ActReportService
     {
         $query = $this->buildActsQuery($organizationId, $filters);
 
+        if (array_key_exists('project_ids', $filters)) {
+            $projectIds = array_map('intval', (array) $filters['project_ids']);
+            $includeProjectless = (bool) ($filters['include_projectless'] ?? false);
+            $query->where(function (Builder $projectScope) use ($projectIds, $includeProjectless): void {
+                if ($projectIds !== []) {
+                    $projectScope->whereIn('contract_performance_acts.project_id', $projectIds)
+                        ->orWhere(function (Builder $contractProjectScope) use ($projectIds): void {
+                            $contractProjectScope->whereNull('contract_performance_acts.project_id')
+                                ->whereHas('contract', static fn (Builder $contract): Builder => $contract->whereIn('project_id', $projectIds));
+                        });
+                }
+
+                if ($includeProjectless) {
+                    $projectlessScope = static function (Builder $projectless): void {
+                        $projectless->whereNull('contract_performance_acts.project_id')
+                            ->whereDoesntHave('contract', static fn (Builder $contract): Builder => $contract->whereNotNull('project_id'));
+                    };
+                    if ($projectIds === []) {
+                        $projectScope->where($projectlessScope);
+                    } else {
+                        $projectScope->orWhere($projectlessScope);
+                    }
+                } elseif ($projectIds === []) {
+                    $projectScope->whereRaw('1 = 0');
+                }
+            });
+        }
+
         // Применяем фильтры
 
         // Сортировка
         $sortBy = $filters['sort_by'] ?? 'act_date';
         $sortDirection = strtolower((string) ($filters['sort_direction'] ?? 'desc'));
-        
+
         $allowedSortFields = ['act_date', 'act_document_number', 'amount', 'created_at'];
         if (!in_array($sortBy, $allowedSortFields)) {
             $sortBy = 'act_date';

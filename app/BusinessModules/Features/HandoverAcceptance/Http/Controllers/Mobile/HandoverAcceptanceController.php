@@ -8,6 +8,11 @@ use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceChe
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceFindingResource;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceScopeResource;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\HandoverPackageResource;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\Mobile\AcceptMobileScopeRequest;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\Mobile\RejectMobileScopeRequest;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\Mobile\ResolveMobileFindingRequest;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\Mobile\ReviewChecklistItemRequest;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\StoreMobileFindingRequest;
 use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
@@ -116,13 +121,10 @@ final class HandoverAcceptanceController extends Controller
         }
     }
 
-    public function reviewChecklistItem(Request $request, int $item): JsonResponse
+    public function reviewChecklistItem(ReviewChecklistItemRequest $request, int $item): JsonResponse
     {
         try {
-            $validated = $this->validated($request, [
-                'status' => ['required', 'string', Rule::in(['accepted', 'rejected'])],
-                'comment' => ['required_if:status,rejected', 'nullable', 'string', 'max:1000'],
-            ]);
+            $validated = $request->validated();
 
             $reviewed = $this->service->reviewChecklistItem(
                 $this->service->findChecklistItem(
@@ -151,17 +153,10 @@ final class HandoverAcceptanceController extends Controller
         }
     }
 
-    public function storeFinding(Request $request, int $session): JsonResponse
+    public function storeFinding(StoreMobileFindingRequest $request, int $session): JsonResponse
     {
         try {
-            $validated = $this->validated($request, [
-                'title' => ['required', 'string', 'max:255'],
-                'description' => ['nullable', 'string', 'max:2000'],
-                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'critical'])],
-                'create_quality_defect' => ['required', 'boolean'],
-                'quality_defect_inspection_required' => ['required_if:create_quality_defect,true', 'boolean'],
-                'work_rework_id' => ['nullable', 'integer', 'min:1'],
-            ]);
+            $validated = $request->validated();
 
             return MobileResponse::success(
                 new AcceptanceFindingResource($this->service->addFinding(
@@ -189,10 +184,10 @@ final class HandoverAcceptanceController extends Controller
         }
     }
 
-    public function resolveFinding(Request $request, int $finding): JsonResponse
+    public function resolveFinding(ResolveMobileFindingRequest $request, int $finding): JsonResponse
     {
         try {
-            $validated = $this->validated($request, ['resolution_comment' => ['required', 'string', 'max:2000']]);
+            $validated = $request->validated();
 
             return MobileResponse::success(new AcceptanceFindingResource($this->service->resolveFinding(
                 $this->service->findFinding(
@@ -226,24 +221,21 @@ final class HandoverAcceptanceController extends Controller
         return $this->scopeAction($request, $scope, fn ($model) => $this->service->startScope($model, (int) $request->user()?->id), 'start');
     }
 
-    public function accept(Request $request, int $scope): JsonResponse
+    public function accept(AcceptMobileScopeRequest $request, int $scope): JsonResponse
     {
-        try {
-            $validated = $this->validated($request, ['comment' => ['nullable', 'string', 'max:1000']]);
+        $validated = $request->validated();
 
-            return $this->scopeAction(
-                $request,
-                $scope,
-                fn ($model) => $this->service->acceptScope($model, (int) $request->user()?->id, $validated['comment'] ?? null),
-                'accept'
-            );
-        } catch (ValidationException $exception) {
-            return MobileResponse::error(
-                trans_message('handover_acceptance.errors.validation_failed'),
-                422,
-                $exception->errors()
-            );
-        }
+        return $this->scopeAction(
+            $request,
+            $scope,
+            fn ($model) => $this->service->acceptScope(
+                $model,
+                (int) $request->user()?->id,
+                $validated['comment'] ?? null,
+                $validated['photos'] ?? [],
+            ),
+            'accept'
+        );
     }
 
     public function handover(Request $request, int $scope): JsonResponse
@@ -256,24 +248,21 @@ final class HandoverAcceptanceController extends Controller
         );
     }
 
-    public function reject(Request $request, int $scope): JsonResponse
+    public function reject(RejectMobileScopeRequest $request, int $scope): JsonResponse
     {
-        try {
-            $validated = $this->validated($request, ['reason' => ['required', 'string', 'max:1000']]);
+        $validated = $request->validated();
 
-            return $this->scopeAction(
-                $request,
-                $scope,
-                fn ($model) => $this->service->rejectScope($model, (int) $request->user()?->id, $validated['reason']),
-                'reject'
-            );
-        } catch (ValidationException $exception) {
-            return MobileResponse::error(
-                trans_message('handover_acceptance.errors.validation_failed'),
-                422,
-                $exception->errors()
-            );
-        }
+        return $this->scopeAction(
+            $request,
+            $scope,
+            fn ($model) => $this->service->rejectScope(
+                $model,
+                (int) $request->user()?->id,
+                $validated['reason'],
+                $validated['photos'] ?? [],
+            ),
+            'reject'
+        );
     }
 
     public function reopen(Request $request, int $scope): JsonResponse

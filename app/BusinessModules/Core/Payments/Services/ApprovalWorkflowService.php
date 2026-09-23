@@ -208,15 +208,15 @@ class ApprovalWorkflowService
         })->first();
     }
 
-    private function approvalQueryForUser(PaymentDocument $document, int $userId, ?User $user)
+    private function approvalQueryForUser(PaymentDocument $document, int $userId, ?User $user, string $decisionPermission = self::PAYMENT_APPROVAL_PERMISSION)
     {
         $query = PaymentApproval::where('payment_document_id', $document->id)
             ->where('status', 'pending');
 
-        return $query->where(function ($scope) use ($document, $userId, $user): void {
+        return $query->where(function ($scope) use ($document, $userId, $user, $decisionPermission): void {
             $scope->where('approver_user_id', $userId);
 
-            if ($this->userHasPermission($user, self::PAYMENT_APPROVAL_PERMISSION, (int) $document->organization_id)) {
+            if ($this->userHasPermission($user, $decisionPermission, (int) $document->organization_id, $document->project_id !== null ? (int) $document->project_id : null)) {
                 $scope->orWhere(function ($permissionScope): void {
                     $permissionScope->whereNull('approver_user_id')
                         ->where('approval_permission', self::PAYMENT_APPROVAL_PERMISSION);
@@ -225,13 +225,18 @@ class ApprovalWorkflowService
         });
     }
 
-    private function userHasPermission(?User $user, string $permission, int $organizationId): bool
+    private function userHasPermission(?User $user, string $permission, int $organizationId, ?int $projectId = null): bool
     {
         if (! $user) {
             return false;
         }
 
-        return $user->can($permission, ['organization_id' => $organizationId]);
+        return $user->can($permission, ['organization_id' => $organizationId])
+            || ($projectId !== null && $user->can($permission, [
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'strict_project_scope' => true,
+            ]));
     }
 
     private function isPrivilegedApprovalActor(?User $user, int $organizationId): bool
@@ -483,7 +488,7 @@ class ApprovalWorkflowService
 
             // Найти pending утверждение для данного пользователя
             $user = User::find($userId);
-            $approval = $this->approvalQueryForUser($document, $userId, $user)
+            $approval = $this->approvalQueryForUser($document, $userId, $user, 'payments.transaction.reject')
                 ->lockForUpdate()
                 ->first();
             $approval ??= $this->legacyRoleApprovalForUser($document, $userId);

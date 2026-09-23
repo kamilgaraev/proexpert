@@ -17,6 +17,18 @@ final class MobileModulesTest extends TestCase
     public function test_mobile_modules_catalog_contains_supported_field_modules(): void
     {
         $expected = [
+            'crm' => ['icon' => 'contacts', 'route' => 'crm'],
+            'tenders' => ['icon' => 'tenders', 'route' => 'tenders'],
+            'act-reporting' => ['icon' => 'acts', 'route' => 'acts'],
+            'design-management' => ['icon' => 'design', 'route' => 'design-management'],
+            'payments' => ['icon' => 'payments', 'route' => 'payments'],
+            'file-management' => ['icon' => 'reports', 'route' => 'published_reports'],
+            'report-templates' => ['icon' => 'templates', 'route' => 'template_library'],
+            'budgeting' => ['icon' => 'budgeting', 'route' => 'budgeting'],
+            'one-c-basic-exchange' => ['icon' => 'sync', 'route' => 'one_c_exchange'],
+            'access_recertification' => ['icon' => 'verified_user', 'route' => 'access_recertification'],
+            'rate-management' => ['icon' => 'functions', 'route' => 'rate_coefficients'],
+            'system-logs' => ['icon' => 'history', 'route' => 'system_events'],
             'construction-journal' => ['icon' => 'journal', 'route' => 'construction_journal'],
             'quality-control' => ['icon' => 'quality', 'route' => 'quality-control'],
             'safety-management' => ['icon' => 'shield-check', 'route' => 'safety-management'],
@@ -34,6 +46,7 @@ final class MobileModulesTest extends TestCase
             'project-management' => ['icon' => 'project', 'route' => 'project-management'],
             'catalog-management' => ['icon' => 'catalog', 'route' => 'catalog-management'],
             'brigades' => ['icon' => 'brigades', 'route' => 'brigades'],
+            'contractor-marketplace' => ['icon' => 'contractors', 'route' => 'contractors'],
             'video-monitoring' => ['icon' => 'video', 'route' => 'video-monitoring'],
         ];
 
@@ -108,7 +121,13 @@ final class MobileModulesTest extends TestCase
         $permissions = [];
 
         foreach ($permissionSlugs as $slug) {
-            $permissions[$slug] = ['view'];
+            if ($slug === 'budgeting') {
+                $permissions['reports'] = ['reports.project_control.view'];
+            } elseif ($slug === 'contractor-marketplace') {
+                $permissions['contractor-portal'] = ['contractor_marketplace.search.view'];
+            } else {
+                $permissions[$slug] = ['view'];
+            }
         }
 
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($permissions): void {

@@ -1,4 +1,4 @@
-﻿# Mobile API Contract Checklist
+# Mobile API Contract Checklist
 
 Date: 2026-05-22
 
@@ -6,8 +6,22 @@ Source: `php artisan route:list --path=api/v1/mobile --json`.
 
 Policy: mobile clients use only `/api/v1/mobile/*`, canonical routes only, MobileResponse envelope, translated business messages, and no compatibility aliases.
 
+Rows marked `review` were added from the registered route inventory. Their authentication, response shape, and module tests still need a focused contract review; the route entry alone does not assert these properties.
+
 | Route | Module | Route exists | Auth required | Permission checked | MobileResponse used | Translated messages | Success example | Validation error example | Mobile parser test | Backend feature test |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /acts` | Acts | yes | yes | act_reports.view | yes | yes | yes | n/a for read route | test/features/acts | MobileActFieldConfirmationTest.php |
+| `GET /acts/{act}` | Acts | yes | yes | act_reports.view | yes | yes | yes | n/a for read route | test/features/acts | MobileActFieldConfirmationTest.php |
+| `GET /acts/{act}/files/{file}` | Acts | yes | yes | act_reports.view | yes | yes | binary file | n/a for read route | test/features/acts | MobileActFieldConfirmationTest.php |
+| `POST /acts/{act}/field-confirmations` | Acts | yes | yes | act_reports.field_confirm | yes | yes | yes | yes | test/features/acts | MobileActFieldConfirmationTest.php |
+| `GET /payments/documents` | Payments | yes | yes | payments.invoice.view | yes | yes | yes | n/a for read route | test/features/payments | MobilePaymentDocumentsTest.php |
+| `POST /payments/documents` | Payments | yes | yes | payments.invoice.create | yes | yes | yes | yes | test/features/payments | MobilePaymentDocumentsTest.php |
+| `GET /payments/documents/{id}` | Payments | yes | yes | payments.invoice.view | yes | yes | yes | n/a for read route | test/features/payments | MobilePaymentDocumentsTest.php |
+| `PUT /payments/documents/{id}` | Payments | yes | yes | payments.invoice.edit | yes | yes | yes | yes | test/features/payments | MobilePaymentDocumentsTest.php |
+| `POST /payments/documents/{id}/submit` | Payments | yes | yes | payments.invoice.issue | yes | yes | yes | yes | test/features/payments | MobilePaymentDocumentsTest.php |
+| `POST /payments/documents/{id}/approve` | Payments | yes | yes | payments.transaction.approve | yes | yes | yes | yes | test/features/payments | MobilePaymentDocumentsTest.php |
+| `POST /payments/documents/{id}/reject` | Payments | yes | yes | payments.transaction.reject | yes | yes | yes | yes | test/features/payments | MobilePaymentDocumentsTest.php |
+| `POST /payments/documents/{id}/payments` | Payments | yes | yes | payments.transaction.register | yes | yes | yes | yes | test/features/payments | MobilePaymentDocumentsTest.php |
 | `POST /ai-assistant/actions/execute` | AI Assistant | yes | yes | yes | yes | yes | yes | yes | test/features/ai_assistant | AIAssistantMobileTest.php |
 | `POST /ai-assistant/actions/preview` | AI Assistant | yes | yes | yes | yes | yes | yes | yes | test/features/ai_assistant | AIAssistantMobileTest.php |
 | `POST /ai-assistant/chat` | AI Assistant | yes | yes | yes | yes | yes | yes | yes | test/features/ai_assistant | AIAssistantMobileTest.php |
@@ -73,6 +87,8 @@ Policy: mobile clients use only `/api/v1/mobile/*`, canonical routes only, Mobil
 | `POST /notifications/mark-all-read` | Notifications | yes | yes | yes | yes | yes | yes | yes | test/features/notifications | MobileApiContractDocumentationTest.php |
 | `GET /notifications/unread` | Notifications | yes | yes | yes | yes | yes | yes | n/a for read route | test/features/notifications | MobileApiContractDocumentationTest.php |
 | `GET /notifications/unread-count` | Notifications | yes | yes | yes | yes | yes | yes | n/a for read route | test/features/notifications | MobileApiContractDocumentationTest.php |
+| `POST /notifications/devices` | Notifications | yes | yes | yes | yes | yes | yes | yes | test/features/notifications | MobileDeviceTokenRegistrationTest.php |
+| `DELETE /notifications/devices/{installationId}` | Notifications | yes | yes | yes | yes | yes | yes | n/a for read route | test/features/notifications | MobileDeviceTokenRegistrationTest.php |
 | `GET /procurement/approvals` | Procurement | yes | yes | yes | yes | yes | yes | n/a for read route | test/features/procurement | ProcurementMobileTest.php |
 | `POST /procurement/approvals/{approval}/approve` | Procurement | yes | yes | yes | yes | yes | yes | yes | test/features/procurement | ProcurementMobileTest.php |
 | `POST /procurement/approvals/{approval}/reject` | Procurement | yes | yes | yes | yes | yes | yes | yes | test/features/procurement | ProcurementMobileTest.php |
@@ -161,6 +177,115 @@ Policy: mobile clients use only `/api/v1/mobile/*`, canonical routes only, Mobil
 | `POST /workflow-management/tasks/{task}/reject` | Workflow Management | yes | yes | yes | yes | yes | yes | yes | test/features/workflow_management | WorkflowManagementMobileTest.php |
 | `POST /workflow-management/tasks/{task}/request-changes` | Workflow Management | yes | yes | yes | yes | yes | yes | yes | test/features/workflow_management | WorkflowManagementMobileTest.php |
 | `GET /workforce/attendance/history` | Workforce | yes | yes | yes | yes | yes | yes | n/a for read route | test/features/workforce | WorkforceAttendanceQrWorkflowTest.php |
+| `GET /field-admin/personnel/attendance` | Workforce | yes | yes | yes | yes | yes | yes | n/a for read route | test/features/field-admin | FieldAdminRouteAuthorizationTest.php |
 | `POST /workforce/attendance/qr` | Workforce | yes | yes | yes | yes | yes | yes | yes | test/features/workforce | WorkforceAttendanceQrWorkflowTest.php |
 | `POST /workforce/attendance/qr/scan` | Workforce | yes | yes | yes | yes | yes | yes | yes | test/features/workforce | WorkforceAttendanceQrWorkflowTest.php |
 | `POST /workforce/attendance/self` | Workforce | yes | yes | yes | yes | yes | yes | yes | test/features/workforce | WorkforceAttendanceQrWorkflowTest.php |
+
+| `DELETE /security/sessions/{session}` | Security | yes | review | review | review | review | review | review | review | review |
+| `DELETE /site-requests/{id}/files/{fileId}` | Site Requests | yes | review | review | review | review | review | review | review | review |
+| `GET /budgeting/projects/{project}/execution-cards` | Budgeting | yes | review | review | review | review | review | review | review | review |
+| `GET /budgeting/projects/{project}/summary` | Budgeting | yes | review | review | review | review | review | review | review | review |
+| `GET /catalog/crm/{entity}/{id}` | Catalog | yes | review | review | review | review | review | review | review | review |
+| `GET /catalog/crm/{entity}` | Catalog | yes | review | review | review | review | review | review | review | review |
+| `GET /catalog/reports/{id}` | Catalog | yes | review | review | review | review | review | review | review | review |
+| `GET /catalog/reports` | Catalog | yes | review | review | review | review | review | review | review | review |
+| `GET /catalog/templates/{id}` | Catalog | yes | review | review | review | review | review | review | review | review |
+| `GET /catalog/templates` | Catalog | yes | review | review | review | review | review | review | review | review |
+| `GET /catalog/tenders/{id}` | Catalog | yes | review | review | review | review | review | review | review | review |
+| `GET /catalog/tenders` | Catalog | yes | review | review | review | review | review | review | review | review |
+| `GET /construction-journal-exports/{export}` | Construction Journal Exports | yes | review | review | review | review | review | review | review | review |
+| `GET /construction-journals/form-options` | Construction Journals | yes | review | review | review | review | review | review | review | review |
+| `GET /field-admin/personnel/absences` | Field Admin | yes | review | review | review | review | review | review | review | review |
+| `GET /field-admin/personnel/calendar` | Field Admin | yes | review | review | review | review | review | review | review | review |
+| `GET /field-admin/personnel/employees/{employee}` | Field Admin | yes | review | review | review | review | review | review | review | review |
+| `GET /field-admin/personnel/employees` | Field Admin | yes | review | review | review | review | review | review | review | review |
+| `GET /field-admin/personnel/orders` | Field Admin | yes | review | review | review | review | review | review | review | review |
+| `GET /field-admin/team/projects/{project}/participants/available-users` | Field Admin | yes | review | review | review | review | review | review | review | review |
+| `GET /field-admin/team/projects/{project}/participants` | Field Admin | yes | review | review | review | review | review | review | review | review |
+| `GET /files/{fileId}` | Files | yes | review | review | review | review | review | review | review | review |
+| `GET /files` | Files | yes | review | review | review | review | review | review | review | review |
+| `GET /knowledge-hub/articles/{slug}` | Knowledge Hub | yes | review | review | review | review | review | review | review | review |
+| `GET /knowledge-hub/articles` | Knowledge Hub | yes | review | review | review | review | review | review | review | review |
+| `GET /knowledge-hub/context` | Knowledge Hub | yes | review | review | review | review | review | review | review | review |
+| `GET /knowledge-hub/overview` | Knowledge Hub | yes | review | review | review | review | review | review | review | review |
+| `GET /knowledge-hub/search` | Knowledge Hub | yes | review | review | review | review | review | review | review | review |
+| `GET /knowledge-hub/tree` | Knowledge Hub | yes | review | review | review | review | review | review | review | review |
+| `GET /legal-archive/documents/{document}/versions/{version}/{purpose}` | Legal Archive | yes | review | review | review | review | review | review | review | review |
+| `GET /legal-archive/documents/{document}` | Legal Archive | yes | review | review | review | review | review | review | review | review |
+| `GET /legal-archive/documents` | Legal Archive | yes | review | review | review | review | review | review | review | review |
+| `GET /machinery-operations/maintenance-orders` | Machinery Operations | yes | review | review | review | review | review | review | review | review |
+| `GET /my-actions` | My Actions | yes | review | review | review | review | review | review | review | review |
+| `GET /pto/design-packages/{packageId}` | Pto | yes | review | review | review | review | review | review | review | review |
+| `GET /pto/design-packages` | Pto | yes | review | review | review | review | review | review | review | review |
+| `GET /quality-control/defects/{id}/assignees` | Quality Control | yes | review | review | review | review | review | review | review | review |
+| `GET /safety-management/briefings/{id}` | Safety Management | yes | review | review | review | review | review | review | review | review |
+| `GET /safety-management/briefings` | Safety Management | yes | review | review | review | review | review | review | review | review |
+| `GET /safety-management/dashboard` | Safety Management | yes | review | review | review | review | review | review | review | review |
+| `GET /safety-management/inspection-findings` | Safety Management | yes | review | review | review | review | review | review | review | review |
+| `GET /safety-management/inspections` | Safety Management | yes | review | review | review | review | review | review | review | review |
+| `GET /safety-management/my-admission` | Safety Management | yes | review | review | review | review | review | review | review | review |
+| `GET /schedule/tasks/{task}` | Schedule | yes | review | review | review | review | review | review | review | review |
+| `GET /security/sessions` | Security | yes | review | review | review | review | review | review | review | review |
+| `GET /site-requests/{id}/assignees` | Site Requests | yes | review | review | review | review | review | review | review | review |
+| `GET /site-requests/{id}/files` | Site Requests | yes | review | review | review | review | review | review | review | review |
+| `GET /team-expansion/brigade-invitations` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `GET /team-expansion/brigade-requests/{brigadeRequest}/responses` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `GET /team-expansion/brigade-requests` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `GET /team-expansion/brigades/{brigade}` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `GET /team-expansion/brigades` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `GET /team-expansion/contractors/{profile}` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `GET /team-expansion/contractors` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `GET /time-tracking/pending-approvals` | Time Tracking | yes | review | review | review | review | review | review | review | review |
+| `GET /warehouse/custody/balances` | Warehouse | yes | review | review | review | review | review | review | review | review |
+| `PATCH /schedule/tasks/{task}` | Schedule | yes | review | review | review | review | review | review | review | review |
+| `POST /catalog/crm/activities` | Catalog | yes | review | review | review | review | review | review | review | review |
+| `POST /construction-journals/{journal}/archive` | Construction Journals | yes | review | review | review | review | review | review | review | review |
+| `POST /construction-journals/{journal}/close` | Construction Journals | yes | review | review | review | review | review | review | review | review |
+| `POST /construction-journals/{journal}/reopen` | Construction Journals | yes | review | review | review | review | review | review | review | review |
+| `POST /files` | Files | yes | review | review | review | review | review | review | review | review |
+| `POST /knowledge-hub/assistant` | Knowledge Hub | yes | review | review | review | review | review | review | review | review |
+| `POST /knowledge-hub/feedback` | Knowledge Hub | yes | review | review | review | review | review | review | review | review |
+| `POST /legal-archive/documents/{document}/actions/{action}` | Legal Archive | yes | review | review | review | review | review | review | review | review |
+| `POST /legal-archive/signature-requests/{signatureRequest}/upload-original` | Legal Archive | yes | review | review | review | review | review | review | review | review |
+| `POST /machinery-operations/asset-requests` | Machinery Operations | yes | review | review | review | review | review | review | review | review |
+| `POST /machinery-operations/maintenance-orders/{id}/complete` | Machinery Operations | yes | review | review | review | review | review | review | review | review |
+| `POST /machinery-operations/shift-reports/{id}/finish` | Machinery Operations | yes | review | review | review | review | review | review | review | review |
+| `POST /procurement/purchase-requests` | Procurement | yes | review | review | review | review | review | review | review | review |
+| `POST /pto/design-packages/{packageId}/actions/{action}` | Pto | yes | review | review | review | review | review | review | review | review |
+| `POST /pto/executive-documents/{documentId}/actions/{action}` | Pto | yes | review | review | review | review | review | review | review | review |
+| `POST /quality-control/defects/{id}/assign` | Quality Control | yes | review | review | review | review | review | review | review | review |
+| `POST /safety-management/briefings/{id}/participants/{participantId}/sign` | Safety Management | yes | review | review | review | review | review | review | review | review |
+| `POST /safety-management/inspection-findings` | Safety Management | yes | review | review | review | review | review | review | review | review |
+| `POST /schedule/{schedule_id}/tasks` | Schedule | yes | review | review | review | review | review | review | review | review |
+| `POST /security/sessions/revoke-others` | Security | yes | review | review | review | review | review | review | review | review |
+| `POST /site-requests/{id}/files` | Site Requests | yes | review | review | review | review | review | review | review | review |
+| `POST /team-expansion/brigade-invitations` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `POST /team-expansion/brigade-requests/{brigadeRequest}/responses/{response}/approve` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `POST /team-expansion/brigade-requests` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `POST /team-expansion/contractor-invitations` | Team Expansion | yes | review | review | review | review | review | review | review | review |
+| `POST /time-tracking/entries/{entry}/approve` | Time Tracking | yes | review | review | review | review | review | review | review | review |
+| `POST /time-tracking/entries/{entry}/reject` | Time Tracking | yes | review | review | review | review | review | review | review | review |
+| `POST /warehouse/custody/issue` | Warehouse | yes | review | review | review | review | review | review | review | review |
+| `POST /warehouse/custody/return` | Warehouse | yes | review | review | review | review | review | review | review | review |
+| `POST /warehouse/operations/write-off` | Warehouse | yes | review | review | review | review | review | review | review | review |
+| `PUT /field-admin/team/projects/{project}/participants/{user}` | Field Admin | yes | review | review | review | review | review | review | review | review |
+| `PUT /site-requests/{id}/assignee` | Site Requests | yes | review | review | review | review | review | review | review | review |
+
+## System routes
+
+System mobile lists use `MobileResponse`; `data` is an array and `meta` is a sibling object with `current_page`, `per_page`, `total`, and `last_page`.
+The service checks both route permission and active module access: `one-c-basic-exchange`, `access_recertification`, `rate-management`, or `system-logs`.
+
+| Method and route | Permission | Response data |
+| --- | --- | --- |
+| `GET /system/one-c-exchange/status` | `one_c_exchange.view` | Configuration flags, available scopes, and safe summary of latest run |
+| `GET /system/one-c-exchange/history` | `one_c_exchange.history.view` | Paged runs with status, counts, safe errors, and timestamps |
+| `POST /system/one-c-exchange/journal/{operationId}/retry` | `one_c_exchange.retry` | Requeues eligible exchange operation |
+| `GET /system/access-recertification/campaigns` | `access_recertification.campaigns.view` | Paged campaign resources |
+| `GET /system/access-recertification/reviews/my` | `access_recertification.reviews.view` | Paged current-user review queue |
+| `POST /system/access-recertification/items/{item}/decisions` | `access_recertification.reviews.decide` | Saves a decision and required `reason` comment |
+| `GET /system/rate-coefficients/current` | `rate_coefficients.view` | Paged active coefficients within their validity dates |
+| `GET /system/events` | `system-logs.system.view` | Paged protected system event records |
+
+Route permissions, mobile authentication middleware, and read/decision permission separation are covered by `MobileSystemRoutesTest.php`.

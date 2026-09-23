@@ -50,7 +50,7 @@ final class MobileBudgetEstimateService
     public function projectSummary(int $organizationId, int $projectId, User $user): array
     {
         $project = $this->findProject($organizationId, $projectId, $user);
-        $estimates = $this->estimateListQuery($organizationId, ['project_id' => $project->id])
+        $estimates = $this->estimateListQuery(['project_id' => $project->id])
             ->limit(30)
             ->get();
         $estimateIds = $estimates->pluck('id')->map(static fn ($id): int => (int) $id)->all();
@@ -82,8 +82,8 @@ final class MobileBudgetEstimateService
     {
         $this->findProject($organizationId, (int) $filters['project_id'], $user);
 
-        $query = $this->estimateListQuery($organizationId, $filters);
-        $summary = $this->totalsPayload((clone $query)->get());
+        $query = $this->estimateListQuery($filters);
+        $summary = $this->filteredTotals($filters);
         $paginator = $query
             ->orderByDesc('estimate_date')
             ->orderByDesc('id')
@@ -158,16 +158,59 @@ final class MobileBudgetEstimateService
         );
     }
 
-    private function estimateListQuery(int $organizationId, array $filters): Builder
+    private function estimateListQuery(array $filters): Builder
+    {
+        return $this->filteredEstimates($filters)
+            ->with(['project', 'approvedBy'])
+            ->withCount(['sections', 'items']);
+    }
+
+    private function filteredEstimates(array $filters): Builder
     {
         return Estimate::query()
-            ->with(['project', 'approvedBy'])
-            ->withCount(['sections', 'items'])
             ->whereNull('parent_estimate_id')
             ->where('project_id', (int) $filters['project_id'])
             ->when(isset($filters['status']), static function (Builder $query) use ($filters): void {
                 $query->where('status', (string) $filters['status']);
+            })
+            ->when(! empty($filters['search']), static function (Builder $query) use ($filters): void {
+                $term = '%'.trim((string) $filters['search']).'%';
+                $query->where(static function (Builder $searchQuery) use ($term): void {
+                    $searchQuery->where('number', 'ilike', $term)
+                        ->orWhere('name', 'ilike', $term);
+                });
             });
+    }
+
+    private function filteredTotals(array $filters): array
+    {
+        $rows = $this->filteredEstimates($filters)
+            ->selectRaw('status, COUNT(*) AS estimate_count, COALESCE(SUM(total_amount), 0) AS amount_sum, COALESCE(SUM(total_amount_with_vat), 0) AS amount_with_vat_sum')
+            ->groupBy('status')
+            ->get();
+        $byStatus = array_fill_keys(self::STATUSES, 0);
+        $totalAmount = 0.0;
+        $totalAmountWithVat = 0.0;
+        $approvedAmountWithVat = 0.0;
+        foreach ($rows as $row) {
+            $status = (string) $row->status;
+            $count = (int) $row->estimate_count;
+            $byStatus[$status] = $count;
+            $totalAmount += (float) $row->amount_sum;
+            $totalAmountWithVat += (float) $row->amount_with_vat_sum;
+            if ($status === 'approved') {
+                $approvedAmountWithVat += (float) $row->amount_with_vat_sum;
+            }
+        }
+
+        return [
+            'estimates_count' => array_sum($byStatus),
+            'by_status' => $byStatus,
+            'total_amount' => round($totalAmount, 2),
+            'total_amount_with_vat' => round($totalAmountWithVat, 2),
+            'approved_amount_with_vat' => round($approvedAmountWithVat, 2),
+            'in_review_count' => $byStatus['in_review'] ?? 0,
+        ];
     }
 
     private function linkedChangesQuery(int $organizationId, int $projectId, array $estimateItemIds): Builder

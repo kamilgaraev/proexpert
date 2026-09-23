@@ -21,6 +21,7 @@
     "projects.view",
     "projects.create", 
     "projects.edit",
+    "projects.participants.assign",
     "projects.delete",
     "projects.archive",
     "projects.analytics",

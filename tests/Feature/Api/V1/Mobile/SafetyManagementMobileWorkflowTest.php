@@ -17,7 +17,10 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Storage\FileService;
+use App\Enums\UserProjectAccessMode;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -25,6 +28,71 @@ use Tests\TestCase;
 final class SafetyManagementMobileTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_mobile_violation_create_and_resolution_store_scoped_photo_evidence(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value,
+        ]);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'foreman');
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $this->allowModuleAccess();
+        $this->allowAdminAccess();
+        $storedPath = "org-{$context->organization->id}/safety-management/violations/evidence.jpg";
+        $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath): void {
+            $mock->shouldReceive('upload')->twice()->andReturn($storedPath);
+            $mock->shouldReceive('temporaryUrl')->times(3)->andReturn('https://files.test/safety.jpg');
+        });
+
+        $headers = $context->mobileAuthHeaders();
+        $this->withHeaders($headers)
+            ->post('/api/v1/mobile/safety-management/violations', [
+                'project_id' => $foreignProject->id,
+                'title' => 'Чужой проект',
+                'severity' => 'major',
+                'photos' => [UploadedFile::fake()->image('foreign.jpg')],
+            ])
+            ->assertStatus(422);
+        $this->assertDatabaseCount('files', 0);
+
+        $created = $this->withHeaders($headers)
+            ->post('/api/v1/mobile/safety-management/violations', [
+                'project_id' => $project->id,
+                'title' => 'Нарушение ограждения',
+                'severity' => 'major',
+                'photos' => [UploadedFile::fake()->image('before.jpg')],
+            ]);
+        $created->assertCreated()
+            ->assertJsonPath('data.photos.0.name', 'before.jpg')
+            ->assertJsonPath('data.photos.0.url', 'https://files.test/safety.jpg');
+        $violationId = (int) $created->json('data.id');
+        $this->assertDatabaseHas('files', [
+            'organization_id' => $context->organization->id,
+            'fileable_type' => \App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation::class,
+            'fileable_id' => $violationId,
+            'user_id' => $context->user->id,
+        ]);
+
+        $this->withHeaders($headers)
+            ->post("/api/v1/mobile/safety-management/violations/{$violationId}/resolve", [
+                'resolution_comment' => 'Ограждение восстановлено',
+                'photos' => [UploadedFile::fake()->image('after.jpg')],
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'resolved')
+            ->assertJsonPath('data.photos.1.name', 'after.jpg');
+
+        $this->assertDatabaseCount('files', 2);
+        $this->withHeaders($headers)
+            ->post("/api/v1/mobile/safety-management/violations/{$violationId}/resolve", [
+                'resolution_comment' => 'Повторное закрытие',
+                'photos' => [UploadedFile::fake()->image('late.jpg')],
+            ])
+            ->assertStatus(422);
+        $this->assertDatabaseCount('files', 2);
+    }
 
     public function test_mobile_permit_list_and_detail_are_scoped_to_current_user_and_organization(): void
     {

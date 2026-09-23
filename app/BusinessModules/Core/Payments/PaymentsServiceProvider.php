@@ -79,6 +79,7 @@ class PaymentsServiceProvider extends ServiceProvider
 
         // Загрузка маршрутов
         $this->loadRoutesFrom(__DIR__.'/routes.php');
+        $this->loadRoutesFrom(__DIR__.'/routes-mobile.php');
 
         // Регистрация event listeners
         $this->registerEventListeners();

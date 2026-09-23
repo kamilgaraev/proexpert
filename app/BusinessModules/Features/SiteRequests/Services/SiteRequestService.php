@@ -19,11 +19,19 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\EstimateItem;
 use App\Models\Material;
+use App\Models\MeasurementUnit;
+use App\Models\User;
+use App\Models\File;
+use App\Services\Storage\FileService;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\QueryException;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -45,7 +53,25 @@ class SiteRequestService
         private readonly SiteRequestsModule $module,
         private readonly SiteRequestSortResolver $sortResolver,
         private readonly SiteRequestAssetProjectionService $machineryProjection,
+        private readonly AuthorizationService $authorizationService,
+        private readonly FileService $fileService,
+        private readonly MobileProjectAccessResolver $mobileProjectAccess,
     ) {}
+
+    public function mobileMeta(int $organizationId): array
+    {
+        return [
+            'request_types' => SiteRequestTypeEnum::options(),
+            'personnel_types' => PersonnelTypeEnum::options(),
+            'equipment_types' => EquipmentTypeEnum::options(),
+            'units' => MeasurementUnit::query()
+                ->where(function ($query) use ($organizationId): void {
+                    $query->where('organization_id', $organizationId)
+                        ->orWhere('is_system', true);
+                })
+                ->get(['id', 'name', 'short_name', 'type']),
+        ];
+    }
 
     /**
      * Получить заявку по ID
@@ -113,35 +139,133 @@ class SiteRequestService
         return $query->paginate($perPage);
     }
 
+    public function paginateMobile(User $actor, int $organizationId, int $perPage, array $filters, string $scope): LengthAwarePaginator
+    {
+        if (! empty($filters['project_id'])) {
+            $this->mobileProjectAccess->assert(
+                $actor,
+                $organizationId,
+                (int) $filters['project_id'],
+                trans_message('site_requests::mobile.not_found')
+            );
+        }
+
+        $projectIds = $this->mobileProjectAccess->ids($actor, $organizationId);
+        if ($projectIds === []) {
+            throw new DomainException(trans_message('site_requests::mobile.no_accessible_projects'), 403);
+        }
+        $filters['project_ids'] = $projectIds;
+
+        if ($scope === 'approvals') {
+            if (! $this->actorHasAnyPermission($actor, $organizationId, [
+                'site_requests.approve',
+                'site_requests.assign',
+                'site_requests.change_status',
+                'site_requests.statistics',
+            ])) {
+                throw new DomainException(trans_message('site_requests::mobile.approvals_access_denied'), 403);
+            }
+            $filters['status_in'] = [SiteRequestStatusEnum::PENDING->value, SiteRequestStatusEnum::IN_REVIEW->value];
+        } elseif ($scope === 'assigned') {
+            $filters['assigned_to'] = (int) $actor->id;
+        } elseif ($scope === 'all') {
+            if (! $this->actorHasPermission($actor, $organizationId, 'site_requests.view')) {
+                throw new DomainException(trans_message('site_requests::mobile.access_denied'), 403);
+            }
+        } else {
+            $filters['user_id'] = (int) $actor->id;
+        }
+
+        if (array_key_exists('assigned_user_id', $filters) && $filters['assigned_user_id'] !== null) {
+            $filters['assigned_to'] = $filters['assigned_user_id'];
+        }
+        if (filter_var($filters['urgent'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $filters['priority'] = SiteRequestPriorityEnum::URGENT->value;
+        }
+        if (isset($filters['required_from'])) {
+            $filters['required_date_from'] = $filters['required_from'];
+        }
+        if (isset($filters['required_to'])) {
+            $filters['required_date_to'] = $filters['required_to'];
+        }
+        if (array_key_exists('overdue', $filters)) {
+            $filters['overdue'] = filter_var($filters['overdue'], FILTER_VALIDATE_BOOLEAN);
+        }
+
+        return $this->paginate($organizationId, (int) $actor->id, $perPage, $filters);
+    }
+
     /**
      * Создать одиночную заявку
      */
-    public function create(int $organizationId, int $userId, array $data, ?int $groupId = null): SiteRequest
+    public function create(int $organizationId, int $userId, array $data, ?int $groupId = null, ?string $idempotencyKey = null): SiteRequest
     {
+        $idempotencyKey = $idempotencyKey !== null ? trim($idempotencyKey) : null;
+        $idempotencyFingerprint = null;
+        if ($idempotencyKey !== null && $idempotencyKey !== '') {
+            $idempotencyFingerprint = $this->makeIdempotencyFingerprint($data);
+            $existing = SiteRequest::query()
+                ->where('organization_id', $organizationId)
+                ->where('user_id', $userId)
+                ->where('idempotency_key', $idempotencyKey)
+                ->first();
+            if ($existing) {
+                if (! hash_equals((string) $existing->idempotency_hash, $idempotencyFingerprint)) {
+                    throw new DomainException(trans_message('site_requests::mobile.idempotency_conflict'));
+                }
+                return $existing->fresh(['project', 'user', 'estimateItem.measurementUnit']);
+            }
+        }
+
         // Проверяем лимиты
         $this->checkLimits($organizationId);
         $data = $this->prepareEstimateResourceData($organizationId, $data);
         $data = $this->prepareMaterialCatalogData($organizationId, $data);
 
-        $request = DB::transaction(function () use ($organizationId, $userId, $data, $groupId) {
-            // Создаем заявку
-            $request = SiteRequest::create([
-                'organization_id' => $organizationId,
-                'user_id' => $userId,
-                'status' => SiteRequestStatusEnum::DRAFT->value,
-                'site_request_group_id' => $groupId,
-                ...$data,
-            ]);
+        try {
+            $request = DB::transaction(function () use (
+                $organizationId,
+                $userId,
+                $data,
+                $groupId,
+                $idempotencyKey,
+                $idempotencyFingerprint
+            ) {
+                $request = SiteRequest::create([
+                    'organization_id' => $organizationId,
+                    'user_id' => $userId,
+                    'status' => SiteRequestStatusEnum::DRAFT->value,
+                    'site_request_group_id' => $groupId,
+                    'idempotency_key' => $idempotencyKey ?: null,
+                    'idempotency_hash' => $idempotencyFingerprint,
+                    ...$data,
+                ]);
 
-            // Записываем в историю
-            SiteRequestHistory::logCreated($request, $userId);
+                SiteRequestHistory::logCreated($request, $userId);
 
-            if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST) {
-                $this->machineryProjection->synchronizeFromSiteRequest($request, $userId);
+                if ($request->request_type === SiteRequestTypeEnum::EQUIPMENT_REQUEST) {
+                    $this->machineryProjection->synchronizeFromSiteRequest($request, $userId);
+                }
+
+                return $request;
+            });
+        } catch (QueryException $exception) {
+            if (! $idempotencyKey) {
+                throw $exception;
             }
-
-            return $request;
-        });
+            $existing = SiteRequest::query()
+                ->where('organization_id', $organizationId)
+                ->where('user_id', $userId)
+                ->where('idempotency_key', $idempotencyKey)
+                ->first();
+            if (! $existing) {
+                throw $exception;
+            }
+            if (! hash_equals((string) $existing->idempotency_hash, (string) $idempotencyFingerprint)) {
+                throw new DomainException(trans_message('site_requests::mobile.idempotency_conflict'));
+            }
+            return $existing->fresh(['project', 'user', 'estimateItem.measurementUnit']);
+        }
 
         // Инвалидируем кеш
         $this->invalidateCache($organizationId);
@@ -165,12 +289,81 @@ class SiteRequestService
         return $request->fresh(['project', 'user', 'estimateItem.measurementUnit']);
     }
 
+    public function createMobile(int $organizationId, int $userId, array $data, ?string $idempotencyKey = null): SiteRequest
+    {
+        $actor = User::query()->find($userId);
+        if (! $actor || ! $this->actorHasPermission($actor, $organizationId, 'site_requests.create')) {
+            throw new DomainException(trans_message('site_requests::mobile.create_access_denied'));
+        }
+        $this->assertMobileProjectIdAccess((int) ($data['project_id'] ?? 0), $organizationId, $actor);
+        return $this->create($organizationId, $userId, $data, null, $idempotencyKey);
+    }
+
+    public function createMobileBatch(int $organizationId, int $userId, array $data, ?string $idempotencyKey = null): SiteRequestGroup
+    {
+        $actor = User::query()->find($userId);
+        if (! $actor || ! $this->actorHasPermission($actor, $organizationId, 'site_requests.create')) {
+            throw new DomainException(trans_message('site_requests::mobile.create_access_denied'));
+        }
+        $this->assertMobileProjectIdAccess((int) ($data['project_id'] ?? 0), $organizationId, $actor);
+
+        $items = [];
+        foreach (($data['materials'] ?? []) as $material) {
+            $itemData = [
+                'material_name' => $material['name'] ?? null,
+                'material_quantity' => $material['quantity'] ?? null,
+                'material_unit' => $material['unit'] ?? null,
+                'material_id' => $material['material_id'] ?? null,
+                'note' => $material['note'] ?? null,
+            ];
+            $itemData['title'] = ($data['title'] ?? trans_message('site_requests::mobile.default_title'))
+                .($itemData['material_name'] ? ' - '.$itemData['material_name'] : '');
+            $items[] = $itemData;
+        }
+
+        $idempotencyKey = $idempotencyKey !== null ? trim($idempotencyKey) : null;
+        $fingerprint = $idempotencyKey ? $this->makeIdempotencyFingerprint(['data' => $data, 'items' => $items]) : null;
+        if ($idempotencyKey) {
+            $existing = SiteRequestGroup::query()
+                ->where('organization_id', $organizationId)
+                ->where('user_id', $userId)
+                ->where('idempotency_key', $idempotencyKey)
+                ->first();
+            if ($existing) {
+                if (! hash_equals((string) $existing->idempotency_hash, (string) $fingerprint)) {
+                    throw new DomainException(trans_message('site_requests::mobile.idempotency_conflict'));
+                }
+                return $existing->fresh(['requests.estimateItem.measurementUnit']);
+            }
+        }
+
+        try {
+            return $this->createBatch($organizationId, $userId, $data, $items, $idempotencyKey, $fingerprint);
+        } catch (QueryException $exception) {
+            if (! $idempotencyKey) {
+                throw $exception;
+            }
+            $existing = SiteRequestGroup::query()
+                ->where('organization_id', $organizationId)
+                ->where('user_id', $userId)
+                ->where('idempotency_key', $idempotencyKey)
+                ->first();
+            if (! $existing) {
+                throw $exception;
+            }
+            if (! hash_equals((string) $existing->idempotency_hash, (string) $fingerprint)) {
+                throw new DomainException(trans_message('site_requests::mobile.idempotency_conflict'));
+            }
+            return $existing->fresh(['requests.estimateItem.measurementUnit']);
+        }
+    }
+
     /**
      * Создать пакет заявок (группу)
      */
-    public function createBatch(int $organizationId, int $userId, array $data, array $items): SiteRequestGroup
+    public function createBatch(int $organizationId, int $userId, array $data, array $items, ?string $idempotencyKey = null, ?string $idempotencyFingerprint = null): SiteRequestGroup
     {
-        return DB::transaction(function () use ($organizationId, $userId, $data, $items) {
+        return DB::transaction(function () use ($organizationId, $userId, $data, $items, $idempotencyKey, $idempotencyFingerprint) {
             // 1. Создаем группу
             $group = SiteRequestGroup::create([
                 'organization_id' => $organizationId,
@@ -179,6 +372,8 @@ class SiteRequestService
                 'title' => $data['title'] ?? 'Новая заявка',
                 'description' => $data['description'] ?? null,
                 'status' => SiteRequestStatusEnum::DRAFT->value,
+                'idempotency_key' => $idempotencyKey ?: null,
+                'idempotency_hash' => $idempotencyFingerprint,
             ]);
 
             // 2. Создаем заявки внутри группы
@@ -482,6 +677,22 @@ class SiteRequestService
      */
     public function assign(SiteRequest $request, int $userId, int $assigneeId): SiteRequest
     {
+        $actor = User::query()->find($userId);
+        if (! $actor || ! $this->actorHasPermission($actor, $request->organization_id, 'site_requests.assign')) {
+            throw new DomainException(trans_message('site_requests::mobile.assign_access_denied'));
+        }
+        $this->assertMobileProjectAccess($request, $actor);
+        $assigneeIsActiveParticipant = $request->project->users()
+            ->whereKey($assigneeId)
+            ->wherePivot('is_active', true)
+            ->whereHas('organizations', static fn ($query) => $query
+                ->where('organizations.id', $request->organization_id)
+                ->where('organization_user.is_active', true))
+            ->exists();
+        if (! $assigneeIsActiveParticipant) {
+            throw new DomainException(trans_message('site_requests::mobile.assignee_not_project_member'), 422);
+        }
+
         $oldAssignee = $request->assigned_to;
 
         DB::transaction(function () use ($request, $userId, $oldAssignee, $assigneeId) {
@@ -504,6 +715,142 @@ class SiteRequestService
         ]);
 
         return $request->fresh(['assignedUser']);
+    }
+
+    public function mobileAssignees(SiteRequest $request, User $actor): array
+    {
+        if (! $this->actorHasPermission($actor, $request->organization_id, 'site_requests.assign')) {
+            throw new DomainException(trans_message('site_requests::mobile.assign_access_denied'));
+        }
+        $this->assertMobileProjectAccess($request, $actor);
+        return $request->project->users()
+            ->wherePivot('is_active', true)
+            ->whereHas('organizations', static fn ($query) => $query
+                ->where('organizations.id', $request->organization_id)
+                ->where('organization_user.is_active', true))
+            ->orderBy('users.name')
+            ->get(['users.id', 'users.name', 'users.email'])
+            ->map(static fn (User $user): array => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email])
+            ->values()
+            ->all();
+    }
+
+    public function mobileFiles(SiteRequest $request, User $actor): array
+    {
+        $this->assertMobileRequestAccess($request, $actor, 'site_requests.view');
+        return $request->files->map(fn (File $file): array => [
+            'id' => $file->id,
+            'name' => $file->name,
+            'url' => $this->fileService->temporaryUrl($file->path, 60, $request->organization),
+            'size' => $file->size,
+            'mime_type' => $file->mime_type,
+            'created_at' => $file->created_at?->toIso8601String(),
+        ])->values()->all();
+    }
+
+    public function uploadMobileFile(SiteRequest $request, User $actor, \Illuminate\Http\UploadedFile $uploadedFile): array
+    {
+        $this->assertMobileRequestAccess($request, $actor, 'site_requests.files.upload');
+        $path = $this->fileService->upload($uploadedFile, 'site-requests/'.$request->id, null, 'private', $request->organization);
+        if ($path === false) {
+            throw new DomainException(trans_message('files.upload_failed'), 500);
+        }
+        $file = $request->files()->create([
+            'organization_id' => $request->organization_id,
+            'user_id' => $actor->id,
+            'name' => $uploadedFile->getClientOriginalName(),
+            'original_name' => $uploadedFile->getClientOriginalName(),
+            'path' => $path,
+            'mime_type' => $uploadedFile->getClientMimeType(),
+            'size' => $uploadedFile->getSize(),
+            'disk' => 's3',
+            'type' => 'attachment',
+        ]);
+        return [
+            'id' => $file->id,
+            'name' => $file->name,
+            'url' => $this->fileService->temporaryUrl($file->path, 60, $request->organization),
+            'size' => $file->size,
+            'mime_type' => $file->mime_type,
+            'created_at' => $file->created_at?->toIso8601String(),
+        ];
+    }
+
+    public function deleteMobileFile(SiteRequest $request, User $actor, int $fileId): void
+    {
+        $this->assertMobileRequestAccess($request, $actor, 'site_requests.files.delete');
+        $file = $request->files()->where('organization_id', $request->organization_id)->find($fileId);
+        if (! $file) {
+            throw new DomainException(trans_message('files.not_found'), 404);
+        }
+        $this->fileService->delete($file->path, $request->organization);
+        $file->delete();
+    }
+
+    private function assertMobileRequestAccess(SiteRequest $request, User $actor, string $permission): void
+    {
+        $this->assertMobileProjectAccess($request, $actor);
+        if (! $this->actorHasPermission($actor, $request->organization_id, $permission)) {
+            throw new DomainException(trans_message('site_requests::mobile.access_denied'));
+        }
+        $canSee = $request->belongsToUser((int) $actor->id)
+            || $request->isAssignedTo((int) $actor->id)
+            || $this->actorHasPermission($actor, $request->organization_id, 'site_requests.view');
+        if (! $canSee) {
+            throw new DomainException(trans_message('site_requests::mobile.access_denied'));
+        }
+    }
+
+    private function assertMobileProjectAccess(SiteRequest $request, User $actor): void
+    {
+        $this->assertMobileProjectIdAccess((int) $request->project_id, $request->organization_id, $actor);
+    }
+
+    private function assertMobileProjectIdAccess(int $projectId, int $organizationId, User $actor): void
+    {
+        if ($projectId <= 0 || ! in_array($projectId, $this->mobileProjectAccess->ids($actor, $organizationId), true)) {
+            throw new DomainException(trans_message('site_requests::mobile.access_denied'));
+        }
+    }
+
+    private function actorHasPermission(User $actor, int $organizationId, string $permission): bool
+    {
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        $modules = $this->authorizationService->getUserPermissionsStructured($actor, $context)['modules'] ?? [];
+        $granted = $modules['site-requests'] ?? [];
+        foreach ($granted as $item) {
+            if ($item === '*' || $item === $permission || (str_ends_with((string) $item, '.*') && str_starts_with($permission, substr((string) $item, 0, -1)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function actorHasAnyPermission(User $actor, int $organizationId, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            if ($this->actorHasPermission($actor, $organizationId, $permission)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function makeIdempotencyFingerprint(array $data): string
+    {
+        $normalize = static function (array $value) use (&$normalize): array {
+            foreach ($value as $key => $item) {
+                if (is_array($item)) {
+                    $value[$key] = $normalize($item);
+                }
+            }
+            if (! array_is_list($value)) {
+                ksort($value);
+            }
+            return $value;
+        };
+
+        return hash('sha256', json_encode($normalize($data), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
     /**
@@ -756,8 +1103,22 @@ class SiteRequestService
             $query->forUser($filters['user_id']);
         }
 
-        if (! empty($filters['assigned_to'])) {
+        if (array_key_exists('assigned_to', $filters) && $filters['assigned_to'] === 'unassigned') {
+            $query->whereNull('assigned_to');
+        } elseif (! empty($filters['assigned_to'])) {
             $query->where('assigned_to', $filters['assigned_to']);
+        }
+
+        if (! empty($filters['urgent'])) {
+            $query->where('priority', SiteRequestPriorityEnum::URGENT->value);
+        }
+
+        if (! empty($filters['required_date_from'])) {
+            $query->whereDate('required_date', '>=', $filters['required_date_from']);
+        }
+
+        if (! empty($filters['required_date_to'])) {
+            $query->whereDate('required_date', '<=', $filters['required_date_to']);
         }
 
         if (! empty($filters['date_from'])) {

@@ -7,7 +7,7 @@ namespace App\BusinessModules\Core\Payments\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-final class UpdatePaymentDocumentRequest extends FormRequest
+class UpdatePaymentDocumentRequest extends FormRequest
 {
     public function authorize(): bool
     {

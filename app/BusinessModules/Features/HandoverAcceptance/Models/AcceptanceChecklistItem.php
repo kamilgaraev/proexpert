@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\HandoverAcceptance\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 final class AcceptanceChecklistItem extends Model
 {
@@ -28,5 +29,10 @@ final class AcceptanceChecklistItem extends Model
     public function checklist(): BelongsTo
     {
         return $this->belongsTo(AcceptanceChecklist::class, 'acceptance_checklist_id');
+    }
+
+    public function files(): MorphMany
+    {
+        return $this->morphMany(\App\Models\File::class, 'fileable');
     }
 }

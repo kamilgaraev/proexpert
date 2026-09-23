@@ -2,11 +2,13 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Http\Controllers\Mobile;
 
-use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\ChangeStatusRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileSiteRequestAssignmentRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileSiteRequestFileUploadRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileSiteRequestIndexRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileSiteRequestCalendarRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileCreateSiteRequestFromTemplateRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\StoreSiteRequestRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestGroupRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestRequest;
@@ -21,11 +23,10 @@ use App\BusinessModules\Features\SiteRequests\Services\SiteRequestTemplateServic
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestWorkflowService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
-use App\Models\MeasurementUnit;
 use App\Models\User;
-use App\Services\Mobile\MobileProjectAccessResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -39,10 +40,9 @@ class SiteRequestController extends Controller
         private readonly SiteRequestCalendarService $calendarService,
         private readonly SiteRequestWorkflowService $workflowService,
         private readonly AuthorizationService $authorizationService,
-        private readonly MobileProjectAccessResolver $projectAccess,
     ) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(MobileSiteRequestIndexRequest $request): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -53,38 +53,11 @@ class SiteRequestController extends Controller
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $perPage = min((int) $request->input('per_page', 15), 50);
-            $scope = $request->input('scope', 'own');
-            $filters = $request->only([
-                'status',
-                'priority',
-                'request_type',
-                'project_id',
-                'search',
-            ]);
-            $this->assertProjectAccess($user, $organizationId, $filters['project_id'] ?? null);
-            $projectIds = $this->projectAccess->ids($user, $organizationId);
-
-            if ($projectIds === []) {
-                return MobileResponse::error(trans_message('site_requests::mobile.no_accessible_projects'), 403);
-            }
-
-            $filters['project_ids'] = $projectIds;
-
-            if ($scope === 'approvals') {
-                if (! $this->canReviewRequests($user, $organizationId)) {
-                    return MobileResponse::error(trans_message('site_requests::mobile.approvals_access_denied'), 403);
-                }
-
-                $filters['status_in'] = [
-                    SiteRequestStatusEnum::PENDING->value,
-                    SiteRequestStatusEnum::IN_REVIEW->value,
-                ];
-            } else {
-                $filters['user_id'] = (int) $user->id;
-            }
-
-            $requests = $this->service->paginate($organizationId, (int) $user->id, $perPage, $filters);
+            $filters = $request->validated();
+            $scope = $filters['scope'] ?? 'own';
+            $perPage = (int) ($filters['per_page'] ?? 15);
+            unset($filters['scope'], $filters['per_page']);
+            $requests = $this->service->paginateMobile($user, $organizationId, $perPage, $filters, $scope);
 
             return MobileResponse::paginated(
                 $requests->getCollection()
@@ -104,7 +77,7 @@ class SiteRequestController extends Controller
                 ]
             );
         } catch (\DomainException $e) {
-            return MobileResponse::error($e->getMessage(), 422);
+            return MobileResponse::error($e->getMessage(), $this->domainStatus($e, 422));
         } catch (\Exception $e) {
             Log::error('site_requests.mobile.index.error', [
                 'user_id' => auth()->id(),
@@ -149,6 +122,118 @@ class SiteRequestController extends Controller
         }
     }
 
+    public function assignees(Request $request, int $id): JsonResponse
+    {
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+        /** @var User|null $user */
+        $user = auth()->user();
+        if ($organizationId <= 0 || ! $user) {
+            return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+        }
+        $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
+        if (! $siteRequest) {
+            return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
+        }
+        try {
+            return MobileResponse::success($this->service->mobileAssignees($siteRequest, $user));
+        } catch (\DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception, 403));
+        }
+    }
+
+    public function assign(MobileSiteRequestAssignmentRequest $request, int $id): JsonResponse
+    {
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+        /** @var User|null $user */
+        $user = auth()->user();
+        if ($organizationId <= 0 || ! $user) {
+            return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+        }
+        $validated = $request->validated();
+        $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
+        if (! $siteRequest) {
+            return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
+        }
+        try {
+            $updated = $this->service->assign($siteRequest, (int) $user->id, (int) $validated['assigned_user_id']);
+            return MobileResponse::success(
+                $this->makeSiteRequestPayload($updated, $request, $user, $organizationId),
+                trans_message('site_requests::mobile.assign_success')
+            );
+        } catch (\DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception, 403));
+        }
+    }
+
+    public function files(Request $request, int $id): JsonResponse
+    {
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+        /** @var User|null $user */
+        $user = auth()->user();
+        if ($organizationId <= 0 || ! $user) {
+            return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+        }
+        $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
+        if (! $siteRequest) {
+            return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
+        }
+        try {
+            return MobileResponse::success($this->service->mobileFiles($siteRequest, $user));
+        } catch (\DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception, 403));
+        }
+    }
+
+    public function uploadFile(MobileSiteRequestFileUploadRequest $request, int $id): JsonResponse
+    {
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+        /** @var User|null $user */
+        $user = auth()->user();
+        if ($organizationId <= 0 || ! $user) {
+            return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+        }
+        $validated = $request->validated();
+        $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
+        if (! $siteRequest) {
+            return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
+        }
+        try {
+            return MobileResponse::success(
+                $this->service->uploadMobileFile($siteRequest, $user, $validated['file']),
+                trans_message('site_requests::mobile.file_uploaded'),
+                201
+            );
+        } catch (\DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception, 403));
+        }
+    }
+
+    public function deleteFile(Request $request, int $id, int $fileId): JsonResponse
+    {
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+        /** @var User|null $user */
+        $user = auth()->user();
+        if ($organizationId <= 0 || ! $user) {
+            return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
+        }
+        $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
+        if (! $siteRequest) {
+            return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
+        }
+        try {
+            $this->service->deleteMobileFile($siteRequest, $user, $fileId);
+            return MobileResponse::success(null, trans_message('site_requests::mobile.file_deleted'));
+        } catch (\DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception, 403));
+        }
+    }
+
+    private function domainStatus(\DomainException $exception, int $default): int
+    {
+        $code = $exception->getCode();
+        return $code >= 400 && $code <= 599 ? $code : $default;
+    }
+
     public function store(StoreSiteRequestRequest $request): JsonResponse
     {
         try {
@@ -161,27 +246,10 @@ class SiteRequestController extends Controller
             }
 
             $validated = $request->validated();
-            $this->assertProjectAccess($user, $organizationId, $validated['project_id'] ?? null);
+            $idempotencyKey = $request->header('Idempotency-Key');
 
             if (isset($validated['materials']) && is_array($validated['materials'])) {
-                $items = [];
-
-                foreach ($validated['materials'] as $material) {
-                    $itemData = [
-                        'material_name' => $material['name'] ?? null,
-                        'material_quantity' => $material['quantity'] ?? null,
-                        'material_unit' => $material['unit'] ?? null,
-                        'material_id' => $material['material_id'] ?? null,
-                        'note' => $material['note'] ?? null,
-                    ];
-
-                    $itemData['title'] = ($validated['title'] ?? trans_message('site_requests::mobile.default_title'))
-                        .($itemData['material_name'] ? ' - '.$itemData['material_name'] : '');
-
-                    $items[] = $itemData;
-                }
-
-                $group = $this->service->createBatch($organizationId, (int) $user->id, $validated, $items);
+                $group = $this->service->createMobileBatch($organizationId, (int) $user->id, $validated, $idempotencyKey);
                 $group->load(['requests.project', 'requests.user', 'requests.assignedUser', 'requests.group']);
                 $primaryRequest = $group->requests->first();
 
@@ -199,10 +267,11 @@ class SiteRequestController extends Controller
                 );
             }
 
-            $siteRequest = $this->service->create(
+            $siteRequest = $this->service->createMobile(
                 $organizationId,
                 (int) $user->id,
-                $validated
+                $validated,
+                $idempotencyKey
             );
 
             return MobileResponse::success(
@@ -511,7 +580,7 @@ class SiteRequestController extends Controller
         }
     }
 
-    public function createFromTemplate(Request $request, int $templateId): JsonResponse
+    public function createFromTemplate(MobileCreateSiteRequestFromTemplateRequest $request, int $templateId): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -521,9 +590,7 @@ class SiteRequestController extends Controller
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $validated = $request->validate([
-                'project_id' => ['required', 'integer', 'exists:projects,id'],
-            ]);
+            $validated = $request->validated();
 
             /** @var User|null $user */
             $user = auth()->user();
@@ -532,9 +599,7 @@ class SiteRequestController extends Controller
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $this->assertProjectAccess($user, $organizationId, $validated['project_id']);
-
-            $siteRequest = $this->templateService->createFromTemplate(
+            $siteRequest = $this->templateService->createFromMobileTemplate(
                 $templateId,
                 $organizationId,
                 $userId,
@@ -559,7 +624,7 @@ class SiteRequestController extends Controller
         }
     }
 
-    public function calendar(Request $request): JsonResponse
+    public function calendar(MobileSiteRequestCalendarRequest $request): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -568,12 +633,6 @@ class SiteRequestController extends Controller
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $request->validate([
-                'start_date' => ['required', 'date'],
-                'end_date' => ['required', 'date', 'after_or_equal:start_date'],
-                'project_id' => ['nullable', 'integer'],
-            ]);
-
             /** @var User|null $user */
             $user = auth()->user();
 
@@ -581,16 +640,19 @@ class SiteRequestController extends Controller
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $this->assertProjectAccess($user, $organizationId, $request->input('project_id'));
+            $validated = $request->validated();
 
-            $events = $this->calendarService->getCalendarEvents(
+            $events = $this->calendarService->getMobileCalendarEvents(
+                $user,
                 $organizationId,
-                Carbon::parse($request->input('start_date')),
-                Carbon::parse($request->input('end_date')),
-                $request->input('project_id')
+                Carbon::parse($validated['start_date']),
+                Carbon::parse($validated['end_date']),
+                isset($validated['project_id']) ? (int) $validated['project_id'] : null,
             );
 
             return MobileResponse::success(SiteRequestCalendarEventResource::collection($events));
+        } catch (BusinessLogicException $e) {
+            return MobileResponse::error($e->getMessage(), $e->getCode() ?: 403);
         } catch (\DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
@@ -603,20 +665,6 @@ class SiteRequestController extends Controller
         }
     }
 
-    private function assertProjectAccess(User $user, int $organizationId, mixed $projectId): void
-    {
-        if ($projectId === null || $projectId === '') {
-            return;
-        }
-
-        $this->projectAccess->assert(
-            $user,
-            $organizationId,
-            (int) $projectId,
-            trans_message('site_requests::mobile.not_found'),
-        );
-    }
-
     public function meta(Request $request): JsonResponse
     {
         try {
@@ -626,15 +674,7 @@ class SiteRequestController extends Controller
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            return MobileResponse::success([
-                'request_types' => SiteRequestTypeEnum::options(),
-                'personnel_types' => PersonnelTypeEnum::options(),
-                'equipment_types' => EquipmentTypeEnum::options(),
-                'units' => MeasurementUnit::where(function ($query) use ($organizationId) {
-                    $query->where('organization_id', $organizationId)
-                        ->orWhere('is_system', true);
-                })->get(['id', 'name', 'short_name', 'type']),
-            ]);
+            return MobileResponse::success($this->service->mobileMeta($organizationId));
         } catch (\Exception $e) {
             Log::error('site_requests.mobile.meta.error', [
                 'user_id' => auth()->id(),
@@ -803,6 +843,7 @@ class SiteRequestController extends Controller
     {
         return $siteRequest->belongsToUser((int) $user->id)
             || $siteRequest->isAssignedTo((int) $user->id)
+            || $this->hasSiteRequestPermission($user, $organizationId, 'site_requests.view')
             || $this->canReviewRequests($user, $organizationId);
     }
 

@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\HandoverAcceptance\Http\Resources;
 
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceGate;
+use App\Http\Resources\MobileEvidencePhotoPresenter;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -47,6 +48,7 @@ final class AcceptanceScopeResource extends JsonResource
             'accepted_at' => $scope->accepted_at?->toIso8601String(),
             'handed_over_at' => $scope->handed_over_at?->toIso8601String(),
             'reopened_at' => $scope->reopened_at?->toIso8601String(),
+            'photos' => $scope->relationLoaded('files') ? MobileEvidencePhotoPresenter::present($scope->files) : [],
             'quantity_revision' => (int) $scope->workQuantities->max('revision'),
             'work_quantities' => $scope->workQuantities->map(fn ($quantity) => [
                 'id' => $quantity->id,

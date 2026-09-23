@@ -165,11 +165,19 @@ Route::prefix('v1/mobile')->name('api.v1.mobile.')->group(function () {
     require __DIR__.'/api/v1/mobile/modules.php';
     require __DIR__.'/api/v1/mobile/companions.php';
     require __DIR__.'/api/v1/mobile/legal_archive.php';
+    require __DIR__.'/api/v1/mobile/pto.php';
     require __DIR__.'/api/v1/mobile/knowledge_hub.php';
     require __DIR__.'/api/v1/mobile/projects.php';
     require __DIR__.'/api/v1/mobile/warehouse.php';
     require __DIR__.'/api/v1/mobile/schedule.php';
     require __DIR__.'/api/v1/mobile/notifications.php';
+    require __DIR__.'/api/v1/mobile/acts.php';
+    require __DIR__.'/api/v1/mobile/my_actions.php';
+    require __DIR__.'/api/v1/mobile/field_admin.php';
+    require __DIR__.'/api/v1/mobile/team_expansion.php';
+    require __DIR__.'/api/v1/mobile/budgeting.php';
+    require __DIR__.'/api/v1/mobile/files.php';
+    require __DIR__.'/api/v1/mobile/system.php';
 
     if (file_exists(__DIR__.'/api/v1/mobile/construction_journal.php')) {
         require __DIR__.'/api/v1/mobile/construction_journal.php';

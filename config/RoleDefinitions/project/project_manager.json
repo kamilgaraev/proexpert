@@ -42,6 +42,7 @@
     "project-management": [
       "projects.view",
       "projects.edit",
+      "projects.participants.assign",
       "projects.analytics",
       "projects.foremen.assign",
       "projects.foremen.detach",

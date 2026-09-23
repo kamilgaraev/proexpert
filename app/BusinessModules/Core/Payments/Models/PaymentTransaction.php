@@ -31,6 +31,7 @@ class PaymentTransaction extends Model
         'payment_method',
         'reference_number',
         'bank_transaction_id',
+        'budget_override_reason',
         'idempotency_key',
         'reverses_transaction_id',
         'transaction_date',

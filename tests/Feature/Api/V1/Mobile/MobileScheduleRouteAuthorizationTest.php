@@ -12,24 +12,29 @@ final class MobileScheduleRouteAuthorizationTest extends TestCase
 {
     public function refreshDatabase(): void {}
 
-    public function test_daily_plan_mutation_routes_require_manage_permission(): void
+    public function test_mobile_schedule_mutation_routes_require_edit_permission(): void
     {
         $routes = array_values(array_filter(
             Route::getRoutes()->getRoutes(),
             static fn (LaravelRoute $route): bool => in_array($route->uri(), [
                 'api/v1/mobile/schedule/daily-plan-assignments/{assignment}/fact',
                 'api/v1/mobile/schedule/daily-plans/{dailyPlan}/submit',
+                'api/v1/mobile/schedule/{schedule_id}/tasks',
+                'api/v1/mobile/schedule/tasks/{task}',
+                'api/v1/mobile/warehouse/operations/write-off',
             ], true)
         ));
 
-        $this->assertCount(2, $routes);
+        $this->assertCount(6, $routes);
 
         foreach ($routes as $route) {
-            $this->assertContains(
-                'authorize:schedule.daily_plan.manage',
-                $route->gatherMiddleware(),
-                $route->uri()
-            );
+            $expectedPermission = match (true) {
+                str_contains($route->uri(), 'daily-plan') => 'authorize:schedule.daily_plan.manage',
+                str_contains($route->uri(), 'warehouse') => 'authorize:warehouse.manage_stock',
+                $route->methods()[0] === 'GET' => 'authorize:schedule.view',
+                default => 'authorize:schedule.edit',
+            };
+            $this->assertContains($expectedPermission, $route->gatherMiddleware(), $route->uri());
         }
     }
 }

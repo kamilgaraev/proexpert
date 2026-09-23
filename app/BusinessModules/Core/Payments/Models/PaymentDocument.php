@@ -63,6 +63,7 @@ class PaymentDocument extends Model
         'invoiceable_type',
         'invoiceable_id',
         'origin_key',
+        'mobile_payload_hash',
         'payer_organization_id',
         'payer_contractor_id',
         'payee_organization_id',

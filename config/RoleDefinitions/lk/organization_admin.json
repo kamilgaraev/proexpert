@@ -150,6 +150,7 @@
       "projects.view",
       "projects.create",
       "projects.edit",
+      "projects.participants.assign",
       "projects.delete",
       "projects.analytics",
       "projects.foremen.assign",

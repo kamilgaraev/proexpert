@@ -66,6 +66,117 @@ final class HandoverAcceptanceMobileTest extends TestCase
             );
     }
 
+    public function test_mobile_punch_list_photo_evidence_is_scoped_and_cannot_be_added_after_resolution(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $session = $this->createSession($context);
+        $this->allowAccess();
+        $storedPath = "org-{$context->organization->id}/handover-acceptance/acceptance_findings/1/evidence.jpg";
+        $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath): void {
+            $mock->shouldReceive('upload')->once()->andReturn($storedPath);
+            $mock->shouldReceive('temporaryUrl')->times(3)->andReturn('https://files.test/evidence.jpg');
+        });
+
+        $create = $this->withHeaders($context->mobileAuthHeaders())
+            ->post("/api/v1/mobile/handover-acceptance/sessions/{$session->id}/findings", [
+                'title' => 'Фотофиксация дефекта',
+                'severity' => 'major',
+                'create_quality_defect' => '0',
+                'photos' => [UploadedFile::fake()->image('evidence.jpg')],
+            ]);
+
+        $create->assertCreated()
+            ->assertJsonPath('data.photos.0.name', 'evidence.jpg')
+            ->assertJsonPath('data.photos.0.url', 'https://files.test/evidence.jpg');
+        $findingId = (int) $create->json('data.id');
+        $file = \App\Models\File::query()->firstOrFail();
+        $this->assertSame($context->organization->id, (int) $file->organization_id);
+        $this->assertSame($context->user->id, (int) $file->user_id);
+        $this->assertSame($findingId, (int) $file->fileable_id);
+        $this->assertStringStartsWith("org-{$context->organization->id}/", $file->path);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->post("/api/v1/mobile/handover-acceptance/findings/{$findingId}/resolve", [
+                'resolution_comment' => 'Устранено',
+                'photos' => [UploadedFile::fake()->image('after.jpg')],
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'resolved');
+
+        $this->assertDatabaseCount('files', 2);
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->post("/api/v1/mobile/handover-acceptance/findings/{$findingId}/resolve", [
+                'resolution_comment' => 'Повтор',
+                'photos' => [UploadedFile::fake()->image('late.jpg')],
+            ])
+            ->assertStatus(422);
+        $this->assertDatabaseCount('files', 2);
+    }
+
+    public function test_mobile_checklist_review_attaches_photo_to_the_reviewed_item(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $scope = $this->createScope($context, 'in_progress');
+        $checklist = \App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceChecklist::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $scope->project_id,
+            'acceptance_scope_id' => $scope->id,
+            'title' => 'Проверка отделки',
+            'status' => 'active',
+        ]);
+        $item = $checklist->items()->create(['title' => 'Стены окрашены', 'is_required' => true, 'status' => 'pending']);
+        $this->allowAccess();
+        $storedPath = "org-{$context->organization->id}/handover-acceptance/acceptance_checklist_items/{$item->id}/evidence.jpg";
+        $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath): void {
+            $mock->shouldReceive('upload')->once()->andReturn($storedPath);
+            $mock->shouldReceive('temporaryUrl')->once()->andReturn('https://files.test/checklist.jpg');
+        });
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->post("/api/v1/mobile/handover-acceptance/checklist-items/{$item->id}/review", [
+                'status' => 'accepted',
+                'photos' => [UploadedFile::fake()->image('checklist.jpg')],
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.items.0.photos.0.name', 'checklist.jpg')
+            ->assertJsonPath('data.items.0.photos.0.url', 'https://files.test/checklist.jpg');
+
+        $this->assertDatabaseHas('files', [
+            'organization_id' => $context->organization->id,
+            'fileable_type' => $item::class,
+            'fileable_id' => $item->id,
+            'category' => 'evidence',
+        ]);
+    }
+
+    public function test_mobile_scope_rejection_stores_zone_photo_evidence(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $scope = $this->createScope($context, 'in_progress');
+        $this->allowAccess();
+        $storedPath = "org-{$context->organization->id}/handover-acceptance/acceptance_scopes/{$scope->id}/evidence.jpg";
+        $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath): void {
+            $mock->shouldReceive('upload')->once()->andReturn($storedPath);
+            $mock->shouldReceive('temporaryUrl')->once()->andReturn('https://files.test/zone.jpg');
+        });
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->post("/api/v1/mobile/handover-acceptance/scopes/{$scope->id}/reject", [
+                'reason' => 'Требуется доработка',
+                'photos' => [UploadedFile::fake()->image('zone.jpg')],
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.photos.0.name', 'zone.jpg')
+            ->assertJsonPath('data.photos.0.url', 'https://files.test/zone.jpg');
+
+        $this->assertDatabaseHas('files', [
+            'organization_id' => $context->organization->id,
+            'fileable_type' => $scope::class,
+            'fileable_id' => $scope->id,
+            'category' => 'evidence',
+        ]);
+    }
+
     public function test_mobile_can_create_resolve_and_send_scope_to_reinspection(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'foreman');

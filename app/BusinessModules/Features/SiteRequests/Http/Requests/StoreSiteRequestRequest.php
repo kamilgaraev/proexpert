@@ -7,6 +7,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rules\Exists;
@@ -16,6 +17,23 @@ use Illuminate\Validation\Rules\Exists;
  */
 class StoreSiteRequestRequest extends FormRequest
 {
+    public function withValidator(Validator $validator): void
+    {
+        $idempotencyKey = $this->header('Idempotency-Key');
+        if ($idempotencyKey === null) {
+            return;
+        }
+
+        $validator->after(static function (Validator $validator) use ($idempotencyKey): void {
+            if (trim($idempotencyKey) === '' || strlen($idempotencyKey) > 128) {
+                $validator->errors()->add(
+                    'Idempotency-Key',
+                    trans_message('site_requests::mobile.invalid_idempotency_key')
+                );
+            }
+        });
+    }
+
     /**
      * Determine if the user is authorized to make this request.
      */

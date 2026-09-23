@@ -23,6 +23,19 @@ final class WorkforceEmployeeService
         return WorkforceEmployee::query()
             ->with('user:id,name,email,current_organization_id')
             ->where('organization_id', $organizationId)
+            ->when(isset($filters['project_id']), function (Builder $query) use ($organizationId, $filters): void {
+                $today = Carbon::today()->toDateString();
+                $query->whereIn('id', DB::table('workforce_employee_assignments')
+                    ->select('employee_id')
+                    ->where('organization_id', $organizationId)
+                    ->where('project_id', (int) $filters['project_id'])
+                    ->where('status', 'active')
+                    ->whereNull('deleted_at')
+                    ->whereDate('valid_from', '<=', $today)
+                    ->where(static function ($dates) use ($today): void {
+                        $dates->whereNull('valid_to')->orWhereDate('valid_to', '>=', $today);
+                    }));
+            })
             ->when($filters['status'] ?? null, fn (Builder $query, string $status) => $query->where('employment_status', $status))
             ->when($filters['search'] ?? null, function (Builder $query, string $search): void {
                 $query->where(function (Builder $nested) use ($search): void {

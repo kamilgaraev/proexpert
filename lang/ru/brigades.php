@@ -24,6 +24,7 @@ return [
     'invitation_declined' => 'Приглашение отклонено.',
     'invitation_cancelled' => 'Приглашение отменено.',
     'invitation_brigade_not_available' => 'Приглашать можно только проверенные бригады.',
+    'invitation_already_pending' => 'Для этой бригады уже отправлено приглашение по проекту.',
     'request_created' => 'Запрос на бригаду создан.',
     'request_closed' => 'Запрос закрыт.',
     'request_invalid_status' => 'Запрос уже нельзя перевести в назначение.',

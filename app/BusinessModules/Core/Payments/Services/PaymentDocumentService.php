@@ -555,6 +555,7 @@ class PaymentDocumentService
                 'payment_method' => $paymentData['payment_method'] ?? 'bank_transfer',
                 'reference_number' => $paymentData['reference_number'] ?? null,
                 'bank_transaction_id' => $paymentData['bank_transaction_id'] ?? null,
+                'budget_override_reason' => $paymentData['budget_override_reason'] ?? null,
                 'idempotency_key' => $idempotencyKey,
                 'transaction_date' => $paymentData['transaction_date'] ?? now(),
                 'value_date' => $paymentData['value_date'] ?? now(),
@@ -683,16 +684,24 @@ class PaymentDocumentService
             ? $existing->payment_method->value
             : (string) $existing->payment_method;
         $expectedMethod = (string) ($paymentData['payment_method'] ?? 'bank_transfer');
-        $expectedTransactionDate = $this->normalizedPaymentDate($paymentData['transaction_date'] ?? now());
-        $expectedValueDate = $this->normalizedPaymentDate($paymentData['value_date'] ?? now());
+        $expectedTransactionDate = isset($paymentData['transaction_date'])
+            ? $this->normalizedPaymentDate($paymentData['transaction_date'])
+            : null;
+        $expectedValueDate = isset($paymentData['value_date'])
+            ? $this->normalizedPaymentDate($paymentData['value_date'])
+            : null;
 
         $matches = (int) $existing->payment_document_id === (int) $document->id
             && BigDecimal::of((string) $existing->amount)->toScale(2, RoundingMode::HalfUp)->isEqualTo($amount)
             && (string) $existing->currency === (string) $document->currency
             && $existingMethod === $expectedMethod
             && (string) ($existing->reference_number ?? '') === (string) ($paymentData['reference_number'] ?? '')
-            && $this->normalizedPaymentDate($existing->transaction_date) === $expectedTransactionDate
-            && $this->normalizedPaymentDate($existing->value_date) === $expectedValueDate;
+            && (string) ($existing->bank_transaction_id ?? '') === (string) ($paymentData['bank_transaction_id'] ?? '')
+            && (string) ($existing->budget_override_reason ?? '') === (string) ($paymentData['budget_override_reason'] ?? '')
+            && (string) ($existing->notes ?? '') === (string) ($paymentData['notes'] ?? '')
+            && ($existing->metadata ?? []) === ($paymentData['metadata'] ?? [])
+            && ($expectedTransactionDate === null || $this->normalizedPaymentDate($existing->transaction_date) === $expectedTransactionDate)
+            && ($expectedValueDate === null || $this->normalizedPaymentDate($existing->value_date) === $expectedValueDate);
 
         if (! $matches) {
             throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));

@@ -5,6 +5,18 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function () {
     Route::get('/schedule', [ScheduleController::class, 'index'])->name('schedule.index');
+    Route::get('/schedule/tasks/{task}', [ScheduleController::class, 'showTask'])
+        ->whereNumber('task')
+        ->middleware('authorize:schedule.view')
+        ->name('schedule.tasks.show');
+    Route::post('/schedule/{schedule_id}/tasks', [ScheduleController::class, 'storeTask'])
+        ->whereNumber('schedule_id')
+        ->middleware('authorize:schedule.edit')
+        ->name('schedule.tasks.store');
+    Route::patch('/schedule/tasks/{task}', [ScheduleController::class, 'updateTask'])
+        ->whereNumber('task')
+        ->middleware('authorize:schedule.edit')
+        ->name('schedule.tasks.update');
     Route::get('/schedule/daily-plans', [ScheduleController::class, 'dailyPlans'])->name('schedule.daily-plans');
     Route::patch('/schedule/daily-plan-assignments/{assignment}/fact', [ScheduleController::class, 'recordAssignmentFact'])
         ->whereNumber('assignment')

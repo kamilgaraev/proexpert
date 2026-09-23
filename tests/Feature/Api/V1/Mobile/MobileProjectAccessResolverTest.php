@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Mobile;
 use App\BusinessModules\Features\BudgetEstimates\Services\MobileBudgetEstimateService;
 use App\BusinessModules\Features\TimeTracking\Services\MobileTimeTrackingService;
 use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceAttendanceQrService;
+use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceEmployeeService;
 use App\Enums\UserProjectAccessMode;
 use App\Models\Organization;
 use App\Models\Project;
@@ -116,6 +117,7 @@ final class MobileProjectAccessResolverTest extends TestCase
         Schema::create('estimate_sections', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('estimate_id');
+            $table->unsignedInteger('sort_order')->default(0);
             $table->softDeletes();
         });
         Schema::create('estimate_items', function (Blueprint $table): void {
@@ -180,6 +182,32 @@ final class MobileProjectAccessResolverTest extends TestCase
             $table->foreignId('used_by_user_id')->nullable();
             $table->timestamps();
         });
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ([
+            'workforce_employee_assignments',
+            'workforce_attendance_qr_tokens',
+            'workforce_employees',
+            'work_types',
+            'time_entries',
+            'estimate_items',
+            'estimate_sections',
+            'estimates',
+            'schedule_tasks',
+            'project_schedules',
+            'project_user',
+            'project_organization',
+            'organization_user',
+            'projects',
+            'users',
+            'organizations',
+        ] as $table) {
+            Schema::dropIfExists($table);
+        }
+
+        parent::tearDown();
     }
 
     public function test_owner_organization_can_resolve_its_active_project(): void
@@ -312,6 +340,50 @@ final class MobileProjectAccessResolverTest extends TestCase
         self::assertSame($estimateId, $estimate->id);
     }
 
+    public function test_budget_estimate_search_filters_all_server_pages_and_keeps_project_scope(): void
+    {
+        [$organization, $user] = $this->userInOrganization(UserProjectAccessMode::ALL_PROJECTS);
+        $project = $this->participantProject($organization);
+        $otherProject = $this->participantProject($organization);
+
+        for ($index = 1; $index <= 31; $index++) {
+            DB::table('estimates')->insert([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'name' => $index === 31 ? 'Кровля объекта' : 'Обычная смета '.$index,
+                'number' => 'EST-'.$index,
+                'status' => $index === 31 ? 'approved' : 'draft',
+                'estimate_date' => '2026-08-01',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        DB::table('estimates')->insert([
+            'organization_id' => $organization->id,
+            'project_id' => $otherProject->id,
+            'name' => 'Кровля другого объекта',
+            'number' => 'OTHER-1',
+            'status' => 'approved',
+            'estimate_date' => '2026-08-01',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $service = $this->app->make(MobileBudgetEstimateService::class);
+        $firstPage = $service->paginateEstimates($organization->id, $user, ['project_id' => $project->id], 20);
+        self::assertSame(31, $firstPage->paginator->total());
+        self::assertCount(20, $firstPage->paginator->items());
+
+        $filtered = $service->paginateEstimates($organization->id, $user, [
+            'project_id' => $project->id,
+            'status' => 'approved',
+            'search' => 'кРоВлЯ',
+        ], 20);
+        self::assertSame(1, $filtered->paginator->total());
+        self::assertSame('Кровля объекта', $filtered->paginator->items()[0]->name);
+        self::assertSame(1, $filtered->summary['estimates_count']);
+    }
+
     public function test_time_tracking_accepts_project_of_active_participant(): void
     {
         [$organization, $user] = $this->userInOrganization(UserProjectAccessMode::ALL_PROJECTS);
@@ -352,6 +424,59 @@ final class MobileProjectAccessResolverTest extends TestCase
 
         self::assertSame($project->id, $payload['project_id']);
         self::assertSame($project->name, $payload['project_label']);
+    }
+
+    public function test_workforce_roster_filters_by_current_project_assignment(): void
+    {
+        [$organization] = $this->userInOrganization(UserProjectAccessMode::ALL_PROJECTS);
+        $project = $this->participantProject($organization);
+        $otherProject = $this->participantProject($organization);
+        Schema::create('workforce_employee_assignments', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('employee_id');
+            $table->foreignId('project_id');
+            $table->string('status');
+            $table->date('valid_from');
+            $table->date('valid_to')->nullable();
+            $table->timestamp('deleted_at')->nullable();
+        });
+
+        try {
+            $firstId = DB::table('workforce_employees')->insertGetId([
+                'organization_id' => $organization->id,
+                'personnel_number' => 'W-1',
+                'last_name' => 'Иванов',
+                'first_name' => 'Иван',
+                'employment_status' => 'active',
+            ]);
+            $otherId = DB::table('workforce_employees')->insertGetId([
+                'organization_id' => $organization->id,
+                'personnel_number' => 'W-2',
+                'last_name' => 'Петров',
+                'first_name' => 'Пётр',
+                'employment_status' => 'active',
+            ]);
+            foreach ([[$firstId, $project->id], [$otherId, $otherProject->id]] as [$employeeId, $projectId]) {
+                DB::table('workforce_employee_assignments')->insert([
+                    'organization_id' => $organization->id,
+                    'employee_id' => $employeeId,
+                    'project_id' => $projectId,
+                    'status' => 'active',
+                    'valid_from' => now()->subDay()->toDateString(),
+                ]);
+            }
+
+            $page = $this->app->make(WorkforceEmployeeService::class)->paginate(
+                $organization->id,
+                20,
+                ['project_id' => $project->id],
+            );
+            self::assertSame(1, $page->total());
+            self::assertSame($firstId, $page->items()[0]->id);
+        } finally {
+            Schema::dropIfExists('workforce_employee_assignments');
+        }
     }
 
     private function resolver(): MobileProjectAccessResolver

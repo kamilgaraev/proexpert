@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\Mobile\WarehouseScanController;
 use App\Http\Controllers\Api\V1\Mobile\WarehouseController;
 use App\Http\Controllers\Api\V1\Mobile\WarehouseTaskController;
 use App\Http\Controllers\Api\V1\Mobile\ProjectMaterialDeliveryController;
+use App\Http\Controllers\Api\V1\Mobile\WarehouseWriteOffController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseCustodyController;
 use Illuminate\Support\Facades\Route;
 
@@ -19,6 +20,7 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
     Route::get('/warehouse/project-material-deliveries/{deliveryId}', [ProjectMaterialDeliveryController::class, 'show'])->name('warehouse.project-material-deliveries.show');
     Route::post('/warehouse/project-material-deliveries/{deliveryId}/receive', [ProjectMaterialDeliveryController::class, 'receive'])->name('warehouse.project-material-deliveries.receive');
     Route::middleware('authorize:warehouse.manage_stock')->group(function () {
+        Route::post('/warehouse/operations/write-off', WarehouseWriteOffController::class)->name('warehouse.operations.write-off');
         Route::get('/warehouse/custody/balances', [WarehouseCustodyController::class, 'balances'])->name('warehouse.custody.balances');
         Route::post('/warehouse/custody/issue', [WarehouseCustodyController::class, 'issue'])->name('warehouse.custody.issue');
         Route::post('/warehouse/custody/return', [WarehouseCustodyController::class, 'returnToProject'])->name('warehouse.custody.return');

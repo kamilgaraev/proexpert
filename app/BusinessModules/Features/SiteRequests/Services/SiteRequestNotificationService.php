@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\SiteRequests\Services;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
+use App\BusinessModules\Features\Notifications\Services\MobileNotificationAccessResolver;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
@@ -381,8 +382,9 @@ class SiteRequestNotificationService
                 ->where('organizations.id', $organizationId)
                 ->where('organization_user.is_active', true))
             ->get()
-            ->filter(static function (User $user) use ($authorization, $permissionContext): bool {
-                return $authorization->can($user, 'notifications.receive.site_requests', $permissionContext)
+            ->filter(static function (User $user) use ($authorization, $organizationId, $projectId, $permissionContext): bool {
+                return app(MobileNotificationAccessResolver::class)->canAccess($user, $organizationId, $projectId)
+                    && $authorization->can($user, 'notifications.receive.site_requests', $permissionContext)
                     && $authorization->can($user, 'site_requests.view', $permissionContext)
                     && collect([
                         'site_requests.edit',

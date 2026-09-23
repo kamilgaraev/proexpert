@@ -19,6 +19,7 @@
     "projects": [
       "projects.view",
       "projects.edit",
+      "projects.participants.assign",
       "projects.delete",
       "projects.analytics"
     ],

@@ -24,12 +24,19 @@ use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermitParticipant;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services\SafetyTransitionRecorder;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Exceptions\BusinessLogicException;
+use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
+use App\Services\Storage\FileService;
 use App\Models\WorkType;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +46,9 @@ final class SafetyManagementService
     public function __construct(
         private readonly SafetyComplianceService $complianceService,
         private readonly SafetyTransitionRecorder $transitionRecorder,
+        private readonly AuthorizationService $authorization,
+        private readonly UserProjectAccessService $projectAccess,
+        private readonly FileService $fileService,
     ) {}
 
     public function employeeCards(int $organizationId, array $filters = []): array
@@ -271,7 +281,7 @@ final class SafetyManagementService
     public function paginateViolations(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
     {
         return SafetyViolation::forOrganization($organizationId)
-            ->with(['project:id,name', 'assignedUser:id,name'])
+            ->with(['project:id,name', 'assignedUser:id,name', 'files.organization'])
             ->when(array_key_exists('project_ids', $filters), fn ($query) => $query->whereIn('project_id', $filters['project_ids']))
             ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
@@ -1348,21 +1358,29 @@ final class SafetyManagementService
                 'metadata' => $data['metadata'] ?? null,
             ]);
             $this->transitionRecorder->record($violation, null, 'open', $userId, $violation->created_at);
+            $this->storePhotoEvidence($violation, $data['photos'] ?? [], $organizationId, $userId);
 
-            return $violation->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $violation->fresh(['project:id,name', 'assignedUser:id,name', 'files.organization']);
         });
+    }
+
+    public function createMobileViolation(int $organizationId, int $userId, array $data): SafetyViolation
+    {
+        $this->assertMobileMutationActor($organizationId, $userId, (int) $data['project_id'], 'safety-management.violations.create');
+
+        return $this->createViolation($organizationId, $userId, $data);
     }
 
     public function findViolation(int $organizationId, int $id): ?SafetyViolation
     {
         return SafetyViolation::forOrganization($organizationId)
-            ->with(['project:id,name', 'assignedUser:id,name'])
+            ->with(['project:id,name', 'assignedUser:id,name', 'files.organization'])
             ->find($id);
     }
 
-    public function resolveViolation(SafetyViolation $violation, int $userId, string $comment): SafetyViolation
+    public function resolveViolation(SafetyViolation $violation, int $userId, string $comment, array $photos = []): SafetyViolation
     {
-        return DB::transaction(function () use ($violation, $userId, $comment): SafetyViolation {
+        return DB::transaction(function () use ($violation, $userId, $comment, $photos): SafetyViolation {
             $violation = $this->lockViolation($violation);
             if ($violation->status !== 'open') {
                 throw new DomainException(trans_message('safety_management.errors.violation_resolve_invalid_status'));
@@ -1371,6 +1389,8 @@ final class SafetyManagementService
             if (trim($comment) === '') {
                 throw new DomainException(trans_message('safety_management.errors.violation_resolution_required'));
             }
+
+            $this->storePhotoEvidence($violation, $photos, (int) $violation->organization_id, $userId);
 
             $changedAt = now();
             $violation->update([
@@ -1381,8 +1401,22 @@ final class SafetyManagementService
             ]);
             $this->transitionRecorder->record($violation, 'open', 'resolved', $userId, $changedAt);
 
-            return $violation->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $violation->fresh(['project:id,name', 'assignedUser:id,name', 'files.organization']);
         });
+    }
+
+    public function resolveMobileViolation(int $organizationId, int $userId, int $violationId, string $comment, array $photos = []): SafetyViolation
+    {
+        $violation = $this->findViolation($organizationId, $violationId);
+        if ($violation === null) {
+            throw new DomainException(trans_message('safety_management.errors.violation_not_found'));
+        }
+        if ((int) $violation->organization_id !== $organizationId) {
+            throw new DomainException(trans_message('safety_management.errors.violation_not_found'));
+        }
+        $this->assertMobileMutationActor($organizationId, $userId, (int) $violation->project_id, 'safety-management.violations.resolve');
+
+        return $this->resolveViolation($violation, $userId, $comment, $photos);
     }
 
     public function createBriefing(int $organizationId, int $userId, array $data): SafetyBriefing
@@ -2206,6 +2240,84 @@ final class SafetyManagementService
 
         if (! $exists) {
             throw new DomainException(trans_message('safety_management.errors.project_not_found'));
+        }
+    }
+
+    private function assertMobileMutationActor(int $organizationId, int $userId, int $projectId, string $permission): void
+    {
+        $actor = User::query()->find($userId);
+        $project = Project::query()
+            ->accessibleByOrganization($organizationId)
+            ->whereKey($projectId)
+            ->first();
+        if ($actor === null || (int) $actor->current_organization_id !== $organizationId
+            || ! $actor->belongsToOrganization($organizationId) || $project === null
+            || ! $this->projectAccess->canAccessProject($actor, $project, $organizationId)) {
+            throw new DomainException(trans_message('safety_management.errors.project_not_found'));
+        }
+
+        if (! $this->authorization->can($actor, $permission, [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'strict_project_scope' => true,
+        ])) {
+            throw new BusinessLogicException(trans_message('safety_management.errors.action_forbidden'), 403);
+        }
+    }
+
+    private function storePhotoEvidence(Model $owner, array $photos, int $organizationId, int $userId): void
+    {
+        if ($photos === []) {
+            return;
+        }
+        if (count($photos) > 5) {
+            throw new DomainException(trans_message('safety_management.errors.validation_failed'));
+        }
+        $organization = Organization::query()->find($organizationId);
+        if ($organization === null || (int) $owner->getAttribute('organization_id') !== $organizationId) {
+            throw new DomainException(trans_message('safety_management.errors.project_not_found'));
+        }
+
+        $uploadedPaths = [];
+        try {
+            foreach ($photos as $photo) {
+                if (! $photo instanceof UploadedFile || ! $photo->isValid()
+                    || ! in_array($photo->getMimeType(), ['image/jpeg', 'image/png'], true)
+                    || (int) $photo->getSize() > 10 * 1024 * 1024) {
+                    throw new DomainException(trans_message('safety_management.errors.validation_failed'));
+                }
+                $path = $this->fileService->upload(
+                    $photo,
+                    'safety-management/violations/'.$owner->getKey(),
+                    null,
+                    'private',
+                    $organization,
+                );
+                if ($path === false) {
+                    throw new DomainException(trans_message('safety_management.errors.photo_upload_failed'));
+                }
+                $uploadedPaths[] = $path;
+                $owner->files()->create([
+                    'organization_id' => $organizationId,
+                    'user_id' => $userId,
+                    'name' => basename($path),
+                    'original_name' => $photo->getClientOriginalName(),
+                    'path' => $path,
+                    'mime_type' => $photo->getMimeType(),
+                    'size' => $photo->getSize() ?? 0,
+                    'disk' => 's3',
+                    'type' => 'photo',
+                    'category' => 'evidence',
+                ]);
+            }
+        } catch (\Throwable $exception) {
+            foreach ($uploadedPaths as $path) {
+                try {
+                    $this->fileService->delete($path, $organization);
+                } catch (\Throwable) {
+                }
+            }
+            throw $exception;
         }
     }
 

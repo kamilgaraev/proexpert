@@ -129,6 +129,7 @@ return [
         'projects.view' => 'Просмотр проектов',
         'projects.create' => 'Создание проектов',
         'projects.edit' => 'Редактирование проектов',
+        'projects.participants.assign' => 'Назначение пользователей на объект',
         'projects.delete' => 'Удаление проектов',
         'contracts.view' => 'Просмотр договоров',
         'contracts.create' => 'Создание договоров',

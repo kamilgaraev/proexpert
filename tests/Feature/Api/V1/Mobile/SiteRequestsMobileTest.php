@@ -17,7 +17,9 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Mobile\MobileDashboardService;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Event;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -357,6 +359,151 @@ final class SiteRequestsMobileTest extends TestCase
             ->assertJsonPath('data', null);
     }
 
+    public function test_mobile_site_request_filters_run_on_server_for_urgent_assigned_and_required_dates(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+
+        $urgent = $this->createSiteRequest($context, $project, SiteRequestStatusEnum::PENDING, 'Urgent overdue request');
+        $urgent->update([
+            'priority' => SiteRequestPriorityEnum::URGENT->value,
+            'assigned_to' => $context->user->id,
+            'required_date' => now()->subDay()->toDateString(),
+        ]);
+        $regular = $this->createSiteRequest($context, $project, SiteRequestStatusEnum::PENDING, 'Regular request');
+        $regular->update(['required_date' => now()->addDay()->toDateString()]);
+
+        $response = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/site-requests?scope=all&urgent=true&assigned_user_id='.$context->user->id.'&request_type='.SiteRequestTypeEnum::MATERIAL_REQUEST->value.'&overdue=true&required_from='.now()->subDays(2)->toDateString().'&required_to='.now()->toDateString());
+
+        $response->assertOk();
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertSame([$urgent->id], $ids);
+    }
+
+    public function test_mobile_site_request_creation_is_idempotent_for_offline_retries(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $payload = [
+            'project_id' => $project->id,
+            'title' => 'Retry-safe material request',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'material_name' => 'Concrete M300',
+            'material_quantity' => 3,
+            'material_unit' => 'm3',
+        ];
+        $headers = array_merge($context->mobileAuthHeaders(), ['Idempotency-Key' => 'mobile-retry-123']);
+
+        $first = $this->withHeaders($headers)->postJson('/api/v1/mobile/site-requests', $payload);
+        $second = $this->withHeaders($headers)->postJson('/api/v1/mobile/site-requests', $payload);
+
+        $first->assertCreated();
+        $second->assertCreated()->assertJsonPath('data.id', $first->json('data.id'));
+        $this->assertDatabaseCount('site_requests', 1);
+        Event::assertDispatchedTimes(\App\BusinessModules\Features\SiteRequests\Events\SiteRequestCreated::class, 1);
+
+        $this->withHeaders($headers)->postJson('/api/v1/mobile/site-requests', [...$payload, 'title' => 'Different payload'])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('site_requests::mobile.idempotency_conflict'));
+        $this->assertDatabaseCount('site_requests', 1);
+    }
+
+    public function test_mobile_batch_creation_is_idempotent_for_offline_retries(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $payload = [
+            'project_id' => $project->id,
+            'title' => 'Retry-safe material batch',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'materials' => [
+                ['name' => 'Concrete M300', 'quantity' => 3, 'unit' => 'm3'],
+                ['name' => 'Rebar', 'quantity' => 10, 'unit' => 'kg'],
+            ],
+        ];
+        $headers = array_merge($context->mobileAuthHeaders(), ['Idempotency-Key' => 'mobile-batch-retry-123']);
+
+        $first = $this->withHeaders($headers)->postJson('/api/v1/mobile/site-requests', $payload);
+        $second = $this->withHeaders($headers)->postJson('/api/v1/mobile/site-requests', $payload);
+
+        $first->assertCreated();
+        $second->assertCreated()
+            ->assertJsonPath('data.group_id', $first->json('data.group_id'))
+            ->assertJsonPath('data.request_ids', $first->json('data.request_ids'));
+        $this->assertDatabaseCount('site_request_groups', 1);
+        $this->assertDatabaseCount('site_requests', 2);
+        Event::assertDispatchedTimes(\App\BusinessModules\Features\SiteRequests\Events\SiteRequestCreated::class, 2);
+
+        $changedPayload = $payload;
+        $changedPayload['materials'][0]['quantity'] = 4;
+        $this->withHeaders($headers)->postJson('/api/v1/mobile/site-requests', $changedPayload)
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('site_requests::mobile.idempotency_conflict'));
+        $this->assertDatabaseCount('site_request_groups', 1);
+        $this->assertDatabaseCount('site_requests', 2);
+    }
+
+    public function test_mobile_assignee_list_and_assignment_require_an_active_project_member(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $candidate = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($candidate->id, ['is_owner' => false, 'is_active' => true]);
+        $project->users()->attach($candidate->id, ['role' => 'member', 'is_active' => true]);
+        $this->allowAccess();
+        $siteRequest = $this->createSiteRequest($context, $project, SiteRequestStatusEnum::PENDING, 'Assign me');
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignees")
+            ->assertOk()
+            ->assertJsonFragment(['id' => $candidate->id, 'name' => $candidate->name]);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->putJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignee", ['assigned_user_id' => $candidate->id])
+            ->assertOk()
+            ->assertJsonPath('data.assigned_user.id', $candidate->id);
+
+        $outsideCandidate = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($outsideCandidate->id, ['is_owner' => false, 'is_active' => true]);
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->putJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignee", ['assigned_user_id' => $outsideCandidate->id])
+            ->assertStatus(422);
+    }
+
+    public function test_mobile_site_request_file_upload_list_and_delete_use_private_storage(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $siteRequest = $this->createSiteRequest($context, $project, SiteRequestStatusEnum::DRAFT, 'Files for request');
+        $this->mock(FileService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('upload')->once()->andReturn('org-test/site-requests/request/file.pdf');
+            $mock->shouldReceive('temporaryUrl')->twice()->andReturn('https://private.example/file.pdf');
+            $mock->shouldReceive('delete')->once()->andReturn(true);
+        });
+
+        $uploaded = $this->withHeaders($context->mobileAuthHeaders())
+            ->post("/api/v1/mobile/site-requests/{$siteRequest->id}/files", ['file' => UploadedFile::fake()->create('site-photo.pdf', 32, 'application/pdf')]);
+        $uploaded->assertCreated()->assertJsonPath('data.name', 'site-photo.pdf');
+        $fileId = (int) $uploaded->json('data.id');
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/site-requests/{$siteRequest->id}/files")
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $fileId);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->deleteJson("/api/v1/mobile/site-requests/{$siteRequest->id}/files/{$fileId}")
+            ->assertOk();
+        $this->assertSoftDeleted('files', ['id' => $fileId]);
+    }
+
     private function createSiteRequest(
         AdminApiTestContext $context,
         Project $project,
@@ -402,6 +549,9 @@ final class SiteRequestsMobileTest extends TestCase
                     'site-requests' => [
                         'site_requests.view',
                         'site_requests.create',
+                        'site_requests.assign',
+                        'site_requests.files.upload',
+                        'site_requests.files.delete',
                         'site_requests.change_status',
                         'site_requests.approve',
                     ],

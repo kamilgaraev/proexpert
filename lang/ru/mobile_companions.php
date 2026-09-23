@@ -32,6 +32,14 @@ return [
     'actions' => [
         'submit_change' => 'Отправить на оценку',
         'acknowledge_transmittal' => 'Подтвердить получение',
+        'start_internal_review' => 'Передать на внутреннее рассмотрение',
+        'start_customer_review' => 'Передать заказчику',
+        'implement_change' => 'Отметить выполненным',
+        'close_change' => 'Закрыть изменение',
+        'submit_executive_document' => 'Отправить на проверку',
+        'approve_executive_document' => 'Согласовать документ',
+        'reject_executive_document' => 'Вернуть документ',
+        'add_executive_remark' => 'Добавить замечание',
     ],
     'sections' => [
         'main' => 'Основное',

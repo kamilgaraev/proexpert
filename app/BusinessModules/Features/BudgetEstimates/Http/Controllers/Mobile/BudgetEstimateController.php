@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Http\Controllers\Mobile;
 
 use App\BusinessModules\Features\BudgetEstimates\Http\Resources\MobileBudgetEstimateResource;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\MobileEstimateIndexRequest;
 use App\BusinessModules\Features\BudgetEstimates\Services\MobileBudgetEstimateService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
@@ -64,18 +65,14 @@ final class BudgetEstimateController extends Controller
         }
     }
 
-    public function index(Request $request): JsonResponse
+    public function index(MobileEstimateIndexRequest $request): JsonResponse
     {
         if ($denied = $this->ensureAnyPermission($request, ['budget-estimates.view', 'budget-estimates.view_all'])) {
             return $denied;
         }
 
         try {
-            $validated = $this->validated($request, [
-                'project_id' => ['required', 'integer'],
-                'status' => ['nullable', 'string', Rule::in(MobileBudgetEstimateService::STATUSES)],
-                'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
-            ]);
+            $validated = $request->validated();
             $user = $request->user();
             if (! $user instanceof User) {
                 return MobileResponse::error(
