@@ -58,17 +58,18 @@ final class ContractDocumentLayoutValidator
 
     public function block(mixed $block): void
     {
-        $this->keys($block, ['id', 'x', 'y', 'width', 'minHeight', 'breakBefore', 'align', 'firstLineIndent', 'lineHeight', 'spaceAfter']);
+        $this->keys($block, ['id', 'x', 'y', 'width', 'minHeight', 'breakBefore', 'align', 'firstLineIndent', 'lineHeight', 'spaceAfter', 'fontFamily', 'fontSize']);
         if (! is_string($block['id'] ?? null) || preg_match('/^[A-Za-z0-9_-]{1,512}$/D', $block['id']) !== 1) {
             $this->invalid();
         }
         foreach (['x' => [0, 297], 'y' => [0, 100000], 'width' => [10, 297], 'minHeight' => [0, 5000],
-            'firstLineIndent' => [0, 50], 'lineHeight' => [1, 3], 'spaceAfter' => [0, 50]] as $field => [$min, $max]) {
+            'firstLineIndent' => [0, 50], 'lineHeight' => [1, 3], 'spaceAfter' => [0, 50], 'fontSize' => [8, 20]] as $field => [$min, $max]) {
             if (in_array($field, ['x', 'y', 'width', 'minHeight'], true) || array_key_exists($field, $block)) {
                 $this->number($block[$field] ?? null, $min, $max);
             }
         }
-        if ((array_key_exists('breakBefore', $block) && ! is_bool($block['breakBefore']))
+        if ((array_key_exists('fontFamily', $block) && ! in_array($block['fontFamily'], ['DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono', 'Most Contract'], true))
+            || (array_key_exists('breakBefore', $block) && ! is_bool($block['breakBefore']))
             || (array_key_exists('align', $block) && ! in_array($block['align'], ['left', 'center', 'right', 'justify'], true))) {
             $this->invalid();
         }

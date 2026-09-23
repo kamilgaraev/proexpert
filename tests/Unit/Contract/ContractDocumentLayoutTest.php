@@ -66,7 +66,8 @@ final class ContractDocumentLayoutTest extends TestCase
 
     public function test_invalid_geometry_and_duplicate_ids_are_rejected(): void
     {
-        foreach (['width' => -1, 'x' => INF, 'minHeight' => -2, 'align' => 'absolute', 'lineHeight' => 100, 'style' => 'url(file:///secret)'] as $field => $value) {
+        foreach (['width' => -1, 'x' => INF, 'minHeight' => -2, 'align' => 'absolute', 'lineHeight' => 100,
+            'fontFamily' => 'Arial', 'fontSize' => 21, 'style' => 'url(file:///secret)'] as $field => $value) {
             $content = self::content();
             $content['document']['content'][0]['attrs']['layout'][$field] = $value;
             try {
@@ -147,14 +148,80 @@ final class ContractDocumentLayoutTest extends TestCase
     public function test_print_splits_long_text_without_losing_words_or_overlapping_following_blocks(): void
     {
         $content = self::content();
+        $content['document']['content'][0]['attrs']['layout']['fontFamily'] = 'DejaVu Serif';
+        $content['document']['content'][0]['attrs']['layout']['fontSize'] = 16;
         $content['document']['content'][0]['content'][0]['text'] = str_repeat('Длинное условие договора. ', 200).'КОНЕЦ';
+        $following = $content['document']['content'][0];
+        $following['attrs']['layout'] = [...$following['attrs']['layout'], 'id' => 'after-long-text', 'y' => 15, 'fontSize' => 10];
+        $following['content'][0]['text'] = 'Следующий блок';
+        $content['document']['content'][] = $following;
         $html = (new ContractDocumentRenderer)->render($content['document'], [], []);
         self::assertStringContainsString('data-contract-print=', $html);
+        $plan = (new \App\Services\Contract\ContractDocumentPrintLayout)->decode($html);
+        self::assertGreaterThan(1, count($plan['pages']));
+        $pageWithFollowingBlock = null;
+        foreach ($plan['pages'] as $page => $items) {
+            foreach ($items as $item) {
+                if ($item['type'] === 'text' && $item['text'] === 'Следующий блок') {
+                    $pageWithFollowingBlock = $page;
+                }
+                if ($item['type'] === 'text' && $item['text'] === 'Длинное') {
+                    self::assertSame(16.0, (float) $item['fontSize']);
+                }
+            }
+        }
+        self::assertSame(count($plan['pages']) - 1, $pageWithFollowingBlock);
         $pdf = (new ContractDocumentExporter)->render($html, 'pdf');
         $parsed = (new \Smalot\PdfParser\Parser)->parseContent($pdf);
-        self::assertGreaterThan(1, count($parsed->getPages()));
+        self::assertSame(count($plan['pages']), count($parsed->getPages()));
         self::assertStringContainsString('КОНЕЦ', $parsed->getText());
+        self::assertStringContainsString('Следующий блок', $parsed->getText());
         self::assertSame(200, substr_count($parsed->getText(), 'Длинное'));
+    }
+
+    public function test_clause_text_placement_and_free_font_settings_reach_positioned_exports(): void
+    {
+        $content = self::content();
+        $layout = $content['document']['content'][0]['attrs']['layout'];
+        $layout['fontFamily'] = 'DejaVu Serif';
+        $layout['fontSize'] = 16;
+        $content['document']['content'] = [[
+            'type' => 'clause',
+            'attrs' => ['id' => 'formatted', 'textPlacement' => 'new_line', 'layout' => $layout],
+            'content' => [[
+                'type' => 'paragraph',
+                'content' => [[
+                    'type' => 'text',
+                    'text' => 'Условия',
+                    'marks' => [['type' => 'bold'], ['type' => 'underline']],
+                ]],
+            ]],
+        ]];
+
+        $resolved = (new ContractDocumentResolver)->resolve($content, static fn () => throw new \LogicException('No dependencies'));
+        self::assertSame('new_line', $resolved['document']['content'][0]['attrs']['textPlacement']);
+        $html = (new ContractDocumentRenderer)->render($resolved['document'], [], []);
+        $plan = (new \App\Services\Contract\ContractDocumentPrintLayout)->decode($html);
+        $texts = array_values(array_filter($plan['pages'][0], static fn (array $item): bool => $item['type'] === 'text'));
+        self::assertSame('DejaVu Serif', $texts[0]['fontFamily']);
+        self::assertEqualsWithDelta(16, $texts[0]['fontSize'], .01);
+        self::assertNotSame($texts[0]['y'], $texts[1]['y']);
+        self::assertTrue($texts[1]['bold']);
+        self::assertTrue($texts[1]['underline']);
+
+        $file = tempnam(sys_get_temp_dir(), 'most-layout-serif-');
+        file_put_contents($file, (new ContractDocumentExporter)->render($html, 'docx'));
+        try {
+            $zip = new \ZipArchive;
+            self::assertTrue($zip->open($file));
+            $xml = $zip->getFromName('word/document.xml');
+            self::assertStringContainsString('w:ascii="DejaVu Serif"', $xml);
+            self::assertStringContainsString('w:sz w:val="32"', $xml);
+            self::assertNotFalse($zip->getFromName('word/fonts/serif-regular.odttf'));
+            $zip->close();
+        } finally {
+            unlink($file);
+        }
     }
 
     public function test_positioned_export_rejects_modified_html_and_active_links(): void
@@ -188,10 +255,15 @@ final class ContractDocumentLayoutTest extends TestCase
         $right['content'][0]['text'] = 'Подрядчик';
         $content['document']['content'] = [['type' => 'group', 'attrs' => ['layout' => [
             'id' => 'section', 'x' => 0, 'y' => 40, 'width' => 170, 'minHeight' => 0,
+            'fontFamily' => 'DejaVu Sans Mono', 'fontSize' => 14,
         ]], 'content' => [$left, $right]]];
         $html = (new ContractDocumentRenderer)->render($content['document'], [], []);
         $plan = (new \App\Services\Contract\ContractDocumentPrintLayout)->decode($html);
         $texts = array_values(array_filter($plan['pages'][0], static fn ($item): bool => $item['type'] === 'text'));
+        self::assertSame('DejaVu Sans Mono', $texts[0]['fontFamily']);
+        self::assertEqualsWithDelta(14, $texts[0]['fontSize'], .01);
+        self::assertSame('DejaVu Sans Mono', $texts[1]['fontFamily']);
+        self::assertEqualsWithDelta(14, $texts[1]['fontSize'], .01);
         self::assertEqualsWithDelta($texts[0]['y'], $texts[1]['y'], .01);
         self::assertEqualsWithDelta(90 * 72 / 25.4, $texts[1]['x'] - $texts[0]['x'], .01);
         self::assertGreaterThanOrEqual(60 * 72 / 25.4, $texts[0]['y']);

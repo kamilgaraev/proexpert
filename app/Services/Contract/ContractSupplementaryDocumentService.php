@@ -195,9 +195,11 @@ final class ContractSupplementaryDocumentService
         $document = $this->show($actor, $organizationId, $contractId, $documentId);
         $row = DB::table('contract_supplementary_documents')->where('id', $documentId)->firstOrFail();
         $frameDefinitions = json_decode($row->frame_definitions, true, 512, JSON_THROW_ON_ERROR);
+        $documentValues = (array) $document['values'];
+        $frameValues = array_intersect_key($documentValues, array_flip(array_column($frameDefinitions, 'id')));
         $html = $this->composer->composeHtml(
             json_decode($row->frame_document, true, 512, JSON_THROW_ON_ERROR),
-            $frameDefinitions, [], $document['changes'],
+            $frameDefinitions, $frameValues, $document['changes'],
             json_decode($row->entity_snapshots, true, 512, JSON_THROW_ON_ERROR)
         );
 
