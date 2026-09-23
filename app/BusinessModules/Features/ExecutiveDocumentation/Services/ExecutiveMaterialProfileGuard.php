@@ -59,6 +59,14 @@ final class ExecutiveMaterialProfileGuard
         if (!in_array($type, ['quality_passport', 'incoming_batch_control'], true)) return;
         if (($document->metadata['capture_mode'] ?? null) === 'uploaded') {
             $this->assertRelations($document);
+            foreach (['quality_document_date', 'received_at', 'checked_at', 'valid_until'] as $field) {
+                if (isset($data[$field]) && $data[$field] !== '') {
+                    $date = \DateTimeImmutable::createFromFormat('!Y-m-d', (string) $data[$field]);
+                    if ($date === false || $date->format('Y-m-d') !== $data[$field]) {
+                        throw new DomainException(trans_message('executive_documentation.errors.profile_data_invalid'));
+                    }
+                }
+            }
             return;
         }
         $this->assertRelations($document);

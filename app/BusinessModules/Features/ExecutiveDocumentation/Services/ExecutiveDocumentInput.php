@@ -48,7 +48,7 @@ final class ExecutiveDocumentInput
                 'relations.*.label' => ['nullable', 'string', 'max:255'],
                 'relations.*.metadata' => ['nullable', 'array'],
                 'initial_version' => ['required', 'array'],
-                'initial_version.file' => ['required_without:source_warehouse_passport_file_id', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'])->max(25 * 1024)],
+                'initial_version.file' => ['required_without:source_warehouse_passport_file_id', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'webp'])->max(25 * 1024)],
                 'initial_version.version_number' => ['required_with:initial_version', 'string', 'max:40'],
                 'initial_version.uploaded_at' => ['nullable', 'date'],
                 'initial_version.file_kind' => ['nullable', Rule::in(['copy', 'paper_scan', 'electronic_original'])],

@@ -55,6 +55,9 @@ final class ExecutiveDocumentRequirementsService
             if ($previous->isNotEmpty()) {
                 $this->assertCanApprove($lockedSet, $actor, $authorization);
             }
+            $existingEvidence = $previous->keyBy(static fn (ExecutiveDocumentRequirement $item): string => $item->requirement_key.'|'.$item->profile_type.'|'.json_encode([
+                $item->work_type_id, $item->project_location_id, $item->completed_work_id,
+            ], JSON_THROW_ON_ERROR));
             foreach ($previous as $oldRequirement) {
                 $before = $oldRequirement->toArray();
                 $oldRequirement->forceFill(['superseded_at' => now(), 'revision' => $oldRequirement->revision + 1])->save();
@@ -63,6 +66,15 @@ final class ExecutiveDocumentRequirementsService
             $created = null;
             foreach ($requirements as $requirement) {
                 $created = $this->createLocked($lockedSet, $requirement, $actor, $authorization);
+                $key = $created->requirement_key.'|'.$created->profile_type.'|'.json_encode([
+                    $created->work_type_id, $created->project_location_id, $created->completed_work_id,
+                ], JSON_THROW_ON_ERROR);
+                $prior = $existingEvidence->get($key);
+                if ($prior !== null && $prior->evidence !== []) {
+                    $before = $created->toArray();
+                    $created->forceFill(['evidence' => $prior->evidence, 'revision' => $created->revision + 1])->save();
+                    $this->recordEvent($created, $actor, 'evidence_carried_forward', $before);
+                }
             }
             if ($created !== null && $operationKey !== null) {
                 $this->recordEvent($created, $actor, 'composition_replaced', null, $operationKey, $requestHash);

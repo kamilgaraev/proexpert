@@ -30,7 +30,9 @@ final class ExecutiveDocumentPrintPackageService
                 || (int) $document->document_set_id !== (int) $transmittal->document_set_id
                 || (int) $document->id !== (int) ($entry['document_id'] ?? 0)
                 || $version->content_hash !== ($entry['content_hash'] ?? null)
-                || $version->file_url !== ($entry['file_url'] ?? null)) {
+                || $version->file_url !== ($entry['file_url'] ?? null)
+                || ($version->metadata['signature_file_url'] ?? null) !== ($entry['signature_file_url'] ?? null)
+                || ($version->metadata['signature_hash'] ?? null) !== ($entry['signature_hash'] ?? null)) {
                 $this->invalid();
             }
             $this->guard->assertActor($document, $actorId, 'executive-documentation.view');
@@ -71,13 +73,45 @@ final class ExecutiveDocumentPrintPackageService
                     throw new BusinessLogicException(trans_message('executive_document_print.render_limit'), 422);
                 }
                 $extension = strtolower(pathinfo($key, PATHINFO_EXTENSION));
-                $extension = in_array($extension, ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'], true) ? $extension : 'bin';
+                $extension = in_array($extension, ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'webp'], true) ? $extension : 'bin';
                 $filename = 'documents/'.(int) $entry['version_id'].'.'.$extension;
                 if (! $zip->addFromString($filename, $bytes)) {
                     throw new \RuntimeException('executive_package_entry_failed');
                 }
-                $rows[] = ['document_id' => (int) $entry['document_id'], 'version_id' => (int) $entry['version_id'],
-                    'version_number' => $entry['version_number'], 'title' => $entry['title'], 'sha256' => $entry['content_hash'], 'file' => $filename];
+                $row = ['document_id' => (int) $entry['document_id'], 'version_id' => (int) $entry['version_id'],
+                    'version_number' => $entry['version_number'], 'title' => $entry['title'], 'sha256' => $entry['content_hash'], 'file' => $filename,
+                    'file_kind' => $entry['file_kind'] ?? 'copy'];
+                if (! empty($entry['signature_file_url'])) {
+                    $signatureKey = (string) $entry['signature_file_url'];
+                    if (! str_starts_with($signatureKey, 'org-'.$transmittal->organization_id.'/') || str_contains($signatureKey, '..')) {
+                        $this->invalid();
+                    }
+                    $signatureStream = $this->files->disk()->readStream($signatureKey);
+                    if (! is_resource($signatureStream)) {
+                        $this->invalid();
+                    }
+                    try {
+                        $signatureBytes = stream_get_contents($signatureStream, 25 * 1024 * 1024 + 1);
+                    } finally {
+                        fclose($signatureStream);
+                    }
+                    if (! is_string($signatureBytes) || strlen($signatureBytes) > 25 * 1024 * 1024
+                        || ! hash_equals((string) $entry['signature_hash'], hash('sha256', $signatureBytes))) {
+                        $this->invalid();
+                    }
+                    $total += strlen($signatureBytes);
+                    if ($total > 64 * 1024 * 1024) {
+                        throw new BusinessLogicException(trans_message('executive_document_print.render_limit'), 422);
+                    }
+                    $signatureExtension = strtolower(pathinfo($signatureKey, PATHINFO_EXTENSION));
+                    $signatureExtension = in_array($signatureExtension, ['sig', 'p7s', 'p7m'], true) ? $signatureExtension : 'sig';
+                    $signatureFilename = 'signatures/'.(int) $entry['version_id'].'.'.$signatureExtension;
+                    if (! $zip->addFromString($signatureFilename, $signatureBytes)) {
+                        throw new \RuntimeException('executive_package_entry_failed');
+                    }
+                    $row['signature'] = ['file' => $signatureFilename, 'sha256' => $entry['signature_hash']];
+                }
+                $rows[] = $row;
             }
             $approvedList = $transmittal->manifest['approved_list'] ?? null;
             $approvedListEntry = null;

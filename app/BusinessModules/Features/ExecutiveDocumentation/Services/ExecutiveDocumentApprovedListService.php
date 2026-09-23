@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\ExecutiveDocumentation\Services;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Support\ExecutiveDocumentProfileRegistry;
+use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
@@ -51,13 +52,14 @@ final class ExecutiveDocumentApprovedListService
         $project = $this->project($projectId, $actor, 'executive-documentation.approve');
         $items = $this->normalizeItems((array) $data['items'], $project);
         $organization = Organization::query()->findOrFail($project->organization_id);
+        $fileHash = hash_file('sha256', $file->getRealPath());
         $path = $this->files->upload($file, "executive-documentation/project-{$project->id}/approved-lists", null, 'private', $organization);
         if (! is_string($path)) {
             throw ValidationException::withMessages(['file' => 'Не удалось сохранить утверждённый перечень.']);
         }
 
         try {
-            return DB::transaction(function () use ($project, $actor, $data, $file, $items, $path): ExecutiveDocumentApprovedList {
+            return DB::transaction(function () use ($project, $actor, $data, $file, $fileHash, $items, $path): ExecutiveDocumentApprovedList {
                 Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
                 $revision = (int) ExecutiveDocumentApprovedList::query()->where('project_id', $project->id)->max('revision') + 1;
 
@@ -68,7 +70,7 @@ final class ExecutiveDocumentApprovedListService
                     'approved_by_party' => trim((string) $data['approved_by_party']),
                     'approved_at' => $data['approved_at'],
                     'file_url' => $path,
-                    'file_hash' => hash_file('sha256', $file->getRealPath()),
+                    'file_hash' => $fileHash,
                     'original_name' => $file->getClientOriginalName(),
                     'items' => $items,
                     'uploaded_by' => $actor->id,
@@ -127,6 +129,11 @@ final class ExecutiveDocumentApprovedListService
                     ->whereKey((int) $item[$field])->exists()) {
                     throw ValidationException::withMessages(["items.{$index}.{$field}" => 'Запись не принадлежит объекту.']);
                 }
+            }
+            if (! empty($item['project_location_id']) && ! ProjectLocation::query()
+                ->where('organization_id', $project->organization_id)->where('project_id', $project->id)
+                ->whereKey((int) $item['project_location_id'])->exists()) {
+                throw ValidationException::withMessages(["items.{$index}.project_location_id" => 'Участок не принадлежит объекту.']);
             }
             $item = array_filter([
                 'key' => $key,

@@ -15,6 +15,8 @@ Route::prefix('api/v1/admin/executive-documentation')
             ->middleware('authorize:executive-documentation.view')->name('versions.print');
         Route::post('/documents/{documentId}/prepare', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'prepare'])
             ->middleware('authorize:executive-documentation.edit')->name('documents.prepare');
+        Route::get('/versions/{versionId}/signature', [ExecutiveDocumentationController::class, 'signature'])
+            ->middleware('authorize:executive-documentation.view')->name('versions.signature');
         Route::get('/transmittals/{transmittalId}/package', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'package'])
             ->middleware('authorize:executive-documentation.view')->name('transmittals.package');
         Route::post('/versions/{versionId}/legal-archive', [\App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers\ExecutiveDocumentPrintController::class, 'legalArchive'])

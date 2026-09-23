@@ -37,6 +37,22 @@ final class ExecutiveDocumentProfilesTest extends TestCase
         }
     }
 
+    public function test_ready_external_act_can_be_registered_without_retyping_template_fields(): void
+    {
+        [$actor, $set, $service] = $this->fixture();
+        $data = app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentInput::class)->normalize([
+            'document_type' => 'hidden_work_act',
+            'title' => 'Акт из файла',
+            'initial_version' => ['version_number' => '1', 'file' => UploadedFile::fake()->createWithContent('act.pdf', 'ready act')],
+        ], $set);
+
+        $document = $service->addDocument($set, $actor->user->id, $data);
+
+        self::assertSame('uploaded', $document->metadata['capture_mode']);
+        self::assertSame('registered_external', $document->versions->first()->metadata['origin']);
+        self::assertNotEmpty($document->versions->first()->content_hash);
+    }
+
     public function test_passport_registration_does_not_require_a_control_event_and_freezes_profile_identity(): void
     {
         [$actor, $set, $service] = $this->fixture();
@@ -47,14 +63,15 @@ final class ExecutiveDocumentProfilesTest extends TestCase
         self::assertSame(0, $document->relations()->count());
     }
 
-    public function test_control_without_a_real_delivery_is_rejected_atomically(): void
+    public function test_uploaded_control_does_not_require_retyping_a_delivery_relation(): void
     {
         [$actor, $set, $service] = $this->fixture();
         $data = $this->passport();
         $data['document_type'] = 'incoming_batch_control';
         $data['profile_data'] = ['control_number' => 'ВК-1', 'received_at' => '2026-09-20', 'checked_at' => '2026-09-20', 'material_name' => 'Бетон', 'supplier' => 'Завод', 'batch_details' => 'Партия 1', 'quantity' => '10', 'control_result' => 'accepted'];
-        try { $service->addDocument($set, $actor->user->id, $data); self::fail('Control without delivery accepted'); } catch (\DomainException) {}
-        self::assertSame(0, $set->documents()->count());
+        $document = $service->addDocument($set, $actor->user->id, $data);
+        self::assertSame('draft', $document->status->value);
+        self::assertSame(0, $document->relations()->count());
     }
 
     public function test_invalid_profile_dates_are_rejected_in_service_calls(): void

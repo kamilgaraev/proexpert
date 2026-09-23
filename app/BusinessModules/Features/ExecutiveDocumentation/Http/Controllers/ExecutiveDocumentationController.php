@@ -351,6 +351,16 @@ final class ExecutiveDocumentationController extends Controller
         }
     }
 
+    public function signature(Request $request, int $versionId): JsonResponse
+    {
+        $url = $this->service->signatureUrl($versionId, (int) $request->user()->id);
+        if ($url === null) {
+            return AdminResponse::error(trans_message('executive_documentation.errors.version_not_found'), 404);
+        }
+
+        return AdminResponse::success(['url' => $url]);
+    }
+
     public function approve(Request $request, int $id): JsonResponse
     {
         return $this->documentAction($request, $id, 'approve');
