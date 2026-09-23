@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\ExecutiveDocumentation;
 
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -51,6 +52,92 @@ final class ExecutiveDocumentProfilesTest extends TestCase
         self::assertSame('uploaded', $document->metadata['capture_mode']);
         self::assertSame('registered_external', $document->versions->first()->metadata['origin']);
         self::assertNotEmpty($document->versions->first()->content_hash);
+    }
+
+    public function test_act_composition_creates_a_generated_draft_separately_from_file_upload(): void
+    {
+        [$actor, $set] = $this->fixture();
+        try {
+            app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentPreparationService::class)->compose($set, $actor->user->id, [
+                'document_type' => 'geodetic_base_acceptance_act', 'title' => 'Без участников',
+                'profile_data' => ['act_number' => 'ГО-0', 'geodetic_base_description' => 'Реперы', 'base_acceptance_documents' => 'Схема'],
+            ]);
+            self::fail('Акт без обязательных участников не должен создаваться.');
+        } catch (\Illuminate\Validation\ValidationException) {
+            self::assertSame(0, $set->documents()->count());
+        }
+        $document = app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentPreparationService::class)->compose($set, $actor->user->id, [
+            'document_type' => 'geodetic_base_acceptance_act',
+            'title' => 'Акт геодезической основы',
+            'profile_data' => [
+                'act_number' => 'ГО-1',
+                'geodetic_base_description' => 'Реперы участка',
+                'base_acceptance_documents' => 'Схема передачи',
+            ],
+            'signatories' => array_map(static fn (string $role): array => [
+                'role' => $role, 'name' => 'Иванов И.И.', 'organization' => 'Строительная организация', 'authority_document' => 'Доверенность №1',
+            ], ['developer_control_representative', 'construction_representative', 'contractor_control_representative']),
+        ]);
+
+        self::assertSame('generated', $document->metadata['capture_mode']);
+        self::assertSame('generated_preparation', $document->versions->first()->metadata['origin']);
+        self::assertSame('generated_draft', $document->versions->first()->metadata['file_kind']);
+        self::assertNotEmpty($document->versions->first()->content_hash);
+    }
+
+    public function test_uploaded_scan_and_electronic_original_keep_distinct_file_provenance(): void
+    {
+        [$actor, $set, $service] = $this->fixture();
+        $scan = $service->addDocument($set, $actor->user->id, [
+            'document_type' => 'quality_passport', 'title' => 'Скан паспорта',
+            'initial_version' => ['version_number' => '1', 'file' => UploadedFile::fake()->createWithContent('scan.pdf', 'paper scan'), 'file_kind' => 'paper_scan'],
+        ]);
+        $electronic = $service->addDocument($set, $actor->user->id, [
+            'document_type' => 'quality_passport', 'title' => 'Электронный паспорт',
+            'initial_version' => [
+                'version_number' => '1', 'file' => UploadedFile::fake()->createWithContent('original.pdf', 'electronic original'),
+                'file_kind' => 'electronic_original', 'signature_file' => UploadedFile::fake()->createWithContent('original.sig', 'detached signature'),
+            ],
+        ]);
+
+        self::assertSame('paper_scan', $scan->versions->first()->metadata['file_kind']);
+        self::assertSame('electronic_original', $electronic->versions->first()->metadata['file_kind']);
+        self::assertSame(hash('sha256', 'detached signature'), $electronic->versions->first()->metadata['signature_hash']);
+        self::assertNotEmpty($electronic->versions->first()->metadata['signature_file_url']);
+    }
+
+    public function test_act_composition_requires_additional_participants_from_the_object_list(): void
+    {
+        [$actor, $set] = $this->fixture();
+        $list = ExecutiveDocumentApprovedList::query()->create([
+            'organization_id' => $actor->organization->id, 'project_id' => $set->project_id,
+            'revision' => 1, 'approved_by_party' => 'Технический заказчик', 'approved_at' => '2026-09-24',
+            'file_url' => 'org-'.$actor->organization->id.'/approved-list.pdf', 'file_hash' => str_repeat('a', 64),
+            'original_name' => 'approved-list.pdf', 'uploaded_by' => $actor->user->id,
+            'items' => [['key' => 'geodetic-act', 'profile_type' => 'geodetic_base_acceptance_act',
+                'title' => 'Акт геодезической основы', 'stage' => 'document_review',
+                'conditions' => ['designer_supervision' => true, 'separate_executor' => true]]],
+        ]);
+        $set->forceFill(['approved_list_id' => $list->id])->save();
+        $signer = static fn (string $role): array => [
+            'role' => $role, 'name' => 'Иванов И.И.', 'organization' => 'Строительная организация', 'authority_document' => 'Доверенность №1',
+        ];
+        $data = [
+            'document_type' => 'geodetic_base_acceptance_act', 'title' => 'Акт геодезической основы',
+            'profile_data' => ['act_number' => 'ГО-2', 'geodetic_base_description' => 'Реперы', 'base_acceptance_documents' => 'Схема'],
+            'signatories' => array_map($signer, ['developer_control_representative', 'construction_representative', 'contractor_control_representative']),
+        ];
+        $composer = app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentPreparationService::class);
+        try {
+            $composer->compose($set, $actor->user->id, $data);
+            self::fail('Условные участники акта должны быть обязательны.');
+        } catch (\Illuminate\Validation\ValidationException) {
+            self::assertSame(0, $set->documents()->count());
+        }
+        $data['signatories'][] = $signer('designer_representative');
+        $data['signatories'][] = $signer('geodetic_base_executor');
+        $document = $composer->compose($set, $actor->user->id, $data);
+        self::assertSame('generated', $document->metadata['capture_mode']);
     }
 
     public function test_passport_registration_does_not_require_a_control_event_and_freezes_profile_identity(): void

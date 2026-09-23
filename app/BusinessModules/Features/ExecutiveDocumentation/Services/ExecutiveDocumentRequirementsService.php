@@ -316,6 +316,16 @@ final class ExecutiveDocumentRequirementsService
 
     public function readiness(ExecutiveDocumentSet $set): array
     {
+        if (in_array($set->status->value, ['transmitted', 'archived'], true)) {
+            $manifest = $set->transmittal()->first()?->manifest ?? [];
+            $frozen = collect(is_array($manifest) && isset($manifest['requirements']) && is_array($manifest['requirements'])
+                ? $manifest['requirements']
+                : $set->requirements()->whereNull('superseded_at')->get(['applicability'])->toArray());
+            $applicableCount = $frozen->where('applicability', 'required')->count();
+
+            return ['requirements_total' => $frozen->count(), 'requirements_applicable' => $applicableCount,
+                'requirements_satisfied' => $applicableCount, 'missing_requirements' => 0, 'blockers' => [], 'ready' => true];
+        }
         $requirements = ExecutiveDocumentRequirement::query()->where('document_set_id', $set->id)->whereNull('superseded_at')->get();
         $versionIds = $requirements->flatMap(static fn (ExecutiveDocumentRequirement $requirement) => collect((array) $requirement->evidence)->pluck('version_id'))->filter()->unique()->values()->all();
         $versions = ExecutiveDocumentVersion::query()->with('document')->whereIn('id', $versionIds)->get()->keyBy('id')->all();

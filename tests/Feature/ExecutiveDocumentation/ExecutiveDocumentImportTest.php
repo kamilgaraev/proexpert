@@ -151,16 +151,15 @@ final class ExecutiveDocumentImportTest extends TestCase
         $this->withHeaders($foreign->authHeaders())->getJson('/api/v1/admin/executive-documentation/imports/'.$batchId)->assertNotFound();
     }
 
-    public function test_single_document_route_keeps_shared_validation_and_rejects_missing_profile_fields(): void
+    public function test_single_document_route_accepts_ready_file_without_retyping_profile_fields(): void
     {
         [$actor, $set] = $this->fixture();
         $url = '/api/v1/admin/executive-documentation/sets/'.$set->id.'/documents';
         $payload = ['document_type' => 'quality_passport', 'title' => 'Паспорт', 'profile_data' => [], 'initial_version' => ['version_number' => '1', 'file' => \Illuminate\Http\UploadedFile::fake()->createWithContent('passport.pdf', "%PDF-1.4\nsingle")]];
-        $this->withHeaders($actor->authHeaders())->post($url, $payload)->assertUnprocessable();
-        self::assertSame(0, $set->documents()->count());
-        $payload['profile_data'] = ['document_number' => 'П-1', 'quality_document_kind' => 'passport', 'material_name' => 'Бетон', 'manufacturer' => 'Завод', 'quality_document_date' => '2026-09-20', 'quality_document_details' => 'Бетон В25'];
-        $this->post($url, $payload)->assertCreated()->assertJsonPath('data.document_type', 'quality_passport');
+        $this->withHeaders($actor->authHeaders())->post($url, $payload)->assertCreated()->assertJsonPath('data.document_type', 'quality_passport');
         self::assertSame(1, $set->documents()->count());
+        unset($payload['initial_version']);
+        $this->post($url, $payload)->assertUnprocessable();
     }
 
     public function test_duplicate_content_and_changed_operation_payload_are_not_registered_twice(): void
@@ -179,14 +178,14 @@ final class ExecutiveDocumentImportTest extends TestCase
         self::assertSame(0, $set->documents()->count());
     }
 
-    public function test_preview_reports_missing_required_delivery_before_queueing_control_document(): void
+    public function test_preview_waits_for_the_file_without_requiring_retyped_delivery_details(): void
     {
         [$actor, $set] = $this->fixture();
         $service = app(ExecutiveDocumentImportService::class);
         $batch = $service->create($set, $actor->user->id, 'missing-delivery', [['key' => 'one', 'name' => 'control.pdf', 'size' => 10, 'sha256' => str_repeat('a', 64)]]);
         $mapped = $service->map($batch, $actor->user->id, [['id' => $batch->items->first()->id, 'mapping' => ['document_type' => 'incoming_batch_control', 'title' => 'Входной контроль', 'profile_data' => ['control_number' => 'ВК-1', 'received_at' => '2026-09-20', 'checked_at' => '2026-09-20', 'material_name' => 'Бетон', 'supplier' => 'Завод', 'batch_details' => 'Партия 1', 'quantity' => '10', 'control_result' => 'accepted']]]]);
-        self::assertSame('invalid', $mapped->items->first()->status);
-        self::assertArrayHasKey('relations.material_delivery', $mapped->items->first()->errors);
+        self::assertSame('awaiting_upload', $mapped->items->first()->status);
+        self::assertNull($mapped->items->first()->errors);
         $service->start($batch, $actor->user->id);
         Queue::assertNothingPushed();
     }

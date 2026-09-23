@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers;
 
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\ApplyExecutiveApprovedListRequest;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\StoreExecutiveApprovedListRequest;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentApprovedListService;
 use App\Http\Responses\AdminResponse;
 use App\Models\Organization;
 use App\Services\Storage\FileService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rules\File;
 use Illuminate\Validation\ValidationException;
 
 final class ExecutiveDocumentApprovedListController extends \App\Http\Controllers\Controller
@@ -25,21 +26,9 @@ final class ExecutiveDocumentApprovedListController extends \App\Http\Controller
         return AdminResponse::success(array_map(fn ($list): array => $this->payload($list), $lists));
     }
 
-    public function store(Request $request, int $projectId): JsonResponse
+    public function store(StoreExecutiveApprovedListRequest $request, int $projectId): JsonResponse
     {
-        $data = $request->validate([
-            'file' => ['required', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx'])->min(1)->max(25 * 1024)],
-            'approved_by_party' => ['required', 'string', 'max:255'],
-            'approved_at' => ['required', 'date'],
-            'items' => ['required', 'array', 'min:1', 'max:500'],
-            'items.*.key' => ['required', 'string', 'max:128', 'distinct'],
-            'items.*.profile_type' => ['required', 'string', 'max:100'],
-            'items.*.title' => ['required', 'string', 'max:255'],
-            'items.*.stage' => ['sometimes', 'string', 'max:64'],
-            'items.*.work_type_id' => ['sometimes', 'nullable', 'integer'],
-            'items.*.completed_work_id' => ['sometimes', 'nullable', 'integer'],
-            'items.*.project_location_id' => ['sometimes', 'nullable', 'integer'],
-        ]);
+        $data = $request->validated();
         $list = $this->lists->create($projectId, $request->user(), $data, $request->file('file'));
 
         return AdminResponse::success($this->payload($list), null, 201);
@@ -57,13 +46,9 @@ final class ExecutiveDocumentApprovedListController extends \App\Http\Controller
         return AdminResponse::success(['url' => $url]);
     }
 
-    public function apply(Request $request, ExecutiveDocumentSet $set): JsonResponse
+    public function apply(ApplyExecutiveApprovedListRequest $request, ExecutiveDocumentSet $set): JsonResponse
     {
-        $data = $request->validate([
-            'approved_list_id' => ['required', 'integer', 'min:1'],
-            'item_keys' => ['required', 'array', 'min:1', 'max:500'],
-            'item_keys.*' => ['required', 'string', 'max:128', 'distinct'],
-        ]);
+        $data = $request->validated();
         $list = $this->lists->find((int) $set->project_id, (int) $data['approved_list_id'], $request->user());
         $this->lists->applyToSet($set, $list, $data['item_keys'], $request->user());
 

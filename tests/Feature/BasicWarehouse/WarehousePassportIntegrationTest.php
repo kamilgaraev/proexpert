@@ -13,6 +13,7 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentInput;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentRelationSnapshot;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Material;
@@ -23,6 +24,7 @@ use App\Models\User;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
@@ -32,10 +34,14 @@ final class WarehousePassportIntegrationTest extends TestCase
 
     public function test_passport_is_filterable_and_can_be_linked_to_itd_only_in_its_project(): void
     {
+        Storage::fake('s3');
         $organization = Organization::factory()->create();
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $otherProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $organization->users()->attach($user->id, ['is_owner' => true, 'is_active' => true]);
+        $user->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true]);
+        $user->assignedProjects()->attach($otherProject->id, ['role' => 'member', 'is_active' => true]);
         $warehouse = OrganizationWarehouse::query()->create([
             'organization_id' => $organization->id,
             'name' => 'Основной склад',
@@ -61,9 +67,11 @@ final class WarehousePassportIntegrationTest extends TestCase
         $missing = $this->receipt($organization->id, $project->id, $warehouse->id, $material->id, 'П-2');
 
         $fileService = $this->mock(FileService::class);
-        $fileService->shouldReceive('upload')->twice()->andReturn('org-'.$organization->id.'/warehouse/movements/'.$receipt->id.'/passport/file.pdf');
+        $passportPath = 'org-'.$organization->id.'/warehouse/movements/'.$receipt->id.'/passport/file.pdf';
+        $fileService->shouldReceive('upload')->times(3)->andReturn($passportPath, 'org-'.$organization->id.'/executive-documentation/passport.pdf', 'org-'.$organization->id.'/warehouse/central.pdf');
+        $fileService->shouldReceive('disk')->andReturn(Storage::disk('s3'));
         $fileService->shouldReceive('temporaryUrl')->andReturn('https://example.test/passport.pdf');
-        $this->mock(AuthorizationService::class)->shouldReceive('can')->with($user, 'warehouse.receipts', ['organization_id' => $organization->id])->andReturn(true);
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturn(true);
         $passports = app(WarehousePassportService::class);
         $uploaded = $passports->upload($organization->id, $receipt->id, UploadedFile::fake()->create('passport.pdf', 1, 'application/pdf'), $user);
         $again = $passports->upload($organization->id, $receipt->id, UploadedFile::fake()->create('passport.pdf', 1, 'application/pdf'), $user);
@@ -87,6 +95,16 @@ final class WarehousePassportIntegrationTest extends TestCase
         $normalized = $input->normalize($this->documentInput($relation), $set);
         self::assertSame($relation, $normalized['relations'][0]);
 
+        Storage::disk('s3')->put($passportPath, 'supplier passport');
+        $registered = app(ExecutiveDocumentationService::class)->addDocument($set, $user->id, [
+            'document_type' => 'quality_passport', 'title' => 'Паспорт из прихода',
+            'source_warehouse_passport_file_id' => $uploaded['id'],
+        ]);
+        self::assertSame($receipt->id, $registered->versions->first()->metadata['warehouse_movement_id']);
+        self::assertSame($uploaded['id'], $registered->versions->first()->metadata['warehouse_passport_file_id']);
+        self::assertSame(hash('sha256', 'supplier passport'), $registered->versions->first()->metadata['source_content_hash']);
+        self::assertNotEmpty($registered->versions->first()->file_url);
+
         $document = ExecutiveDocument::query()->create([
             'organization_id' => $organization->id,
             'project_id' => $project->id,
@@ -106,6 +124,17 @@ final class WarehousePassportIntegrationTest extends TestCase
         $otherSet = $this->set($organization->id, $otherProject->id, $user->id);
         $centralRelation = ['relation_type' => 'quality_documents', 'target_type' => 'warehouse_passport', 'target_id' => $centralPassport['id']];
         self::assertSame($centralRelation, $input->normalize($this->documentInput($centralRelation), $otherSet)['relations'][0]);
+
+        try {
+            app(ExecutiveDocumentationService::class)->addDocument($otherSet, $user->id, [
+                'document_type' => 'quality_passport', 'title' => 'Чужой паспорт',
+                'source_warehouse_passport_file_id' => $uploaded['id'],
+                'initial_version' => ['version_number' => '1.0'],
+            ]);
+            self::fail('Паспорт другого объекта не должен стать файлом ИД.');
+        } catch (ValidationException) {
+            self::assertSame(0, $otherSet->documents()->count());
+        }
 
         $this->expectException(ValidationException::class);
         $input->normalize($this->documentInput($relation), $otherSet);

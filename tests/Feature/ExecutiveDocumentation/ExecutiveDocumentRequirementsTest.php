@@ -7,9 +7,13 @@ namespace Tests\Feature\ExecutiveDocumentation;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentRequirementsService;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentApprovedListService;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Exceptions\BusinessLogicException;
 use App\Models\Project;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 use Mockery\MockInterface;
@@ -83,7 +87,93 @@ final class ExecutiveDocumentRequirementsTest extends TestCase
 
         self::assertFalse($readiness['ready']);
         self::assertSame(2, $readiness['requirements_total']);
-        self::assertSame(1, $readiness['missing_requirements']);
-        self::assertSame('missing_expected_document', $readiness['blockers'][0]['code']);
+        self::assertSame(2, $readiness['missing_requirements']);
+        self::assertContains('missing_expected_document', array_column($readiness['blockers'], 'code'));
+        self::assertContains('approved_list_missing', array_column($readiness['blockers'], 'code'));
+    }
+
+    public function test_project_list_has_immutable_revisions_and_cannot_be_applied_to_another_project(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $other = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->user->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true]);
+        $context->user->assignedProjects()->attach($other->id, ['role' => 'member', 'is_active' => true]);
+        $set = ExecutiveDocumentSet::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'created_by' => $context->user->id, 'set_number' => 'SET-LIST', 'title' => 'Перечень', 'status' => 'draft',
+        ]);
+        $otherSet = ExecutiveDocumentSet::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $other->id,
+            'created_by' => $context->user->id, 'set_number' => 'SET-OTHER', 'title' => 'Чужой объект', 'status' => 'draft',
+        ]);
+        $this->mock(AuthorizationService::class, static function (MockInterface $mock): void {
+            $mock->shouldReceive('can')->andReturn(true);
+        });
+        $this->mock(FileService::class, static function (MockInterface $mock): void {
+            $mock->shouldReceive('upload')->twice()->andReturn('private/list-1.pdf', 'private/list-2.pdf');
+        });
+        $service = app(ExecutiveDocumentApprovedListService::class);
+        $items = [['key' => 'hidden-act', 'profile_type' => 'hidden_work_act', 'title' => 'Акт скрытых работ', 'stage' => 'document_review',
+            'conditions' => ['designer_supervision' => false, 'separate_executor' => false]]];
+        $data = ['approved_by_party' => 'Технический заказчик', 'approved_at' => '2026-09-24', 'items' => $items];
+        $file1 = UploadedFile::fake()->createWithContent('list-1.pdf', 'first revision');
+        $file2 = UploadedFile::fake()->createWithContent('list-2.pdf', 'second revision');
+        $first = $service->create($project->id, $context->user, $data, $file1);
+        $second = $service->create($project->id, $context->user, $data, $file2);
+
+        self::assertSame(1, $first->revision);
+        self::assertSame(2, $second->revision);
+        self::assertSame(hash('sha256', 'first revision'), $first->file_hash);
+        self::assertSame(hash('sha256', 'second revision'), $second->file_hash);
+        self::assertSame('private/list-1.pdf', $first->fresh()->file_url);
+
+        $service->applyToSet($set, $second, ['hidden-act'], $context->user);
+        self::assertSame($second->id, $set->fresh()->approved_list_id);
+        self::assertSame('approved-list-'.$second->id, $set->requirements()->firstOrFail()->source_revision);
+        self::assertSame([], $set->requirements()->firstOrFail()->rule_snapshot['unresolved_conditions']);
+
+        $this->expectException(BusinessLogicException::class);
+        $service->applyToSet($otherSet, $second, ['hidden-act'], $context->user);
+    }
+
+    public function test_transmitted_set_keeps_its_original_requirement_summary(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $set = ExecutiveDocumentSet::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'created_by' => $context->user->id, 'set_number' => 'SET-HISTORY', 'title' => 'История', 'status' => 'transmitted',
+        ]);
+        $set->transmittal()->create([
+            'organization_id' => $context->organization->id,
+            'transmitted_by' => $context->user->id,
+            'transmittal_number' => 'HISTORY-1',
+            'transmitted_at' => now(),
+            'manifest' => ['requirements' => [[
+                'requirement_key' => 'act', 'profile_type' => 'hidden_work_act', 'applicability' => 'required',
+            ]]],
+        ]);
+
+        $summary = app(ExecutiveDocumentRequirementsService::class)->readiness($set->fresh());
+
+        self::assertTrue($summary['ready']);
+        self::assertSame(1, $summary['requirements_total']);
+        self::assertSame(1, $summary['requirements_satisfied']);
+        self::assertSame([], $summary['blockers']);
+
+        $set->transmittal()->firstOrFail()->forceFill(['manifest' => null])->save();
+        $legacy = app(ExecutiveDocumentRequirementsService::class)->readiness($set->fresh());
+        self::assertTrue($legacy['ready']);
+        self::assertSame([], $legacy['blockers']);
+
+        $set->documents()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'created_by' => $context->user->id, 'document_type' => 'hidden_work_act',
+            'title' => 'Исторический акт', 'status' => 'transmitted',
+        ]);
+        $workflow = app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationWorkflowService::class)
+            ->readinessSummary($set->fresh());
+        self::assertSame(0, $workflow['missing_required_data']);
     }
 }

@@ -102,6 +102,7 @@ final class ExecutiveDocumentApprovedListService
             'stage' => $item['stage'],
             'source' => 'Утверждённый перечень ИД объекта',
             'source_revision' => 'approved-list-'.$list->id,
+            'conditions' => $item['conditions'] ?? [],
             'work_type_id' => $item['work_type_id'] ?? null,
             'completed_work_id' => $item['completed_work_id'] ?? null,
             'project_location_id' => $item['project_location_id'] ?? null,
@@ -123,6 +124,15 @@ final class ExecutiveDocumentApprovedListService
                 throw ValidationException::withMessages(["items.{$index}" => 'Проверьте ключ и вид документа.']);
             }
             $keys[$key] = true;
+            $conditions = (array) ($item['conditions'] ?? []);
+            $act = in_array($profile, ['hidden_work_act', 'axis_layout_act', 'geodetic_base_acceptance_act', 'responsible_structure_act', 'engineering_network_section_act'], true);
+            if ($act
+                && (! array_key_exists('designer_supervision', $conditions) || ! array_key_exists('separate_executor', $conditions))) {
+                throw ValidationException::withMessages(["items.{$index}.conditions" => 'Для формы акта укажите авторский надзор и отдельного исполнителя.']);
+            }
+            if (! $act && $conditions !== []) {
+                throw ValidationException::withMessages(["items.{$index}.conditions" => 'Условия подписантов применяются только к актам.']);
+            }
             foreach (['work_type_id' => WorkType::class, 'completed_work_id' => CompletedWork::class] as $field => $model) {
                 if (! empty($item[$field]) && ! $model::query()->where('organization_id', $project->organization_id)
                     ->when($field === 'completed_work_id', static fn ($query) => $query->where('project_id', $project->id))
@@ -143,6 +153,10 @@ final class ExecutiveDocumentApprovedListService
                 'work_type_id' => isset($item['work_type_id']) ? (int) $item['work_type_id'] : null,
                 'completed_work_id' => isset($item['completed_work_id']) ? (int) $item['completed_work_id'] : null,
                 'project_location_id' => isset($item['project_location_id']) ? (int) $item['project_location_id'] : null,
+                'conditions' => $conditions === [] ? null : [
+                    'designer_supervision' => (bool) ($conditions['designer_supervision'] ?? false),
+                    'separate_executor' => (bool) ($conditions['separate_executor'] ?? false),
+                ],
             ], static fn ($value) => $value !== null);
         }
         unset($item);

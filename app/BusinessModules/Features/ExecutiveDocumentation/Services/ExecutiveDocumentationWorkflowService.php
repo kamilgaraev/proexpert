@@ -111,7 +111,9 @@ final class ExecutiveDocumentationWorkflowService
                 ExecutiveRemarkStatusEnum::RETURNED,
             ], true))
             ->count());
-        $missingRequiredData = $documents->filter(fn (ExecutiveDocument $document): bool => $this->documentHasMissingRequiredData($document))->count();
+        $missingRequiredData = in_array($set->status, [ExecutiveDocumentStatusEnum::TRANSMITTED, ExecutiveDocumentStatusEnum::ARCHIVED], true)
+            ? 0
+            : $documents->filter(fn (ExecutiveDocument $document): bool => $this->documentHasMissingRequiredData($document))->count();
 
         $requirements = $this->requirementsService->readiness($set);
 

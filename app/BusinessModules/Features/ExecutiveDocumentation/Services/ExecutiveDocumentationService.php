@@ -125,6 +125,10 @@ final class ExecutiveDocumentationService
 
     public function addDocument(ExecutiveDocumentSet $set, int $userId, array $data): ExecutiveDocument
     {
+        $this->mutationGuard->assertSetActor($set, $userId, 'executive-documentation.create');
+        if (empty($data['source_warehouse_passport_file_id']) && ! (($data['initial_version']['file'] ?? null) instanceof UploadedFile)) {
+            throw ValidationException::withMessages(['initial_version.file' => trans_message('executive_documentation.errors.version_file_required')]);
+        }
         $createdVersion = null;
         $sourceTemporary = null;
         if (! empty($data['source_warehouse_passport_file_id'])) {
@@ -132,6 +136,7 @@ final class ExecutiveDocumentationService
                 throw ValidationException::withMessages(['source_warehouse_passport_file_id' => 'Для паспорта выберите один источник файла.']);
             }
             [$sourceFile, $sourceTemporary, $movementId, $sourceHash] = $this->warehousePassportSource($set, (int) $data['source_warehouse_passport_file_id']);
+            $data['initial_version']['version_number'] ??= '1.0';
             $data['initial_version']['file'] = $sourceFile;
             $data['initial_version']['metadata'] = [
                 'warehouse_movement_id' => $movementId,
@@ -142,7 +147,7 @@ final class ExecutiveDocumentationService
         try {
             return DB::transaction(function () use ($set, $userId, $data, &$createdVersion): ExecutiveDocument {
                 $set = ExecutiveDocumentSet::query()->lockForUpdate()->findOrFail($set->id);
-                if ($set->status === ExecutiveDocumentStatusEnum::TRANSMITTED) {
+                if ($set->status !== ExecutiveDocumentStatusEnum::DRAFT) {
                     throw new DomainException(trans_message('executive_documentation.errors.transmitted_set_locked'));
                 }
                 $document = ExecutiveDocument::query()->create([
@@ -165,7 +170,7 @@ final class ExecutiveDocumentationService
                     'participants' => $data['participants'] ?? null,
                     'profile_data' => $data['profile_data'] ?? null,
                     'signatories' => $data['signatories'] ?? null,
-                    'metadata' => [...($data['metadata'] ?? []), 'capture_mode' => 'uploaded'],
+                    'metadata' => [...($data['metadata'] ?? []), 'capture_mode' => ! empty($data['__generated_preparation']) ? 'generated' : 'uploaded'],
                 ]);
 
                 $this->mutationGuard->assertActor($document, $userId, 'executive-documentation.create');
@@ -173,7 +178,7 @@ final class ExecutiveDocumentationService
                 $this->syncRelations($document, $data['relations'] ?? []);
                 app(ExecutiveMaterialProfileGuard::class)->assertValid($document);
                 if (!empty($data['initial_version'])) {
-                    $createdVersion = $this->createVersion($document, $userId, $data['initial_version'], 'executive-documentation.create');
+                    $createdVersion = $this->createVersion($document, $userId, $data['initial_version'], 'executive-documentation.create', ! empty($data['__generated_preparation']));
                 }
 
                 return $document->fresh(self::DOCUMENT_RELATIONS);
