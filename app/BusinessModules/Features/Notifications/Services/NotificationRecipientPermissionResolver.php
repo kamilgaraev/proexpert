@@ -83,6 +83,7 @@ final class NotificationRecipientPermissionResolver
 
         if ($projectId !== null) {
             $context['project_id'] = $projectId;
+            $context['strict_project_scope'] = true;
         }
 
         return $context;

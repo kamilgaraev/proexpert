@@ -2,6 +2,11 @@
 
 return [
 
+    'rustore' => [
+        'project_id' => env('RUSTORE_PROJECT_ID', ''),
+        'service_token' => env('RUSTORE_SERVICE_TOKEN', ''),
+    ],
+
     'yookassa' => [
         'mode' => env('YOOKASSA_MODE'),
         'shop_id' => env('YOOKASSA_SHOP_ID'),

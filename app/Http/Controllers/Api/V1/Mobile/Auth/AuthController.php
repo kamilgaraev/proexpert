@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Mobile\Auth;
 
+use App\BusinessModules\Features\Notifications\Services\MobileDeviceTokenService;
 use App\DTOs\Auth\LoginDTO;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Mobile\Auth\LoginRequest;
+use App\Http\Requests\Api\V1\Mobile\Auth\MobileLogoutRequest;
 use App\Http\Resources\Api\V1\Mobile\Auth\MobileUserResource;
 use App\Http\Responses\MobileResponse;
 use App\Services\Auth\JwtAuthService;
@@ -28,7 +30,8 @@ class AuthController extends Controller
 
     public function __construct(
         JwtAuthService $authService,
-        private readonly JwtTokenIssuer $tokenIssuer
+        private readonly JwtTokenIssuer $tokenIssuer,
+        private readonly MobileDeviceTokenService $deviceTokens,
     ) {
         $this->authService = $authService;
     }
@@ -124,13 +127,19 @@ class AuthController extends Controller
     /**
      * Выход пользователя.
      */
-    public function logout(): JsonResponse
+    public function logout(MobileLogoutRequest $request): JsonResponse
     {
-        return PerformanceMonitor::measure('mobile.logout', function () {
+        return PerformanceMonitor::measure('mobile.logout', function () use ($request) {
+            $user = $request->user();
             $result = $this->authService->logout($this->guard);
 
             if (! $result['success']) {
                 return MobileResponse::error($result['message'], $result['status_code'] ?? 401);
+            }
+
+            $installationId = $request->validated('installation_id');
+            if (is_string($installationId) && $user instanceof \App\Models\User) {
+                $this->deviceTokens->unregister($user, $installationId);
             }
 
             LogService::authLog('mobile_logout', [

@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Notifications\Services;
 
 use App\BusinessModules\Features\Notifications\Channels\EmailChannel;
 use App\BusinessModules\Features\Notifications\Channels\InAppChannel;
+use App\BusinessModules\Features\Notifications\Channels\MobilePushChannel;
 use App\BusinessModules\Features\Notifications\Channels\TelegramChannel;
 use App\BusinessModules\Features\Notifications\Channels\WebSocketChannel;
 use App\BusinessModules\Features\Notifications\Contracts\NotificationCommitSequencer;
@@ -95,6 +96,26 @@ class NotificationService
             $requiredPermissions
         );
 
+        $resolvedInterfaces = $this->filterInterfacesByAccess($user, $resolvedInterfaces, $organizationId, $data);
+
+        if ($resolvedInterfaces === []) {
+            Log::info('Notification skipped due to missing interface access', [
+                'user_id' => $user->id,
+                'notification_type' => $notificationType,
+            ]);
+
+            return $this->makeSkippedNotification(
+                $user,
+                $type,
+                $data,
+                $notificationType,
+                $priority,
+                new NotificationDeliveryOptions([], [], $organizationId, $requiredPermissions, $notificationId),
+            );
+        }
+
+        $mobileTargeted = in_array(NotificationInterface::Mobile, $resolvedInterfaces, true);
+
         if (! $this->permissionResolver->canReceive($user, $requiredPermissions, $organizationId, $data)) {
             Log::info('Notification skipped due to recipient permissions', [
                 'user_id' => $user->id,
@@ -118,7 +139,9 @@ class NotificationService
             );
         }
 
-        if (! $forceSend && ! $this->preferenceManager->canSend($user, $notificationType, $organizationId)) {
+        $canSendByPreferences = $forceSend || $this->preferenceManager->canSend($user, $notificationType, $organizationId);
+
+        if (! $canSendByPreferences && ! $mobileTargeted) {
             Log::info('Notification skipped due to preferences', [
                 'user_id' => $user->id,
                 'notification_type' => $notificationType,
@@ -149,12 +172,18 @@ class NotificationService
                 'channels' => $effectiveChannels,
                 'priority' => $priority,
             ]);
-        } else {
+        } elseif ($canSendByPreferences) {
             $effectiveChannels = $channels ?? $this->preferenceManager->getChannels(
                 $user,
                 $notificationType,
                 $organizationId
             );
+        } else {
+            $effectiveChannels = [];
+        }
+
+        if ($mobileTargeted) {
+            $effectiveChannels = array_values(array_unique([...$effectiveChannels, 'push']));
         }
 
         $this->assertWebSocketTargetsSupported($effectiveChannels, $resolvedInterfaces);
@@ -249,6 +278,31 @@ class NotificationService
         unset($data['interface']);
 
         return $data;
+    }
+
+    /** @param array<NotificationInterface> $interfaces
+     * @return array<NotificationInterface>
+     */
+    private function filterInterfacesByAccess(User $user, array $interfaces, ?int $organizationId, array $data): array
+    {
+        if (! in_array(NotificationInterface::Mobile, $interfaces, true)) {
+            return $interfaces;
+        }
+
+        $organizationId = $organizationId
+            ?? (is_numeric($data['organization_id'] ?? null) ? (int) $data['organization_id'] : null)
+            ?? (is_numeric($user->current_organization_id) ? (int) $user->current_organization_id : null);
+        if ($organizationId !== null) {
+            $projectId = is_numeric($data['project_id'] ?? null) ? (int) $data['project_id'] : null;
+            if (app(MobileNotificationAccessResolver::class)->canAccess($user, $organizationId, $projectId)) {
+                return $interfaces;
+            }
+        }
+
+        return array_values(array_filter(
+            $interfaces,
+            static fn (NotificationInterface $interface): bool => $interface !== NotificationInterface::Mobile,
+        ));
     }
 
     private function assertWebSocketTargetsSupported(array $channels, array $interfaces): void
@@ -361,6 +415,7 @@ class NotificationService
             'telegram' => app(TelegramChannel::class),
             'in_app' => app(InAppChannel::class),
             'websocket' => app(WebSocketChannel::class),
+            'push' => app(MobilePushChannel::class),
         ];
 
         return $channels[$channel] ?? null;
