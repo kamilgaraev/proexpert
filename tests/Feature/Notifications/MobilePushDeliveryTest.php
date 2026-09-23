@@ -38,7 +38,7 @@ final class MobilePushDeliveryTest extends TestCase
         Http::fake(function (Request $request) use (&$captured) {
             $captured = $request;
 
-            return Http::response((object) [], 200);
+            return Http::response('{}', 200, ['Content-Type' => 'application/json']);
         });
         $user = User::factory()->create();
         app(MobileDeviceTokenService::class)->register($user, 'android-1', 'android', 'rustore', 'rustore-token');
