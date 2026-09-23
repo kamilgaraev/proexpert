@@ -91,14 +91,14 @@ final class ContractPaymentPostgresRaceTest extends TestCase
         $payment = $this->startWorker('payment', $documentId);
         $update = null;
         try {
-            self::assertSame('contract_locked', $this->readLine($payment['stdout']));
+            self::assertSame('contract_locked', $this->readLine($payment['stdout'], $payment['stderr'], $payment['process']));
             $update = $this->startWorker('update', $documentId);
-            self::assertSame('update_started', $this->readLine($update['stdout']));
+            self::assertSame('update_started', $this->readLine($update['stdout'], $update['stderr'], $update['process']));
             $this->waitForDatabaseLock('most-contract-payment-race-update');
 
             fwrite($payment['stdin'], "release\n");
-            self::assertSame('payment_committed', $this->readLine($payment['stdout']));
-            self::assertSame('financial_conflict', $this->readLine($update['stdout']));
+            self::assertSame('payment_committed', $this->readLine($payment['stdout'], $payment['stderr'], $payment['process']));
+            self::assertSame('financial_conflict', $this->readLine($update['stdout'], $update['stderr'], $update['process']));
             self::assertSame('600.00', (string) $this->connection->table('payment_transactions')->sum('amount'));
             self::assertSame('1000.00', (string) $this->connection->table('contracts')->where('id', 100)->value('total_amount'));
             $this->assertWorkerSucceeded($payment);
@@ -117,7 +117,8 @@ final class ContractPaymentPostgresRaceTest extends TestCase
         if (! is_file($worker)) {
             throw new RuntimeException('Contract payment race worker was not found.');
         }
-        $environment = array_merge($_ENV, [
+        $inheritedEnvironment = getenv();
+        $environment = array_merge(is_array($inheritedEnvironment) ? $inheritedEnvironment : [], $_ENV, [
             'MOST_CONTRACT_PAYMENT_RACE_HOST' => $this->databaseConfig['host'],
             'MOST_CONTRACT_PAYMENT_RACE_PORT' => $this->databaseConfig['port'],
             'MOST_CONTRACT_PAYMENT_RACE_DATABASE' => $this->databaseConfig['database'],
@@ -135,13 +136,15 @@ final class ContractPaymentPostgresRaceTest extends TestCase
         return ['process' => $process, 'stdin' => $pipes[0], 'stdout' => $pipes[1], 'stderr' => $pipes[2]];
     }
 
-    private function readLine(mixed $stream): string
+    private function readLine(mixed $stream, mixed $stderr, mixed $process): string
     {
         $read = [$stream];
         $write = null;
         $except = null;
         if (stream_select($read, $write, $except, 10, 0) !== 1 || ($line = fgets($stream)) === false) {
-            throw new RuntimeException('Contract payment race worker did not reach its barrier.');
+            $status = proc_get_status($process);
+            $error = trim((string) stream_get_contents($stderr));
+            throw new RuntimeException('Contract payment race worker did not reach its barrier; exit='.(string) ($status['exitcode'] ?? 'running').'; stderr='.$error);
         }
 
         return trim($line);
@@ -166,9 +169,10 @@ final class ContractPaymentPostgresRaceTest extends TestCase
     private function assertWorkerSucceeded(array $worker): void
     {
         fclose($worker['stdin']);
-        self::assertSame(0, proc_close($worker['process']), stream_get_contents($worker['stderr']));
+        $error = is_resource($worker['stderr']) ? stream_get_contents($worker['stderr']) : '';
         fclose($worker['stdout']);
         fclose($worker['stderr']);
+        self::assertSame(0, proc_close($worker['process']), $error);
     }
 
     private function stopWorker(array $worker): void

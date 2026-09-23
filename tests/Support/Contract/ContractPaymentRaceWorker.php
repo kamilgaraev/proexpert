@@ -10,6 +10,11 @@ use App\Services\Contract\ContractBuilderMutationGuard;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Events\Dispatcher;
+use Illuminate\Foundation\Application;
+use Illuminate\Translation\ArrayLoader;
+use Illuminate\Translation\Translator;
+use Illuminate\Config\Repository;
+use Psr\Log\NullLogger;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Facade;
 
@@ -25,7 +30,11 @@ if (! in_array($role, ['payment', 'update'], true)
     exit(2);
 }
 
-$container = new Container;
+$container = new Application(dirname(__DIR__, 3));
+$container->instance('app', $container);
+$container->instance('config', new Repository(['app' => ['locale' => 'ru', 'fallback_locale' => 'ru']]));
+$container->instance('translator', new Translator(new ArrayLoader, 'ru'));
+$container->instance('log', new NullLogger);
 $capsule = new Capsule;
 $capsule->addConnection([
     'driver' => 'pgsql',
@@ -53,8 +62,10 @@ $connection->selectOne('SELECT set_config(\'application_name\', ?, false)', ['mo
 try {
     if ($role === 'payment') {
         $connection->beginTransaction();
-        $document = PaymentDocument::query()->findOrFail($documentId);
-        (new ContractPaymentLockService)->lockForPaymentDocument($document);
+        $document = PaymentDocument::withoutEvents(
+            static fn (): PaymentDocument => PaymentDocument::query()->findOrFail($documentId)
+        );
+        Contract::withoutEvents(static fn () => (new ContractPaymentLockService)->lockForPaymentDocument($document));
         fwrite(STDOUT, "contract_locked\n");
         fflush(STDOUT);
         if (trim((string) fgets(STDIN)) !== 'release') {
@@ -77,7 +88,9 @@ try {
         fwrite(STDOUT, "update_started\n");
         fflush(STDOUT);
         $connection->beginTransaction();
-        $contract = Contract::query()->whereKey(100)->lockForUpdate()->firstOrFail();
+        $contract = Contract::withoutEvents(
+            static fn (): Contract => Contract::query()->whereKey(100)->lockForUpdate()->firstOrFail()
+        );
         (new ContractBuilderMutationGuard)->assertUpdate($contract, ['total_amount' => '500.00'], 'update');
         $connection->table('contracts')->where('id', 100)->update(['total_amount' => '500.00']);
         $connection->commit();
@@ -92,6 +105,6 @@ try {
     if ($connection->transactionLevel() > 0) {
         $connection->rollBack();
     }
-    fwrite(STDERR, $exception::class.':'.$exception->getMessage());
+    fwrite(STDERR, $exception::class.':'.$exception->getMessage().' '.$exception->getTraceAsString());
     exit(1);
 }
