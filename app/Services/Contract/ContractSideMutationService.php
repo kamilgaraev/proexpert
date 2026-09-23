@@ -17,6 +17,7 @@ use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Services\Contractor\SelfExecutionService;
 use App\Services\Logging\LoggingService;
 use Exception;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -154,7 +155,7 @@ class ContractSideMutationService
         $contract = $this->contractAccessService->findAccessible($contractId, $organizationId);
 
         if (! $contract || (int) $contract->organization_id !== $organizationId) {
-            throw new Exception('Contract not found.');
+            throw new AuthorizationException;
         }
 
         $contractDTO = $this->resolveContractParties($organizationId, $contractDTO, null);

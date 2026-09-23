@@ -11,6 +11,7 @@ use App\Repositories\Interfaces\ContractRepositoryInterface;
 use Exception;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class ContractPaymentService
 {
@@ -72,21 +73,24 @@ class ContractPaymentService
 
     protected function updateActualAdvanceAmount(int $contractId, int $paymentId, string $reason): void
     {
-        $contract = $this->contractRepository->find($contractId);
-        if (! $contract instanceof Contract) {
-            throw new Exception("Contract with ID {$contractId} not found.");
-        }
-        $this->contractMutations->update(
-            $contract,
-            ['actual_advance_amount' => $this->contractPaymentDocumentService->getAdvancePaymentsSum($contractId)],
-            'actual_advance_amount_recalculated',
-            Auth::id(),
-            [
-                'payment_id' => $paymentId,
-                'reason' => $reason,
-                'source_event_id' => 'payment:'.(string) $paymentId.':advance_total:'.$reason,
-            ],
-        );
+        DB::transaction(function () use ($contractId, $paymentId, $reason): void {
+            $contract = Contract::query()->whereKey($contractId)->lockForUpdate()->first();
+            if (! $contract instanceof Contract) {
+                throw new Exception("Contract with ID {$contractId} not found.");
+            }
+
+            $this->contractMutations->update(
+                $contract,
+                ['actual_advance_amount' => $this->contractPaymentDocumentService->getAdvancePaymentsSum($contractId)],
+                'actual_advance_amount_recalculated',
+                Auth::id(),
+                [
+                    'payment_id' => $paymentId,
+                    'reason' => $reason,
+                    'source_event_id' => 'payment:'.(string) $paymentId.':advance_total:'.$reason,
+                ],
+            );
+        }, 3);
     }
 
     public function getAllPaymentsForContract(
@@ -106,14 +110,16 @@ class ContractPaymentService
         ContractPaymentDTO $paymentDTO,
         ?int $projectId = null
     ): PaymentDocument {
-        $contract = $this->getContractOrFail($contractId, $organizationId, $projectId);
-        $payment = $this->contractPaymentDocumentService->createPaidContractPayment($contract, $paymentDTO->toArray());
+        return DB::transaction(function () use ($contractId, $organizationId, $paymentDTO, $projectId): PaymentDocument {
+            $contract = Contract::query()->whereKey($contractId)->lockForUpdate()->first();
+            if (! $contract instanceof Contract || ! $this->canAccessContract($contract, $organizationId)) {
+                throw new Exception("Contract with ID {$contractId} not found.");
+            }
+            $this->getContractOrFail($contractId, $organizationId, $projectId);
+            $payment = $this->contractPaymentDocumentService->createPaidContractPayment($contract, $paymentDTO->toArray());
 
-        if ($paymentDTO->payment_type->value === 'advance') {
-            $this->updateActualAdvanceAmount($contractId, (int) $payment->id, 'created');
-        }
-
-        return $payment;
+            return $payment;
+        }, 3);
     }
 
     public function getPaymentById(int $paymentId, ?int $contractId, int $organizationId): ?PaymentDocument
@@ -146,59 +152,70 @@ class ContractPaymentService
         int $organizationId,
         ContractPaymentDTO $paymentDTO
     ): PaymentDocument {
-        $payment = $this->getPaymentById($paymentId, $contractId, $organizationId);
+        return DB::transaction(function () use ($paymentId, $contractId, $organizationId, $paymentDTO): PaymentDocument {
+            $payment = $this->getPaymentById($paymentId, $contractId, $organizationId);
+            if (! $payment instanceof PaymentDocument) {
+                throw new Exception('Payment not found.');
+            }
 
-        if (! $payment instanceof PaymentDocument) {
-            throw new Exception('Payment not found.');
-        }
+            $lockedContract = Contract::query()->whereKey($payment->invoiceable_id)->lockForUpdate()->firstOrFail();
+            if (! $this->canAccessContract($lockedContract, $organizationId)) {
+                throw new Exception('Payment not found.');
+            }
+            $payment = PaymentDocument::query()->whereKey($paymentId)->lockForUpdate()->firstOrFail();
+            $metadata = $payment->metadata ?? [];
+            $oldPaymentType = $metadata['contract_payment_type'] ?? null;
 
-        $metadata = $payment->metadata ?? [];
-        $oldPaymentType = $metadata['contract_payment_type'] ?? null;
+            $payment = $this->contractPaymentDocumentService->updateUnpaidDocument($payment, [
+                'amount' => $paymentDTO->amount,
+                'document_date' => $paymentDTO->payment_date,
+                'due_date' => $paymentDTO->payment_date,
+                'invoice_type' => $this->contractPaymentDocumentService
+                    ->mapContractPaymentTypeToInvoiceType($paymentDTO->payment_type->value)
+                    ->value,
+                'description' => $paymentDTO->description,
+                'metadata' => array_merge($metadata, [
+                    'contract_payment_type' => $paymentDTO->payment_type->value,
+                    'reference_document_number' => $paymentDTO->reference_document_number,
+                ]),
+            ]);
 
-        $payment = $this->contractPaymentDocumentService->updateUnpaidDocument($payment, [
-            'amount' => $paymentDTO->amount,
-            'document_date' => $paymentDTO->payment_date,
-            'due_date' => $paymentDTO->payment_date,
-            'invoice_type' => $this->contractPaymentDocumentService
-                ->mapContractPaymentTypeToInvoiceType($paymentDTO->payment_type->value)
-                ->value,
-            'description' => $paymentDTO->description,
-            'metadata' => array_merge($metadata, [
-                'contract_payment_type' => $paymentDTO->payment_type->value,
-                'reference_document_number' => $paymentDTO->reference_document_number,
-            ]),
-        ]);
+            if ($oldPaymentType === 'advance' || $paymentDTO->payment_type->value === 'advance') {
+                $this->updateActualAdvanceAmount((int) $payment->invoiceable_id, (int) $payment->id, 'updated');
+            }
 
-        if ($oldPaymentType === 'advance' || $paymentDTO->payment_type->value === 'advance') {
-            $this->updateActualAdvanceAmount((int) $payment->invoiceable_id, (int) $payment->id, 'updated');
-        }
-
-        return $payment->refresh();
+            return $payment->refresh();
+        }, 3);
     }
 
     public function deletePayment(int $paymentId, ?int $contractId, int $organizationId): bool
     {
-        $payment = $this->getPaymentById($paymentId, $contractId, $organizationId);
+        return DB::transaction(function () use ($paymentId, $contractId, $organizationId): bool {
+            $payment = $this->getPaymentById($paymentId, $contractId, $organizationId);
+            if (! $payment instanceof PaymentDocument) {
+                throw new Exception('Payment not found.');
+            }
 
-        if (! $payment instanceof PaymentDocument) {
-            throw new Exception('Payment not found.');
-        }
+            $actualContractId = (int) $payment->invoiceable_id;
+            $lockedContract = Contract::query()->whereKey($actualContractId)->lockForUpdate()->firstOrFail();
+            if (! $this->canAccessContract($lockedContract, $organizationId)) {
+                throw new Exception('Payment not found.');
+            }
+            $payment = PaymentDocument::query()->whereKey($paymentId)->lockForUpdate()->firstOrFail();
+            $wasAdvancePayment = ($payment->metadata['contract_payment_type'] ?? null) === 'advance'
+                || $payment->invoice_type?->value === 'advance';
 
-        $wasAdvancePayment = ($payment->metadata['contract_payment_type'] ?? null) === 'advance'
-            || $payment->invoice_type?->value === 'advance';
-        $actualContractId = (int) $payment->invoiceable_id;
+            $this->contractPaymentDocumentService->cancelDocument(
+                $payment,
+                trans_message('payments.documents.cancelled'),
+            );
 
-        $this->contractPaymentDocumentService->cancelDocument(
-            $payment,
-            trans_message('payments.documents.cancelled'),
-        );
-        $result = true;
+            if ($wasAdvancePayment) {
+                $this->updateActualAdvanceAmount($actualContractId, (int) $payment->id, 'cancelled');
+            }
 
-        if ($result && $wasAdvancePayment) {
-            $this->updateActualAdvanceAmount($actualContractId, (int) $payment->id, 'cancelled');
-        }
-
-        return $result;
+            return true;
+        }, 3);
     }
 
     public function getTotalPaidAmountForContract(int $contractId, int $organizationId, ?int $projectId = null): float

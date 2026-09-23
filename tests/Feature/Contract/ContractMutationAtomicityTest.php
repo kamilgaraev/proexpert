@@ -9,6 +9,7 @@ use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStateEventTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
+use App\Exceptions\ContractBuilderException;
 use App\Models\Contract;
 use App\Models\ContractStateEvent;
 use App\Observers\ContractObserver;
@@ -85,6 +86,118 @@ class ContractMutationAtomicityTest extends TestCase
         );
 
         self::assertSame('1000.00', (string) $storedAmount);
+    }
+
+    public function test_financial_guard_rejects_total_below_approved_acts(): void
+    {
+        $project = \App\Models\Project::factory()->create(['organization_id' => $this->organizationId]);
+        $contract = $this->mutationService()->create($this->organizationId, $this->contractDto($project->id));
+        $contract->performanceActs()->create([
+            'project_id' => $project->id,
+            'act_document_number' => 'ACT-FINANCIAL-100',
+            'act_date' => now()->toDateString(),
+            'amount' => 1100,
+            'status' => 'approved',
+            'is_approved' => true,
+        ]);
+
+        $this->expectException(ContractBuilderException::class);
+        app(\App\Services\Contract\ContractBuilderMutationGuard::class)
+            ->assertUpdate($contract->fresh(), ['total_amount' => 900], 'update');
+    }
+
+    public function test_financial_guard_rejects_planned_advance_below_actual_advance(): void
+    {
+        $contract = $this->mutationService()->create($this->organizationId, $this->contractDto());
+        $contract->update(['actual_advance_amount' => 250]);
+
+        $this->expectException(ContractBuilderException::class);
+        app(\App\Services\Contract\ContractBuilderMutationGuard::class)
+            ->assertUpdate($contract->fresh(), ['planned_advance_amount' => 200], 'update');
+    }
+
+    public function test_financial_guard_keeps_planned_advance_at_or_below_contract_total(): void
+    {
+        $contract = $this->mutationService()->create($this->organizationId, $this->contractDto());
+        $contract->update(['planned_advance_amount' => 700]);
+
+        $this->expectException(ContractBuilderException::class);
+        app(\App\Services\Contract\ContractBuilderMutationGuard::class)
+            ->assertUpdate($contract->fresh(), ['total_amount' => 600], 'update');
+    }
+
+    public function test_financial_guard_rejects_direct_advance_override_when_payment_document_exists(): void
+    {
+        $contract = $this->mutationService()->create($this->organizationId, $this->contractDto());
+        \App\BusinessModules\Core\Payments\Models\PaymentDocument::create([
+            'organization_id' => $this->organizationId,
+            'document_type' => 'invoice',
+            'document_number' => 'ADV-GUARD-'.$contract->id,
+            'document_date' => now()->toDateString(),
+            'direction' => 'outgoing',
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'invoice_type' => 'advance',
+            'amount' => 300,
+            'currency' => 'RUB',
+            'paid_amount' => 300,
+            'remaining_amount' => 0,
+            'status' => 'paid',
+        ]);
+
+        $this->expectException(ContractBuilderException::class);
+        app(\App\Services\Contract\ContractBuilderMutationGuard::class)
+            ->assertUpdate($contract->fresh(), ['actual_advance_amount' => 250], 'update');
+    }
+
+    public function test_financial_guard_rejects_actual_advance_without_payment_documents(): void
+    {
+        $contract = $this->mutationService()->create($this->organizationId, $this->contractDto());
+
+        $this->expectException(ContractBuilderException::class);
+        app(\App\Services\Contract\ContractBuilderMutationGuard::class)
+            ->assertUpdate($contract->fresh(), ['actual_advance_amount' => 250], 'update');
+    }
+
+    public function test_financial_guard_counts_completed_payment_linked_to_contract_act(): void
+    {
+        $project = \App\Models\Project::factory()->create(['organization_id' => $this->organizationId]);
+        $contract = $this->mutationService()->create($this->organizationId, $this->contractDto($project->id));
+        $act = $contract->performanceActs()->create([
+            'project_id' => $project->id,
+            'act_document_number' => 'ACT-PAYMENT-100',
+            'act_date' => now()->toDateString(),
+            'amount' => 100,
+            'status' => 'approved',
+            'is_approved' => true,
+        ]);
+        $document = \App\BusinessModules\Core\Payments\Models\PaymentDocument::create([
+            'organization_id' => $this->organizationId,
+            'document_type' => 'invoice',
+            'document_number' => 'ACT-PAY-GUARD-'.$contract->id,
+            'document_date' => now()->toDateString(),
+            'direction' => 'outgoing',
+            'invoiceable_type' => \App\Models\ContractPerformanceAct::class,
+            'invoiceable_id' => $act->id,
+            'amount' => 600,
+            'currency' => 'RUB',
+            'paid_amount' => 0,
+            'remaining_amount' => 600,
+            'status' => 'approved',
+        ]);
+        \App\BusinessModules\Core\Payments\Models\PaymentTransaction::create([
+            'organization_id' => $this->organizationId,
+            'payment_document_id' => $document->id,
+            'amount' => 600,
+            'currency' => 'RUB',
+            'payment_method' => 'bank_transfer',
+            'transaction_date' => now()->toDateString(),
+            'status' => 'completed',
+        ]);
+
+        $this->expectException(ContractBuilderException::class);
+        app(\App\Services\Contract\ContractBuilderMutationGuard::class)
+            ->assertUpdate($contract->fresh(), ['total_amount' => 500], 'update');
     }
 
     public function test_contract_and_audit_are_atomic(): void
