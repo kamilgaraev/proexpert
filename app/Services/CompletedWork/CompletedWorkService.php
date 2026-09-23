@@ -50,6 +50,7 @@ class CompletedWorkService
         ContractAuditedMutationService $contractMutations,
         CompletedWorkScopeResolver $scopeResolver,
         private readonly CompletedWorkMutationGuard $mutationGuard,
+        private readonly CompletedWorkFactReadiness $factReadiness,
     ) {
         $this->completedWorkRepository = $completedWorkRepository;
         $this->rateCoefficientService = $rateCoefficientService;
@@ -192,6 +193,10 @@ class CompletedWorkService
                 throw new BusinessLogicException('Не удалось создать запись о выполненной работе.', 500);
             }
 
+            if ($dto->status === CompletedWork::STATUS_IN_REVIEW) {
+                $this->factReadiness->assertReady($createdModel);
+            }
+
             if ($dto->materials) {
                 $this->syncMaterials($createdModel, $dto->materials);
             }
@@ -283,6 +288,10 @@ class CompletedWorkService
             }
 
             $updatedWork = $existingWork->refresh();
+
+            if ($dto->status === CompletedWork::STATUS_IN_REVIEW) {
+                $this->factReadiness->assertReady($updatedWork);
+            }
 
             if ($dto->materials !== null) {
                 $this->syncMaterials($updatedWork, $dto->materials);

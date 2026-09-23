@@ -91,7 +91,7 @@ class StoreCompletedWorkRequest extends FormRequest
                             ->whereNull('deleted_at');
                     }),
             ],
-            'quantity' => 'required|numeric|min:0.001',
+            'quantity' => 'required|numeric|min:'.($this->input('status') === 'draft' ? '0' : '0.001'),
             'completed_quantity' => 'nullable|numeric|min:0',
             'price' => 'nullable|numeric|min:0',
             'total_amount' => 'nullable|numeric|min:0',
@@ -134,6 +134,9 @@ class StoreCompletedWorkRequest extends FormRequest
             ],
             'planning_status' => 'nullable|string|in:planned,requires_schedule',
             'additional_info' => 'nullable|array',
+            'additional_info.work_name' => 'nullable|string|max:255',
+            'additional_info.unit_of_measurement' => 'nullable|string|max:32',
+            'additional_info.location' => 'nullable|string|max:255',
             'materials' => 'nullable|array',
             'materials.*.material_id' => [
                 'required_with:materials',

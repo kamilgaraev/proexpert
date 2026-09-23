@@ -85,6 +85,11 @@ final class CompletedWorkSourceParityTest extends TestCase
             'status' => 'pending',
             'work_origin_type' => CompletedWork::ORIGIN_MANUAL,
             'planning_status' => CompletedWork::PLANNING_PLANNED,
+            'additional_info' => [
+                'work_name' => 'Монтаж секции',
+                'unit_of_measurement' => 'шт.',
+                'location' => 'Секция А',
+            ],
         ]);
 
         $this->withHeaders($context->authHeaders())->postJson(
