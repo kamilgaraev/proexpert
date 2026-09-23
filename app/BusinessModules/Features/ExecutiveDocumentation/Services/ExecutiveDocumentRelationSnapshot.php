@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ExecutiveDocumentation\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRelation;
 use App\BusinessModules\Features\ExecutiveDocumentation\Support\ExecutiveDocumentProfileRegistry;
@@ -30,6 +31,7 @@ final class ExecutiveDocumentRelationSnapshot
         foreach ($relations as $relation) {
             $expectedTarget = $allowedTargets[$relation->relation_type] ?? null;
             if ($expectedTarget !== $relation->target_type
+                && ! ($relation->relation_type === 'quality_documents' && $expectedTarget === 'incoming_control_document' && in_array($relation->target_type, ['warehouse_passport', 'quality_passport'], true))
                 && ! ($expectedTarget === 'executive_document' && $this->profiles->find($relation->target_type) !== null)) {
                 $this->targetNotFound();
             }
@@ -157,6 +159,29 @@ final class ExecutiveDocumentRelationSnapshot
         $result = [];
         foreach ($relations->groupBy('target_type') as $targetType => $items) {
             $ids = $items->pluck('target_id')->map(static fn ($id): int => (int) $id)->unique()->values();
+            if ($targetType === 'warehouse_passport') {
+                $movements = WarehouseMovement::query()
+                    ->where('organization_id', $document->organization_id)
+                    ->where(static fn ($query) => $query->where('project_id', $document->project_id)->orWhereNull('project_id'))
+                    ->where('movement_type', WarehouseMovement::TYPE_RECEIPT)
+                    ->whereHas('passportFile', static fn ($query) => $query->whereIn('id', $ids))
+                    ->with(['passportFile', 'material:id,name'])
+                    ->get();
+                foreach ($movements as $movement) {
+                    $file = $movement->passportFile;
+                    $batchNumber = data_get($movement->metadata, 'batch_number');
+                    $result[$this->targetKey($targetType, (int) $file->id)] = [
+                        'id' => (int) $file->id,
+                        'title' => 'Паспорт материала '.$movement->material?->name
+                            .(is_string($batchNumber) && $batchNumber !== '' ? ', партия '.$batchNumber : '')
+                            .' ('.$file->original_name.')',
+                        'material_name' => $movement->material?->name,
+                        'batch_number' => $batchNumber,
+                        'movement_id' => (int) $movement->id,
+                    ];
+                }
+                continue;
+            }
             $targets = match ($targetType) {
                 'journal_entry' => ConstructionJournalEntry::query()->whereHas('journal', static fn ($query) => $query
                     ->where('organization_id', $document->organization_id)->where('project_id', $document->project_id))->whereIn('id', $ids)->with('journal:id,name,journal_number')->get(),

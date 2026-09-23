@@ -11,6 +11,7 @@ use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseIdentifierC
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseLogisticUnitController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseOperationsController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehousePhotoController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehousePassportController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseScanEventController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseStockExportController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseStorageCellController;
@@ -81,6 +82,10 @@ Route::middleware(AdminRouteStack::middleware())
                 ->name('movements.photos.store');
             Route::delete('/movements/{id}/photos/{fileId}', [WarehousePhotoController::class, 'deleteMovementPhoto'])
                 ->name('movements.photos.destroy');
+            Route::post('/movements/{movementId}/passport', [WarehousePassportController::class, 'store'])
+                ->whereNumber('movementId')
+                ->middleware('authorize:warehouse.receipts')
+                ->name('movements.passport.store');
             Route::get('/movements/{id}/export-m11', [WarehouseOperationsController::class, 'exportM11'])
                 ->whereNumber('id')
                 ->middleware('authorize:warehouse.manage_stock')

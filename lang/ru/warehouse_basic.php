@@ -62,4 +62,6 @@ return [
     'photo_upload_empty' => 'Не выбраны фотографии для загрузки.',
     'photo_target_not_found' => 'Не удалось найти объект для привязки фотографий.',
     'photo_limit_exceeded' => 'Можно прикрепить не более 4 фотографий.',
+    'passport_upload_success' => 'Паспорт материала загружен.',
+    'passport_upload_failed' => 'Не удалось загрузить паспорт материала.',
 ];

@@ -1587,6 +1587,7 @@ class WarehouseService implements WarehouseReportDataProvider
             'date_from' => $filters['date_from'] ?? null,
             'date_to' => $filters['date_to'] ?? null,
             'search' => $filters['search'] ?? null,
+            'has_passport' => $filters['has_passport'] ?? null,
             'per_page' => $paginator->perPage(),
         ], static fn (mixed $value): bool => $value !== null && $value !== ''));
 
@@ -1607,7 +1608,12 @@ class WarehouseService implements WarehouseReportDataProvider
                 'user',
                 'relatedUser',
                 'photos',
+                'passportFile',
             ]);
+
+        if (isset($filters['has_passport'])) {
+            $filters['has_passport'] ? $query->whereHas('passportFile') : $query->whereDoesntHave('passportFile');
+        }
 
         if (isset($filters['warehouse_id'])) {
             $query->where('warehouse_id', $filters['warehouse_id']);
@@ -1773,6 +1779,7 @@ class WarehouseService implements WarehouseReportDataProvider
             'description' => is_string($description) ? $description : null,
             'movement_date' => $movement->movement_date->toDateTimeString(),
             'photo_gallery' => $movement->photo_gallery,
+            'passport_document' => $movement->passport_document,
         ];
     }
 

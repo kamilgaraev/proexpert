@@ -38,6 +38,7 @@ final class IndexWarehouseMovementRequest extends FormRequest
             'date_from' => ['sometimes', 'nullable', 'date'],
             'date_to' => ['sometimes', 'nullable', 'date', 'after_or_equal:date_from'],
             'search' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'has_passport' => ['sometimes', 'nullable', 'boolean'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
             'page' => ['sometimes', 'integer', 'min:1'],
         ];

@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
 
 use function trans_message;
 
@@ -160,6 +161,28 @@ class WarehouseMovement extends Model
     public function photos(): MorphMany
     {
         return $this->files()->where('type', 'photo')->orderByDesc('created_at');
+    }
+
+    public function passportFile(): MorphOne
+    {
+        return $this->morphOne(File::class, 'fileable')->where('type', 'document')->where('category', 'receipt_passport');
+    }
+
+    public function getPassportDocumentAttribute(): ?array
+    {
+        $file = $this->relationLoaded('passportFile') ? $this->getRelation('passportFile') : $this->passportFile()->first();
+        if ($file === null) {
+            return null;
+        }
+
+        return [
+            'id' => $file->id,
+            'original_name' => $file->original_name,
+            'url' => app(FileService::class)->temporaryUrl($file->path, 60),
+            'mime_type' => $file->mime_type,
+            'size' => $file->size,
+            'uploaded_at' => optional($file->created_at)?->toDateTimeString(),
+        ];
     }
 
     /**
