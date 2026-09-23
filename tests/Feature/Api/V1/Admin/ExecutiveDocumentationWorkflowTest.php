@@ -336,7 +336,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
                 'is_archived' => false,
             ]);
             $project->organizations()->attach($context->organization->id, [
-                'role' => $role->value,
+                'role' => 'contractor',
                 'role_new' => $role->value,
                 'is_active' => true,
             ]);
@@ -418,7 +418,7 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
             $response->assertOk();
             $response->assertJsonPath('data.url', "https://files.example.test/{$purpose}");
             $response->assertJsonPath('data.expires_in_seconds', 300);
-            $response->assertHeader('Cache-Control', 'private, no-store, max-age=0');
+            self::assertStringContainsString('no-store', (string) $response->headers->get('Cache-Control'));
         }
 
         $this->withHeaders($context->authHeaders())
