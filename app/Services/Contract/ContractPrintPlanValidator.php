@@ -31,8 +31,9 @@ final class ContractPrintPlanValidator
                 }
                 $keys = ['type', 'x', 'y', 'width', 'height'];
                 if ($item['type'] === 'text') {
-                    array_push($keys, 'text', 'fontSize', 'bold', 'italic', 'underline', 'strike', 'wordSpacing', 'letterSpacing', 'href');
+                    array_push($keys, 'text', 'fontFamily', 'fontSize', 'bold', 'italic', 'underline', 'strike', 'wordSpacing', 'letterSpacing', 'href');
                     if (! is_string($item['text'] ?? null) || strlen($item['text']) > 100000
+                        || ! in_array($item['fontFamily'] ?? null, ['DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono', 'Most Contract'], true)
                         || ! $this->number($item['fontSize'] ?? null, 1, 72)
                         || ! $this->number($item['wordSpacing'] ?? null, -20, 500)
                         || ! $this->number($item['letterSpacing'] ?? null, -20, 100)) {

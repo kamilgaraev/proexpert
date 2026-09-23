@@ -58,7 +58,7 @@ final class ContractDocumentValidator
             $this->invalid();
         }
         $attributeKeys = match ($type) {
-            'heading' => ['level'], 'orderedList' => ['start'], 'clause' => ['id'],
+            'heading' => ['level'], 'orderedList' => ['start'], 'clause' => ['id', 'textPlacement'],
             'clauseReference' => ['target'], 'variable' => ['variableId', 'columnId'],
             'conditional', 'repeatRows' => ['variableId'], 'tableCell' => ['colspan', 'rowspan'],
             'blockReference' => ['blockId', 'version', 'instanceId'],
@@ -76,6 +76,10 @@ final class ContractDocumentValidator
             $this->invalid();
         }
         if ($type === 'heading' && (! is_int($attrs['level'] ?? null) || $attrs['level'] < 1 || $attrs['level'] > 6)) {
+            $this->invalid();
+        }
+        if ($type === 'clause' && array_key_exists('textPlacement', $attrs)
+            && ! in_array($attrs['textPlacement'], ['inline', 'new_line'], true)) {
             $this->invalid();
         }
         foreach (['start', 'colspan', 'rowspan'] as $positive) {

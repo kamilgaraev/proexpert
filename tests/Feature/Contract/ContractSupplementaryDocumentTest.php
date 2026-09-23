@@ -45,6 +45,45 @@ final class ContractSupplementaryDocumentTest extends TestCase
         }
     }
 
+    public function test_preview_renders_frame_variables_from_matching_document_values(): void
+    {
+        [$actor, , $contract, $priceId] = $this->effectiveFixture();
+        $library = app(ContractLibraryService::class);
+        $frame = $library->create($actor, $actor->current_organization_id, 'template', 'Допсоглашение с ценой', [
+            'document' => ['type' => 'doc', 'content' => [[
+                'type' => 'clause', 'attrs' => ['id' => 'price'], 'content' => [[
+                    'type' => 'paragraph', 'content' => [['type' => 'variable', 'attrs' => ['variableId' => $priceId]]],
+                ]],
+            ]]],
+            'variables' => [$priceId => 1],
+        ], 'supplementary-frame-values');
+        $frameId = $frame['item']['id'];
+        $library->publish($actor, $actor->current_organization_id, $frameId, 1, 1);
+        $service = app(ContractSupplementaryDocumentService::class);
+        $document = $service->create($actor, $actor->current_organization_id, $contract->id, $frameId, 1, 'ДС-preview', now()->toDateString(), 'preview-values');
+
+        $preview = $service->preview($actor, $actor->current_organization_id, $contract->id, $document['id']);
+
+        self::assertStringContainsString('120', $preview['html']);
+    }
+
+    public function test_confirmation_of_unchanged_supplementary_document_returns_validation_error(): void
+    {
+        [$actor, , $contract, , $frameId] = $this->effectiveFixture();
+        $service = app(ContractSupplementaryDocumentService::class);
+        $document = $service->create($actor, $actor->current_organization_id, $contract->id, $frameId, 1, 'ДС-empty', now()->toDateString(), 'confirm-empty');
+
+        try {
+            app(ContractSupplementaryConfirmationService::class)->confirm(
+                $actor, $actor->current_organization_id, $contract->id, $document['id'], $document['content_hash'], 'confirm-empty'
+            );
+            self::fail('An unchanged supplementary document must not be confirmed');
+        } catch (\App\Exceptions\ContractBuilderException $exception) {
+            self::assertSame(422, $exception->getCode());
+            self::assertSame('contracts.supplementary_changes_required', $exception->messageKey());
+        }
+    }
+
     public function test_confirmation_and_activation_change_price_and_specification_without_touching_revision(): void
     {
         $this->enableImmutableAuditWriter();

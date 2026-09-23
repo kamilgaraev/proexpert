@@ -148,7 +148,12 @@ final class ContractDocumentPrintLayout
                     $html .= '<span id="'.$this->escape($item['name']).'" style="'.$position.'"></span>';
                 } else {
                     $decoration = trim(($item['underline'] ? 'underline ' : '').($item['strike'] ? 'line-through' : '')) ?: 'none';
-                    $style = $position.'white-space:pre;font-family:MostContract,Arial,sans-serif;font-size:'.$item['fontSize'].'pt;line-height:1;'
+                    $family = match ($item['fontFamily']) {
+                        'DejaVu Serif' => '"DejaVu Serif",serif',
+                        'DejaVu Sans Mono' => '"DejaVu Sans Mono",monospace',
+                        default => '"DejaVu Sans",sans-serif',
+                    };
+                    $style = $position.'white-space:pre;font-family:'.$family.';font-size:'.$item['fontSize'].'pt;line-height:1;'
                         .'font-weight:'.($item['bold'] ? 'bold' : 'normal').';font-style:'.($item['italic'] ? 'italic' : 'normal').';'
                         .'word-spacing:'.$item['wordSpacing'].'pt;letter-spacing:'.$item['letterSpacing'].'pt;text-decoration:'.$decoration.';color:#172033';
                     $text = $this->escape($item['text']);

@@ -39,10 +39,20 @@ final class ContractDocumentPrintMeasure
         foreach ($blocks as $index => $block) {
             $layout = $block['layout'];
             $measurements[$index] = ['items' => [], 'height' => 0.0, 'origin' => 0.0];
+            $family = $layout['fontFamily'] ?? 'DejaVu Sans';
+            if ($family === 'Most Contract') {
+                $family = 'DejaVu Sans';
+            }
+            $cssFamily = match ($family) {
+                'DejaVu Serif' => '"DejaVu Serif",serif',
+                'DejaVu Sans Mono' => '"DejaVu Sans Mono",monospace',
+                default => '"DejaVu Sans",sans-serif',
+            };
             $style = 'width:'.($layout['width'] * self::PT_PER_MM).'pt;page-break-after:always;'
                 .'line-height:'.($layout['lineHeight'] ?? 1.4).';text-align:'.($layout['align'] ?? 'left').';'
-                .'text-indent:'.(($layout['firstLineIndent'] ?? 0) * self::PT_PER_MM).'pt';
-            $html .= '<section data-measure="'.$index.'" style="'.$style.'">'.$block['html'].'</section>';
+                .'text-indent:'.(($layout['firstLineIndent'] ?? 0) * self::PT_PER_MM).'pt;font-family:'.$cssFamily.';'
+                .(isset($layout['fontSize']) ? 'font-size:'.$layout['fontSize'].'pt;' : '');
+            $html .= '<section data-measure="'.$index.'" data-font-family="'.$family.'" style="'.$style.'">'.$block['html'].'</section>';
         }
         $html .= '</body></html>';
         $pdf->setCallbacks([['event' => 'end_frame', 'f' => function (Frame $frame) use (&$measurements, $pdf): void {
@@ -77,7 +87,8 @@ final class ContractDocumentPrintMeasure
                 $bold = $style->font_weight === 'bold' || (int) $style->font_weight >= 600;
                 $italic = in_array($style->font_style, ['italic', 'oblique'], true);
                 $size = (float) $style->font_size;
-                $font = $pdf->getFontMetrics()->getFont('DejaVu Sans', ($bold ? 'bold' : '').($italic ? 'italic' : '') ?: 'normal');
+                $family = $root->getAttribute('data-font-family');
+                $font = $pdf->getFontMetrics()->getFont($family, ($bold ? 'bold' : '').($italic ? 'italic' : '') ?: 'normal');
                 $spacing = $frame instanceof Text ? $frame->get_text_spacing() + (float) $style->word_spacing : 0.0;
                 $width = $pdf->getFontMetrics()->getTextWidth($text, $font, $size, $spacing, (float) $style->letter_spacing);
                 if ($frame instanceof ListBullet) {
@@ -85,7 +96,7 @@ final class ContractDocumentPrintMeasure
                 }
                 $item = ['type' => 'text', 'text' => $text, 'x' => (float) $x, 'y' => (float) $y,
                     'width' => $width, 'height' => $pdf->getFontMetrics()->getFontHeight($font, $size),
-                    'fontSize' => $size, 'bold' => $bold, 'italic' => $italic, 'underline' => false, 'strike' => false,
+                    'fontFamily' => $family, 'fontSize' => $size, 'bold' => $bold, 'italic' => $italic, 'underline' => false, 'strike' => false,
                     'wordSpacing' => $spacing, 'letterSpacing' => (float) $style->letter_spacing, 'href' => null];
                 for ($parent = $node->parentNode; $parent instanceof DOMElement && $parent !== $root; $parent = $parent->parentNode) {
                     if ($parent->tagName === 'u') {

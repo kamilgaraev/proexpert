@@ -69,9 +69,12 @@ final class ContractSupplementaryConfirmationService
                 json_decode($document->values, true, 512, JSON_THROW_ON_ERROR),
                 json_decode($document->entity_snapshots, true, 512, JSON_THROW_ON_ERROR)
             );
-            if ($document->status !== 'draft' || $changes === [] || !hash_equals($document->content_hash, $hash)
+            if ($document->status !== 'draft' || !hash_equals($document->content_hash, $hash)
                 || DB::table('contract_supplementary_confirmations')->where('document_id', $document->id)->where('side', $side)->exists()) {
                 throw new ContractBuilderException('contracts.confirmation_conflict', 409);
+            }
+            if ($changes === []) {
+                throw new ContractBuilderException('contracts.supplementary_changes_required', 422);
             }
             $proof = $external === null ? null : app(ContractBuilderAssetService::class)->evidence($actor, $organizationId, $contractId, $external['asset_id']);
             $id = DB::table('contract_supplementary_confirmations')->insertGetId([
