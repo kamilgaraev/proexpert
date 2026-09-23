@@ -7,7 +7,10 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion;
 use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
+use App\Enums\ProjectOrganizationRole;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
@@ -18,6 +21,7 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Models\WorkType;
 use App\Modules\Core\AccessController;
+use App\Services\Storage\FileService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -316,6 +320,113 @@ final class ExecutiveDocumentationWorkflowTest extends TestCase
         $customerResponse->assertOk();
         $ids = collect($customerResponse->json('data'))->pluck('id')->all();
         $this->assertNotContains($ownSetId, $ids);
+    }
+
+    public function test_active_project_participants_can_create_sets_regardless_of_project_role(): void
+    {
+        $context = AdminApiTestContext::create();
+        $ownerContext = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        foreach ([ProjectOrganizationRole::GENERAL_CONTRACTOR, ProjectOrganizationRole::CONTRACTOR] as $role) {
+            $project = Project::factory()->create([
+                'organization_id' => $ownerContext->organization->id,
+                'status' => 'active',
+                'is_archived' => false,
+            ]);
+            $project->organizations()->attach($context->organization->id, [
+                'role' => $role->value,
+                'role_new' => $role->value,
+                'is_active' => true,
+            ]);
+
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/executive-documentation/sets', [
+                    'project_id' => $project->id,
+                    'title' => 'Participant package',
+                ]);
+
+            $response->assertCreated();
+            $response->assertJsonPath('data.project.id', $project->id);
+        }
+
+        $inactiveProject = Project::factory()->create([
+            'organization_id' => $ownerContext->organization->id,
+            'status' => 'active',
+            'is_archived' => false,
+        ]);
+        $inactiveProject->organizations()->attach($context->organization->id, [
+            'role' => ProjectOrganizationRole::CONTRACTOR->value,
+            'role_new' => ProjectOrganizationRole::CONTRACTOR->value,
+            'is_active' => false,
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/executive-documentation/sets', [
+                'project_id' => $inactiveProject->id,
+                'title' => 'Inactive participant package',
+            ])
+            ->assertStatus(422);
+    }
+
+    public function test_version_file_url_is_temporary_and_scoped_to_document_and_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $set = ExecutiveDocumentSet::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'set_number' => 'ED-FILE-1',
+            'title' => 'File package',
+        ]);
+        $document = ExecutiveDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'document_set_id' => $set->id,
+            'document_type' => 'incoming_control_document',
+            'title' => 'File document',
+        ]);
+        $path = "org-{$context->organization->id}/executive-documentation/document.pdf";
+        $version = ExecutiveDocumentVersion::query()->create([
+            'organization_id' => $context->organization->id,
+            'document_id' => $document->id,
+            'version_number' => '1.0',
+            'file_url' => $path,
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $this->mock(FileService::class, function (MockInterface $mock) use ($context, $path): void {
+            foreach (['preview' => 'inline', 'download' => 'attachment'] as $purpose => $disposition) {
+                $mock->shouldReceive('temporaryUrl')
+                    ->once()
+                    ->withArgs(static fn ($key, $minutes, $organization, $parameters): bool =>
+                        $key === $path
+                        && $minutes === 5
+                        && (int) $organization->id === $context->organization->id
+                        && $parameters === ['ResponseContentDisposition' => $disposition]
+                    )
+                    ->andReturn("https://files.example.test/{$purpose}");
+            }
+        });
+
+        foreach (['preview', 'download'] as $purpose) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/executive-documentation/documents/{$document->id}/versions/{$version->id}/{$purpose}");
+
+            $response->assertOk();
+            $response->assertJsonPath('data.url', "https://files.example.test/{$purpose}");
+            $response->assertJsonPath('data.expires_in_seconds', 300);
+            $response->assertHeader('Cache-Control', 'private, no-store, max-age=0');
+        }
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/executive-documentation/documents/999999/versions/{$version->id}/preview")
+            ->assertNotFound();
+        $this->withHeaders($foreignContext->authHeaders())
+            ->getJson("/api/v1/admin/executive-documentation/documents/{$document->id}/versions/{$version->id}/preview")
+            ->assertNotFound();
     }
 
     public function test_transmit_without_expected_composition_returns_user_facing_unprocessable(): void

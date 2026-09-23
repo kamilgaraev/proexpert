@@ -101,6 +101,33 @@ final class ExecutiveDocumentationController extends Controller
         }
     }
 
+    public function versionFileUrl(Request $request, int $documentId, int $versionId, string $purpose): JsonResponse
+    {
+        try {
+            $url = $this->service->temporaryVersionUrl(
+                (int) $request->attributes->get('current_organization_id'),
+                $documentId,
+                $versionId,
+                $purpose,
+            );
+
+            if ($url === null) {
+                return AdminResponse::error(trans_message('executive_documentation.errors.not_found'), 404);
+            }
+
+            return AdminResponse::success([
+                'url' => $url,
+                'expires_in_seconds' => 300,
+            ])->withHeaders([
+                'Cache-Control' => 'private, no-store, max-age=0',
+                'Pragma' => 'no-cache',
+                'Referrer-Policy' => 'no-referrer',
+            ]);
+        } catch (\Throwable $e) {
+            return $this->failed('version_file_url', $versionId, $e);
+        }
+    }
+
     public function references(Request $request): JsonResponse
     {
         try {
