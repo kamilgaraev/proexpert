@@ -208,6 +208,7 @@ final class ExecutiveDocumentInput
             $targetMatchesProfile = $hasProfileRelation
                 && (
                     $targetType === $expectedTarget
+                    || ($relationType === 'quality_documents' && in_array($targetType, ['warehouse_passport', 'quality_passport'], true) && $expectedTarget === 'incoming_control_document')
                     || ($expectedTarget === 'executive_document' && $this->profileRegistry->find($targetType) !== null)
                 );
             $exists = $targetMatchesProfile && $this->relationTargetExists($targetType, $targetId, $set);
@@ -250,6 +251,15 @@ final class ExecutiveDocumentInput
 
     private function relationTargetExists(string $targetType, int $targetId, ExecutiveDocumentSet $set): bool
     {
+        if ($targetType === 'warehouse_passport') {
+            return \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::query()
+                ->where('organization_id', $set->organization_id)
+                ->where(static fn ($query) => $query->where('project_id', $set->project_id)->orWhereNull('project_id'))
+                ->where('movement_type', 'receipt')
+                ->whereHas('passportFile', static fn ($query) => $query->whereKey($targetId))
+                ->exists();
+        }
+
         if ($targetType === 'project_material_delivery') {
             return \App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery::query()
                 ->where('organization_id', $set->organization_id)->where('project_id', $set->project_id)

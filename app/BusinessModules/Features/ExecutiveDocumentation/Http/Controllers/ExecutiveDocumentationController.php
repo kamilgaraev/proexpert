@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ExecutiveDocumentation\Http\Controllers;
 
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePassportService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentRemarkResource;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentResource;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentSetResource;
@@ -43,6 +44,7 @@ final class ExecutiveDocumentationController extends Controller
         private readonly ExecutiveDocumentationService $service,
         private readonly ExecutiveDocumentProfileRegistry $profileRegistry,
         private readonly HiddenWorkActAutofillService $hiddenWorkActAutofillService,
+        private readonly WarehousePassportService $warehousePassportService,
     ) {
     }
 
@@ -247,6 +249,7 @@ final class ExecutiveDocumentationController extends Controller
                     ])
                     ->values(),
                 'material_deliveries' => app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveMaterialProfileGuard::class)->deliveryReferences($organizationId, $projectId),
+                'warehouse_passports' => $this->warehousePassportService->references($organizationId, $projectId),
                 'materials' => Material::query()
                     ->where('organization_id', $organizationId)
                     ->where('is_active', true)
