@@ -273,6 +273,7 @@ class WarehouseController extends Controller
                 'date_from' => $validated['date_from'] ?? null,
                 'date_to' => $validated['date_to'] ?? null,
                 'search' => $validated['search'] ?? null,
+                'has_passport' => $validated['has_passport'] ?? null,
             ];
 
             $movements = $this->warehouseService->paginateMovementsData(
@@ -313,6 +314,7 @@ class WarehouseController extends Controller
                     'date_from',
                     'date_to',
                     'search',
+                    'has_passport',
                     'page',
                     'per_page',
                 ]),

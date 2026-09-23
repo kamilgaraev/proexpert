@@ -19,6 +19,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseMovemen
 use App\BusinessModules\Features\BasicWarehouse\Services\Export\WriteOffActExportService;
 use App\BusinessModules\Features\BasicWarehouse\Services\ReservationLifecycleService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePassportService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseStorageCellResolver;
 use App\Http\Controllers\Controller;
@@ -43,6 +44,7 @@ class WarehouseOperationsController extends Controller
         protected WarehouseService $warehouseService,
         protected AssetService $assetService,
         protected WarehousePhotoService $warehousePhotoService,
+        protected WarehousePassportService $warehousePassportService,
         protected WarehouseStorageCellResolver $storageCellResolver,
         protected ProjectService $projectService,
         protected WarehouseMovementFormExportService $movementFormExportService,
@@ -319,6 +321,16 @@ class WarehouseOperationsController extends Controller
                 );
 
                 $result['movement']->load('photos');
+            }
+
+            if ($request->hasFile('passport')) {
+                $this->warehousePassportService->upload(
+                    $organizationId,
+                    (int) $result['movement']->id,
+                    $request->file('passport'),
+                    $request->user()
+                );
+                $result['movement']->load('passportFile');
             }
 
             return AdminResponse::success(

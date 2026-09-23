@@ -83,6 +83,7 @@ class ReceiptRequest extends FormRequest
             'metadata.description' => 'nullable|string|max:1000',
             'photos' => 'nullable|array|max:4',
             'photos.*' => 'file|image|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
+            'passport' => 'nullable|file|mimes:pdf,jpg,jpeg,png,webp|max:20480',
         ];
     }
 
