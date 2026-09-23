@@ -19,6 +19,9 @@ final class TransmitExecutiveDocumentSetRequest extends FormRequest
             'expected_versions' => ['required', 'array', 'min:1', 'max:1000'],
             'expected_versions.*.document_id' => ['required', 'integer', 'min:1', 'distinct'],
             'expected_versions.*.version_id' => ['required', 'integer', 'min:1', 'distinct'],
+            'paper_originals' => ['sometimes', 'array', 'max:1000'],
+            'paper_originals.*.document_id' => ['required', 'integer', 'min:1', 'distinct'],
+            'paper_originals.*.copies_count' => ['required', 'integer', 'min:1', 'max:50'],
         ];
     }
 }

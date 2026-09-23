@@ -32,9 +32,12 @@ final class ExecutiveDocumentPrintPackageTest extends TestCase
             $zip = new \ZipArchive();
             self::assertTrue($zip->open($path));
             self::assertSame('original-file', $zip->getFromName('documents/'.$version->id.'.pdf'));
+            self::assertSame('detached-signature', $zip->getFromName('signatures/'.$version->id.'.sig'));
+            self::assertSame('approved-list-file', $zip->getFromName('approved-list/revision-2.pdf'));
             $manifest = json_decode($zip->getFromName('registry.json'), true, 512, JSON_THROW_ON_ERROR);
             self::assertSame($version->id, $manifest['documents'][0]['version_id']);
             self::assertSame('1', $manifest['documents'][0]['version_number']);
+            self::assertSame(hash('sha256', 'approved-list-file'), $manifest['approved_list']['sha256']);
             self::assertStringNotContainsString('org-', $zip->getFromName('registry.json'));
             self::assertStringContainsString('АОСР', $zip->getFromName('registry.html'));
             $zip->close();
@@ -80,10 +83,23 @@ final class ExecutiveDocumentPrintPackageTest extends TestCase
             'organization_id' => $context->organization->id, 'uploaded_by' => $context->user->id,
             'version_number' => '1', 'file_url' => $path, 'status' => 'draft', 'content_hash' => hash('sha256', 'original-file'),
         ]);
+        $signaturePath = 'org-'.$context->organization->id.'/executive-documentation/one.sig';
+        $approvedListPath = 'org-'.$context->organization->id.'/executive-documentation/approved-list.pdf';
+        $version->forceFill(['metadata' => [
+            'file_kind' => 'electronic_original', 'signature_file_url' => $signaturePath,
+            'signature_hash' => hash('sha256', 'detached-signature'),
+        ]])->save();
+        Storage::disk('s3')->put($signaturePath, 'detached-signature');
+        Storage::disk('s3')->put($approvedListPath, 'approved-list-file');
         $manifest = ['set' => ['title' => 'Комплект', 'set_number' => 'PKG'], 'documents' => [[
             'document_id' => $document->id, 'version_id' => $version->id, 'version_number' => '1',
             'file_url' => $path, 'content_hash' => $version->content_hash, 'title' => 'АОСР',
-        ]]];
+            'file_kind' => 'electronic_original', 'signature_file_url' => $signaturePath,
+            'signature_hash' => hash('sha256', 'detached-signature'),
+        ]], 'approved_list' => [
+            'id' => 2, 'revision' => 2, 'file_url' => $approvedListPath,
+            'file_hash' => hash('sha256', 'approved-list-file'), 'original_name' => 'approved-list.pdf',
+        ]];
         $transmittal = ExecutiveDocumentTransmittal::query()->create([
             'organization_id' => $context->organization->id, 'document_set_id' => $set->id,
             'transmitted_by' => $context->user->id, 'transmittal_number' => 'PKG-1', 'status' => 'sent', 'transmitted_at' => now(),

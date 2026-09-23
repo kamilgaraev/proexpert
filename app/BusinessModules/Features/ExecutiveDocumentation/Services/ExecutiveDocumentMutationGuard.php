@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ExecutiveDocumentation\Services;
 
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
@@ -19,6 +20,26 @@ final class ExecutiveDocumentMutationGuard
         private readonly AuthorizationService $authorization,
         private readonly UserProjectAccessService $projectAccess,
     ) {}
+
+    public function assertSetActor(ExecutiveDocumentSet $set, int $userId, string $permission): void
+    {
+        $actor = User::query()->find($userId);
+        $organizationId = (int) $set->organization_id;
+        $project = $set->project;
+        if ($actor === null || (int) $actor->current_organization_id !== $organizationId
+            || ! $actor->belongsToOrganization($organizationId)
+            || $project === null || (int) $project->organization_id !== $organizationId
+            || ! $this->projectAccess->canAccessProject($actor, $project, $organizationId)) {
+            throw new BusinessLogicException(trans_message('executive_documentation.errors.document_not_found'), 404);
+        }
+        if (! $this->authorization->can($actor, $permission, [
+            'organization_id' => $organizationId,
+            'project_id' => (int) $set->project_id,
+            'strict_project_scope' => true,
+        ])) {
+            throw new BusinessLogicException(trans_message('executive_documentation.errors.forbidden'), 403);
+        }
+    }
 
     public function assertActor(ExecutiveDocument $document, int $userId, string $permission): void
     {

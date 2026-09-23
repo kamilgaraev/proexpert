@@ -111,7 +111,9 @@ final class ExecutiveDocumentationWorkflowService
                 ExecutiveRemarkStatusEnum::RETURNED,
             ], true))
             ->count());
-        $missingRequiredData = $documents->filter(fn (ExecutiveDocument $document): bool => $this->documentHasMissingRequiredData($document))->count();
+        $missingRequiredData = in_array($set->status, [ExecutiveDocumentStatusEnum::TRANSMITTED, ExecutiveDocumentStatusEnum::ARCHIVED], true)
+            ? 0
+            : $documents->filter(fn (ExecutiveDocument $document): bool => $this->documentHasMissingRequiredData($document))->count();
 
         $requirements = $this->requirementsService->readiness($set);
 
@@ -135,6 +137,9 @@ final class ExecutiveDocumentationWorkflowService
 
     private function documentHasMissingRequiredData(ExecutiveDocument $document): bool
     {
+        if (($document->metadata['capture_mode'] ?? null) === 'uploaded') {
+            return false;
+        }
         $profile = $this->profileRegistry->find($document->document_type->value);
 
         if ($profile === null) {

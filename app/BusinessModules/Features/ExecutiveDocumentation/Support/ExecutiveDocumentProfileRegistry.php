@@ -424,7 +424,7 @@ final class ExecutiveDocumentProfileRegistry
                 'category' => 'quality_documents',
                 'profile_revision' => '2026-09-20.1',
                 'profile_mode' => 'external_manual_review',
-                'regulatory_basis' => ['344/пр, применимый состав ИД'],
+                'regulatory_basis' => ['Постановление Правительства РФ № 468, пункт 7: документ поставщика о качестве', 'В составе ИД объекта — только по утверждённому перечню'],
                 'requires_work_type' => false,
                 'requires_journal_entry' => false,
                 'fields' => [

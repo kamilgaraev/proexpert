@@ -30,6 +30,7 @@ final class ExecutiveDocumentSet extends Model
     protected $fillable = [
         'organization_id',
         'project_id',
+        'approved_list_id',
         'created_by',
         'set_number',
         'title',
@@ -61,6 +62,11 @@ final class ExecutiveDocumentSet extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    public function approvedList(): BelongsTo
+    {
+        return $this->belongsTo(ExecutiveDocumentApprovedList::class, 'approved_list_id');
     }
 
     public function createdBy(): BelongsTo

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ExecutiveDocumentation\Services;
 
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRequirement;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion;
 use App\BusinessModules\Features\ExecutiveDocumentation\Support\ExecutiveDocumentProfileRegistry;
@@ -54,6 +55,9 @@ final class ExecutiveDocumentRequirementsService
             if ($previous->isNotEmpty()) {
                 $this->assertCanApprove($lockedSet, $actor, $authorization);
             }
+            $existingEvidence = $previous->keyBy(static fn (ExecutiveDocumentRequirement $item): string => $item->requirement_key.'|'.$item->profile_type.'|'.json_encode([
+                $item->work_type_id, $item->project_location_id, $item->completed_work_id,
+            ], JSON_THROW_ON_ERROR));
             foreach ($previous as $oldRequirement) {
                 $before = $oldRequirement->toArray();
                 $oldRequirement->forceFill(['superseded_at' => now(), 'revision' => $oldRequirement->revision + 1])->save();
@@ -62,6 +66,15 @@ final class ExecutiveDocumentRequirementsService
             $created = null;
             foreach ($requirements as $requirement) {
                 $created = $this->createLocked($lockedSet, $requirement, $actor, $authorization);
+                $key = $created->requirement_key.'|'.$created->profile_type.'|'.json_encode([
+                    $created->work_type_id, $created->project_location_id, $created->completed_work_id,
+                ], JSON_THROW_ON_ERROR);
+                $prior = $existingEvidence->get($key);
+                if ($prior !== null && $prior->evidence !== []) {
+                    $before = $created->toArray();
+                    $created->forceFill(['evidence' => $prior->evidence, 'revision' => $created->revision + 1])->save();
+                    $this->recordEvent($created, $actor, 'evidence_carried_forward', $before);
+                }
             }
             if ($created !== null && $operationKey !== null) {
                 $this->recordEvent($created, $actor, 'composition_replaced', null, $operationKey, $requestHash);
@@ -303,6 +316,16 @@ final class ExecutiveDocumentRequirementsService
 
     public function readiness(ExecutiveDocumentSet $set): array
     {
+        if (in_array($set->status->value, ['transmitted', 'archived'], true)) {
+            $manifest = $set->transmittal()->first()?->manifest ?? [];
+            $frozen = collect(is_array($manifest) && isset($manifest['requirements']) && is_array($manifest['requirements'])
+                ? $manifest['requirements']
+                : $set->requirements()->whereNull('superseded_at')->get(['applicability'])->toArray());
+            $applicableCount = $frozen->where('applicability', 'required')->count();
+
+            return ['requirements_total' => $frozen->count(), 'requirements_applicable' => $applicableCount,
+                'requirements_satisfied' => $applicableCount, 'missing_requirements' => 0, 'blockers' => [], 'ready' => true];
+        }
         $requirements = ExecutiveDocumentRequirement::query()->where('document_set_id', $set->id)->whereNull('superseded_at')->get();
         $versionIds = $requirements->flatMap(static fn (ExecutiveDocumentRequirement $requirement) => collect((array) $requirement->evidence)->pluck('version_id'))->filter()->unique()->values()->all();
         $versions = ExecutiveDocumentVersion::query()->with('document')->whereIn('id', $versionIds)->get()->keyBy('id')->all();
@@ -321,12 +344,6 @@ final class ExecutiveDocumentRequirementsService
 
                 continue;
             }
-            $unresolved = (array) ($requirement->rule_snapshot['unresolved_conditions'] ?? []);
-            if ($unresolved !== []) {
-                $blockers[] = array_merge($this->blocker('normative_conditions_unresolved', $requirement, trans_message('executive_requirements.normative_conditions_unresolved')), ['conditions' => $unresolved]);
-
-                continue;
-            }
             $evidence = $this->evidenceFor($requirement, $set, $versions, $latestVersionIds);
             if ($evidence === []) {
                 $blockers[] = $this->evidenceBlocker($requirement, $set, $versions, $latestVersionIds);
@@ -336,6 +353,24 @@ final class ExecutiveDocumentRequirementsService
         }
         if ($requirements->isEmpty()) {
             $blockers[] = ['code' => 'requirements_not_configured', 'requirement_id' => null, 'scope_id' => $set->project_id, 'stage' => 'document_review', 'message' => trans_message('executive_requirements.not_configured'), 'target' => ['type' => 'document_set', 'id' => $set->id]];
+        }
+        if ($set->status->value === 'draft') {
+            $approvedList = $set->approved_list_id === null ? null : ExecutiveDocumentApprovedList::query()
+                ->where('organization_id', $set->organization_id)->where('project_id', $set->project_id)->find($set->approved_list_id);
+            if ($approvedList === null) {
+                $blockers[] = ['code' => 'approved_list_missing', 'requirement_id' => null, 'scope_id' => $set->project_id,
+                    'stage' => 'document_review', 'message' => 'Приложите утверждённый перечень ИД объекта.',
+                    'target' => ['type' => 'document_set', 'id' => $set->id]];
+            } else {
+                $items = collect($approvedList->items)->keyBy('key');
+                foreach ($requirements as $requirement) {
+                    $item = $items->get($requirement->requirement_key);
+                    if ($item === null || $item['profile_type'] !== $requirement->profile_type
+                        || $requirement->source_revision !== 'approved-list-'.$approvedList->id) {
+                        $blockers[] = $this->blocker('approved_list_mismatch', $requirement, 'Пункт комплекта не соответствует утверждённому перечню.');
+                    }
+                }
+            }
         }
 
         return ['requirements_total' => $requirements->count(), 'requirements_applicable' => $applicable->count(), 'requirements_satisfied' => max(0, $satisfied), 'missing_requirements' => count($blockers), 'blockers' => $blockers, 'ready' => $blockers === []];

@@ -57,6 +57,19 @@ final class ExecutiveDocumentRequirementEvidenceValidatorTest extends TestCase
         self::assertContains('normative_conditions_unresolved', array_column((new ExecutiveDocumentRequirementEvidenceValidator())->violations($requirement, $version), 'code'));
     }
 
+    public function test_uploaded_file_does_not_require_retyped_template_fields_or_signatories(): void
+    {
+        $requirement = $this->requirement('hidden_work_act', [
+            'profile' => $this->profile('hidden_work_act', [['key' => 'act_number', 'required' => true]]),
+            'required_signatories' => ['contractor_representative' => ['authority_required' => true]],
+            'unresolved_conditions' => ['template_only'],
+        ]);
+        $version = $this->version(['profile' => $this->profile('hidden_work_act', [])], [], true);
+        $version->metadata = ['origin' => 'registered_external'];
+
+        self::assertSame([], (new ExecutiveDocumentRequirementEvidenceValidator())->violations($requirement, $version));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -130,6 +143,7 @@ final class ExecutiveDocumentRequirementEvidenceValidatorTest extends TestCase
             'profile_snapshot' => $profile,
             'file_url' => $complete ? 's3://evidence.pdf' : null,
             'content_hash' => $complete ? str_repeat('a', 64) : null,
+            'metadata' => ['origin' => 'generated_preparation'],
         ]);
     }
 

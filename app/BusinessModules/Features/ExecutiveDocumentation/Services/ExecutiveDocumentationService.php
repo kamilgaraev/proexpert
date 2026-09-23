@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ExecutiveDocumentation\Services;
 
 use App\BusinessModules\Features\ExecutiveDocumentation\Enums\ExecutiveDocumentStatusEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\ExecutiveDocumentation\Enums\ExecutiveRemarkStatusEnum;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRelation;
@@ -24,6 +25,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 final class ExecutiveDocumentationService
 {
@@ -123,11 +125,29 @@ final class ExecutiveDocumentationService
 
     public function addDocument(ExecutiveDocumentSet $set, int $userId, array $data): ExecutiveDocument
     {
+        $this->mutationGuard->assertSetActor($set, $userId, 'executive-documentation.create');
+        if (empty($data['source_warehouse_passport_file_id']) && ! (($data['initial_version']['file'] ?? null) instanceof UploadedFile)) {
+            throw ValidationException::withMessages(['initial_version.file' => trans_message('executive_documentation.errors.version_file_required')]);
+        }
         $createdVersion = null;
+        $sourceTemporary = null;
+        if (! empty($data['source_warehouse_passport_file_id'])) {
+            if (($data['document_type'] ?? null) !== 'quality_passport' || ! empty($data['initial_version']['file'])) {
+                throw ValidationException::withMessages(['source_warehouse_passport_file_id' => 'Для паспорта выберите один источник файла.']);
+            }
+            [$sourceFile, $sourceTemporary, $movementId, $sourceHash] = $this->warehousePassportSource($set, (int) $data['source_warehouse_passport_file_id']);
+            $data['initial_version']['version_number'] ??= '1.0';
+            $data['initial_version']['file'] = $sourceFile;
+            $data['initial_version']['metadata'] = [
+                'warehouse_movement_id' => $movementId,
+                'warehouse_passport_file_id' => (int) $data['source_warehouse_passport_file_id'],
+                'source_content_hash' => $sourceHash,
+            ];
+        }
         try {
             return DB::transaction(function () use ($set, $userId, $data, &$createdVersion): ExecutiveDocument {
                 $set = ExecutiveDocumentSet::query()->lockForUpdate()->findOrFail($set->id);
-                if ($set->status === ExecutiveDocumentStatusEnum::TRANSMITTED) {
+                if ($set->status !== ExecutiveDocumentStatusEnum::DRAFT) {
                     throw new DomainException(trans_message('executive_documentation.errors.transmitted_set_locked'));
                 }
                 $document = ExecutiveDocument::query()->create([
@@ -150,7 +170,7 @@ final class ExecutiveDocumentationService
                     'participants' => $data['participants'] ?? null,
                     'profile_data' => $data['profile_data'] ?? null,
                     'signatories' => $data['signatories'] ?? null,
-                    'metadata' => $data['metadata'] ?? null,
+                    'metadata' => [...($data['metadata'] ?? []), 'capture_mode' => ! empty($data['__generated_preparation']) ? 'generated' : 'uploaded'],
                 ]);
 
                 $this->mutationGuard->assertActor($document, $userId, 'executive-documentation.create');
@@ -158,7 +178,7 @@ final class ExecutiveDocumentationService
                 $this->syncRelations($document, $data['relations'] ?? []);
                 app(ExecutiveMaterialProfileGuard::class)->assertValid($document);
                 if (!empty($data['initial_version'])) {
-                    $createdVersion = $this->createVersion($document, $userId, $data['initial_version'], 'executive-documentation.create');
+                    $createdVersion = $this->createVersion($document, $userId, $data['initial_version'], 'executive-documentation.create', ! empty($data['__generated_preparation']));
                 }
 
                 return $document->fresh(self::DOCUMENT_RELATIONS);
@@ -168,7 +188,68 @@ final class ExecutiveDocumentationService
                 $this->removeFailedUpload($createdVersion->file_url, Organization::query()->find($set->organization_id), (int) $createdVersion->document_id);
             }
             throw $exception;
+        } finally {
+            if ($sourceTemporary !== null && is_file($sourceTemporary)) {
+                unlink($sourceTemporary);
+            }
         }
+    }
+
+    private function warehousePassportSource(ExecutiveDocumentSet $set, int $fileId): array
+    {
+        $movement = WarehouseMovement::query()
+            ->where('organization_id', $set->organization_id)
+            ->where(static fn ($query) => $query->where('project_id', $set->project_id)->orWhereNull('project_id'))
+            ->where('movement_type', WarehouseMovement::TYPE_RECEIPT)
+            ->whereHas('passportFile', static fn ($query) => $query->whereKey($fileId))
+            ->with('passportFile')
+            ->first();
+        if ($movement === null || $movement->passportFile === null) {
+            throw ValidationException::withMessages(['source_warehouse_passport_file_id' => trans_message('executive_documentation.errors.relation_target_not_found')]);
+        }
+        $organization = Organization::query()->findOrFail($set->organization_id);
+        $stream = $this->fileService->disk($organization)->readStream($movement->passportFile->path);
+        if (! is_resource($stream)) {
+            throw ValidationException::withMessages(['source_warehouse_passport_file_id' => 'Файл паспорта недоступен.']);
+        }
+        $temporary = tempnam(sys_get_temp_dir(), 'itd-passport-');
+        if ($temporary === false) {
+            fclose($stream);
+            throw new \RuntimeException('executive_passport_temp_failed');
+        }
+        $target = fopen($temporary, 'wb');
+        $copyError = null;
+        try {
+            if (! is_resource($target) || stream_copy_to_stream($stream, $target, 25 * 1024 * 1024 + 1) === false) {
+                throw new \RuntimeException('executive_passport_copy_failed');
+            }
+        } catch (\Throwable $exception) {
+            $copyError = $exception;
+        } finally {
+            fclose($stream);
+            if (is_resource($target)) {
+                fclose($target);
+            }
+        }
+        if ($copyError !== null) {
+            unlink($temporary);
+            throw $copyError;
+        }
+        if (! is_file($temporary) || filesize($temporary) === 0) {
+            @unlink($temporary);
+            throw ValidationException::withMessages(['source_warehouse_passport_file_id' => 'Файл паспорта недоступен.']);
+        }
+        if (filesize($temporary) > 25 * 1024 * 1024) {
+            unlink($temporary);
+            throw ValidationException::withMessages(['source_warehouse_passport_file_id' => 'Файл паспорта превышает допустимый размер.']);
+        }
+
+        return [
+            new UploadedFile($temporary, $movement->passportFile->original_name, $movement->passportFile->mime_type, null, true),
+            $temporary,
+            (int) $movement->id,
+            hash_file('sha256', $temporary),
+        ];
     }
 
     public function addVersion(ExecutiveDocument $document, int $userId, array $data): ExecutiveDocumentVersion
@@ -184,9 +265,10 @@ final class ExecutiveDocumentationService
     private function createVersion(ExecutiveDocument $document, int $userId, array $data, string $permission, bool $prepared = false): ExecutiveDocumentVersion
     {
         $uploadedPath = null;
+        $signatureUploadedPath = null;
         $organization = null;
         try {
-            return DB::transaction(function () use ($document, $userId, $data, $permission, $prepared, &$uploadedPath, &$organization): ExecutiveDocumentVersion {
+            return DB::transaction(function () use ($document, $userId, $data, $permission, $prepared, &$uploadedPath, &$signatureUploadedPath, &$organization): ExecutiveDocumentVersion {
                 $lockedSet = ExecutiveDocumentSet::query()->lockForUpdate()->findOrFail($document->document_set_id);
                 $lockedDocument = ExecutiveDocument::query()->lockForUpdate()->findOrFail($document->id);
                 if ((int) $lockedDocument->document_set_id !== (int) $lockedSet->id) {
@@ -197,6 +279,12 @@ final class ExecutiveDocumentationService
                 $file = $data['file'] ?? null;
                 if (! $file instanceof UploadedFile || ! $file->isValid() || $file->getSize() <= 0) {
                     throw new DomainException(trans_message('executive_documentation.errors.version_file_required'));
+                }
+                $signature = $data['signature_file'] ?? null;
+                if ($signature !== null && (! $signature instanceof UploadedFile || ! $signature->isValid()
+                    || ! in_array(strtolower($signature->getClientOriginalExtension()), ['sig', 'p7s', 'p7m'], true)
+                    || ($data['file_kind'] ?? null) !== 'electronic_original')) {
+                    throw ValidationException::withMessages(['signature_file' => 'Отдельная подпись допускается только для электронного оригинала.']);
                 }
                 if (isset($data['profile_data'], $data['profile_snapshot']) && $data['profile_data'] !== $data['profile_snapshot']) {
                     throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
@@ -210,6 +298,8 @@ final class ExecutiveDocumentationService
                     'version_number' => $data['version_number'],
                     'comment' => $data['comment'] ?? null,
                     'content_hash' => $contentHash,
+                    'signature_hash' => $signature instanceof UploadedFile ? hash_file('sha256', $signature->getRealPath()) : null,
+                    'file_kind' => $data['file_kind'] ?? 'copy',
                     'profile_snapshot' => $requestedProfile,
                     'basis_snapshot' => $data['basis_snapshot'] ?? null,
                     'metadata' => $data['metadata'] ?? null,
@@ -252,6 +342,18 @@ final class ExecutiveDocumentationService
                 if ($uploadedPath === false) {
                     throw new DomainException(trans_message('executive_documentation.errors.version_file_upload_failed'));
                 }
+                if ($signature instanceof UploadedFile) {
+                    $signatureUploadedPath = $this->fileService->upload(
+                        $signature,
+                        "executive-documentation/project-{$lockedDocument->project_id}/set-{$lockedDocument->document_set_id}/signatures",
+                        null,
+                        'private',
+                        $organization,
+                    );
+                    if (! is_string($signatureUploadedPath)) {
+                        throw new DomainException(trans_message('executive_documentation.errors.version_file_upload_failed'));
+                    }
+                }
                 $profileSnapshot = $requestedProfile ?? $lockedDocument->profile_data;
                 $version = $lockedDocument->versions()->create([
                     'organization_id' => $lockedDocument->organization_id,
@@ -262,7 +364,13 @@ final class ExecutiveDocumentationService
                     'content_hash' => $contentHash,
                     'comment' => $data['comment'] ?? null,
                     'uploaded_at' => $data['uploaded_at'] ?? now(),
-                    'metadata' => array_merge($data['metadata'] ?? [], ['draft_revision' => 0, 'origin' => $prepared ? 'generated_preparation' : 'registered_external']),
+                    'metadata' => array_merge($data['metadata'] ?? [], [
+                        'draft_revision' => 0,
+                        'origin' => $prepared ? 'generated_preparation' : 'registered_external',
+                        'file_kind' => $prepared ? 'generated_draft' : ($data['file_kind'] ?? 'copy'),
+                        'signature_file_url' => $signatureUploadedPath,
+                        'signature_hash' => $signature instanceof UploadedFile ? hash_file('sha256', $signature->getRealPath()) : null,
+                    ]),
                     'profile_snapshot' => $profileSnapshot,
                     'basis_snapshot' => $basisSnapshot,
                     'operation_key' => $operationKey,
@@ -282,6 +390,9 @@ final class ExecutiveDocumentationService
         } catch (\Throwable $exception) {
             if (is_string($uploadedPath)) {
                 $this->removeFailedUpload($uploadedPath, $organization, (int) $document->id);
+            }
+            if (is_string($signatureUploadedPath)) {
+                $this->fileService->delete($signatureUploadedPath, $organization);
             }
             throw $exception;
         }
@@ -609,6 +720,9 @@ final class ExecutiveDocumentationService
                     'content_hash' => $version->content_hash,
                     'version_number' => $version->version_number,
                     'file_url' => $version->file_url,
+                    'signature_file_url' => $version->metadata['signature_file_url'] ?? null,
+                    'signature_hash' => $version->metadata['signature_hash'] ?? null,
+                    'file_kind' => $version->metadata['file_kind'] ?? 'copy',
                     'profile_snapshot' => $version->profile_snapshot,
                     'basis_snapshot' => $version->basis_snapshot,
                 ];
@@ -618,6 +732,12 @@ final class ExecutiveDocumentationService
                 $actual = collect($documentsManifest)->mapWithKeys(fn ($row) => [(int) $row['document_id'] => (int) $row['version_id']])->sortKeys()->all();
                 if ($expected !== $actual || count($data['expected_versions']) !== count($actual)) {
                     throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+                }
+            }
+            $documentIds = collect($documentsManifest)->pluck('document_id')->map(static fn ($id): int => (int) $id)->all();
+            foreach ($data['paper_originals'] ?? [] as $paperOriginal) {
+                if (! in_array((int) $paperOriginal['document_id'], $documentIds, true)) {
+                    throw ValidationException::withMessages(['paper_originals' => 'Укажите экземпляры только для документов передаваемого комплекта.']);
                 }
             }
             $recipient = app(\App\Services\Project\ProjectCustomerResolverService::class)->resolve($set->project);
@@ -631,7 +751,17 @@ final class ExecutiveDocumentationService
                 'sender' => ['user_id' => $userId, 'organization_id' => $set->organization_id, 'name' => $set->organization->name],
                 'recipient' => ['organization_id' => $recipient['id'], 'name' => $recipient['name'], 'source' => $recipient['source']],
                 'documents' => $documentsManifest,
+                'paper_originals' => $data['paper_originals'] ?? [],
                 'requirements' => $set->requirements()->whereNull('superseded_at')->orderBy('id')->get()->toArray(),
+                'approved_list' => ($approvedList = $set->approvedList()->first()) ? [
+                    'id' => $approvedList->id,
+                    'revision' => $approvedList->revision,
+                    'approved_by_party' => $approvedList->approved_by_party,
+                    'approved_at' => $approvedList->approved_at?->format('Y-m-d'),
+                    'file_url' => $approvedList->file_url,
+                    'file_hash' => $approvedList->file_hash,
+                    'original_name' => $approvedList->original_name,
+                ] : null,
             ];
             $operationHash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
             $set->update([
@@ -698,6 +828,22 @@ final class ExecutiveDocumentationService
         return ExecutiveDocument::forOrganization($organizationId)
             ->with(self::DOCUMENT_RELATIONS)
             ->find($id);
+    }
+
+    public function signatureUrl(int $versionId, int $userId): ?string
+    {
+        $version = ExecutiveDocumentVersion::query()->with('document')->findOrFail($versionId);
+        $document = $version->document;
+        if ($document === null) {
+            return null;
+        }
+        $this->mutationGuard->assertActor($document, $userId, 'executive-documentation.view');
+        $path = $version->metadata['signature_file_url'] ?? null;
+        if (! is_string($path) || ! str_starts_with($path, 'org-'.$document->organization_id.'/')) {
+            return null;
+        }
+
+        return $this->fileService->temporaryUrl($path, 5, Organization::query()->findOrFail($document->organization_id));
     }
 
     public function temporaryVersionUrl(int $organizationId, int $documentId, int $versionId, string $purpose): ?string
@@ -841,6 +987,9 @@ final class ExecutiveDocumentationService
     private function setHasIncompleteDocuments(ExecutiveDocumentSet $set): bool
     {
         return $set->documents->contains(function (ExecutiveDocument $document): bool {
+            if (($document->metadata['capture_mode'] ?? null) === 'uploaded') {
+                return $document->versions->isEmpty() || $document->openRemarks()->exists();
+            }
             $profile = $this->profileRegistry->find($document->document_type->value);
 
             if (($profile['requires_work_type'] ?? false) === true && $document->work_type_id === null) {

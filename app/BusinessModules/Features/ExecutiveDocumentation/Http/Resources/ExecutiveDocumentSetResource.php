@@ -22,6 +22,7 @@ final class ExecutiveDocumentSetResource extends JsonResource
             'id' => $set->id,
             'organization_id' => $set->organization_id,
             'project_id' => $set->project_id,
+            'approved_list_id' => $set->approved_list_id,
             'set_number' => $set->set_number,
             'title' => $set->title,
             'status' => $set->status->value,

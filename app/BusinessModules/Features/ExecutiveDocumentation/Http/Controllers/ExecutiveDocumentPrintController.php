@@ -10,6 +10,9 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocume
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentPrintPackageService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentLegalArchiveService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\PrepareExecutiveDocumentRequest;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\ComposeExecutiveActRequest;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentResource;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Resources\ExecutiveDocumentVersionResource;
 use App\Http\Responses\AdminResponse;
 use App\Http\Controllers\Controller;
@@ -42,6 +45,13 @@ final class ExecutiveDocumentPrintController extends Controller
         return $this->respond(fn (): JsonResponse => AdminResponse::success(new ExecutiveDocumentVersionResource(
             $preparation->prepare($documentId, (int) $request->user()->id, $request->validated()),
         )));
+    }
+
+    public function compose(ComposeExecutiveActRequest $request, ExecutiveDocumentSet $set, ExecutiveDocumentPreparationService $preparation): JsonResponse
+    {
+        return $this->respond(fn (): JsonResponse => AdminResponse::success(new ExecutiveDocumentResource(
+            $preparation->compose($set, (int) $request->user()->id, $request->validated()),
+        ), null, 201));
     }
 
     public function package(Request $request, int $transmittalId, ExecutiveDocumentPrintPackageService $packages): Response|JsonResponse

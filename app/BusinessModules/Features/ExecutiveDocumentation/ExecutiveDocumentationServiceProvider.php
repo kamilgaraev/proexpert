@@ -44,6 +44,10 @@ final class ExecutiveDocumentationServiceProvider extends ServiceProvider
         Route::middleware(AdminRouteStack::middleware(['executive-documentation.active']))
             ->prefix('api/v1/admin/executive-documentation')
             ->group(function (): void {
+                Route::get('/projects/{projectId}/approved-lists', [Http\Controllers\ExecutiveDocumentApprovedListController::class, 'index'])->middleware('authorize:executive-documentation.view');
+                Route::post('/projects/{projectId}/approved-lists', [Http\Controllers\ExecutiveDocumentApprovedListController::class, 'store'])->middleware('authorize:executive-documentation.approve');
+                Route::get('/projects/{projectId}/approved-lists/{listId}/download', [Http\Controllers\ExecutiveDocumentApprovedListController::class, 'download'])->middleware('authorize:executive-documentation.view');
+                Route::post('/sets/{set}/approved-list', [Http\Controllers\ExecutiveDocumentApprovedListController::class, 'apply'])->middleware('authorize:executive-documentation.edit');
                 Route::get('/sets/{set}/requirements', [Http\Controllers\ExecutiveDocumentRequirementsController::class, 'index'])->middleware('authorize:executive-documentation.view');
                 Route::get('/sets/{set}/requirements/history', [Http\Controllers\ExecutiveDocumentRequirementsController::class, 'history'])->middleware('authorize:executive-documentation.view');
                 Route::put('/sets/{set}/requirements', [Http\Controllers\ExecutiveDocumentRequirementsController::class, 'replace'])->middleware('authorize:executive-documentation.edit');

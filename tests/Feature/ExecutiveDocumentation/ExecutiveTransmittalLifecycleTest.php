@@ -34,16 +34,19 @@ final class ExecutiveTransmittalLifecycleTest extends TestCase
             'transmittal_number' => 'T1',
             'operation_key' => 'transmit-t1',
             'recipient' => ['organization_id' => $context->organization->id, 'name' => 'Заказчик'],
+            'paper_originals' => [['document_id' => $document->id, 'copies_count' => 2]],
         ])->transmittal;
 
         self::assertSame($v1->id, $first->manifest['documents'][0]['version_id']);
         self::assertSame($v1->content_hash, $first->manifest['documents'][0]['content_hash']);
         self::assertSame($context->organization->id, $first->manifest['recipient']['organization_id']);
+        self::assertSame([['document_id' => $document->id, 'copies_count' => 2]], $first->manifest['paper_originals']);
 
         $replay = $service->transmit($set->fresh(), $context->user->id, [
             'transmittal_number' => 'T1',
             'operation_key' => 'transmit-t1',
             'recipient' => ['organization_id' => $context->organization->id, 'name' => 'Заказчик'],
+            'paper_originals' => [['document_id' => $document->id, 'copies_count' => 2]],
         ])->transmittal;
         self::assertSame($first->id, $replay->id);
 
@@ -68,6 +71,7 @@ final class ExecutiveTransmittalLifecycleTest extends TestCase
         $oldReplay = $service->transmit($set->fresh(), $context->user->id, [
             'transmittal_number' => 'T1', 'operation_key' => 'transmit-t1',
             'recipient' => ['organization_id' => $context->organization->id, 'name' => 'Заказчик'],
+            'paper_originals' => [['document_id' => $document->id, 'copies_count' => 2]],
         ])->transmittal;
         self::assertSame($first->id, $oldReplay->id);
         self::assertSame($v1->file_url, $oldReplay->manifest['documents'][0]['file_url']);

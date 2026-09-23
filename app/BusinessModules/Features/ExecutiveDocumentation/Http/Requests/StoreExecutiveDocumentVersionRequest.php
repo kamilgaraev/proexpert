@@ -19,7 +19,9 @@ final class StoreExecutiveDocumentVersionRequest extends FormRequest
         return [
             'expected_version_id' => ['required', 'integer', 'min:0'],
             'version_number' => ['required', 'string', 'max:40'],
-            'file' => ['required', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'])->min(1)->max(25 * 1024)],
+            'file' => ['required', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'webp'])->min(1)->max(25 * 1024)],
+            'file_kind' => ['nullable', 'in:copy,paper_scan,electronic_original'],
+            'signature_file' => ['nullable', 'file', 'max:25600'],
             'comment' => ['nullable', 'string', 'max:1000'],
             'uploaded_at' => ['nullable', 'date'],
             'profile_snapshot' => ['nullable', 'array'],
