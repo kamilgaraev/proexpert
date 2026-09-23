@@ -33,6 +33,9 @@
     ],
     "change-management": [
       "change-management.view",
+      "change-management.rfi.answer",
+      "change-management.rfi.review",
+      "change-management.rfi.attach",
       "change-management.customer-submit"
     ],
     "handover-acceptance": [

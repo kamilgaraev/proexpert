@@ -97,6 +97,14 @@
       "contracts.view",
       "contracts.edit"
     ],
+    "change-management": [
+      "change-management.view",
+      "change-management.rfi.create",
+      "change-management.rfi.answer",
+      "change-management.rfi.review",
+      "change-management.rfi.reassign",
+      "change-management.rfi.attach"
+    ],
     "reports": [
       "reports.*"
     ],

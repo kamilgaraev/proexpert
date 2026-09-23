@@ -9,6 +9,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 final class ChangeManagementRfi extends Model
@@ -19,6 +20,7 @@ final class ChangeManagementRfi extends Model
 
     protected $fillable = [
         'organization_id',
+        'recipient_organization_id',
         'project_id',
         'created_by_user_id',
         'rfi_number',
@@ -54,6 +56,11 @@ final class ChangeManagementRfi extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
+    public function history(): HasMany
+    {
+        return $this->hasMany(ChangeManagementRfiHistory::class, 'rfi_id')->orderBy('id');
     }
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder

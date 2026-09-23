@@ -38,6 +38,8 @@
       "change-management.view",
       "change-management.create",
       "change-management.rfi.create",
+      "change-management.rfi.answer",
+      "change-management.rfi.attach",
       "change-management.customer-submit"
     ],
     "handover-acceptance": [
