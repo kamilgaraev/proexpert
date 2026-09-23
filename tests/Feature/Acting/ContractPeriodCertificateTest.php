@@ -35,8 +35,8 @@ final class ContractPeriodCertificateTest extends TestCase
         [$contract, $actor, $firstAct, $secondAct] = $this->twoJanuaryActs();
         $service = app(ContractPeriodCertificateService::class);
 
-        $certificate = $service->create($contract, '2026-01-01', '2026-01-31', null, 'ks3-once-0001', $actor->id);
-        $replay = $service->create($contract, '2026-01-01', '2026-01-31', null, 'ks3-once-0001', $actor->id);
+        $certificate = $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-once-0001', $actor->id);
+        $replay = $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-once-0001', $actor->id);
 
         $this->assertSame($certificate->id, $replay->id);
         $this->assertSame([$firstAct->id, $secondAct->id], $certificate->source_act_ids);
@@ -57,6 +57,7 @@ final class ContractPeriodCertificateTest extends TestCase
         $service = app(ContractPeriodCertificateService::class);
         $certificate = $service->create(
             $contract,
+            (int) $contract->organization_id,
             '2026-01-01',
             '2026-01-31',
             null,
@@ -69,6 +70,7 @@ final class ContractPeriodCertificateTest extends TestCase
         try {
             $service->create(
                 $contract,
+                (int) $contract->organization_id,
                 '2026-01-01',
                 '2026-01-31',
                 null,
@@ -78,8 +80,7 @@ final class ContractPeriodCertificateTest extends TestCase
             );
             $this->fail('Повторное включение акта должно быть отклонено');
         } catch (BusinessLogicException $exception) {
-            $this->assertSame(422, $exception->getCode());
-            $this->assertSame(trans_message('act_reports.certificate_act_already_included'), $exception->getMessage());
+            $this->assertSame(409, $exception->getCode());
         }
     }
 
@@ -88,7 +89,7 @@ final class ContractPeriodCertificateTest extends TestCase
         [$contract, $actor, $firstAct] = $this->twoJanuaryActs();
         $service = app(ContractPeriodCertificateService::class);
         $certificate = $service->approve(
-            $service->create($contract, '2026-01-01', '2026-01-31', null, 'ks3-frozen-0001', $actor->id),
+            $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-frozen-0001', $actor->id),
             $actor->id,
         );
         $before = $certificate->snapshot;
@@ -120,6 +121,7 @@ final class ContractPeriodCertificateTest extends TestCase
         [$contract, $actor] = $this->twoJanuaryActs();
         $certificate = app(ContractPeriodCertificateService::class)->create(
             $contract,
+            (int) $contract->organization_id,
             '2026-01-01',
             '2026-01-31',
             null,
@@ -143,7 +145,7 @@ final class ContractPeriodCertificateTest extends TestCase
         [$contract, $actor] = $this->twoJanuaryActs();
         $service = app(ContractPeriodCertificateService::class);
         $certificate = $service->approve(
-            $service->create($contract, '2026-01-01', '2026-01-31', null, 'ks3-unique-0001', $actor->id),
+            $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-unique-0001', $actor->id),
             $actor->id,
         );
 
@@ -175,7 +177,7 @@ final class ContractPeriodCertificateTest extends TestCase
         [$contract, $actor] = $this->twoJanuaryActs();
         $service = app(ContractPeriodCertificateService::class);
         $certificate = $service->approve(
-            $service->create($contract, '2026-01-01', '2026-01-31', null, 'ks3-sum-0001', $actor->id),
+            $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-sum-0001', $actor->id),
             $actor->id,
         );
         $export = app(OfficialFormsExportService::class);
@@ -212,13 +214,78 @@ final class ContractPeriodCertificateTest extends TestCase
     {
         [$contract, $actor] = $this->twoJanuaryActs();
         $service = app(ContractPeriodCertificateService::class);
-        $service->create($contract, '2026-01-01', '2026-01-31', null, 'ks3-conflict-0001', $actor->id);
+        $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-conflict-0001', $actor->id);
 
         try {
-            $service->create($contract, '2026-01-02', '2026-01-31', null, 'ks3-conflict-0001', $actor->id);
+            $service->create($contract, (int) $contract->organization_id, '2026-01-02', '2026-01-31', null, 'ks3-conflict-0001', $actor->id);
             $this->fail('Изменённый повтор должен конфликтовать');
         } catch (BusinessLogicException $exception) {
             $this->assertSame(409, $exception->getCode());
+        }
+    }
+
+    public function test_same_period_with_a_different_idempotency_key_is_conflict(): void
+    {
+        [$contract, $actor] = $this->twoJanuaryActs();
+        $service = app(ContractPeriodCertificateService::class);
+        $existing = $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-period-0001', $actor->id);
+        $existing->forceFill(['calculation_version' => 'ks3-legacy'])->save();
+
+        try {
+            $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-period-0002', $actor->id);
+            $this->fail('Повтор периода с другим ключом должен конфликтовать');
+        } catch (BusinessLogicException $exception) {
+            $this->assertSame(409, $exception->getCode());
+        }
+    }
+
+    public function test_service_rejects_certificate_creation_from_non_owner_organization(): void
+    {
+        [$contract, $actor] = $this->twoJanuaryActs();
+        $otherOrganization = Organization::factory()->create();
+
+        try {
+            app(ContractPeriodCertificateService::class)->create(
+                $contract,
+                (int) $otherOrganization->id,
+                '2026-01-01',
+                '2026-01-31',
+                null,
+                'ks3-owner-0001',
+                $actor->id,
+            );
+            $this->fail('Создание справки из другой организации должно быть запрещено');
+        } catch (BusinessLogicException $exception) {
+            $this->assertSame(403, $exception->getCode());
+        }
+
+        $this->assertSame(0, ContractPeriodCertificate::query()->count());
+    }
+
+    public function test_document_date_is_part_of_idempotent_request_parameters(): void
+    {
+        [$contract, $actor] = $this->twoJanuaryActs();
+        $service = app(ContractPeriodCertificateService::class);
+        $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-date-key-001', $actor->id, null, '2026-02-01');
+
+        try {
+            $service->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', null, 'ks3-date-key-001', $actor->id, null, '2026-02-02');
+            $this->fail('Повтор с изменённой датой документа должен конфликтовать');
+        } catch (BusinessLogicException $exception) {
+            $this->assertSame(409, $exception->getCode());
+        }
+    }
+
+    public function test_project_outside_contract_is_rejected(): void
+    {
+        [$contract, $actor] = $this->twoJanuaryActs();
+        $otherProject = Project::factory()->create(['organization_id' => $contract->organization_id]);
+
+        try {
+            app(ContractPeriodCertificateService::class)->create($contract, (int) $contract->organization_id, '2026-01-01', '2026-01-31', (int) $otherProject->id, 'ks3-project-001', $actor->id);
+            $this->fail('Проект вне договора должен отклоняться');
+        } catch (BusinessLogicException $exception) {
+            $this->assertSame(422, $exception->getCode());
         }
     }
 

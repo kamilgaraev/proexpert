@@ -36,14 +36,38 @@ final readonly class MobileLegalArchiveService
         private LegalDocumentSignatureService $signatures,
     ) {}
 
-    public function documents(User $actor, int $organizationId, int $projectId): LengthAwarePaginator
+    public function documents(
+        User $actor,
+        int $organizationId,
+        int $projectId,
+        ?int $page = null,
+        ?int $perPage = null,
+        ?int $syncAfterId = null,
+        ?int $syncMaxId = null,
+    ): LengthAwarePaginator
     {
-        return $this->registry->paginate($actor, $organizationId, [
+        $filters = [
             'project_id' => $projectId,
-            'per_page' => 50,
-            'sort_by' => 'updated_at',
-            'sort_direction' => 'desc',
+            'per_page' => $perPage ?? 50,
+            'sort_by' => $syncAfterId === null ? 'updated_at' : 'id',
+            'sort_direction' => $syncAfterId === null ? 'desc' : 'asc',
+        ];
+        if ($page !== null) {
+            $filters['page'] = $page;
+        }
+        if ($syncAfterId !== null) {
+            $filters['sync_after_id'] = $syncAfterId;
+            $filters['sync_max_id'] = $syncMaxId ?? $this->registry->maximumId($actor, $organizationId, ['project_id' => $projectId]);
+        }
+
+        return $this->registry->paginate($actor, $organizationId, [
+            ...$filters,
         ]);
+    }
+
+    public function syncMaximumId(User $actor, int $organizationId, int $projectId): int
+    {
+        return $this->registry->maximumId($actor, $organizationId, ['project_id' => $projectId]);
     }
 
     public function document(User $actor, int $organizationId, int $documentId): LegalArchiveDocument

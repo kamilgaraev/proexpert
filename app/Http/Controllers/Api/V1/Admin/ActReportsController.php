@@ -60,8 +60,12 @@ class ActReportsController extends Controller
             $this->accessService->authorize($request, ActReportAccessService::PERMISSION_CREATE, $organizationId);
             $data = $request->validated();
             $contract = $this->accessService->findAccessibleContractOrFail($organizationId, (int) $data['contract_id']);
+            if ((int) $contract->organization_id !== $organizationId) {
+                throw new BusinessLogicException(trans_message('act_reports.access_denied'), 403);
+            }
             $certificate = $this->certificateService->create(
                 $contract,
+                $organizationId,
                 $data['period_start'],
                 $data['period_end'],
                 isset($data['project_id']) ? (int) $data['project_id'] : null,

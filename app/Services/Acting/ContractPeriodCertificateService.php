@@ -26,6 +26,7 @@ final class ContractPeriodCertificateService
      */
     public function create(
         Contract $contract,
+        int $actorOrganizationId,
         string $periodStart,
         string $periodEnd,
         ?int $projectId,
@@ -34,20 +35,13 @@ final class ContractPeriodCertificateService
         ?array $actIds = null,
         ?string $documentDate = null,
     ): ContractPeriodCertificate {
-        return DB::transaction(function () use ($contract, $periodStart, $periodEnd, $projectId, $idempotencyKey, $userId, $actIds, $documentDate): ContractPeriodCertificate {
+        return DB::transaction(function () use ($contract, $actorOrganizationId, $periodStart, $periodEnd, $projectId, $idempotencyKey, $userId, $actIds, $documentDate): ContractPeriodCertificate {
             $contract = Contract::query()->lockForUpdate()->findOrFail($contract->id);
-            $this->assertProjectBelongsToContract($contract, $projectId);
+            if ((int) $contract->organization_id !== $actorOrganizationId) {
+                throw new BusinessLogicException(trans_message('act_reports.access_denied'), 403);
+            }
 
-            $acts = $this->actsForPeriod($contract, $periodStart, $periodEnd, $projectId, $actIds);
-            $snapshot = $this->buildSnapshot($contract, $acts, $periodStart, $periodEnd, $projectId);
-            $versionNumber = $this->nextVersionNumber($contract->id, $projectId, $periodStart, $periodEnd);
-            $payloadHash = $this->payloadHash(
-                $contract->id,
-                $projectId,
-                $periodStart,
-                $periodEnd,
-                $acts->pluck('id')->map(static fn ($id): int => (int) $id)->values()->all(),
-            );
+            $payloadHash = $this->payloadHash($contract->id, $projectId, $periodStart, $periodEnd, $actIds, $documentDate);
 
             $existing = ContractPeriodCertificate::query()
                 ->where('contract_id', $contract->id)
@@ -61,6 +55,23 @@ final class ContractPeriodCertificateService
 
                 return $existing->load(['memberships']);
             }
+
+            $this->assertProjectBelongsToContract($contract, $projectId);
+            $samePeriod = ContractPeriodCertificate::query()
+                ->where('contract_id', $contract->id)
+                ->where('period_start', $periodStart)
+                ->where('period_end', $periodEnd)
+                ->when($projectId === null, static fn ($query) => $query->whereNull('project_id'))
+                ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
+                ->lockForUpdate()
+                ->exists();
+            if ($samePeriod) {
+                throw new BusinessLogicException(trans_message('act_reports.certificate_identity_conflict'), 409);
+            }
+
+            $acts = $this->actsForPeriod($contract, $periodStart, $periodEnd, $projectId, $actIds);
+            $snapshot = $this->buildSnapshot($contract, $acts, $periodStart, $periodEnd, $projectId);
+            $versionNumber = $this->nextVersionNumber($contract->id, $projectId, $periodStart, $periodEnd);
 
             $this->assertActsAvailable($acts->pluck('id')->all());
             $this->assertNoOpenDraft($contract->id, $projectId, $periodStart, $periodEnd);
@@ -488,14 +499,20 @@ final class ContractPeriodCertificateService
     /**
      * @param  list<int>  $actIds
      */
-    private function payloadHash(int $contractId, ?int $projectId, string $periodStart, string $periodEnd, array $actIds): string
+    private function payloadHash(int $contractId, ?int $projectId, string $periodStart, string $periodEnd, ?array $requestedActIds, ?string $documentDate): string
     {
+        $normalizedActIds = $requestedActIds === null ? null : array_values(array_unique(array_map('intval', $requestedActIds)));
+        if ($normalizedActIds !== null) {
+            sort($normalizedActIds, SORT_NUMERIC);
+        }
+
         $payload = [
             'contract_id' => $contractId,
             'project_id' => $projectId,
             'period_start' => $periodStart,
             'period_end' => $periodEnd,
-            'act_ids' => $actIds,
+            'act_ids' => $normalizedActIds,
+            'document_date' => $documentDate,
             'calculation_version' => self::CALCULATION_VERSION,
         ];
 
