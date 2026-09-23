@@ -239,6 +239,11 @@ final class CompletedWorkScheduleScopeTest extends TestCase
 
     private function task(ProjectSchedule $schedule, int $userId, int $completedQuantity): ScheduleTask
     {
+        $unit = \App\Models\MeasurementUnit::query()->firstOrCreate(
+            ['organization_id' => $schedule->organization_id, 'short_name' => 'м²'],
+            ['name' => 'Квадратный метр', 'type' => 'work']
+        );
+
         return ScheduleTask::query()->create([
             'organization_id' => $schedule->organization_id,
             'schedule_id' => $schedule->id,
@@ -247,6 +252,7 @@ final class CompletedWorkScheduleScopeTest extends TestCase
             'planned_end_date' => '2026-09-30',
             'planned_duration_days' => 30,
             'name' => 'Scope task',
+            'measurement_unit_id' => $unit->id,
             'quantity' => 10,
             'completed_quantity' => $completedQuantity,
         ]);

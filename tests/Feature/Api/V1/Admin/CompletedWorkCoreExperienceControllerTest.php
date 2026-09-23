@@ -31,6 +31,49 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_manual_work_needs_identity_for_review_and_confirmation_but_allows_zero_draft(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $endpoint = "/api/v1/admin/projects/{$project->id}/works";
+
+        $created = $this->withHeaders($context->authHeaders())->postJson($endpoint, [
+            'project_id' => $project->id,
+            'quantity' => 0,
+            'completion_date' => '2026-09-23',
+            'status' => 'draft',
+        ])->assertCreated()->assertJsonPath('data.quantity', 0);
+
+        $id = $created->json('data.id');
+        $this->withHeaders($context->authHeaders())->putJson("{$endpoint}/{$id}", [
+            'quantity' => 1,
+            'completed_quantity' => 1,
+            'status' => 'in_review',
+        ])->assertStatus(422);
+        $this->assertSame('draft', CompletedWork::findOrFail($id)->status);
+
+        $this->withHeaders($context->authHeaders())->postJson("{$endpoint}/{$id}/confirm")
+            ->assertStatus(422);
+
+        $this->withHeaders($context->authHeaders())->putJson("{$endpoint}/{$id}", [
+            'quantity' => 1,
+            'completed_quantity' => 1,
+            'status' => 'in_review',
+            'additional_info' => [
+                'work_name' => 'Монтаж перегородки на втором этаже',
+                'unit_of_measurement' => 'м²',
+                'location' => 'Секция Б, этаж 2',
+            ],
+        ])->assertOk()
+            ->assertJsonPath('data.work_name', 'Монтаж перегородки на втором этаже')
+            ->assertJsonPath('data.unit_of_measurement', 'м²')
+            ->assertJsonPath('data.location', 'Секция Б, этаж 2');
+
+        $this->withHeaders($context->authHeaders())->postJson("{$endpoint}/{$id}/confirm")
+            ->assertOk()->assertJsonPath('data.status', 'confirmed');
+    }
+
     public function test_bulk_create_preserves_description(): void
     {
         $context = AdminApiTestContext::create();
@@ -136,7 +179,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $this->assertNull(CompletedWork::findOrFail($id)->description);
     }
 
-    public function test_owner_can_create_update_list_and_delete_completed_work_inside_project(): void
+    public function test_owner_can_create_update_list_and_confirm_completed_work_inside_project(): void
     {
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
@@ -157,6 +200,11 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
                 'price' => 1250,
                 'completion_date' => '2026-06-10',
                 'notes' => 'First owner work',
+                'additional_info' => [
+                    'work_name' => 'Монтаж вентиляции в секции А',
+                    'unit_of_measurement' => 'м²',
+                    'location' => 'Секция А',
+                ],
                 'status' => 'pending',
             ]);
 
@@ -171,11 +219,6 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $this->assertSame($context->organization->id, $work->organization_id);
         $this->assertSame($project->id, $work->project_id);
         $this->assertSame(10000.0, (float) $work->total_amount);
-
-        $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}/confirm")
-            ->assertOk()
-            ->assertJsonPath('data.status', 'confirmed');
 
         $otherProjectWork = $this->createCompletedWork($context->organization, $anotherProject, $contractor, [
             'notes' => 'Other project work',
@@ -192,6 +235,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $updateResponse = $this->withHeaders($context->authHeaders())
             ->putJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}", [
                 'quantity' => 5,
+                'completed_quantity' => 5,
                 'total_amount' => 15000,
                 'notes' => 'Updated owner work',
             ]);
@@ -203,11 +247,16 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $this->assertSame(15000.0, (float) $work->total_amount);
         $this->assertSame(3000.0, (float) $work->price);
 
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}/confirm")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'confirmed');
+
         $deleteResponse = $this->withHeaders($context->authHeaders())
             ->deleteJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}");
 
-        $deleteResponse->assertNoContent();
-        $this->assertSoftDeleted('completed_works', ['id' => $work->id]);
+        $deleteResponse->assertUnprocessable();
+        $this->assertNotSoftDeleted('completed_works', ['id' => $work->id]);
     }
 
     public function test_completed_work_routes_hide_work_from_another_project_without_mutating_it(): void

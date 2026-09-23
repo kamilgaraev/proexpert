@@ -91,6 +91,14 @@ class CompletedWorkResource extends JsonResource
             'price' => $price,
             'total_amount' => $totalAmount,
             'completion_date' => $this->completion_date->format('Y-m-d'),
+            'work_name' => $scheduleTask?->name
+                ?: $this->estimateItem?->name
+                ?: data_get($this->additional_info, 'work_name')
+                ?: $workType?->name,
+            'unit_of_measurement' => $measurementUnit['short_name']
+                ?? data_get($this->additional_info, 'unit_of_measurement')
+                ?? $workType?->measurementUnit?->short_name,
+            'location' => data_get($this->additional_info, 'location'),
             'notes' => $this->notes,
             'description' => $this->description,
             'status' => $this->status,
