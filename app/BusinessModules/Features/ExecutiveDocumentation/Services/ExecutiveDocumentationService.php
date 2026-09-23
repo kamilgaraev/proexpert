@@ -103,7 +103,7 @@ final class ExecutiveDocumentationService
 
     public function createSet(int $organizationId, int $userId, array $data): ExecutiveDocumentSet
     {
-        $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
+        $this->assertProjectAccessibleByOrganization((int) $data['project_id'], $organizationId);
 
         $set = ExecutiveDocumentSet::query()->create([
             'organization_id' => $organizationId,
@@ -700,6 +700,39 @@ final class ExecutiveDocumentationService
             ->find($id);
     }
 
+    public function temporaryVersionUrl(int $organizationId, int $documentId, int $versionId, string $purpose): ?string
+    {
+        if (!in_array($purpose, ['preview', 'download'], true)) {
+            throw new \InvalidArgumentException('executive_document_file_purpose_invalid');
+        }
+
+        $version = ExecutiveDocumentVersion::query()
+            ->where('organization_id', $organizationId)
+            ->where('document_id', $documentId)
+            ->whereHas('document', static fn ($query) => $query->forOrganization($organizationId))
+            ->with('organization')
+            ->find($versionId);
+
+        if ($version === null
+            || $version->organization === null
+            || !str_starts_with($version->file_url, "org-{$organizationId}/")) {
+            return null;
+        }
+
+        $url = $this->fileService->temporaryUrl(
+            $version->file_url,
+            5,
+            $version->organization,
+            ['ResponseContentDisposition' => $purpose === 'download' ? 'attachment' : 'inline'],
+        );
+
+        if ($url === null) {
+            throw new \RuntimeException('executive_document_temporary_url_failed');
+        }
+
+        return $url;
+    }
+
     public function findRemark(int $id, int $organizationId): ?ExecutiveDocumentRemark
     {
         return ExecutiveDocumentRemark::query()
@@ -708,11 +741,11 @@ final class ExecutiveDocumentationService
             ->find($id);
     }
 
-    private function assertProjectBelongsToOrganization(int $projectId, int $organizationId): void
+    private function assertProjectAccessibleByOrganization(int $projectId, int $organizationId): void
     {
         $exists = Project::query()
+            ->activeAccessibleByOrganization($organizationId)
             ->where('id', $projectId)
-            ->where('organization_id', $organizationId)
             ->exists();
 
         if (!$exists) {
