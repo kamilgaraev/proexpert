@@ -135,6 +135,9 @@ final class ExecutiveDocumentationWorkflowService
 
     private function documentHasMissingRequiredData(ExecutiveDocument $document): bool
     {
+        if (($document->metadata['capture_mode'] ?? null) === 'uploaded') {
+            return false;
+        }
         $profile = $this->profileRegistry->find($document->document_type->value);
 
         if ($profile === null) {

@@ -57,6 +57,10 @@ final class ExecutiveMaterialProfileGuard
             }
         }
         if (!in_array($type, ['quality_passport', 'incoming_batch_control'], true)) return;
+        if (($document->metadata['capture_mode'] ?? null) === 'uploaded') {
+            $this->assertRelations($document);
+            return;
+        }
         $this->assertRelations($document);
         if ($this->profiles->validateProfileData($type, $data) !== []) {
             throw new DomainException(trans_message('executive_documentation.errors.profile_data_invalid'));

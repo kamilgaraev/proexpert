@@ -19,6 +19,7 @@ final class ExecutiveDocumentRequirementEvidenceValidator
         $basis = is_array($version->basis_snapshot) ? $version->basis_snapshot : [];
         $profile = $this->profileSnapshot($basis);
         $profileData = is_array($version->profile_snapshot) ? $version->profile_snapshot : [];
+        $generated = ($version->metadata['origin'] ?? null) === 'generated_preparation';
         $violations = [];
         if ($this->emptyValue($version->file_url)) {
             $violations[] = $this->violation('file_missing', 'file_url', trans_message('executive_requirements.file_missing'));
@@ -36,7 +37,7 @@ final class ExecutiveDocumentRequirementEvidenceValidator
         }
 
         $rules = $this->rules($requirement);
-        if (($rules['unresolved_conditions'] ?? []) !== []) {
+        if ($generated && ($rules['unresolved_conditions'] ?? []) !== []) {
             $violations[] = $this->violation('normative_conditions_unresolved', 'conditions', trans_message('executive_requirements.normative_conditions_unresolved'));
         }
         $expectedRevision = trim((string) ($rules['profile_revision'] ?? $rules['profile']['profile_revision'] ?? ''));
@@ -46,15 +47,15 @@ final class ExecutiveDocumentRequirementEvidenceValidator
 
         $ruleProfile = is_array($rules['profile'] ?? null) ? $rules['profile'] : [];
         $profileValidator = new ExecutiveDocumentProfileValidator;
-        foreach ($profileValidator->missingRequiredFields($ruleProfile, $profileData) as $field => $label) {
+        foreach ($generated ? $profileValidator->missingRequiredFields($ruleProfile, $profileData) : [] as $field => $label) {
             $violations[] = $this->violation('required_field_missing', (string) $field, trans_message('executive_requirements.required_field_missing', ['field' => $label]));
         }
 
         $document = is_array($basis['document'] ?? null) ? $basis['document'] : [];
-        if (($ruleProfile['requires_work_type'] ?? false) === true && $this->emptyValue($document['work_type_id'] ?? null)) {
+        if ($generated && ($ruleProfile['requires_work_type'] ?? false) === true && $this->emptyValue($document['work_type_id'] ?? null)) {
             $violations[] = $this->violation('work_type_missing', 'work_type_id', trans_message('executive_requirements.work_type_missing'));
         }
-        if (($ruleProfile['requires_journal_entry'] ?? false) === true && $this->emptyValue($basis['journal_entry_id'] ?? null)) {
+        if ($generated && ($ruleProfile['requires_journal_entry'] ?? false) === true && $this->emptyValue($basis['journal_entry_id'] ?? null)) {
             $violations[] = $this->violation('journal_entry_missing', 'journal_entry_id', trans_message('executive_requirements.journal_entry_missing'));
         }
 
@@ -82,7 +83,7 @@ final class ExecutiveDocumentRequirementEvidenceValidator
         }
 
         $relations = is_array($basis['relations'] ?? null) ? $basis['relations'] : [];
-        foreach ($this->requiredRelations($rules) as $relation) {
+        foreach ($generated ? $this->requiredRelations($rules) : [] as $relation) {
             $key = (string) ($relation['key'] ?? '');
             $target = (string) ($relation['target'] ?? '');
             $present = $this->relationPresent($relations, $key, $target);
@@ -91,7 +92,7 @@ final class ExecutiveDocumentRequirementEvidenceValidator
             }
         }
 
-        foreach ($this->requiredSignatories($rules) as $role => $authorityRequired) {
+        foreach ($generated ? $this->requiredSignatories($rules) : [] as $role => $authorityRequired) {
             $signatory = $this->signatoryForRole($document['signatories'] ?? [], $role);
             if ($signatory === null) {
                 $violations[] = $this->violation('required_signatory_missing', 'signatories', trans_message('executive_requirements.required_signatory_missing', ['role' => $role]));

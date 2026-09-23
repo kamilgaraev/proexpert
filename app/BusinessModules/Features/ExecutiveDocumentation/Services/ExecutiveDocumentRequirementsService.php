@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ExecutiveDocumentation\Services;
 
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRequirement;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion;
 use App\BusinessModules\Features\ExecutiveDocumentation\Support\ExecutiveDocumentProfileRegistry;
@@ -321,12 +322,6 @@ final class ExecutiveDocumentRequirementsService
 
                 continue;
             }
-            $unresolved = (array) ($requirement->rule_snapshot['unresolved_conditions'] ?? []);
-            if ($unresolved !== []) {
-                $blockers[] = array_merge($this->blocker('normative_conditions_unresolved', $requirement, trans_message('executive_requirements.normative_conditions_unresolved')), ['conditions' => $unresolved]);
-
-                continue;
-            }
             $evidence = $this->evidenceFor($requirement, $set, $versions, $latestVersionIds);
             if ($evidence === []) {
                 $blockers[] = $this->evidenceBlocker($requirement, $set, $versions, $latestVersionIds);
@@ -336,6 +331,24 @@ final class ExecutiveDocumentRequirementsService
         }
         if ($requirements->isEmpty()) {
             $blockers[] = ['code' => 'requirements_not_configured', 'requirement_id' => null, 'scope_id' => $set->project_id, 'stage' => 'document_review', 'message' => trans_message('executive_requirements.not_configured'), 'target' => ['type' => 'document_set', 'id' => $set->id]];
+        }
+        if ($set->status->value === 'draft') {
+            $approvedList = $set->approved_list_id === null ? null : ExecutiveDocumentApprovedList::query()
+                ->where('organization_id', $set->organization_id)->where('project_id', $set->project_id)->find($set->approved_list_id);
+            if ($approvedList === null) {
+                $blockers[] = ['code' => 'approved_list_missing', 'requirement_id' => null, 'scope_id' => $set->project_id,
+                    'stage' => 'document_review', 'message' => 'Приложите утверждённый перечень ИД объекта.',
+                    'target' => ['type' => 'document_set', 'id' => $set->id]];
+            } else {
+                $items = collect($approvedList->items)->keyBy('key');
+                foreach ($requirements as $requirement) {
+                    $item = $items->get($requirement->requirement_key);
+                    if ($item === null || $item['profile_type'] !== $requirement->profile_type
+                        || $requirement->source_revision !== 'approved-list-'.$approvedList->id) {
+                        $blockers[] = $this->blocker('approved_list_mismatch', $requirement, 'Пункт комплекта не соответствует утверждённому перечню.');
+                    }
+                }
+            }
         }
 
         return ['requirements_total' => $requirements->count(), 'requirements_applicable' => $applicable->count(), 'requirements_satisfied' => max(0, $satisfied), 'missing_requirements' => count($blockers), 'blockers' => $blockers, 'ready' => $blockers === []];

@@ -47,6 +47,13 @@ final class ExecutiveDocumentPreparationService
                 || (int) $data['expected_revision'] !== (int) ($latest?->metadata['draft_revision'] ?? 0)) {
                 $this->conflict();
             }
+            app(ExecutiveDocumentInput::class)->validatePreparedProfile([
+                'document_type' => $document->document_type->value,
+                'work_type_id' => $document->work_type_id,
+                'journal_entry_id' => $document->journal_entry_id,
+                'profile_data' => $document->profile_data ?? [],
+                'relations' => $document->relations()->get(['relation_type', 'target_type', 'target_id'])->toArray(),
+            ]);
             $snapshot = [
                 'document_type' => $document->document_type->value,
                 'document' => $document->only(['title', 'document_date', 'inspection_date', 'participants', 'signatories', 'copies_count']),

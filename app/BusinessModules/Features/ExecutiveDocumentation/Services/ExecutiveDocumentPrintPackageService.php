@@ -79,8 +79,40 @@ final class ExecutiveDocumentPrintPackageService
                 $rows[] = ['document_id' => (int) $entry['document_id'], 'version_id' => (int) $entry['version_id'],
                     'version_number' => $entry['version_number'], 'title' => $entry['title'], 'sha256' => $entry['content_hash'], 'file' => $filename];
             }
+            $approvedList = $transmittal->manifest['approved_list'] ?? null;
+            $approvedListEntry = null;
+            if (is_array($approvedList)) {
+                $key = (string) ($approvedList['file_url'] ?? '');
+                if (! str_starts_with($key, 'org-'.$transmittal->organization_id.'/') || str_contains($key, '..')) {
+                    $this->invalid();
+                }
+                $stream = $this->files->disk()->readStream($key);
+                if (! is_resource($stream)) {
+                    $this->invalid();
+                }
+                try {
+                    $bytes = stream_get_contents($stream, 25 * 1024 * 1024 + 1);
+                } finally {
+                    fclose($stream);
+                }
+                if (! is_string($bytes) || strlen($bytes) > 25 * 1024 * 1024
+                    || ! hash_equals((string) ($approvedList['file_hash'] ?? ''), hash('sha256', $bytes))) {
+                    $this->invalid();
+                }
+                $total += strlen($bytes);
+                if ($total > 64 * 1024 * 1024) {
+                    throw new BusinessLogicException(trans_message('executive_document_print.render_limit'), 422);
+                }
+                $extension = strtolower(pathinfo($key, PATHINFO_EXTENSION));
+                $extension = in_array($extension, ['pdf', 'doc', 'docx', 'xls', 'xlsx'], true) ? $extension : 'bin';
+                $filename = 'approved-list/revision-'.(int) ($approvedList['revision'] ?? 0).'.'.$extension;
+                if (! $zip->addFromString($filename, $bytes)) {
+                    throw new \RuntimeException('executive_package_entry_failed');
+                }
+                $approvedListEntry = ['revision' => $approvedList['revision'], 'sha256' => $approvedList['file_hash'], 'file' => $filename];
+            }
             $registry = ['transmittal_id' => (int) $transmittal->id, 'number' => $transmittal->transmittal_number,
-                'manifest_hash' => $transmittal->manifest_hash, 'documents' => $rows];
+                'manifest_hash' => $transmittal->manifest_hash, 'documents' => $rows, 'approved_list' => $approvedListEntry];
             $zip->addFromString('registry.json', json_encode($registry, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
             $zip->addFromString('registry.html', view('executive-documentation.package-registry', ['registry' => $registry])->render());
             $zip->close();

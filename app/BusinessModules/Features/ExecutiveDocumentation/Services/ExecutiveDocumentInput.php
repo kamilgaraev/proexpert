@@ -48,9 +48,12 @@ final class ExecutiveDocumentInput
                 'relations.*.label' => ['nullable', 'string', 'max:255'],
                 'relations.*.metadata' => ['nullable', 'array'],
                 'initial_version' => ['required', 'array'],
-                'initial_version.file' => ['required', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'])->max(25 * 1024)],
+                'initial_version.file' => ['required_without:source_warehouse_passport_file_id', File::types(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'])->max(25 * 1024)],
                 'initial_version.version_number' => ['required_with:initial_version', 'string', 'max:40'],
                 'initial_version.uploaded_at' => ['nullable', 'date'],
+                'initial_version.file_kind' => ['nullable', Rule::in(['copy', 'paper_scan', 'electronic_original'])],
+                'initial_version.signature_file' => ['nullable', 'file', 'max:25600'],
+                'source_warehouse_passport_file_id' => ['required_without:initial_version.file', 'integer', 'min:1'],
                 'metadata' => ['nullable', 'array'],
             ];
     }
@@ -58,7 +61,7 @@ final class ExecutiveDocumentInput
     public function validateMapping(array $data, ExecutiveDocumentSet $set): array
     {
         $rules = $this->rules();
-        unset($rules['initial_version'], $rules['initial_version.file'], $rules['initial_version.version_number'], $rules['initial_version.uploaded_at']);
+        unset($rules['initial_version'], $rules['initial_version.file'], $rules['initial_version.version_number'], $rules['initial_version.uploaded_at'], $rules['initial_version.file_kind'], $rules['initial_version.signature_file'], $rules['source_warehouse_passport_file_id']);
         unset($data['initial_version']);
         return $this->normalize(Validator::make($data, $rules)->validate(), $set);
     }
@@ -73,8 +76,6 @@ final class ExecutiveDocumentInput
         $validated = $this->normalizeQualityDefectReference($validated, $set);
         $validated = $this->normalizeAcceptanceScopeReference($validated, $set);
         $validated = $this->normalizeDocumentRelations($validated, $set);
-        $validated = $this->validateDocumentProfile($validated);
-
         return $validated;
     }
 
@@ -82,7 +83,7 @@ final class ExecutiveDocumentInput
      * @param array<string, mixed> $validated
      * @return array<string, mixed>
      */
-    private function validateDocumentProfile(array $validated): array
+    public function validatePreparedProfile(array $validated): array
     {
         $documentType = (string) ($validated['document_type'] ?? '');
         $profile = $this->profileRegistry->require($documentType);

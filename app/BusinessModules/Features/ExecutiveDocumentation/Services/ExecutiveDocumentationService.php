@@ -150,7 +150,7 @@ final class ExecutiveDocumentationService
                     'participants' => $data['participants'] ?? null,
                     'profile_data' => $data['profile_data'] ?? null,
                     'signatories' => $data['signatories'] ?? null,
-                    'metadata' => $data['metadata'] ?? null,
+                    'metadata' => [...($data['metadata'] ?? []), 'capture_mode' => 'uploaded'],
                 ]);
 
                 $this->mutationGuard->assertActor($document, $userId, 'executive-documentation.create');
@@ -262,7 +262,11 @@ final class ExecutiveDocumentationService
                     'content_hash' => $contentHash,
                     'comment' => $data['comment'] ?? null,
                     'uploaded_at' => $data['uploaded_at'] ?? now(),
-                    'metadata' => array_merge($data['metadata'] ?? [], ['draft_revision' => 0, 'origin' => $prepared ? 'generated_preparation' : 'registered_external']),
+                    'metadata' => array_merge($data['metadata'] ?? [], [
+                        'draft_revision' => 0,
+                        'origin' => $prepared ? 'generated_preparation' : 'registered_external',
+                        'file_kind' => $prepared ? 'generated_draft' : ($data['file_kind'] ?? 'copy'),
+                    ]),
                     'profile_snapshot' => $profileSnapshot,
                     'basis_snapshot' => $basisSnapshot,
                     'operation_key' => $operationKey,
@@ -632,6 +636,15 @@ final class ExecutiveDocumentationService
                 'recipient' => ['organization_id' => $recipient['id'], 'name' => $recipient['name'], 'source' => $recipient['source']],
                 'documents' => $documentsManifest,
                 'requirements' => $set->requirements()->whereNull('superseded_at')->orderBy('id')->get()->toArray(),
+                'approved_list' => ($approvedList = $set->approvedList()->first()) ? [
+                    'id' => $approvedList->id,
+                    'revision' => $approvedList->revision,
+                    'approved_by_party' => $approvedList->approved_by_party,
+                    'approved_at' => $approvedList->approved_at?->format('Y-m-d'),
+                    'file_url' => $approvedList->file_url,
+                    'file_hash' => $approvedList->file_hash,
+                    'original_name' => $approvedList->original_name,
+                ] : null,
             ];
             $operationHash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
             $set->update([
@@ -808,6 +821,9 @@ final class ExecutiveDocumentationService
     private function setHasIncompleteDocuments(ExecutiveDocumentSet $set): bool
     {
         return $set->documents->contains(function (ExecutiveDocument $document): bool {
+            if (($document->metadata['capture_mode'] ?? null) === 'uploaded') {
+                return $document->versions->isEmpty() || $document->openRemarks()->exists();
+            }
             $profile = $this->profileRegistry->find($document->document_type->value);
 
             if (($profile['requires_work_type'] ?? false) === true && $document->work_type_id === null) {
