@@ -7,7 +7,7 @@ namespace App\BusinessModules\Features\BasicWarehouse\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-final class WarehouseBalancesRequest extends FormRequest
+class WarehouseBalancesRequest extends FormRequest
 {
     public function authorize(): bool
     {

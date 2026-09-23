@@ -30,6 +30,7 @@ use chillerlan\QRCode\QROptions;
 use DateTimeInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -1266,6 +1267,54 @@ class WarehouseService implements WarehouseReportDataProvider
                 'reserved_quantities' => $reservedQuantities,
             ],
         ];
+    }
+
+    public function stockExportQuery(int $organizationId, array $filters): QueryBuilder
+    {
+        $queryFilters = $filters;
+        unset($queryFilters['low_stock']);
+        $stockQuery = $this->buildStockQuery($organizationId, $queryFilters);
+        $stockQuery->setEagerLoads([]);
+
+        $query = DB::query()
+            ->fromSub($stockQuery->select([
+                'warehouse_balances.material_id',
+                'warehouse_balances.cell_id',
+                'warehouse_balances.location_code',
+                'warehouse_balances.available_quantity',
+                'warehouse_balances.reserved_quantity',
+                'warehouse_balances.unit_price',
+                'warehouse_balances.min_stock_level',
+            ])->toBase(), 'stock')
+            ->join('materials', 'materials.id', '=', 'stock.material_id')
+            ->leftJoin('measurement_units', 'measurement_units.id', '=', 'materials.measurement_unit_id')
+            ->leftJoin('warehouse_storage_cells as cells', 'cells.id', '=', 'stock.cell_id')
+            ->select([
+                'stock.material_id',
+                'materials.name as material_name',
+                'materials.code as material_code',
+                'measurement_units.short_name as unit_short_name',
+                'measurement_units.name as unit_name',
+            ])
+            ->selectRaw('SUM(stock.available_quantity) AS available_quantity')
+            ->selectRaw('SUM(stock.reserved_quantity) AS reserved_quantity')
+            ->selectRaw('SUM((stock.available_quantity + stock.reserved_quantity) * stock.unit_price) AS total_value')
+            ->selectRaw('MAX(stock.min_stock_level) AS min_stock_level')
+            ->selectRaw("STRING_AGG(DISTINCT COALESCE(NULLIF(cells.code, ''), NULLIF(stock.location_code, '')), ', ') AS storage_address")
+            ->groupBy(
+                'stock.material_id',
+                'materials.name',
+                'materials.code',
+                'measurement_units.short_name',
+                'measurement_units.name',
+            );
+
+        if (! empty($filters['low_stock'])) {
+            $query->havingRaw('MAX(stock.min_stock_level) > 0')
+                ->havingRaw('SUM(stock.available_quantity) <= MAX(stock.min_stock_level)');
+        }
+
+        return $query->orderBy('materials.name')->orderBy('stock.material_id');
     }
 
     private function buildStockQuery(int $organizationId, array $filters): Builder

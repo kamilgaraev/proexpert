@@ -12,6 +12,7 @@ use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseLogisticUni
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseOperationsController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehousePhotoController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseScanEventController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseStockExportController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseStorageCellController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseTaskController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseZoneController;
@@ -59,6 +60,11 @@ Route::middleware(AdminRouteStack::middleware())
                 ->whereNumber('id')
                 ->name('dashboard');
             Route::get('/{id}/balances', [WarehouseController::class, 'balances'])->whereNumber('id');
+            Route::get('/{id}/balances/export/{format}', WarehouseStockExportController::class)
+                ->whereNumber('id')
+                ->whereIn('format', ['xlsx', 'pdf'])
+                ->middleware('authorize:warehouse.reports')
+                ->name('balances.export');
             Route::get('/{id}/movements', [WarehouseController::class, 'movements'])->whereNumber('id');
             Route::get('/{warehouseId}/balances/{materialId}/photos', [WarehousePhotoController::class, 'balancePhotos']);
             Route::post('/{warehouseId}/balances/{materialId}/photos', [WarehousePhotoController::class, 'uploadBalancePhotos']);
