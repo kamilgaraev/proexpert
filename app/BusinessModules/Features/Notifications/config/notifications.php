@@ -24,6 +24,10 @@ return [
             'driver' => \App\BusinessModules\Features\Notifications\Channels\WebSocketChannel::class,
             'enabled' => config('broadcasting.default') === 'reverb',
         ],
+        'push' => [
+            'driver' => \App\BusinessModules\Features\Notifications\Channels\MobilePushChannel::class,
+            'enabled' => true,
+        ],
     ],
 
     'types' => [
@@ -132,4 +136,3 @@ return [
         'verify_ssl' => true,
     ],
 ];
-

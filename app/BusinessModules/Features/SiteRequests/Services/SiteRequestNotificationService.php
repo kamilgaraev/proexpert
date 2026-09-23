@@ -7,7 +7,8 @@ use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
-use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -37,7 +38,7 @@ class SiteRequestNotificationService
             return;
         }
 
-        $managers = $this->getOrganizationManagers($request->organization_id);
+        $managers = $this->getOrganizationManagers($request);
         $publicationKey = "site_request:{$request->id}:submitted";
 
         DB::transaction(function () use ($request, $managers, $publicationKey): void {
@@ -336,7 +337,7 @@ class SiteRequestNotificationService
                     null,
                     $organizationId,
                     requiredPermissions: ['notifications.receive.site_requests'],
-                    interfaces: ['admin'],
+                    interfaces: ['admin', 'mobile'],
                 );
             } catch (Throwable $e) {
                 Log::warning('site_request.notification.failed', [
@@ -355,24 +356,42 @@ class SiteRequestNotificationService
         }
     }
 
-    /**
-     * Получить менеджеров организации (владельцы и админы по новой системе авторизации).
-     */
-    private function getOrganizationManagers(int $organizationId): \Illuminate\Support\Collection
+    private function getOrganizationManagers(SiteRequest $request): Collection
     {
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
-        if (! $context) {
+        $organizationId = (int) $request->organization_id;
+        $projectId = $request->project_id === null ? null : (int) $request->project_id;
+
+        if ($projectId !== null && ! Project::query()
+            ->whereKey($projectId)
+            ->where('organization_id', $organizationId)
+            ->exists()) {
             return collect();
         }
 
-        return User::whereHas('organizations', function ($query) use ($organizationId) {
-            $query->where('organizations.id', $organizationId);
-        })
-            ->whereHas('roleAssignments', function ($query) use ($context) {
-                $query->active()
-                    ->where('context_id', $context->id)
-                    ->whereIn('role_slug', ['organization_owner', 'organization_admin']);
+        $authorization = app(AuthorizationService::class);
+        $permissionContext = ['organization_id' => $organizationId];
+
+        if ($projectId !== null) {
+            $permissionContext['project_id'] = $projectId;
+            $permissionContext['strict_project_scope'] = true;
+        }
+
+        return User::query()
+            ->whereHas('organizations', static fn ($query) => $query
+                ->where('organizations.id', $organizationId)
+                ->where('organization_user.is_active', true))
+            ->get()
+            ->filter(static function (User $user) use ($authorization, $permissionContext): bool {
+                return $authorization->can($user, 'notifications.receive.site_requests', $permissionContext)
+                    && $authorization->can($user, 'site_requests.view', $permissionContext)
+                    && collect([
+                        'site_requests.edit',
+                        'site_requests.approve',
+                        'site_requests.reject',
+                        'site_requests.assign',
+                        'site_requests.change_status',
+                    ])->contains(static fn (string $permission): bool => $authorization->can($user, $permission, $permissionContext));
             })
-            ->get();
+            ->values();
     }
 }

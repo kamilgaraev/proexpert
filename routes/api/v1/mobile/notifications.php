@@ -1,9 +1,12 @@
 <?php
 
+use App\BusinessModules\Features\Notifications\Http\Controllers\MobileDeviceTokenController;
 use App\BusinessModules\Features\Notifications\Http\Controllers\NotificationController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function () {
+    Route::post('/notifications/devices', [MobileDeviceTokenController::class, 'store'])->name('notifications.devices.store');
+    Route::delete('/notifications/devices/{installationId}', [MobileDeviceTokenController::class, 'destroy'])->name('notifications.devices.destroy');
     Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications.index');
     Route::get('/notifications/unread-count', [NotificationController::class, 'getUnreadCount'])->name('notifications.unread-count');
     Route::get('/notifications/unread', [NotificationController::class, 'unread'])->name('notifications.unread');
