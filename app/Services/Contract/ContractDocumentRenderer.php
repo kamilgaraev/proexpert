@@ -131,9 +131,11 @@ final class ContractDocumentRenderer
         return $block;
     }
 
-    private function html(array $node, array $numbers): string
+    private function html(array $node, array $numbers, array $inheritedTypography = []): string
     {
         $attrs = $node['attrs'] ?? [];
+        $layout = $attrs['layout'] ?? [];
+        $typography = array_replace($inheritedTypography, array_intersect_key($layout, ['fontFamily' => true, 'fontSize' => true]));
         if ($node['type'] === 'text') {
             $text = $this->escape($node['text']);
             foreach ($node['marks'] ?? [] as $mark) {
@@ -156,7 +158,7 @@ final class ContractDocumentRenderer
 
             return '<a href="#clause-'.$this->escape($attrs['target']).'">'.$numbers[$attrs['target']].'</a>';
         }
-        $children = implode('', array_map(fn (array $child): string => $this->html($child, $numbers), $node['content'] ?? []));
+        $children = implode('', array_map(fn (array $child): string => $this->html($child, $numbers, $typography), $node['content'] ?? []));
         $tag = match ($node['type']) {
             'doc' => 'article', 'paragraph' => 'p', 'heading' => 'h'.$attrs['level'],
             'clause', 'group' => 'section', 'orderedList' => 'ol', 'bulletList' => 'ul', 'listItem' => 'li',
@@ -168,14 +170,52 @@ final class ContractDocumentRenderer
             $attributes = ' class="contract-document"';
         } elseif ($node['type'] === 'clause') {
             $attributes = ' id="clause-'.$this->escape($attrs['id']).'"';
-            $children = '<p class="contract-clause-number">'.$numbers[$attrs['id']].'.</p>'.$children;
+            $numberStyle = $this->typographyStyle($typography);
+            $number = '<p class="contract-clause-number"'.($numberStyle !== '' ? ' style="'.$numberStyle.'"' : '').'>'.$numbers[$attrs['id']].'.</p>';
+            if (($attrs['textPlacement'] ?? 'inline') === 'inline' && ($node['content'][0]['type'] ?? null) === 'paragraph') {
+                $first = $node['content'][0];
+                $inline = implode('', array_map(fn (array $child): string => $this->html($child, $numbers, $typography), $first['content'] ?? []));
+                $rest = array_slice($node['content'], 1);
+                $paragraphTypography = array_replace($typography, array_intersect_key($first['attrs']['layout'] ?? [], ['fontFamily' => true, 'fontSize' => true]));
+                $paragraphStyle = $this->typographyStyle($paragraphTypography);
+                $children = '<p'.($paragraphStyle !== '' ? ' style="'.$paragraphStyle.'"' : '').'><strong class="contract-clause-number">'.$numbers[$attrs['id']].'. </strong>'.$inline.'</p>'
+                    .implode('', array_map(fn (array $child): string => $this->html($child, $numbers, $typography), $rest));
+            } else {
+                $children = $number.$children;
+            }
         } elseif ($node['type'] === 'orderedList') {
             $attributes = ' start="'.($attrs['start'] ?? 1).'"';
         } elseif ($node['type'] === 'tableCell') {
             $attributes = ' colspan="'.($attrs['colspan'] ?? 1).'" rowspan="'.($attrs['rowspan'] ?? 1).'"';
         }
 
+        if (in_array($node['type'], ['paragraph', 'heading', 'clause', 'group', 'conditional', 'table', 'orderedList', 'bulletList'], true)
+            && ($typography !== [] || $layout !== [])) {
+            $styleTypography = $typography;
+            if ($node['type'] === 'heading' && ! isset($layout['fontSize'])) {
+                unset($styleTypography['fontSize']);
+            }
+            $style = $this->typographyStyle($styleTypography);
+            if ($style !== '') {
+                $attributes .= ' style="'.$style.'"';
+            }
+        }
+
         return '<'.$tag.$attributes.'>'.$children.'</'.$tag.'>';
+    }
+
+    private function typographyStyle(array $typography): string
+    {
+        if ($typography === []) {
+            return '';
+        }
+        $font = match ($typography['fontFamily'] ?? 'Most Contract') {
+            'DejaVu Serif' => '"DejaVu Serif",serif',
+            'DejaVu Sans Mono' => '"DejaVu Sans Mono",monospace',
+            default => '"DejaVu Sans",sans-serif',
+        };
+
+        return 'font-family:'.$font.';'.(isset($typography['fontSize']) ? 'font-size:'.$typography['fontSize'].'pt;' : '');
     }
 
     public function formatValue(array $definition, mixed $value, array $entitySnapshots = []): string

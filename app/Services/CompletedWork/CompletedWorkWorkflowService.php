@@ -24,6 +24,7 @@ final class CompletedWorkWorkflowService
         private readonly ContractAuditedMutationService $contractMutations,
         private readonly LoggingService $logging,
         private readonly CompletedWorkScopeResolver $scopeResolver,
+        private readonly CompletedWorkFactReadiness $factReadiness,
     ) {}
 
     public function confirm(CompletedWork $work, User $actor): CompletedWork
@@ -58,6 +59,7 @@ final class CompletedWorkWorkflowService
             }
 
             $this->assertOriginReadyForConfirmation($lockedWork);
+            $this->factReadiness->assertReady($lockedWork);
 
             $previousStatus = $lockedWork->status;
             $lockedWork->forceFill(['status' => CompletedWork::STATUS_CONFIRMED])->save();

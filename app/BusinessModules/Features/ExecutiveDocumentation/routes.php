@@ -42,6 +42,10 @@ Route::prefix('api/v1/admin/executive-documentation')
         Route::post('/documents/{id}/versions', [ExecutiveDocumentationController::class, 'storeVersion'])
             ->middleware('authorize:executive-documentation.edit')
             ->name('versions.store');
+        Route::get('/documents/{documentId}/versions/{versionId}/{purpose}', [ExecutiveDocumentationController::class, 'versionFileUrl'])
+            ->whereIn('purpose', ['preview', 'download'])
+            ->middleware('authorize:executive-documentation.view')
+            ->name('versions.file_url');
         Route::post('/sets/{id}/transmit', [ExecutiveDocumentationController::class, 'transmit'])
             ->middleware('authorize:executive-documentation.approve')
             ->name('sets.transmit');

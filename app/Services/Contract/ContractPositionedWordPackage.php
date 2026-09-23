@@ -58,26 +58,31 @@ final class ContractPositionedWordPackage
             $fonts = $this->read($zip, 'word/fontTable.xml');
             $query = new DOMXPath($fonts);
             $query->registerNamespace('w', self::W);
-            $font = $query->query('/w:fonts/w:font[@w:name="DejaVu Sans"]')->item(0);
-            if (! $font instanceof DOMElement) {
-                $font = $fonts->createElementNS(self::W, 'w:font');
-                $font->setAttributeNS(self::W, 'w:name', 'DejaVu Sans');
-                $fonts->documentElement->appendChild($font);
-            }
             $relations = new DOMDocument('1.0', 'UTF-8');
             $root = $relations->appendChild($relations->createElementNS('http://schemas.openxmlformats.org/package/2006/relationships', 'Relationships'));
-            foreach (['regular' => 'Regular', 'bold' => 'Bold', 'italic' => 'Italic', 'bolditalic' => 'BoldItalic'] as $variant => $name) {
-                $id = 'rIdContract'.$name;
-                $relation = $relations->createElement('Relationship');
-                $relation->setAttribute('Id', $id);
-                $relation->setAttribute('Type', self::R.'/font');
-                $relation->setAttribute('Target', 'fonts/'.$variant.'.odttf');
-                $root->appendChild($relation);
-                $embed = $fonts->createElementNS(self::W, 'w:embed'.$name);
-                $embed->setAttributeNS(self::R, 'r:id', $id);
-                $embed->setAttributeNS(self::W, 'w:fontKey', '{00000000-0000-0000-0000-000000000000}');
-                $font->appendChild($embed);
-                $zip->addFromString('word/fonts/'.$variant.'.odttf', ContractDocumentFonts::bytes($variant));
+            $families = ['DejaVu Sans' => 'sans', 'DejaVu Serif' => 'serif', 'DejaVu Sans Mono' => 'mono'];
+            $variants = ['regular' => 'Regular', 'bold' => 'Bold', 'italic' => 'Italic', 'bolditalic' => 'BoldItalic'];
+            foreach ($families as $familyName => $slug) {
+                $font = $query->query('/w:fonts/w:font[@w:name="'.$familyName.'"]')->item(0);
+                if (! $font instanceof DOMElement) {
+                    $font = $fonts->createElementNS(self::W, 'w:font');
+                    $font->setAttributeNS(self::W, 'w:name', $familyName);
+                    $fonts->documentElement->appendChild($font);
+                }
+                foreach ($variants as $variant => $name) {
+                    $id = $slug === 'sans' ? 'rIdContract'.$name : 'rIdContract'.ucfirst($slug).$name;
+                    $file = $slug === 'sans' ? $variant.'.odttf' : $slug.'-'.$variant.'.odttf';
+                    $relation = $relations->createElement('Relationship');
+                    $relation->setAttribute('Id', $id);
+                    $relation->setAttribute('Type', self::R.'/font');
+                    $relation->setAttribute('Target', 'fonts/'.$file);
+                    $root->appendChild($relation);
+                    $embed = $fonts->createElementNS(self::W, 'w:embed'.$name);
+                    $embed->setAttributeNS(self::R, 'r:id', $id);
+                    $embed->setAttributeNS(self::W, 'w:fontKey', '{00000000-0000-0000-0000-000000000000}');
+                    $font->appendChild($embed);
+                    $zip->addFromString('word/fonts/'.$file, ContractDocumentFonts::bytes($variant, $familyName));
+                }
             }
             $zip->addFromString('word/fontTable.xml', $fonts->saveXML());
             $zip->addFromString('word/_rels/fontTable.xml.rels', $relations->saveXML());

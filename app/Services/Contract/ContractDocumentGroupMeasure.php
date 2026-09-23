@@ -9,11 +9,15 @@ final class ContractDocumentGroupMeasure
     public function measure(array $blocks): array
     {
         $leaves = [];
-        $collect = function (array $block, float $width) use (&$collect, &$leaves): array {
+        $collect = function (array $block, float $width, array $inherited = []) use (&$collect, &$leaves): array {
+            foreach ($inherited as $field => $value) {
+                $block['layout'][$field] ??= $value;
+            }
+            $typography = array_intersect_key($block['layout'], ['fontFamily' => true, 'fontSize' => true]);
             $block['layout']['width'] = min($width, $block['layout']['width']);
             $block['layout']['x'] = min($block['layout']['x'], $width - $block['layout']['width']);
             if (isset($block['children'])) {
-                $block['children'] = array_map(fn ($child): array => $collect($child, $block['layout']['width']), $block['children']);
+                $block['children'] = array_map(fn ($child): array => $collect($child, $block['layout']['width'], $typography), $block['children']);
             } else {
                 $block['measurement'] = count($leaves);
                 $leaves[] = $block;
@@ -21,7 +25,7 @@ final class ContractDocumentGroupMeasure
 
             return $block;
         };
-        $tree = array_map(fn ($block): array => $collect($block, $block['layout']['width'] + $block['layout']['x']), $blocks);
+        $tree = array_map(fn ($block): array => $collect($block, $block['layout']['width'] + $block['layout']['x'], []), $blocks);
         $measurements = (new ContractDocumentPrintMeasure)->measure($leaves);
         $compose = function (array $block) use (&$compose, $measurements): array {
             if (isset($block['measurement'])) {

@@ -9,21 +9,29 @@ use Dompdf\Options;
 
 final class ContractDocumentFonts
 {
-    public static function bytes(string $variant): string
+    public static function bytes(string $variant, string $family = 'DejaVu Sans'): string
     {
         static $fonts = [];
-        $file = match ($variant) {
-            'bold' => 'DejaVuSans-Bold.ttf', 'italic' => 'DejaVuSans-Oblique.ttf', 'bolditalic' => 'DejaVuSans-BoldOblique.ttf', default => 'DejaVuSans.ttf'
+        $base = match ($family) {
+            'DejaVu Serif' => 'DejaVuSerif',
+            'DejaVu Sans Mono' => 'DejaVuSansMono',
+            default => 'DejaVuSans',
         };
-        if (! isset($fonts[$file])) {
+        $suffix = match ($variant) {
+            'bold' => '-Bold', 'italic' => $base === 'DejaVuSerif' ? '-Italic' : '-Oblique',
+            'bolditalic' => $base === 'DejaVuSerif' ? '-BoldItalic' : '-BoldOblique', default => '',
+        };
+        $file = $base.$suffix.'.ttf';
+        $key = $family.':'.$file;
+        if (! isset($fonts[$key])) {
             $bytes = file_get_contents((new Options)->getFontDir().'/'.$file);
             if ($bytes === false) {
                 throw new ContractBuilderException('contracts.builder_export_failed', 503);
             }
-            $fonts[$file] = $bytes;
+            $fonts[$key] = $bytes;
         }
 
-        return $fonts[$file];
+        return $fonts[$key];
     }
 
     public static function css(array $plan): string
@@ -32,14 +40,18 @@ final class ContractDocumentFonts
         foreach ($plan['pages'] as $items) {
             foreach ($items as $item) {
                 if ($item['type'] === 'text') {
-                    $variants[($item['bold'] ? 'bold' : '').($item['italic'] ? 'italic' : '')] = true;
+                    $family = $item['fontFamily'] === 'Most Contract' ? 'DejaVu Sans' : $item['fontFamily'];
+                    $variant = ($item['bold'] ? 'bold' : '').($item['italic'] ? 'italic' : '') ?: 'regular';
+                    $variants[$family][$variant] = true;
                 }
             }
         }
         $css = '';
-        foreach (array_keys($variants) as $variant) {
-            $css .= '@font-face{font-family:MostContract;src:url(data:font/ttf;base64,'.base64_encode(self::bytes($variant)).') format("truetype");'
-                .'font-weight:'.(str_contains($variant, 'bold') ? 'bold' : 'normal').';font-style:'.(str_contains($variant, 'italic') ? 'italic' : 'normal').'}';
+        foreach ($variants as $family => $styles) {
+            foreach (array_keys($styles) as $variant) {
+                $css .= '@font-face{font-family:"'.$family.'";src:url(data:font/ttf;base64,'.base64_encode(self::bytes($variant, $family)).') format("truetype");'
+                    .'font-weight:'.(str_contains($variant, 'bold') ? 'bold' : 'normal').';font-style:'.(str_contains($variant, 'italic') ? 'italic' : 'normal').'}';
+            }
         }
 
         return $css;

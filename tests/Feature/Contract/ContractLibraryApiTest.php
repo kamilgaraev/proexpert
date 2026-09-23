@@ -241,15 +241,28 @@ final class ContractLibraryApiTest extends TestCase
         });
         $this->app->instance(AuthorizationService::class, $authorization);
         $base = '/api/v1/admin/contract-library';
-        $payload = ['kind' => 'variable', 'title' => 'Цена', 'content' => ['type' => 'money'], 'request_key' => 'create'];
+        $variableDefinition = [
+            'type' => 'money', 'required' => false,
+            'constraints' => ['min' => '0', 'max' => '15000000000', 'scale' => 2, 'currency' => 'RUB'],
+            'source' => ['kind' => 'manual'], 'display' => ['group' => 'Общие', 'hint' => 'Цена договора'],
+            'assignment' => ['target' => 'price'],
+        ];
+        $payload = ['kind' => 'variable', 'title' => 'Цена', 'content' => $variableDefinition, 'request_key' => 'create'];
         $created = $this->postJson($base, $payload)->assertOk()->assertJsonPath('success', true)
-            ->assertJsonPath('data.version.status', 'draft')->json('data');
+            ->assertJsonPath('data.version.status', 'draft')
+            ->assertJsonPath('data.version.content.constraints.max', '15000000000')
+            ->assertJsonPath('data.version.content.constraints.currency', 'RUB')
+            ->assertJsonPath('data.version.content.assignment.target', 'price')->json('data');
         self::assertArrayNotHasKey('creation_key', $created['item']);
         self::assertArrayNotHasKey('request_fingerprint', $created['version']);
         self::assertArrayNotHasKey('request_key', $created['version']);
         $this->postJson($base, $payload)->assertOk()->assertJsonPath('data.item.id', $created['item']['id']);
         $this->postJson($base, array_replace($payload, ['title' => 'Конфликт']))->assertConflict()->assertJsonPath('code', 'http_409');
         $this->postJson($base, array_replace($payload, ['content' => ['type' => 'unknown'], 'request_key' => 'bad-definition']))->assertUnprocessable()->assertJsonPath('code', 'http_422');
+        $variableDefinition['constraints']['currency'] = 'РУБ';
+        $this->postJson($base, ['kind' => 'variable', 'title' => 'Неверная валюта', 'content' => $variableDefinition, 'request_key' => 'bad-currency'])
+            ->assertUnprocessable()->assertJsonValidationErrors('content.constraints.currency')
+            ->assertJsonFragment(['content.constraints.currency' => ['Укажите код валюты из трёх заглавных латинских букв, например RUB.']]);
         $id = $created['item']['id'];
         $this->postJson($base.'/'.$id.'/versions/1/publish', ['expected_version' => 1])->assertForbidden();
         $allowPublish = true;

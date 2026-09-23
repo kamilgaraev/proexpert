@@ -34,11 +34,14 @@ final class ContractVariableDefinitionValidator
             $this->invalid();
         }
         foreach ($constraints as $key => $value) {
+            if ($key === 'currency' && (!is_string($value) || preg_match('/^[A-Z]{3}$/D', $value) !== 1)) {
+                throw (new ContractBuilderException('contracts.variable_currency_invalid', 422))->atField('content.constraints.currency');
+            }
             $valid = match ($key) {
                 'max_length' => is_int($value) && $value > 0 && $value <= 100000,
                 'min_rows', 'max_rows' => is_int($value) && $value >= 0 && $value <= 10000,
                 'scale' => is_int($value) && $value >= 0 && $value <= 12,
-                'currency' => is_string($value) && preg_match('/^[A-Z]{3}$/D', $value) === 1,
+                'currency' => true,
                 'min', 'max' => $type === 'date' ? $this->date($value) : $this->decimal($value),
                 default => false,
             };

@@ -40,7 +40,8 @@ final class ContractPositionedExporter
                 } elseif ($item['type'] === 'anchor') {
                     $canvas->add_named_dest($item['name']);
                 } else {
-                    $font = $metrics->getFont('DejaVu Sans', ($item['bold'] ? 'bold' : '').($item['italic'] ? 'italic' : '') ?: 'normal');
+                    $family = $item['fontFamily'] === 'Most Contract' ? 'DejaVu Sans' : $item['fontFamily'];
+                    $font = $metrics->getFont($family, ($item['bold'] ? 'bold' : '').($item['italic'] ? 'italic' : '') ?: 'normal');
                     $canvas->text($item['x'], $item['y'], $item['text'], $font, $item['fontSize'], [.09, .125, .2], $item['wordSpacing'], $item['letterSpacing']);
                     if ($item['href'] !== null) {
                         $canvas->add_link($item['href'], $item['x'], $item['y'], $item['width'], $item['height']);
@@ -87,7 +88,7 @@ final class ContractPositionedExporter
                 if ($item['type'] !== 'text') {
                     continue;
                 }
-                $font = ['name' => 'DejaVu Sans', 'size' => $item['fontSize'], 'bold' => $item['bold'], 'italic' => $item['italic'],
+                $font = ['name' => $item['fontFamily'] === 'Most Contract' ? 'DejaVu Sans' : $item['fontFamily'], 'size' => $item['fontSize'], 'bold' => $item['bold'], 'italic' => $item['italic'],
                     'underline' => $item['underline'] ? 'single' : 'none', 'strikethrough' => $item['strike']];
                 $paragraph = ['spaceBefore' => 0, 'spaceAfter' => 0, 'lineHeight' => 1];
                 if ($item['href'] !== null) {
