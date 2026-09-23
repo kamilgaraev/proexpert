@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl\Http\Controllers\Mobile;
 
-use App\BusinessModules\Features\QualityControl\Enums\QualityDefectSeverityEnum;
-use App\BusinessModules\Features\QualityControl\Enums\QualityDefectStatusEnum;
+use App\BusinessModules\Features\QualityControl\Http\Requests\Mobile\MobileQualityDefectRequest;
+use App\BusinessModules\Features\QualityControl\Http\Requests\Mobile\AssignQualityDefectRequest;
 use App\BusinessModules\Features\QualityControl\Http\Resources\QualityDefectResource;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
 use App\Http\Controllers\Controller;
@@ -16,10 +16,6 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rule;
-use Illuminate\Validation\Rules\File;
-use Illuminate\Validation\ValidationException;
 
 final class QualityDefectController extends Controller
 {
@@ -28,20 +24,12 @@ final class QualityDefectController extends Controller
         private readonly MobileProjectAccessResolver $projectAccess,
     ) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(MobileQualityDefectRequest $request): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $perPage = min((int) $request->input('per_page', 20), 100);
-            $filters = $this->validated($request, [
-                'status' => ['nullable', 'string', Rule::in(array_column(QualityDefectStatusEnum::cases(), 'value'))],
-                'project_id' => ['nullable', 'integer'],
-                'assigned_to' => ['nullable', 'integer'],
-                'severity' => ['nullable', 'string', Rule::in(array_column(QualityDefectSeverityEnum::cases(), 'value'))],
-                'overdue' => ['nullable', 'boolean'],
-                'sort_by' => ['nullable', 'string', Rule::in(['created_at', 'due_date', 'severity', 'status'])],
-                'sort_dir' => ['nullable', 'string', Rule::in(['asc', 'desc'])],
-            ]);
+            $filters = $request->validated();
             $projectIds = $this->accessibleProjectIds($request);
 
             if ($projectIds === []) {
@@ -60,12 +48,6 @@ final class QualityDefectController extends Controller
                     'total' => $defects->total(),
                     'last_page' => $defects->lastPage(),
                 ]
-            );
-        } catch (ValidationException $e) {
-            return MobileResponse::error(
-                trans_message('quality_control.errors.validation_failed'),
-                422,
-                $e->errors()
             );
         } catch (\Throwable $e) {
             Log::error('quality_control.mobile.defects.index.error', [
@@ -99,43 +81,51 @@ final class QualityDefectController extends Controller
         }
     }
 
-    public function store(Request $request): JsonResponse
+    public function assign(AssignQualityDefectRequest $request, int $id): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $validated = $this->validated($request, [
-                'project_id' => ['required', 'integer'],
-                'contractor_id' => ['nullable', 'integer'],
-                'assigned_to' => ['nullable', 'integer'],
-                'title' => ['required', 'string', 'max:255'],
-                'description' => ['nullable', 'string', 'max:5000'],
-                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'critical'])],
-                'location_name' => ['nullable', 'string', 'max:255'],
-                'schedule_task_id' => ['nullable', 'integer'],
-                'construction_journal_entry_id' => ['nullable', 'integer'],
-                'completed_work_id' => ['nullable', 'integer'],
-                'due_date' => ['nullable', 'date'],
-                'inspection_required' => ['required', 'boolean'],
-                'metadata' => ['nullable', 'array'],
-                'photos' => ['nullable', 'array'],
-                'photos.*.type' => ['required_with:photos', 'string', Rule::in(['before', 'after', 'evidence', 'other'])],
-                'photos.*.url' => ['nullable', 'required_without:photos.*.file', 'string', 'max:2000'],
-                'photos.*.file' => ['nullable', 'required_without:photos.*.url', File::image()->max(10 * 1024)],
-                'photos.*.caption' => ['nullable', 'string', 'max:255'],
-                'photos.*.metadata' => ['nullable', 'array'],
-            ]);
+            $validated = $request->validated();
+            $defect = $this->findOrFail($request, $id, $organizationId);
+
+            return MobileResponse::success(new QualityDefectResource($this->service->assignToProjectParticipant(
+                $defect,
+                (int) $validated['assigned_to'],
+                (int) $request->user()->id,
+                $validated['comment'] ?? null,
+            )));
+        } catch (DomainException $e) {
+            return MobileResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failedAction('assign', $id, $e);
+        }
+    }
+
+    public function assignees(Request $request, int $id): JsonResponse
+    {
+        try {
+            $defect = $this->findOrFail(
+                $request,
+                $id,
+                (int) $request->attributes->get('current_organization_id'),
+            );
+            return MobileResponse::success($this->service->eligibleAssignees($defect));
+        } catch (\Throwable $e) {
+            return $this->failedAction('show', $id, $e);
+        }
+    }
+
+    public function store(MobileQualityDefectRequest $request): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $validated = $request->validated();
             $defect = $this->service->create($organizationId, (int) auth()->id(), $validated);
 
             return MobileResponse::success(
                 new QualityDefectResource($defect),
                 trans_message('quality_control.messages.created'),
                 201
-            );
-        } catch (ValidationException $e) {
-            return MobileResponse::error(
-                trans_message('quality_control.errors.validation_failed'),
-                422,
-                $e->errors()
             );
         } catch (DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
@@ -149,11 +139,11 @@ final class QualityDefectController extends Controller
         }
     }
 
-    public function start(Request $request, int $id): JsonResponse
+    public function start(MobileQualityDefectRequest $request, int $id): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $validated = $this->validated($request, ['comment' => ['nullable', 'string', 'max:1000']]);
+            $validated = $request->validated();
             $defect = $this->findOrFail($request, $id, $organizationId);
 
             return MobileResponse::success(new QualityDefectResource($this->service->start(
@@ -161,8 +151,6 @@ final class QualityDefectController extends Controller
                 (int) auth()->id(),
                 $validated['comment'] ?? null
             )));
-        } catch (ValidationException $e) {
-            return MobileResponse::error($e->getMessage(), 422, $e->errors());
         } catch (DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
@@ -170,19 +158,11 @@ final class QualityDefectController extends Controller
         }
     }
 
-    public function resolve(Request $request, int $id): JsonResponse
+    public function resolve(MobileQualityDefectRequest $request, int $id): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $validated = $this->validated($request, [
-                'comment' => ['nullable', 'string', 'max:1000'],
-                'photos' => ['nullable', 'array'],
-                'photos.*.type' => ['required_with:photos', 'string', Rule::in(['before', 'after', 'evidence', 'other'])],
-                'photos.*.url' => ['nullable', 'required_without:photos.*.file', 'string', 'max:2000'],
-                'photos.*.file' => ['nullable', 'required_without:photos.*.url', File::image()->max(10 * 1024)],
-                'photos.*.caption' => ['nullable', 'string', 'max:255'],
-                'photos.*.metadata' => ['nullable', 'array'],
-            ]);
+            $validated = $request->validated();
             $defect = $this->findOrFail($request, $id, $organizationId);
 
             return MobileResponse::success(new QualityDefectResource($this->service->resolve(
@@ -190,8 +170,6 @@ final class QualityDefectController extends Controller
                 (int) auth()->id(),
                 $validated
             )));
-        } catch (ValidationException $e) {
-            return MobileResponse::error($e->getMessage(), 422, $e->errors());
         } catch (DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
@@ -199,11 +177,11 @@ final class QualityDefectController extends Controller
         }
     }
 
-    public function verify(Request $request, int $id): JsonResponse
+    public function verify(MobileQualityDefectRequest $request, int $id): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $validated = $this->validated($request, ['comment' => ['nullable', 'string', 'max:1000']]);
+            $validated = $request->validated();
             $defect = $this->findOrFail($request, $id, $organizationId);
 
             return MobileResponse::success(new QualityDefectResource($this->service->verify(
@@ -212,12 +190,6 @@ final class QualityDefectController extends Controller
                 true,
                 $validated['comment'] ?? null
             )));
-        } catch (ValidationException $e) {
-            return MobileResponse::error(
-                trans_message('quality_control.errors.validation_failed'),
-                422,
-                $e->errors()
-            );
         } catch (DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
@@ -225,11 +197,11 @@ final class QualityDefectController extends Controller
         }
     }
 
-    public function reject(Request $request, int $id): JsonResponse
+    public function reject(MobileQualityDefectRequest $request, int $id): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $validated = $this->validated($request, ['comment' => ['required', 'string', 'max:1000']]);
+            $validated = $request->validated();
             $defect = $this->findOrFail($request, $id, $organizationId);
 
             return MobileResponse::success(new QualityDefectResource($this->service->reject(
@@ -237,12 +209,6 @@ final class QualityDefectController extends Controller
                 (int) auth()->id(),
                 $validated['comment']
             )));
-        } catch (ValidationException $e) {
-            return MobileResponse::error(
-                trans_message('quality_control.errors.validation_failed'),
-                422,
-                $e->errors()
-            );
         } catch (DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
@@ -286,62 +252,4 @@ final class QualityDefectController extends Controller
         return MobileResponse::error(trans_message("quality_control.errors.{$action}_failed"), 500);
     }
 
-    private function validated(Request $request, array $rules): array
-    {
-        $validator = Validator::make($request->all(), $rules, $this->validationMessages());
-
-        if ($validator->fails()) {
-            throw new ValidationException($validator);
-        }
-
-        $validated = $validator->validated();
-        $projectId = $validated['project_id'] ?? null;
-
-        if ($projectId !== null && $projectId !== '') {
-            $user = $request->user();
-
-            if (! $user instanceof User) {
-                throw ValidationException::withMessages([
-                    'project_id' => [trans_message('quality_control.errors.project_not_found')],
-                ]);
-            }
-
-            try {
-                $this->projectAccess->assert(
-                    $user,
-                    (int) $request->attributes->get('current_organization_id'),
-                    (int) $projectId,
-                    trans_message('quality_control.errors.project_not_found'),
-                );
-            } catch (DomainException $exception) {
-                throw ValidationException::withMessages([
-                    'project_id' => [$exception->getMessage()],
-                ]);
-            }
-        }
-
-        return $validated;
-    }
-
-    private function validationMessages(): array
-    {
-        return [
-            'project_id.required' => trans_message('quality_control.validation.project_required'),
-            'project_id.integer' => trans_message('quality_control.validation.project_invalid'),
-            'assigned_to.integer' => trans_message('quality_control.validation.assignee_invalid'),
-            'status.in' => trans_message('quality_control.validation.status_invalid'),
-            'title.required' => trans_message('quality_control.validation.title_required'),
-            'severity.required' => trans_message('quality_control.validation.severity_required'),
-            'severity.in' => trans_message('quality_control.validation.severity_invalid'),
-            'inspection_required.required' => trans_message('quality_control.validation.inspection_required'),
-            'overdue.boolean' => trans_message('quality_control.validation.overdue_invalid'),
-            'sort_by.in' => trans_message('quality_control.validation.sort_invalid'),
-            'sort_dir.in' => trans_message('quality_control.validation.sort_invalid'),
-            'comment.required' => trans_message('quality_control.validation.comment_required'),
-            'photos.*.type.required_with' => trans_message('quality_control.validation.photo_type_required'),
-            'photos.*.type.in' => trans_message('quality_control.validation.photo_type_required'),
-            'photos.*.url.required_without' => trans_message('quality_control.validation.photo_required'),
-            'photos.*.file.required_without' => trans_message('quality_control.validation.photo_required'),
-        ];
-    }
 }

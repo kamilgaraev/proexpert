@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\TimeTracking\Http\Controllers\Mobile\TimeTrackingController;
+use App\Http\Controllers\Api\V1\Mobile\MobileTimeEntryApprovalController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/mobile/time-tracking')
@@ -17,4 +18,15 @@ Route::prefix('api/v1/mobile/time-tracking')
         Route::post('/entries/{entry}/stop', [TimeTrackingController::class, 'stopTimer'])->name('entries.stop');
         Route::post('/entries/{entry}/submit', [TimeTrackingController::class, 'submit'])->name('entries.submit');
         Route::post('/entries/{entry}/correction', [TimeTrackingController::class, 'correction'])->name('entries.correction');
+        Route::get('/pending-approvals', [MobileTimeEntryApprovalController::class, 'index'])
+            ->middleware('authorize:time_tracking.view')
+            ->name('pending-approvals.index');
+        Route::post('/entries/{entry}/approve', [MobileTimeEntryApprovalController::class, 'approve'])
+            ->whereNumber('entry')
+            ->middleware('authorize:time_tracking.approve')
+            ->name('entries.approve');
+        Route::post('/entries/{entry}/reject', [MobileTimeEntryApprovalController::class, 'reject'])
+            ->whereNumber('entry')
+            ->middleware('authorize:time_tracking.reject')
+            ->name('entries.reject');
     });

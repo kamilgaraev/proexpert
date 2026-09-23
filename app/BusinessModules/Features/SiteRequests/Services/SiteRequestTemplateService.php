@@ -6,6 +6,10 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestTemplate;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 
@@ -16,7 +20,9 @@ class SiteRequestTemplateService
 {
     public function __construct(
         private readonly SiteRequestService $requestService,
-        private readonly SiteRequestsModule $module
+        private readonly SiteRequestsModule $module,
+        private readonly AuthorizationService $authorizationService,
+        private readonly MobileProjectAccessResolver $mobileProjectAccess,
     ) {}
 
     /**
@@ -193,6 +199,30 @@ class SiteRequestTemplateService
         $template->incrementUsage();
 
         return $request;
+    }
+
+    public function createFromMobileTemplate(int $templateId, int $organizationId, int $userId, int $projectId): SiteRequest
+    {
+        $actor = User::query()->find($userId);
+        $canCreate = false;
+        if ($actor && $organizationId > 0) {
+            $context = AuthorizationContext::getOrganizationContext($organizationId);
+            $permissions = $this->authorizationService->getUserPermissionsStructured($actor, $context)['modules']['site-requests'] ?? [];
+            foreach ($permissions as $permission) {
+                if ($permission === '*' || $permission === 'site_requests.create' || $permission === 'site-requests.create'
+                    || (str_ends_with((string) $permission, '.*') && str_starts_with('site_requests.create', substr((string) $permission, 0, -1)))) {
+                    $canCreate = true;
+                    break;
+                }
+            }
+        }
+
+        if (! $actor || $organizationId <= 0 || ! $canCreate
+            || ! in_array($projectId, $this->mobileProjectAccess->ids($actor, $organizationId), true)) {
+            throw new \DomainException(trans_message('site_requests::mobile.access_denied'));
+        }
+
+        return $this->createFromTemplate($templateId, $organizationId, $userId, $projectId);
     }
 
     /**

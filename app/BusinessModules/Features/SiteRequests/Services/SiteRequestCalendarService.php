@@ -9,6 +9,10 @@ use App\BusinessModules\Features\SiteRequests\Enums\CalendarEventTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Exceptions\BusinessLogicException;
+use App\Models\User;
+use App\Services\Mobile\MobileProjectAccessResolver;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -178,7 +182,8 @@ class SiteRequestCalendarService
         Carbon $startDate,
         Carbon $endDate,
         ?int $projectId = null,
-        ?string $eventType = null
+        ?string $eventType = null,
+        ?array $accessibleProjectIds = null,
     ): Collection {
         $query = SiteRequestCalendarEvent::query()
             ->forOrganization($organizationId)
@@ -193,6 +198,10 @@ class SiteRequestCalendarService
             $query->forProject($projectId);
         }
 
+        if ($accessibleProjectIds !== null) {
+            $query->whereIn('project_id', $accessibleProjectIds);
+        }
+
         if ($eventType) {
             $query->ofType($eventType);
         }
@@ -200,6 +209,51 @@ class SiteRequestCalendarService
         return $query->orderBy('start_date')
             ->orderBy('start_time')
             ->get();
+    }
+
+    public function getMobileCalendarEvents(
+        User $actor,
+        int $organizationId,
+        Carbon $startDate,
+        Carbon $endDate,
+        ?int $projectId = null,
+    ): Collection {
+        if ((int) $actor->current_organization_id !== $organizationId || ! $actor->belongsToOrganization($organizationId)) {
+            throw new \DomainException(trans_message('site_requests::mobile.no_organization'));
+        }
+
+        $projectAccess = app(MobileProjectAccessResolver::class);
+        $accessibleIds = $projectAccess->ids($actor, $organizationId);
+        $authorization = app(AuthorizationService::class);
+
+        if ($projectId !== null) {
+            if (! in_array($projectId, $accessibleIds, true)) {
+                throw new BusinessLogicException(trans_message('site_requests::mobile.calendar_access_denied'), 403);
+            }
+            $allowedIds = $authorization->can($actor, 'site_requests.calendar.view', [
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'strict_project_scope' => true,
+            ]) ? [$projectId] : [];
+            if ($allowedIds === []) {
+                throw new BusinessLogicException(trans_message('site_requests::mobile.calendar_access_denied'), 403);
+            }
+        } else {
+            $allowedIds = array_values(array_filter($accessibleIds, fn (int $id): bool => $authorization->can(
+                $actor,
+                'site_requests.calendar.view',
+                [
+                    'organization_id' => $organizationId,
+                    'project_id' => $id,
+                    'strict_project_scope' => true,
+                ],
+            )));
+        }
+        if ($allowedIds === []) {
+            throw new BusinessLogicException(trans_message('site_requests::mobile.calendar_access_denied'), 403);
+        }
+
+        return $this->getCalendarEvents($organizationId, $startDate, $endDate, $projectId, null, $allowedIds);
     }
 
     /**
@@ -597,4 +651,3 @@ class SiteRequestCalendarService
         return $text;
     }
 }
-

@@ -57,6 +57,12 @@ Route::prefix('api/v1/mobile/quality-control')
             Route::get('/{id}', [MobileQualityDefectController::class, 'show'])
                 ->middleware('authorize:quality-control.view')
                 ->name('show');
+            Route::get('/{id}/assignees', [MobileQualityDefectController::class, 'assignees'])
+                ->middleware('authorize:quality-control.view')
+                ->name('assignees');
+            Route::post('/{id}/assign', [MobileQualityDefectController::class, 'assign'])
+                ->middleware('authorize:quality-control.defects.assign')
+                ->name('assign');
             Route::post('/{id}/start', [MobileQualityDefectController::class, 'start'])
                 ->middleware('authorize:quality-control.defects.resolve')
                 ->name('start');

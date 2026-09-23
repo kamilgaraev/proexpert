@@ -158,6 +158,42 @@ final class QualityDefectService
         );
     }
 
+    public function assignToProjectParticipant(
+        QualityDefect $defect,
+        int $assigneeId,
+        int $userId,
+        ?string $comment = null,
+    ): QualityDefect {
+        $this->assertProjectAssignee($assigneeId, (int) $defect->organization_id, (int) $defect->project_id);
+
+        return $this->assign($defect, $assigneeId, $userId, $comment);
+    }
+
+    /** @return list<array{id: int, name: string, email: string|null}> */
+    public function eligibleAssignees(QualityDefect $defect): array
+    {
+        return User::query()
+            ->whereHas('organizations', static function ($query) use ($defect): void {
+                $query->where('organizations.id', $defect->organization_id)
+                    ->where('organization_user.is_active', true);
+            })
+            ->whereExists(static function ($query) use ($defect): void {
+                $query->selectRaw('1')->from('project_user')
+                    ->whereColumn('project_user.user_id', 'users.id')
+                    ->where('project_user.project_id', $defect->project_id)
+                    ->where('project_user.is_active', true);
+            })
+            ->orderBy('users.name')
+            ->get(['users.id', 'users.name', 'users.email'])
+            ->map(static fn (User $user): array => [
+                'id' => (int) $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+            ])
+            ->values()
+            ->all();
+    }
+
     public function start(QualityDefect $defect, int $userId, ?string $comment = null): QualityDefect
     {
         if (! $defect->canBeStarted()) {

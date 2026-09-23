@@ -129,6 +129,11 @@ Route::prefix('api/v1/mobile/site-requests')
         Route::get('/', [MobileSiteRequestController::class, 'index'])->name('index');
         Route::post('/', [MobileSiteRequestController::class, 'store'])->name('store');
         Route::put('/groups/{id}', [MobileSiteRequestController::class, 'updateGroup'])->name('update_group');
+        Route::get('/{id}/assignees', [MobileSiteRequestController::class, 'assignees'])->name('assignees');
+        Route::put('/{id}/assignee', [MobileSiteRequestController::class, 'assign'])->name('assign');
+        Route::get('/{id}/files', [MobileSiteRequestController::class, 'files'])->name('files.index');
+        Route::post('/{id}/files', [MobileSiteRequestController::class, 'uploadFile'])->name('files.store');
+        Route::delete('/{id}/files/{fileId}', [MobileSiteRequestController::class, 'deleteFile'])->name('files.destroy');
         Route::get('/{id}', [MobileSiteRequestController::class, 'show'])->name('show');
         Route::put('/{id}', [MobileSiteRequestController::class, 'update'])->name('update');
 

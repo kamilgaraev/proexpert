@@ -5,20 +5,96 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Mobile;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Mobile\StoreMobileScheduleTaskRequest;
+use App\Http\Requests\Api\V1\Mobile\UpdateMobileScheduleTaskRequest;
+use App\Http\Requests\Api\V1\Mobile\MobileScheduleMutationRequest;
+use App\Http\Resources\Api\V1\Schedule\ScheduleTaskResource;
 use App\Http\Responses\MobileResponse;
+use App\Models\User;
+use App\Services\Mobile\MobileScheduleTaskService;
 use App\Services\Mobile\MobileProjectScheduleService;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
 
 class ScheduleController extends Controller
 {
     public function __construct(
-        private readonly MobileProjectScheduleService $scheduleService
+        private readonly MobileProjectScheduleService $scheduleService,
+        private readonly MobileScheduleTaskService $scheduleTaskService,
     ) {
+    }
+
+    public function storeTask(StoreMobileScheduleTaskRequest $request, int $schedule_id): JsonResponse
+    {
+        try {
+            $actor = $request->user();
+            if (! $actor instanceof User) {
+                return MobileResponse::error(trans_message('mobile_schedule.errors.unauthorized'), 401);
+            }
+            $task = $this->scheduleTaskService->create($actor, $schedule_id, $request->validated());
+
+            return MobileResponse::success(new ScheduleTaskResource($task), trans_message('schedule_management.task_created'), 201);
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('mobile.schedule.task.create.error', [
+                'user_id' => $request->user()?->id,
+                'schedule_id' => $schedule_id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('schedule_management.task_create_error'), 500);
+        }
+    }
+
+    public function updateTask(UpdateMobileScheduleTaskRequest $request, int $task): JsonResponse
+    {
+        try {
+            $actor = $request->user();
+            if (! $actor instanceof User) {
+                return MobileResponse::error(trans_message('mobile_schedule.errors.unauthorized'), 401);
+            }
+            $result = $this->scheduleTaskService->updateById($actor, $task, $request->validated());
+
+            return MobileResponse::success([
+                'task' => new ScheduleTaskResource($result['task']),
+                'affected_tasks' => ScheduleTaskResource::collection($result['affected_tasks']),
+            ], trans_message('schedule_management.task_updated'));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('mobile.schedule.task.update.error', [
+                'user_id' => $request->user()?->id,
+                'task_id' => $task,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('schedule_management.task_update_error'), 500);
+        }
+    }
+
+    public function showTask(Request $request, int $task): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            return MobileResponse::error(trans_message('mobile_schedule.errors.unauthorized'), 401);
+        }
+
+        try {
+            return MobileResponse::success($this->scheduleTaskService->show($actor, $task));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 404);
+        } catch (\Throwable $exception) {
+            Log::error('mobile.schedule.task.show.error', [
+                'user_id' => $actor->id,
+                'task_id' => $task,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('mobile_schedule.errors.load_failed'), 500);
+        }
     }
 
     public function index(Request $request): JsonResponse
@@ -98,7 +174,7 @@ class ScheduleController extends Controller
         }
     }
 
-    public function recordAssignmentFact(int $assignment, Request $request): JsonResponse
+    public function recordAssignmentFact(int $assignment, MobileScheduleMutationRequest $request): JsonResponse
     {
         try {
             /** @var \App\Models\User|null $user */
@@ -108,17 +184,7 @@ class ScheduleController extends Controller
                 return MobileResponse::error(trans_message('mobile_schedule.errors.unauthorized'), 401);
             }
 
-            $validated = $request->validate([
-                'status' => ['required', 'string', Rule::in(['done', 'partially_done', 'not_done'])],
-                'completed_quantity' => ['nullable', 'numeric', 'min:0'],
-                'actual_work_hours' => ['nullable', 'numeric', 'min:0'],
-                'fact_comment' => ['nullable', 'string', 'max:2000'],
-                'failure_reason' => ['nullable', 'required_if:status,not_done', 'string', 'max:2000'],
-            ]);
-
-            return MobileResponse::success($this->scheduleService->recordDailyPlanFact($user, $assignment, $validated));
-        } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::success($this->scheduleService->recordDailyPlanFact($user, $assignment, $request->validated()));
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 400);
         } catch (\Throwable $exception) {
@@ -132,7 +198,7 @@ class ScheduleController extends Controller
         }
     }
 
-    public function submitDailyPlan(int $dailyPlan, Request $request): JsonResponse
+    public function submitDailyPlan(int $dailyPlan, MobileScheduleMutationRequest $request): JsonResponse
     {
         try {
             /** @var \App\Models\User|null $user */
@@ -142,13 +208,7 @@ class ScheduleController extends Controller
                 return MobileResponse::error(trans_message('mobile_schedule.errors.unauthorized'), 401);
             }
 
-            $validated = $request->validate([
-                'summary_comment' => ['nullable', 'string', 'max:1000'],
-            ]);
-
-            return MobileResponse::success($this->scheduleService->submitDailyPlan($user, $dailyPlan, $validated));
-        } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
+            return MobileResponse::success($this->scheduleService->submitDailyPlan($user, $dailyPlan, $request->validated()));
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 400);
         } catch (\Throwable $exception) {
@@ -162,7 +222,7 @@ class ScheduleController extends Controller
         }
     }
 
-    public function createLinkedConstraintAction(int $constraint, Request $request): JsonResponse
+    public function createLinkedConstraintAction(int $constraint, MobileScheduleMutationRequest $request): JsonResponse
     {
         try {
             /** @var \App\Models\User|null $user */
@@ -172,19 +232,13 @@ class ScheduleController extends Controller
                 return MobileResponse::error(trans_message('mobile_schedule.errors.unauthorized'), 401);
             }
 
-            $validated = $request->validate([
-                'comment' => ['nullable', 'string', 'max:1000'],
-            ]);
-
-            $action = $this->scheduleService->createLinkedActionForConstraint($user, $constraint, $validated);
+            $action = $this->scheduleService->createLinkedActionForConstraint($user, $constraint, $request->validated());
 
             return MobileResponse::success(
                 $action,
                 trans_message('mobile_schedule.messages.constraint_linked_action_created'),
                 $action['created'] ? 201 : 200
             );
-        } catch (ValidationException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422, $exception->errors());
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {

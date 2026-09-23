@@ -1,6 +1,247 @@
 ﻿# Generated from `php artisan route:list --path=api/v1/mobile --json`.
 # Keep synchronized with MobileApiContractDocumentationTest.
 
+/acts:
+  get:
+    tags: [Acts]
+    summary: Список актов организации
+    operationId: mobile_get_acts
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: query, name: project_id, schema: { type: integer } }
+      - { in: query, name: status, schema: { type: string } }
+      - { in: query, name: search, schema: { type: string } }
+      - { in: query, name: page, schema: { type: integer, minimum: 1 } }
+      - { in: query, name: per_page, schema: { type: integer, minimum: 1, maximum: 50 } }
+    responses:
+      '200': { description: "Список и meta с пагинацией и capabilities", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/acts/{act}:
+  get:
+    tags: [Acts]
+    summary: Карточка акта и доступные действия
+    operationId: mobile_get_acts_act
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: act, required: true, schema: { type: integer } }
+    responses:
+      '200': { description: "Карточка акта; capabilities.can_field_confirm управляет полевой фиксацией", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '404': { description: Акт или файл недоступен в текущей организации }
+/acts/{act}/files/{file}:
+  get:
+    tags: [Acts]
+    summary: Скачать файл акта
+    operationId: mobile_get_acts_act_files_file
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: act, required: true, schema: { type: integer } }
+      - { in: path, name: file, required: true, schema: { type: integer } }
+    responses:
+      '200': { description: Защищённое содержимое файла }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '404': { description: Акт или файл недоступен в текущей организации }
+/acts/{act}/field-confirmations:
+  post:
+    tags: [Acts]
+    summary: Зафиксировать полевую приёмку подписью на экране
+    description: Создаёт отдельное неизменяемое свидетельство приёмки и не меняет юридическую подпись или статус акта. Повтор с тем же Idempotency-Key возвращает прежнюю фиксацию.
+    operationId: mobile_post_acts_act_field_confirmations
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: act, required: true, schema: { type: integer } }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [signature_data, idempotency_key]
+            properties:
+              signature_data: { type: string, description: PNG подпись в data URL или base64 }
+              idempotency_key: { type: string, minLength: 16, maxLength: 128 }
+    responses:
+      '201': { description: "Полевое подтверждение создано", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '200': { description: Возвращена ранее созданная фиксация при повторе того же запроса }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '409': { description: Акт уже подтверждён этим пользователем либо ключ использован с другим содержимым }
+      '422': { $ref: '../openapi.yaml#/components/responses/MobileValidationError' }
+/payments/documents:
+  get:
+    tags: [Payments]
+    summary: Список финансовых документов
+    operationId: mobile_get_payments_documents
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: query, name: project_id, schema: { type: integer } }
+      - { in: query, name: status, schema: { type: string } }
+      - { in: query, name: search, schema: { type: string } }
+      - { in: query, name: page, schema: { type: integer, minimum: 1 } }
+      - { in: query, name: per_page, schema: { type: integer, minimum: 1, maximum: 50 } }
+    responses:
+      '200': { description: "Список и meta с пагинацией и capabilities.can_create", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+  post:
+    tags: [Payments]
+    summary: Создать финансовый документ
+    operationId: mobile_post_payments_documents
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 16, maxLength: 128 } }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/GenericObject' }
+          example: { document_type: payment_request, project_id: 42, amount: 125000, currency: RUB, payment_purpose: Материалы }
+    responses:
+      '201': { description: "Документ создан; повтор ключа идемпотентен", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '200': { description: Повтор того же ключа и тела запроса вернул прежний документ }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '409': { description: Ключ уже использован с другим содержимым }
+      '422': { $ref: '../openapi.yaml#/components/responses/MobileValidationError' }
+/payments/documents/{id}:
+  get:
+    tags: [Payments]
+    summary: Карточка финансового документа
+    operationId: mobile_get_payments_documents_id
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    responses:
+      '200': { description: "Документ с can_edit, can_submit, can_register_payment, can_approve и can_reject", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '404': { description: Документ недоступен в текущей организации }
+  put:
+    tags: [Payments]
+    summary: Изменить черновик финансового документа
+    operationId: mobile_put_payments_documents_id
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '../openapi.yaml#/components/schemas/GenericObject' }
+          example: { amount: 126000, payment_purpose: Материалы на объект }
+    responses:
+      '200': { description: "Обновлённый документ", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '404': { description: Документ недоступен в текущей организации }
+      '422': { $ref: '../openapi.yaml#/components/responses/MobileValidationError' }
+/payments/documents/{id}/submit:
+  post:
+    tags: [Payments]
+    summary: Отправить документ по процессу согласования
+    operationId: mobile_post_payments_documents_id_submit
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    responses:
+      '200': { description: "Обновлённый документ", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '404': { description: Документ недоступен в текущей организации }
+/payments/documents/{id}/payments:
+  post:
+    tags: [Payments]
+    summary: Зафиксировать факт оплаты
+    description: Регистрирует платёж в МОСТ; не выполняет банковский перевод. Повтор защищён заголовком Idempotency-Key.
+    operationId: mobile_post_payments_documents_id_payments
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+      - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 16, maxLength: 128 } }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [amount]
+            properties:
+              amount: { type: number, exclusiveMinimum: 0 }
+              payment_method: { type: string }
+              transaction_date: { type: string, format: date }
+              payment_date: { type: string, format: date }
+              reference_number: { type: string }
+              notes: { type: string }
+              budget_override_reason: { type: string }
+    responses:
+      '200': { description: "Обновлённый документ после регистрации оплаты", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '404': { description: Документ недоступен в текущей организации }
+      '422': { $ref: '../openapi.yaml#/components/responses/MobileValidationError' }
+
+/payments/documents/{id}/approve:
+  post:
+    tags: [Payments]
+    summary: Согласовать назначенный финансовый документ
+    operationId: mobile_post_payments_documents_id_approve
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              comment: { type: string, maxLength: 1000 }
+              budget_override_reason: { type: string, maxLength: 1000 }
+    responses:
+      '200': { description: "Обновлённый документ после решения", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '404': { description: Документ недоступен в текущей организации }
+      '422': { $ref: '../openapi.yaml#/components/responses/MobileValidationError' }
+
+/payments/documents/{id}/reject:
+  post:
+    tags: [Payments]
+    summary: Отклонить назначенный финансовый документ
+    operationId: mobile_post_payments_documents_id_reject
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason: { type: string, minLength: 3, maxLength: 1000 }
+    responses:
+      '200': { description: "Обновлённый документ после решения", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '404': { description: Документ недоступен в текущей организации }
+      '422': { $ref: '../openapi.yaml#/components/responses/MobileValidationError' }
+
 /ai-assistant/actions/execute:
   post:
     tags:
@@ -388,6 +629,24 @@
       - Budget Estimates
     summary: "GET /budget-estimates/estimates"
     operationId: mobile_get_budget_estimates_estimates
+    parameters:
+      - name: project_id
+        in: query
+        required: true
+        schema: {type: integer}
+      - name: status
+        in: query
+        schema: {type: string, enum: [draft, in_review, approved, cancelled]}
+      - name: search
+        in: query
+        description: Поиск по номеру и названию во всём реестре объекта.
+        schema: {type: string, maxLength: 100}
+      - name: page
+        in: query
+        schema: {type: integer, minimum: 1}
+      - name: per_page
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 50}
     security:
       - bearerAuth: []
     responses:
@@ -2275,6 +2534,70 @@
         $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
       '403':
         $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+/notifications/devices:
+  post:
+    tags:
+      - Notifications
+    summary: "POST /notifications/devices"
+    operationId: mobile_post_notifications_devices
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [installation_id, platform, token]
+            properties:
+              installation_id:
+                type: string
+                maxLength: 128
+              platform:
+                type: string
+                enum: [android, ios]
+              token:
+                type: string
+                maxLength: 4096
+    responses:
+      '200':
+        description: Устройство зарегистрировано.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/notifications/devices/{installationId}:
+  delete:
+    tags:
+      - Notifications
+    summary: "DELETE /notifications/devices/{installationId}"
+    operationId: mobile_delete_notifications_devices_installation_id
+    parameters:
+      - name: installationId
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 128
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Регистрация устройства удалена.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
 /procurement/approvals:
   get:
     tags:
@@ -2553,6 +2876,17 @@
         $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
       '403':
         $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+  post:
+    tags: [Mobile]
+    summary: "POST /procurement/purchase-requests"
+    operationId: mobile_post_procurement_purchase_requests
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
 /procurement/purchase-requests/{purchaseRequest}:
   get:
     tags:
@@ -5476,3 +5810,1289 @@
         $ref: '../openapi.yaml#/components/responses/MobileForbidden'
       '422':
         $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/field-admin/personnel/attendance:
+  get:
+    tags:
+      - Workforce
+    summary: Явка сотрудников выбранного объекта за день
+    operationId: mobile_get_field_admin_personnel_attendance
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: project_id
+        in: query
+        required: true
+        schema: {type: integer}
+      - name: work_date
+        in: query
+        required: true
+        schema: {type: string, format: date}
+      - name: page
+        in: query
+        schema: {type: integer, minimum: 1}
+      - name: per_page
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 50}
+    responses:
+      '200':
+        description: Список сотрудников с источником статуса и серверной пагинацией.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileListEnvelope'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '422':
+        $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/budgeting/projects/{project}/execution-cards:
+  get:
+    tags: [Mobile]
+    summary: "GET /budgeting/projects/{project}/execution-cards"
+    operationId: mobile_get_budgeting_projects_project_execution_cards
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: project, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/budgeting/projects/{project}/summary:
+  get:
+    tags: [Mobile]
+    summary: "GET /budgeting/projects/{project}/summary"
+    operationId: mobile_get_budgeting_projects_project_summary
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: project, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/catalog/crm/activities:
+  post:
+    tags: [Mobile]
+    summary: "POST /catalog/crm/activities"
+    operationId: mobile_post_catalog_crm_activities
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/catalog/crm/{entity}:
+  get:
+    tags: [Mobile]
+    summary: "GET /catalog/crm/{entity}"
+    operationId: mobile_get_catalog_crm_entity
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: entity, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/catalog/crm/{entity}/{id}:
+  get:
+    tags: [Mobile]
+    summary: "GET /catalog/crm/{entity}/{id}"
+    operationId: mobile_get_catalog_crm_entity_id
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: entity, required: true, schema: { type: string } }
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/catalog/reports:
+  get:
+    tags: [Mobile]
+    summary: "GET /catalog/reports"
+    operationId: mobile_get_catalog_reports
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/catalog/reports/{id}:
+  get:
+    tags: [Mobile]
+    summary: "GET /catalog/reports/{id}"
+    operationId: mobile_get_catalog_reports_id
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/catalog/templates:
+  get:
+    tags: [Mobile]
+    summary: "GET /catalog/templates"
+    operationId: mobile_get_catalog_templates
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/catalog/templates/{id}:
+  get:
+    tags: [Mobile]
+    summary: "GET /catalog/templates/{id}"
+    operationId: mobile_get_catalog_templates_id
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/catalog/tenders:
+  get:
+    tags: [Mobile]
+    summary: "GET /catalog/tenders"
+    operationId: mobile_get_catalog_tenders
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/catalog/tenders/{id}:
+  get:
+    tags: [Mobile]
+    summary: "GET /catalog/tenders/{id}"
+    operationId: mobile_get_catalog_tenders_id
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/construction-journal-exports/{export}:
+  get:
+    tags: [Mobile]
+    summary: "GET /construction-journal-exports/{export}"
+    operationId: mobile_get_construction_journal_exports_export
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: export, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/construction-journals/form-options:
+  get:
+    tags: [Mobile]
+    summary: "GET /construction-journals/form-options"
+    operationId: mobile_get_construction_journals_form_options
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/construction-journals/{journal}/archive:
+  post:
+    tags: [Mobile]
+    summary: "POST /construction-journals/{journal}/archive"
+    operationId: mobile_post_construction_journals_journal_archive
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: journal, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/construction-journals/{journal}/close:
+  post:
+    tags: [Mobile]
+    summary: "POST /construction-journals/{journal}/close"
+    operationId: mobile_post_construction_journals_journal_close
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: journal, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/construction-journals/{journal}/reopen:
+  post:
+    tags: [Mobile]
+    summary: "POST /construction-journals/{journal}/reopen"
+    operationId: mobile_post_construction_journals_journal_reopen
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: journal, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/field-admin/personnel/absences:
+  get:
+    tags: [Mobile]
+    summary: "GET /field-admin/personnel/absences"
+    operationId: mobile_get_field_admin_personnel_absences
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/field-admin/personnel/calendar:
+  get:
+    tags: [Mobile]
+    summary: "GET /field-admin/personnel/calendar"
+    operationId: mobile_get_field_admin_personnel_calendar
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/field-admin/personnel/employees:
+  get:
+    tags: [Mobile]
+    summary: "GET /field-admin/personnel/employees"
+    operationId: mobile_get_field_admin_personnel_employees
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/field-admin/personnel/employees/{employee}:
+  get:
+    tags: [Mobile]
+    summary: "GET /field-admin/personnel/employees/{employee}"
+    operationId: mobile_get_field_admin_personnel_employees_employee
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: employee, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/field-admin/personnel/orders:
+  get:
+    tags: [Mobile]
+    summary: "GET /field-admin/personnel/orders"
+    operationId: mobile_get_field_admin_personnel_orders
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/field-admin/team/projects/{project}/participants:
+  get:
+    tags: [Mobile]
+    summary: "GET /field-admin/team/projects/{project}/participants"
+    operationId: mobile_get_field_admin_team_projects_project_participants
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: project, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/field-admin/team/projects/{project}/participants/available-users:
+  get:
+    tags: [Mobile]
+    summary: "GET /field-admin/team/projects/{project}/participants/available-users"
+    operationId: mobile_get_field_admin_team_projects_project_participants_available_users
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: project, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/field-admin/team/projects/{project}/participants/{user}:
+  put:
+    tags: [Mobile]
+    summary: "PUT /field-admin/team/projects/{project}/participants/{user}"
+    operationId: mobile_put_field_admin_team_projects_project_participants_user
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: project, required: true, schema: { type: string } }
+      - { in: path, name: user, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/files:
+  get:
+    tags: [Mobile]
+    summary: "GET /files"
+    operationId: mobile_get_files
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+  post:
+    tags: [Mobile]
+    summary: "POST /files"
+    operationId: mobile_post_files
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/files/{fileId}:
+  get:
+    tags: [Mobile]
+    summary: "GET /files/{fileId}"
+    operationId: mobile_get_files_fileid
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: fileId, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/knowledge-hub/articles:
+  get:
+    tags: [Mobile]
+    summary: "GET /knowledge-hub/articles"
+    operationId: mobile_get_knowledge_hub_articles
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/knowledge-hub/articles/{slug}:
+  get:
+    tags: [Mobile]
+    summary: "GET /knowledge-hub/articles/{slug}"
+    operationId: mobile_get_knowledge_hub_articles_slug
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: slug, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/knowledge-hub/assistant:
+  post:
+    tags: [Mobile]
+    summary: "POST /knowledge-hub/assistant"
+    operationId: mobile_post_knowledge_hub_assistant
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/knowledge-hub/context:
+  get:
+    tags: [Mobile]
+    summary: "GET /knowledge-hub/context"
+    operationId: mobile_get_knowledge_hub_context
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/knowledge-hub/feedback:
+  post:
+    tags: [Mobile]
+    summary: "POST /knowledge-hub/feedback"
+    operationId: mobile_post_knowledge_hub_feedback
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/knowledge-hub/overview:
+  get:
+    tags: [Mobile]
+    summary: "GET /knowledge-hub/overview"
+    operationId: mobile_get_knowledge_hub_overview
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/knowledge-hub/search:
+  get:
+    tags: [Mobile]
+    summary: "GET /knowledge-hub/search"
+    operationId: mobile_get_knowledge_hub_search
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/knowledge-hub/tree:
+  get:
+    tags: [Mobile]
+    summary: "GET /knowledge-hub/tree"
+    operationId: mobile_get_knowledge_hub_tree
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/legal-archive/documents:
+  get:
+    tags: [Mobile]
+    summary: "GET /legal-archive/documents"
+    operationId: mobile_get_legal_archive_documents
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/legal-archive/documents/{document}:
+  get:
+    tags: [Mobile]
+    summary: "GET /legal-archive/documents/{document}"
+    operationId: mobile_get_legal_archive_documents_document
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: document, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/legal-archive/documents/{document}/actions/{action}:
+  post:
+    tags: [Mobile]
+    summary: "POST /legal-archive/documents/{document}/actions/{action}"
+    operationId: mobile_post_legal_archive_documents_document_actions_action
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: document, required: true, schema: { type: string } }
+      - { in: path, name: action, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/legal-archive/documents/{document}/versions/{version}/{purpose}:
+  get:
+    tags: [Mobile]
+    summary: "GET /legal-archive/documents/{document}/versions/{version}/{purpose}"
+    operationId: mobile_get_legal_archive_documents_document_versions_version_purpose
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: document, required: true, schema: { type: string } }
+      - { in: path, name: version, required: true, schema: { type: string } }
+      - { in: path, name: purpose, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/legal-archive/signature-requests/{signatureRequest}/upload-original:
+  post:
+    tags: [Mobile]
+    summary: "POST /legal-archive/signature-requests/{signatureRequest}/upload-original"
+    operationId: mobile_post_legal_archive_signature_requests_signaturerequest_upload_original
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: signatureRequest, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/machinery-operations/asset-requests:
+  post:
+    tags: [Mobile]
+    summary: "POST /machinery-operations/asset-requests"
+    operationId: mobile_post_machinery_operations_asset_requests
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/machinery-operations/maintenance-orders:
+  get:
+    tags: [Mobile]
+    summary: "GET /machinery-operations/maintenance-orders"
+    operationId: mobile_get_machinery_operations_maintenance_orders
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/machinery-operations/maintenance-orders/{id}/complete:
+  post:
+    tags: [Mobile]
+    summary: "POST /machinery-operations/maintenance-orders/{id}/complete"
+    operationId: mobile_post_machinery_operations_maintenance_orders_id_complete
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/machinery-operations/shift-reports/{id}/finish:
+  post:
+    tags: [Mobile]
+    summary: "POST /machinery-operations/shift-reports/{id}/finish"
+    operationId: mobile_post_machinery_operations_shift_reports_id_finish
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/my-actions:
+  get:
+    tags: [Mobile]
+    summary: "GET /my-actions"
+    operationId: mobile_get_my_actions
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/pto/design-packages:
+  get:
+    tags: [Mobile]
+    summary: "GET /pto/design-packages"
+    operationId: mobile_get_pto_design_packages
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/pto/design-packages/{packageId}:
+  get:
+    tags: [Mobile]
+    summary: "GET /pto/design-packages/{packageId}"
+    operationId: mobile_get_pto_design_packages_packageid
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: packageId, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/pto/design-packages/{packageId}/actions/{action}:
+  post:
+    tags: [Mobile]
+    summary: "POST /pto/design-packages/{packageId}/actions/{action}"
+    operationId: mobile_post_pto_design_packages_packageid_actions_action
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: packageId, required: true, schema: { type: string } }
+      - { in: path, name: action, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/pto/executive-documents/{documentId}/actions/{action}:
+  post:
+    tags: [Mobile]
+    summary: "POST /pto/executive-documents/{documentId}/actions/{action}"
+    operationId: mobile_post_pto_executive_documents_documentid_actions_action
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: documentId, required: true, schema: { type: string } }
+      - { in: path, name: action, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/quality-control/defects/{id}/assign:
+  post:
+    tags: [Mobile]
+    summary: "POST /quality-control/defects/{id}/assign"
+    operationId: mobile_post_quality_control_defects_id_assign
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/quality-control/defects/{id}/assignees:
+  get:
+    tags: [Mobile]
+    summary: "GET /quality-control/defects/{id}/assignees"
+    operationId: mobile_get_quality_control_defects_id_assignees
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/safety-management/briefings:
+  get:
+    tags: [Mobile]
+    summary: "GET /safety-management/briefings"
+    operationId: mobile_get_safety_management_briefings
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/safety-management/briefings/{id}:
+  get:
+    tags: [Mobile]
+    summary: "GET /safety-management/briefings/{id}"
+    operationId: mobile_get_safety_management_briefings_id
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/safety-management/briefings/{id}/participants/{participantId}/sign:
+  post:
+    tags: [Mobile]
+    summary: "POST /safety-management/briefings/{id}/participants/{participantId}/sign"
+    operationId: mobile_post_safety_management_briefings_id_participants_participantid_sign
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: participantId, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/safety-management/dashboard:
+  get:
+    tags: [Mobile]
+    summary: "GET /safety-management/dashboard"
+    operationId: mobile_get_safety_management_dashboard
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/safety-management/inspection-findings:
+  get:
+    tags: [Mobile]
+    summary: "GET /safety-management/inspection-findings"
+    operationId: mobile_get_safety_management_inspection_findings
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+  post:
+    tags: [Mobile]
+    summary: "POST /safety-management/inspection-findings"
+    operationId: mobile_post_safety_management_inspection_findings
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/safety-management/inspections:
+  get:
+    tags: [Mobile]
+    summary: "GET /safety-management/inspections"
+    operationId: mobile_get_safety_management_inspections
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/safety-management/my-admission:
+  get:
+    tags: [Mobile]
+    summary: "GET /safety-management/my-admission"
+    operationId: mobile_get_safety_management_my_admission
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/schedule/tasks/{task}:
+  get:
+    tags: [Mobile]
+    summary: "GET /schedule/tasks/{task}"
+    operationId: mobile_get_schedule_tasks_task
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: task, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+  patch:
+    tags: [Mobile]
+    summary: "PATCH /schedule/tasks/{task}"
+    operationId: mobile_patch_schedule_tasks_task
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: task, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/schedule/{schedule_id}/tasks:
+  post:
+    tags: [Mobile]
+    summary: "POST /schedule/{schedule_id}/tasks"
+    operationId: mobile_post_schedule_schedule_id_tasks
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: schedule_id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/security/sessions:
+  get:
+    tags: [Mobile]
+    summary: "GET /security/sessions"
+    operationId: mobile_get_security_sessions
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/security/sessions/revoke-others:
+  post:
+    tags: [Mobile]
+    summary: "POST /security/sessions/revoke-others"
+    operationId: mobile_post_security_sessions_revoke_others
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/security/sessions/{session}:
+  delete:
+    tags: [Mobile]
+    summary: "DELETE /security/sessions/{session}"
+    operationId: mobile_delete_security_sessions_session
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: session, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/site-requests/{id}/assignee:
+  put:
+    tags: [Mobile]
+    summary: "PUT /site-requests/{id}/assignee"
+    operationId: mobile_put_site_requests_id_assignee
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/site-requests/{id}/assignees:
+  get:
+    tags: [Mobile]
+    summary: "GET /site-requests/{id}/assignees"
+    operationId: mobile_get_site_requests_id_assignees
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/site-requests/{id}/files:
+  get:
+    tags: [Mobile]
+    summary: "GET /site-requests/{id}/files"
+    operationId: mobile_get_site_requests_id_files
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+  post:
+    tags: [Mobile]
+    summary: "POST /site-requests/{id}/files"
+    operationId: mobile_post_site_requests_id_files
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/site-requests/{id}/files/{fileId}:
+  delete:
+    tags: [Mobile]
+    summary: "DELETE /site-requests/{id}/files/{fileId}"
+    operationId: mobile_delete_site_requests_id_files_fileid
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: fileId, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/system/access-recertification/campaigns:
+  get:
+    tags: [Mobile]
+    summary: "GET /system/access-recertification/campaigns"
+    operationId: mobile_get_system_access_recertification_campaigns
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/system/access-recertification/items/{item}/decisions:
+  post:
+    tags: [Mobile]
+    summary: "POST /system/access-recertification/items/{item}/decisions"
+    operationId: mobile_post_system_access_recertification_items_item_decisions
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: item, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/system/access-recertification/reviews/my:
+  get:
+    tags: [Mobile]
+    summary: "GET /system/access-recertification/reviews/my"
+    operationId: mobile_get_system_access_recertification_reviews_my
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/system/events:
+  get:
+    tags: [Mobile]
+    summary: "GET /system/events"
+    operationId: mobile_get_system_events
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/system/one-c-exchange/history:
+  get:
+    tags: [Mobile]
+    summary: "GET /system/one-c-exchange/history"
+    operationId: mobile_get_system_one_c_exchange_history
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/system/one-c-exchange/journal/{operationId}/retry:
+  post:
+    tags: [Mobile]
+    summary: "POST /system/one-c-exchange/journal/{operationId}/retry"
+    operationId: mobile_post_system_one_c_exchange_journal_operationid_retry
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: operationId, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/system/one-c-exchange/status:
+  get:
+    tags: [Mobile]
+    summary: "GET /system/one-c-exchange/status"
+    operationId: mobile_get_system_one_c_exchange_status
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/system/rate-coefficients/current:
+  get:
+    tags: [Mobile]
+    summary: "GET /system/rate-coefficients/current"
+    operationId: mobile_get_system_rate_coefficients_current
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/team-expansion/brigade-invitations:
+  get:
+    tags: [Mobile]
+    summary: "GET /team-expansion/brigade-invitations"
+    operationId: mobile_get_team_expansion_brigade_invitations
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+  post:
+    tags: [Mobile]
+    summary: "POST /team-expansion/brigade-invitations"
+    operationId: mobile_post_team_expansion_brigade_invitations
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/team-expansion/brigade-requests:
+  get:
+    tags: [Mobile]
+    summary: "GET /team-expansion/brigade-requests"
+    operationId: mobile_get_team_expansion_brigade_requests
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+  post:
+    tags: [Mobile]
+    summary: "POST /team-expansion/brigade-requests"
+    operationId: mobile_post_team_expansion_brigade_requests
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/team-expansion/brigade-requests/{brigadeRequest}/responses:
+  get:
+    tags: [Mobile]
+    summary: "GET /team-expansion/brigade-requests/{brigadeRequest}/responses"
+    operationId: mobile_get_team_expansion_brigade_requests_brigaderequest_responses
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: brigadeRequest, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/team-expansion/brigade-requests/{brigadeRequest}/responses/{response}/approve:
+  post:
+    tags: [Mobile]
+    summary: "POST /team-expansion/brigade-requests/{brigadeRequest}/responses/{response}/approve"
+    operationId: mobile_post_team_expansion_brigade_requests_brigaderequest_responses_response_approve
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: brigadeRequest, required: true, schema: { type: string } }
+      - { in: path, name: response, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/team-expansion/brigades:
+  get:
+    tags: [Mobile]
+    summary: "GET /team-expansion/brigades"
+    operationId: mobile_get_team_expansion_brigades
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/team-expansion/brigades/{brigade}:
+  get:
+    tags: [Mobile]
+    summary: "GET /team-expansion/brigades/{brigade}"
+    operationId: mobile_get_team_expansion_brigades_brigade
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: brigade, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/team-expansion/contractor-invitations:
+  post:
+    tags: [Mobile]
+    summary: "POST /team-expansion/contractor-invitations"
+    operationId: mobile_post_team_expansion_contractor_invitations
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/team-expansion/contractors:
+  get:
+    tags: [Mobile]
+    summary: "GET /team-expansion/contractors"
+    operationId: mobile_get_team_expansion_contractors
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/team-expansion/contractors/{profile}:
+  get:
+    tags: [Mobile]
+    summary: "GET /team-expansion/contractors/{profile}"
+    operationId: mobile_get_team_expansion_contractors_profile
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: profile, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/time-tracking/entries/{entry}/approve:
+  post:
+    tags: [Mobile]
+    summary: "POST /time-tracking/entries/{entry}/approve"
+    operationId: mobile_post_time_tracking_entries_entry_approve
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: entry, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/time-tracking/entries/{entry}/reject:
+  post:
+    tags: [Mobile]
+    summary: "POST /time-tracking/entries/{entry}/reject"
+    operationId: mobile_post_time_tracking_entries_entry_reject
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: path, name: entry, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/time-tracking/pending-approvals:
+  get:
+    tags: [Mobile]
+    summary: "GET /time-tracking/pending-approvals"
+    operationId: mobile_get_time_tracking_pending_approvals
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/warehouse/custody/balances:
+  get:
+    tags: [Mobile]
+    summary: "GET /warehouse/custody/balances"
+    operationId: mobile_get_warehouse_custody_balances
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/warehouse/custody/issue:
+  post:
+    tags: [Mobile]
+    summary: "POST /warehouse/custody/issue"
+    operationId: mobile_post_warehouse_custody_issue
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/warehouse/custody/return:
+  post:
+    tags: [Mobile]
+    summary: "POST /warehouse/custody/return"
+    operationId: mobile_post_warehouse_custody_return
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+/warehouse/operations/write-off:
+  post:
+    tags: [Mobile]
+    summary: "POST /warehouse/operations/write-off"
+    operationId: mobile_post_warehouse_operations_write_off
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Ответ мобильного API; состав полей зависит от операции.
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }

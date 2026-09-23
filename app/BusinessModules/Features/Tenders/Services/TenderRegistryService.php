@@ -126,6 +126,10 @@ final class TenderRegistryService
             }
         }
 
+        if (isset($filters['project_id']) && (int) $filters['project_id'] > 0) {
+            $query->where('project_id', (int) $filters['project_id']);
+        }
+
         if (!empty($filters['overdue'])) {
             $query->whereNotIn('status', self::TERMINAL_STATUSES)->where('next_deadline_at', '<', now());
         }

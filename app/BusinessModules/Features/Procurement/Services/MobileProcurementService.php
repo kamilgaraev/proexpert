@@ -49,10 +49,20 @@ final class MobileProcurementService
 
     public function __construct(
         private readonly AuthorizationService $authorizationService,
+        private readonly PurchaseRequestService $purchaseRequestService,
         private readonly ProcurementApprovalService $approvalService,
         private readonly PurchaseOrderService $purchaseOrderService,
         private readonly ProcurementAuditService $auditService
     ) {
+    }
+
+    public function createPurchaseRequest(int $organizationId, User $user, array $payload): PurchaseRequest
+    {
+        if (!$this->authorizationService->can($user, 'procurement.purchase_requests.create', ['organization_id' => $organizationId])) {
+            throw new DomainException(trans_message('procurement.mobile.errors.permission_denied'));
+        }
+
+        return $this->purchaseRequestService->create($organizationId, (int) $user->id, $payload);
     }
 
     public function summary(int $organizationId, array $filters, User $user): array

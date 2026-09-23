@@ -1,0 +1,68 @@
+module: file-management
+base_path: /api/v1/mobile/files
+access:
+  module_required: true
+  permission_context: Permissions are checked for the exact project with strict_project_scope=true after the actor's project access is resolved.
+  read_any_permission:
+    - projects.view
+    - completed_works.view
+    - construction-journal.view
+    - report_files.view
+  upload_any_permission:
+    - reports.photo_upload
+    - projects.upload_photos
+    - projects.upload_progress_photos
+  project_scope: The actor must be assigned to the project or have organization-wide project access.
+records:
+  project: Project ID must equal project_id.
+  completed_work: Record must belong to project_id and the project's organization.
+  construction_journal_entry: Entry's journal must belong to project_id and the project's organization.
+search:
+  method: GET
+  path: /
+  query:
+    project_id: required integer
+    record_type: optional enum project|completed_work|construction_journal_entry
+    record_id: optional integer
+    q: optional string, max 255
+    date_from: optional date
+    date_to: optional date, after_or_equal date_from
+    page: optional integer
+    per_page: optional integer, 1..50, default 20
+  response:
+    data: array of file items
+    meta: {current_page: integer, per_page: integer, total: integer, last_page: integer}
+view:
+  method: GET
+  path: /{fileId}?project_id={projectId}
+  response: {data: {item: file item}}
+upload:
+  method: POST
+  path: /
+  content_type: multipart/form-data
+  fields:
+    project_id: required integer
+    record_type: required enum project|completed_work|construction_journal_entry
+    record_id: required integer
+    file_type: required enum photo|document
+    file: required file, max 20 MiB
+    description: optional string, max 500
+  photo_mime_types: [image/jpeg, image/png, image/webp]
+  document_mime_types: [image/jpeg, image/png, image/webp, application/pdf, application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet]
+  storage: private S3 under current organization prefix; filename extension is selected from detected MIME type
+  response_status: 201
+  response: {data: {item: file item}}
+file_item:
+  fields:
+    id: integer
+    project_id: integer
+    record_type: project|completed_work|construction_journal_entry
+    record_id: integer
+    name: original filename
+    mime_type: string
+    size: integer bytes
+    file_type: photo|document
+    description: string|null
+    created_at: ISO-8601|null
+    download_url: short lived private S3 URL|null
+  download_url_ttl_minutes: 5

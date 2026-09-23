@@ -72,6 +72,24 @@ final class PaymentDocumentQueryService
 
         $this->applyFilters($query, $filters);
 
+        if (array_key_exists('project_ids', $filters)) {
+            $projectIds = array_map('intval', (array) $filters['project_ids']);
+            $query->where(static function (Builder $scope) use ($projectIds, $filters): void {
+                if ($projectIds !== []) {
+                    $scope->whereIn('project_id', $projectIds);
+                }
+                if (($filters['include_projectless'] ?? false) === true) {
+                    if ($projectIds === []) {
+                        $scope->whereNull('project_id');
+                    } else {
+                        $scope->orWhereNull('project_id');
+                    }
+                } elseif ($projectIds === []) {
+                    $scope->whereRaw('1 = 0');
+                }
+            });
+        }
+
         $sortBy = is_string($filters['sort_by'] ?? null) ? $filters['sort_by'] : 'created_at';
         $sortOrder = ($filters['sort_order'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
         $perPage = min(100, max(1, (int) ($filters['per_page'] ?? 100)));

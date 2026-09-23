@@ -130,6 +130,43 @@ final class QualityControlMobileTest extends TestCase
             ->assertJsonPath('errors.status.0', trans_message('quality_control.validation.status_invalid'));
     }
 
+    public function test_mobile_quality_defect_can_be_assigned_to_an_active_project_participant(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $assignee = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($assignee->id, ['is_owner' => false, 'is_active' => true]);
+        $project->users()->attach($context->user->id, ['role' => 'member', 'is_active' => true]);
+        $project->users()->attach($assignee->id, ['role' => 'member', 'is_active' => true]);
+        $this->allowAccess();
+        $defect = $this->createDefect($context, $project, 'open', 'major');
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/quality-control/defects/{$defect->id}/assignees")
+            ->assertOk()
+            ->assertJsonFragment(['id' => $assignee->id, 'name' => $assignee->name, 'email' => $assignee->email]);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/quality-control/defects/{$defect->id}/assign", [
+                'assigned_to' => $assignee->id,
+                'comment' => 'Назначено на объекте',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.assigned_to', $assignee->id)
+            ->assertJsonPath('data.status', QualityDefectStatusEnum::ASSIGNED->value);
+
+        $ineligible = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($ineligible->id, ['is_owner' => false, 'is_active' => true]);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/quality-control/defects/{$defect->id}/assign", [
+                'assigned_to' => $ineligible->id,
+            ])
+            ->assertStatus(422);
+
+        $this->assertSame($assignee->id, $defect->fresh()->assigned_to);
+    }
+
     public function test_mobile_quality_defect_list_uses_admin_paginated_envelope_without_project_id(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'foreman');

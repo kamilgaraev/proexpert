@@ -82,6 +82,7 @@ class ActReportingModule implements ModuleInterface, ConfigurableInterface
             'act_reports.view',
             'act_reports.create',
             'act_reports.edit',
+            'act_reports.field_confirm',
             'act_reports.delete',
             'act_reports.contracts.view',
             'act_reports.works.view',

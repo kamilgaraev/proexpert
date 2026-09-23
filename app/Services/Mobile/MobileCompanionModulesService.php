@@ -6,17 +6,20 @@ namespace App\Services\Mobile;
 
 use App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeProfile;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
+use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeWorkflowEvent;
 use App\BusinessModules\Features\ChangeManagement\Services\ChangeManagementService;
-use App\BusinessModules\Features\ExecutiveDocumentation\Enums\ExecutiveDocumentStatusEnum;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
-use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
 use App\BusinessModules\Features\VideoMonitoring\Models\VideoCamera;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Contract;
 use App\Models\Material;
+use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Mobile\MobileLegalArchiveService;
+use App\Services\Storage\FileService;
 use BackedEnum;
 use Carbon\CarbonInterface;
 use DomainException;
@@ -100,8 +103,10 @@ final class MobileCompanionModulesService
         private readonly AuthorizationService $authorizationService,
         private readonly AccessController $accessController,
         private readonly ChangeManagementService $changeManagementService,
-        private readonly ExecutiveDocumentationService $executiveDocumentationService,
         private readonly MobileProjectAccessResolver $projectAccess,
+        private readonly MobileLegalArchiveService $legalArchive,
+        private readonly MobilePtoService $ptoService,
+        private readonly FileService $fileService,
     ) {}
 
     public function canView(string $slug, User $user, int $organizationId): bool
@@ -157,12 +162,22 @@ final class MobileCompanionModulesService
     {
         $config = $this->moduleConfig($slug);
         $model = $this->findModel($slug, $user, $organizationId, $id);
+        $contractArchive = $slug === 'contract-management'
+            ? $this->contractLegalArchive($model, $user, $organizationId)
+            : null;
 
         return [
             'module' => $this->modulePayload($slug, $config),
             'item' => $this->listItem($slug, $model, $user, $organizationId),
             'sections' => $this->detailSections($slug, $model),
-            'related_items' => $this->relatedItems($slug, $model),
+            'related_items' => $this->relatedItems($slug, $model, $user, $organizationId),
+            'files' => $slug === 'contract-management'
+                ? ($contractArchive['files'] ?? [])
+                : $this->detailFiles($slug, $model, $user, $organizationId),
+            'result' => $this->detailResult($slug, $model, $contractArchive),
+            'comments' => $this->detailComments($slug, $model),
+            'workflow_history' => $this->workflowHistory($slug, $model),
+            'workflow' => $contractArchive['workflow_summary'] ?? null,
             'empty_state' => $this->emptyState($slug),
             'permission_state' => $this->permissionState(),
         ];
@@ -177,34 +192,34 @@ final class MobileCompanionModulesService
         array $payload
     ): array {
         if ($slug === 'change-management' && $action === 'submit') {
-            $this->ensureActionPermission($user, $organizationId, ['change-management.create', 'change-management.edit']);
             $change = $this->findModel($slug, $user, $organizationId, $id);
 
             if (! $change instanceof ChangeRequest) {
                 throw new DomainException(trans_message('mobile_companions.errors.item_not_found'));
             }
+            $this->ensureModelActionPermission($user, $organizationId, $change, ['change-management.create', 'change-management.edit']);
 
             $this->changeManagementService->submitChange($change);
 
             return $this->detail($slug, $id, $user, $organizationId);
         }
 
-        if ($slug === 'executive-documentation' && $action === 'acknowledge_transmittal') {
-            $this->ensureActionPermission($user, $organizationId, [
-                'executive-documentation.review',
-                'executive-documentation.approve',
-            ]);
-            $set = $this->findModel($slug, $user, $organizationId, $id);
-
-            if (! $set instanceof ExecutiveDocumentSet) {
+        if ($slug === 'change-management' && in_array($action, ['start_internal_review', 'start_customer_review', 'implement', 'close'], true)) {
+            $permissions = match ($action) {
+                'start_internal_review', 'implement' => ['change-management.edit'],
+                'start_customer_review', 'close' => ['change-management.change-orders.approve'],
+            };
+            $change = $this->findModel($slug, $user, $organizationId, $id);
+            if (! $change instanceof ChangeRequest) {
                 throw new DomainException(trans_message('mobile_companions.errors.item_not_found'));
             }
-
-            $this->executiveDocumentationService->acknowledgeTransmittal(
-                $set,
-                (int) $user->id,
-                $payload['comment'] ?? null
-            );
+            $this->ensureModelActionPermission($user, $organizationId, $change, $permissions);
+            match ($action) {
+                'start_internal_review' => $this->changeManagementService->startInternalReview($change),
+                'start_customer_review' => $this->changeManagementService->startCustomerReview($change),
+                'implement' => $this->changeManagementService->implementChange($change, $payload['comment'] ?? null),
+                'close' => $this->changeManagementService->closeChange($change),
+            };
 
             return $this->detail($slug, $id, $user, $organizationId);
         }
@@ -266,7 +281,7 @@ final class MobileCompanionModulesService
             'executive-documentation' => ExecutiveDocumentSet::query()
                 ->forOrganization($organizationId)
                 ->whereIn('project_id', $projectIds)
-                ->with(['project', 'documents.remarks', 'transmittal'])
+                ->with(['project', 'documents.remarks.createdBy:id,name', 'transmittal'])
                 ->withCount(['documents']),
             'project-management' => Project::query()
                 ->whereIn('projects.id', $projectIds)
@@ -800,16 +815,194 @@ final class MobileCompanionModulesService
         ];
     }
 
-    private function relatedItems(string $slug, Model $model): array
+    private function relatedItems(string $slug, Model $model, User $user, int $organizationId): array
     {
         return match ($slug) {
-            'executive-documentation' => $this->executiveRelatedItems($model),
+            'executive-documentation' => $this->executiveRelatedItems($model, $user, $organizationId),
             'brigades' => $this->brigadeRelatedItems($model),
             default => [],
         };
     }
 
-    private function executiveRelatedItems(Model $model): array
+    private function detailFiles(string $slug, Model $model, User $user, int $organizationId): array
+    {
+        if ($slug !== 'executive-documentation' || ! $model instanceof ExecutiveDocumentSet) {
+            return [];
+        }
+
+        $organization = Organization::query()->find($organizationId);
+
+        return $model->documents
+            ->flatMap(function (ExecutiveDocument $document) use ($organizationId, $organization): array {
+                $version = $document->versions->first();
+                $path = $version?->file_url;
+                if ($version === null || ! is_string($path) || ! str_starts_with($path, 'org-'.$organizationId.'/')) {
+                    return [];
+                }
+
+                $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+                $mimeType = match ($extension) {
+                    'pdf' => 'application/pdf',
+                    'jpg', 'jpeg' => 'image/jpeg',
+                    'png' => 'image/png',
+                    default => 'application/octet-stream',
+                };
+                $previewUrl = in_array($mimeType, ['application/pdf', 'image/jpeg', 'image/png'], true)
+                    ? $this->fileService->temporaryUrl($path, 5, $organization, ['ResponseContentDisposition' => 'inline'])
+                    : null;
+
+                return [[
+                    'id' => (int) $version->id,
+                    'record_id' => (int) $document->id,
+                    'name' => (string) ($document->title ?: basename($path)),
+                    'mime_type' => $mimeType,
+                    'preview_url' => $previewUrl,
+                    'download_url' => $this->fileService->temporaryDownloadUrl($path, 300),
+                ]];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function contractLegalArchive(Model $model, User $user, int $organizationId): ?array
+    {
+        if (! $model instanceof Contract || $model->legal_archive_document_id === null) {
+            return null;
+        }
+
+        try {
+            $document = $this->legalArchive->document($user, $organizationId, (int) $model->legal_archive_document_id);
+            $workflow = $this->legalArchive->summary($user, $document);
+        } catch (\Illuminate\Auth\Access\AuthorizationException|DomainException) {
+            return null;
+        }
+
+        return [
+            'document_id' => (int) $document->id,
+            'title' => (string) $document->title,
+            'status' => (string) $document->status,
+            'workflow_summary' => $workflow,
+            'files' => $document->versions->map(fn ($version): array => [
+                'id' => (int) $version->id,
+                'name' => (string) $version->original_filename,
+                'mime_type' => $version->mime_type,
+                'preview_url' => "/api/v1/mobile/legal-archive/documents/{$document->id}/versions/{$version->id}/preview",
+                'download_url' => "/api/v1/mobile/legal-archive/documents/{$document->id}/versions/{$version->id}/download",
+            ])->values()->all(),
+        ];
+    }
+
+    private function detailResult(string $slug, Model $model, ?array $contractArchive = null): ?array
+    {
+        if ($slug === 'contract-management' && $model instanceof Contract) {
+            return [
+                'status' => $this->statusValue($model->status),
+                'amount' => $this->moneyValue($model->total_amount),
+                'legal_archive_document_id' => $model->legal_archive_document_id === null ? null : (int) $model->legal_archive_document_id,
+                'legal_archive' => $contractArchive === null ? null : [
+                    'document_id' => $contractArchive['document_id'],
+                    'title' => $contractArchive['title'],
+                    'status' => $contractArchive['status'],
+                ],
+            ];
+        }
+
+        if ($slug === 'change-management' && $model instanceof ChangeRequest) {
+            return [
+                'status' => $this->statusValue($model->status),
+                'implementation_comment' => $model->implementation_comment,
+                'impact' => $model->impact === null ? null : [
+                    'cost_delta' => $this->moneyValue($model->impact->cost_delta),
+                    'schedule_delta_days' => $model->impact->schedule_delta_days,
+                    'requires_customer_approval' => (bool) $model->impact->requires_customer_approval,
+                ],
+            ];
+        }
+
+        if ($slug === 'executive-documentation' && $model instanceof ExecutiveDocumentSet) {
+            return [
+                'status' => $this->statusValue($model->status),
+                'transmitted_at' => $this->dateTimeValue($model->transmitted_at),
+                'transmittal' => $model->transmittal === null ? null : [
+                    'id' => (int) $model->transmittal->id,
+                    'number' => $model->transmittal->transmittal_number,
+                    'status' => $model->transmittal->status,
+                    'comment' => $model->transmittal->comment,
+                    'acknowledged_at' => $this->dateTimeValue($model->transmittal->acknowledged_at),
+                    'decision_comment' => $model->transmittal->decision_comment,
+                ],
+            ];
+        }
+
+        return null;
+    }
+
+    private function detailComments(string $slug, Model $model): array
+    {
+        if ($slug === 'change-management' && $model instanceof ChangeRequest) {
+            return $model->approvals
+                ->filter(static fn ($approval): bool => is_string($approval->comment) && trim($approval->comment) !== '')
+                ->map(fn ($approval): array => [
+                    'id' => (int) $approval->id,
+                    'author' => null,
+                    'body' => (string) $approval->comment,
+                    'status' => (string) $approval->status,
+                    'created_at' => $approval->decided_at?->toIso8601String(),
+                ])->values()->all();
+        }
+
+        if ($slug === 'executive-documentation' && $model instanceof ExecutiveDocumentSet) {
+            return $model->documents->flatMap(static fn (ExecutiveDocument $document): array => $document->remarks
+                ->map(static fn ($remark): array => [
+                    'id' => (int) $remark->id,
+                    'record_id' => (int) $document->id,
+                    'author' => $remark->createdBy?->name,
+                    'body' => (string) $remark->body,
+                    'status' => $remark->status instanceof BackedEnum ? $remark->status->value : (string) $remark->status,
+                    'response' => $remark->response,
+                    'created_at' => $remark->created_at?->toIso8601String(),
+                ])
+            )->values()->all();
+        }
+
+        return [];
+    }
+
+    private function workflowHistory(string $slug, Model $model): array
+    {
+        if ($slug === 'change-management' && $model instanceof ChangeRequest) {
+            return ChangeWorkflowEvent::query()
+                ->where('organization_id', $model->organization_id)
+                ->where('change_request_id', $model->id)
+                ->orderBy('version')
+                ->get(['id', 'event_type', 'prior_status', 'current_status', 'actor_id', 'occurred_at'])
+                ->map(static fn (ChangeWorkflowEvent $event): array => [
+                    'id' => (int) $event->id,
+                    'action' => $event->event_type,
+                    'from_status' => $event->prior_status,
+                    'to_status' => $event->current_status,
+                    'user_id' => $event->actor_id === null ? null : (int) $event->actor_id,
+                    'at' => $event->occurred_at?->toIso8601String(),
+                ])->all();
+        }
+
+        if ($slug === 'executive-documentation' && $model instanceof ExecutiveDocumentSet) {
+            return $model->transmittal === null ? [] : [[
+                'action' => 'transmit',
+                'status' => $model->transmittal->status,
+                'comment' => $model->transmittal->comment,
+                'at' => $model->transmittal->transmitted_at?->toIso8601String(),
+                'acknowledgement_comment' => $model->transmittal->acknowledgement_comment,
+                'acknowledged_at' => $model->transmittal->acknowledged_at?->toIso8601String(),
+                'decision_comment' => $model->transmittal->decision_comment,
+                'decision_at' => $model->transmittal->decision_at?->toIso8601String(),
+            ]];
+        }
+
+        return [];
+    }
+
+    private function executiveRelatedItems(Model $model, User $user, int $organizationId): array
     {
         /** @var ExecutiveDocumentSet $set */
         $set = $model;
@@ -821,6 +1014,8 @@ final class MobileCompanionModulesService
                 'subtitle' => $document->work_type_name,
                 'status' => $this->statusValue($document->status),
                 'status_label' => $this->statusLabel($this->statusValue($document->status)),
+                'available_actions' => $this->ptoService->availableExecutiveDocumentActions($user, $organizationId, (int) $document->id),
+                'actions_endpoint' => "/api/v1/mobile/pto/executive-documents/{$document->id}/actions/{action}",
             ])
             ->values()
             ->all();
@@ -873,28 +1068,26 @@ final class MobileCompanionModulesService
 
     private function availableActions(string $slug, Model $model, User $user, int $organizationId): array
     {
-        if ($slug === 'change-management' && $model instanceof ChangeRequest && $model->status === 'draft') {
-            if ($this->hasAnyPermission($user, $organizationId, ['change-management.create', 'change-management.edit'])) {
-                return [
-                    $this->action('submit', 'submit_change', false),
-                ];
-            }
-        }
-
-        if ($slug === 'executive-documentation' && $model instanceof ExecutiveDocumentSet) {
-            $model->loadMissing('transmittal');
-            $status = $this->statusValue($model->status);
-
-            if (
-                $status === ExecutiveDocumentStatusEnum::TRANSMITTED->value
-                && $model->transmittal !== null
-                && $model->transmittal->acknowledged_at === null
-                && $this->hasAnyPermission($user, $organizationId, ['executive-documentation.review', 'executive-documentation.approve'])
-            ) {
-                return [
-                    $this->action('acknowledge_transmittal', 'acknowledge_transmittal', true),
-                ];
-            }
+        if ($slug === 'change-management' && $model instanceof ChangeRequest) {
+            return match ($model->status) {
+                'draft' => $this->hasAnyProjectPermission($user, $organizationId, (int) $model->project_id, ['change-management.create', 'change-management.edit'])
+                    ? [$this->action('submit', 'submit_change', false)]
+                    : [],
+                'impact_assessment' => $this->hasAnyProjectPermission($user, $organizationId, (int) $model->project_id, ['change-management.edit'])
+                    ? [$this->action('start_internal_review', 'start_internal_review', false)]
+                    : [],
+                'internal_review' => $model->impact?->requires_customer_approval
+                    && $this->hasAnyProjectPermission($user, $organizationId, (int) $model->project_id, ['change-management.change-orders.approve'])
+                    ? [$this->action('start_customer_review', 'start_customer_review', false)]
+                    : [],
+                'approved' => $this->hasAnyProjectPermission($user, $organizationId, (int) $model->project_id, ['change-management.edit'])
+                    ? [$this->action('implement', 'implement_change', true)]
+                    : [],
+                'implemented' => $this->hasAnyProjectPermission($user, $organizationId, (int) $model->project_id, ['change-management.change-orders.approve'])
+                    ? [$this->action('close', 'close_change', false)]
+                    : [],
+                default => [],
+            };
         }
 
         return [];
@@ -954,9 +1147,24 @@ final class MobileCompanionModulesService
         return false;
     }
 
-    private function ensureActionPermission(User $user, int $organizationId, array $permissions): void
+    private function hasAnyProjectPermission(User $user, int $organizationId, int $projectId, array $permissions): bool
     {
-        if ($this->hasAnyPermission($user, $organizationId, $permissions)) {
+        foreach ($permissions as $permission) {
+            if ($this->authorizationService->can($user, $permission, [
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'strict_project_scope' => true,
+            ])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function ensureModelActionPermission(User $user, int $organizationId, ChangeRequest $change, array $permissions): void
+    {
+        if ($this->hasAnyProjectPermission($user, $organizationId, (int) $change->project_id, $permissions)) {
             return;
         }
 

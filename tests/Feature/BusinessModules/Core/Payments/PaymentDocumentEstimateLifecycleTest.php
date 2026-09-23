@@ -281,6 +281,66 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
         self::assertSame(1, PaymentTransaction::query()->where('payment_document_id', $document->id)->count());
     }
 
+    public function test_reused_payment_idempotency_key_rejects_changed_payment_details(): void
+    {
+        foreach ([
+            ['notes' => 'second note', 'metadata' => ['source' => 'field']],
+            ['notes' => 'first note', 'metadata' => ['source' => 'admin']],
+            ['notes' => 'first note', 'metadata' => ['source' => 'field'], 'reference_number' => 'CHANGED-REFERENCE'],
+            ['notes' => 'first note', 'metadata' => ['source' => 'field'], 'bank_transaction_id' => 'CHANGED-BANK-EVENT'],
+            ['notes' => 'first note', 'metadata' => ['source' => 'field'], 'budget_override_reason' => 'Другая причина'],
+        ] as $index => $changedPayload) {
+            $item = $this->createEstimateItem(['quantity' => 10, 'unit_price' => 100, 'total_amount' => 1000]);
+            $document = $this->createDocumentWithSplit($item, [
+                'document_number' => 'PAY-IDEMPOTENT-FINGERPRINT-'.($index + 1),
+                'status' => PaymentDocumentStatus::SCHEDULED->value,
+            ]);
+            $original = [
+                'payment_method' => 'bank_transfer',
+                'transaction_date' => '2026-08-23',
+                'value_date' => '2026-08-24',
+                'idempotency_key' => 'payment-fingerprint-'.($index + 1),
+                'notes' => 'first note',
+                'metadata' => ['source' => 'field'],
+                'bank_transaction_id' => 'BANK-FINGERPRINT-'.($index + 1),
+            ];
+            $this->service->registerPayment($document, 400, $original);
+
+            try {
+                $this->service->registerPayment($document->fresh(), 400, array_merge($original, $changedPayload));
+                self::fail('Changed payment payload was accepted with a reused idempotency key');
+            } catch (\DomainException $exception) {
+                self::assertSame(trans_message('payments.validation.idempotency_conflict'), $exception->getMessage());
+            }
+        }
+    }
+
+    public function test_payment_retry_without_value_date_survives_a_change_of_day(): void
+    {
+        $item = $this->createEstimateItem(['quantity' => 10, 'unit_price' => 100, 'total_amount' => 1000]);
+        $document = $this->createDocumentWithSplit($item, [
+            'document_number' => 'PAY-IDEMPOTENT-NEXT-DAY',
+            'status' => PaymentDocumentStatus::SCHEDULED->value,
+        ]);
+        $payload = [
+            'payment_method' => 'bank_transfer',
+            'transaction_date' => '2026-09-23',
+            'idempotency_key' => 'payment-next-day-retry',
+        ];
+
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-09-23 23:59:00'));
+        try {
+            $this->service->registerPayment($document, '400.00', $payload);
+            $this->travelTo(\Illuminate\Support\Carbon::parse('2026-09-24 00:01:00'));
+            $replayed = $this->service->registerPayment($document->fresh(), '400.00', $payload);
+        } finally {
+            $this->travelBack();
+        }
+
+        self::assertSame('400.00', $replayed->paid_amount);
+        self::assertSame(1, PaymentTransaction::query()->where('payment_document_id', $document->id)->count());
+    }
+
     public function test_same_bank_event_cannot_be_applied_twice_with_different_idempotency_keys(): void
     {
         $item = $this->createEstimateItem(['quantity' => 10, 'unit_price' => 100, 'total_amount' => 1000]);

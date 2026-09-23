@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\HandoverAcceptance\Http\Resources;
 
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceChecklist;
+use App\Http\Resources\MobileEvidencePhotoPresenter;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -31,6 +32,7 @@ final class AcceptanceChecklistResource extends JsonResource
                 'is_required' => $item->is_required,
                 'status' => $item->status,
                 'comment' => $item->comment,
+                'photos' => $item->relationLoaded('files') ? MobileEvidencePhotoPresenter::present($item->files) : [],
                 'available_actions' => $item->status === 'pending' ? ['accept', 'reject'] : [],
             ])->values()->all() : [],
         ];

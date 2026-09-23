@@ -305,6 +305,17 @@ final class CrmRegistryService
             ->forOrganization($organizationId)
             ->with(['company', 'primaryContact', 'owner', 'pipeline', 'stage', 'source']);
 
+        if (array_key_exists('allowed_project_ids', $filters)) {
+            $query->where(function (Builder $scope) use ($filters): void {
+                if ($filters['include_projectless'] ?? false) {
+                    $scope->whereNull('project_id')
+                        ->orWhereIn('project_id', $filters['allowed_project_ids']);
+                } else {
+                    $scope->whereIn('project_id', $filters['allowed_project_ids']);
+                }
+            });
+        }
+
         $this->applyArchiveFilter($query, $filters);
 
         if (!empty($filters['q'])) {
@@ -316,6 +327,7 @@ final class CrmRegistryService
             'status',
             'owner_user_id',
             'company_id',
+            'project_id',
             'source_id',
             'pipeline_id',
             'stage_id',
@@ -333,6 +345,24 @@ final class CrmRegistryService
         $query = CrmActivity::query()
             ->forOrganization($organizationId)
             ->with(['owner', 'company', 'contact', 'lead', 'deal']);
+
+        if (array_key_exists('allowed_project_ids', $filters)) {
+            $query->where(function (Builder $scope) use ($filters): void {
+                $dealScope = function (Builder $deal) use ($filters): void {
+                    if ($filters['include_projectless'] ?? false) {
+                        $deal->whereNull('project_id')
+                            ->orWhereIn('project_id', $filters['allowed_project_ids']);
+                    } else {
+                        $deal->whereIn('project_id', $filters['allowed_project_ids']);
+                    }
+                };
+                if ($filters['include_projectless'] ?? false) {
+                    $scope->whereNull('deal_id')->orWhereHas('deal', $dealScope);
+                } else {
+                    $scope->whereHas('deal', $dealScope);
+                }
+            });
+        }
 
         $this->applyArchiveFilter($query, $filters);
 

@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptIdempoten
 use App\BusinessModules\Features\Procurement\Http\Resources\MobileProcurementApprovalResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\MobilePurchaseOrderResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\MobilePurchaseRequestResource;
+use App\BusinessModules\Features\Procurement\Http\Requests\StoreMobilePurchaseRequestRequest;
 use App\BusinessModules\Features\Procurement\Services\MobileProcurementService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
@@ -25,7 +26,7 @@ final class ProcurementController extends Controller
 {
     public function __construct(
         private readonly MobileProcurementService $service,
-        private readonly AuthorizationService $authorizationService
+        private readonly AuthorizationService $authorizationService,
     ) {}
 
     public function summary(Request $request): JsonResponse
@@ -110,6 +111,29 @@ final class ProcurementController extends Controller
             return MobileResponse::error($exception->getMessage(), 404);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'purchase_request');
+        }
+    }
+
+    public function storePurchaseRequest(StoreMobilePurchaseRequestRequest $request): JsonResponse
+    {
+        try {
+            $purchaseRequest = $this->service->createPurchaseRequest(
+                $this->organizationId($request),
+                $this->mobileUser($request),
+                $request->validated()
+            );
+
+            return MobileResponse::success(
+                ['item' => (new MobilePurchaseRequestResource($purchaseRequest))->resolve($request)],
+                trans_message('procurement.purchase_requests.created'),
+                201
+            );
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (ValidationException $exception) {
+            return $this->validationFailed($exception);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'purchase_request_store');
         }
     }
 

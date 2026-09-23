@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\SafetyManagement\Http\Resources;
 
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
+use App\Http\Resources\MobileEvidencePhotoPresenter;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -35,6 +36,7 @@ final class SafetyViolationResource extends JsonResource
             'due_date' => $violation->due_date?->format('Y-m-d'),
             'resolved_at' => $violation->resolved_at?->toIso8601String(),
             'resolution_comment' => $violation->resolution_comment,
+            'photos' => $violation->relationLoaded('files') ? MobileEvidencePhotoPresenter::present($violation->files) : [],
             'workflow_summary' => [
                 'status' => $violation->status,
                 'stage_label' => trans_message("safety_management.violation_statuses.{$violation->status}"),

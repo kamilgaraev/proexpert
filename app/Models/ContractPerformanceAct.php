@@ -142,4 +142,9 @@ class ContractPerformanceAct extends Model
     {
         return $this->morphMany(File::class, 'fileable');
     }
+
+    public function fieldConfirmations(): HasMany
+    {
+        return $this->hasMany(ActFieldConfirmation::class, 'act_id');
+    }
 }

@@ -84,6 +84,7 @@ class ProjectManagementModule implements ModuleInterface, ConfigurableInterface
             'projects.view',
             'projects.create', 
             'projects.edit',
+            'projects.participants.assign',
             'projects.delete',
             'projects.archive',
             'projects.analytics',

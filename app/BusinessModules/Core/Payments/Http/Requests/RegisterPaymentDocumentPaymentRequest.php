@@ -6,7 +6,7 @@ namespace App\BusinessModules\Core\Payments\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-final class RegisterPaymentDocumentPaymentRequest extends FormRequest
+class RegisterPaymentDocumentPaymentRequest extends FormRequest
 {
     protected function prepareForValidation(): void
     {

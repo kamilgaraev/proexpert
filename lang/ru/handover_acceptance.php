@@ -28,6 +28,7 @@ return [
         'package_document_not_found' => 'Документ комплекта передачи не найден.',
         'organization_not_found' => 'Организация не найдена.',
         'document_upload_failed' => 'Не удалось загрузить документ комплекта передачи.',
+        'photo_upload_failed' => 'Не удалось загрузить фотографию доказательства.',
         'document_requires_explicit_approval' => 'Документ можно согласовать только отдельным действием после его добавления.',
         'location_parent_invalid' => 'Родительская локация относится к другому проекту.',
         'invalid_status' => 'Действие недоступно для текущего статуса приемки.',
@@ -57,5 +58,8 @@ return [
         'document_file_required' => 'Приложите файл документа',
         'document_file_invalid' => 'Можно загрузить PDF, JPG, JPEG или PNG',
         'document_file_too_large' => 'Размер файла не должен превышать 20 МБ',
+        'photos_limit' => 'Можно приложить не более пяти фотографий',
+        'photo_invalid' => 'Можно приложить фотографию в формате JPG или PNG',
+        'photo_too_large' => 'Размер фотографии не должен превышать 10 МБ',
     ],
 ];

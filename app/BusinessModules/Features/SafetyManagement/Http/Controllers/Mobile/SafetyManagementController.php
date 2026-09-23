@@ -11,8 +11,11 @@ use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectio
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyViolationResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyWorkPermitResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Requests\Mobile\ResolveViolationRequest;
+use App\BusinessModules\Features\SafetyManagement\Http\Requests\Mobile\StoreViolationRequest;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementService;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
 use App\Models\User;
@@ -492,25 +495,14 @@ final class SafetyManagementController extends Controller
         }
     }
 
-    public function storeViolation(Request $request): JsonResponse
+    public function storeViolation(StoreViolationRequest $request): JsonResponse
     {
         try {
-            $validated = $this->validated($request, [
-                'project_id' => ['required', 'integer'],
-                'title' => ['required', 'string', 'max:255'],
-                'severity' => ['required', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
-                'location_name' => ['nullable', 'string', 'max:255'],
-                'description' => ['nullable', 'string', 'max:5000'],
-                'due_date' => ['nullable', 'date'],
-                'corrective_action' => ['nullable', 'string', 'max:5000'],
-                'metadata' => ['nullable', 'array'],
-            ]);
-
             return MobileResponse::success(
-                new SafetyViolationResource($this->service->createViolation(
+                new SafetyViolationResource($this->service->createMobileViolation(
                     (int) $request->attributes->get('current_organization_id'),
                     (int) $request->user()?->id,
-                    $validated
+                    $request->validated(),
                 )),
                 trans_message('safety_management.messages.violation_created'),
                 201
@@ -521,6 +513,8 @@ final class SafetyManagementController extends Controller
                 422,
                 $exception->errors()
             );
+        } catch (BusinessLogicException $exception) {
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() ?: 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -577,22 +571,17 @@ final class SafetyManagementController extends Controller
         }
     }
 
-    public function resolveViolation(Request $request, int $id): JsonResponse
+    public function resolveViolation(ResolveViolationRequest $request, int $id): JsonResponse
     {
         try {
-            $validated = $this->validated($request, ['resolution_comment' => ['required', 'string', 'max:1000']]);
-            $violation = $this->service->findViolation((int) $request->attributes->get('current_organization_id'), $id);
+            $validated = $request->validated();
 
-            if ($violation === null) {
-                return MobileResponse::error(trans_message('safety_management.errors.violation_not_found'), 404);
-            }
-
-            $this->assertProjectAccess($request, $violation->project_id);
-
-            return MobileResponse::success(new SafetyViolationResource($this->service->resolveViolation(
-                $violation,
+            return MobileResponse::success(new SafetyViolationResource($this->service->resolveMobileViolation(
+                (int) $request->attributes->get('current_organization_id'),
                 (int) $request->user()?->id,
-                $validated['resolution_comment']
+                $id,
+                $validated['resolution_comment'],
+                $validated['photos'] ?? [],
             )));
         } catch (ValidationException $exception) {
             return MobileResponse::error(
@@ -600,6 +589,8 @@ final class SafetyManagementController extends Controller
                 422,
                 $exception->errors()
             );
+        } catch (BusinessLogicException $exception) {
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() ?: 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {

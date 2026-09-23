@@ -41,7 +41,8 @@
       "advance_transactions.view", "users.advance_balance.view"
     ],
     "act-reporting": [
-      "act_reports.view"
+      "act_reports.view",
+      "act_reports.field_confirm"
     ],
     "time-tracking": [
       "time_tracking.view", "time_tracking.create", "time_tracking.edit", "time_tracking.submit"

@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\HandoverAcceptance\Models;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 final class AcceptanceFinding extends Model
@@ -49,5 +50,10 @@ final class AcceptanceFinding extends Model
     public function workRework(): BelongsTo
     {
         return $this->belongsTo(WorkRework::class);
+    }
+
+    public function files(): MorphMany
+    {
+        return $this->morphMany(\App\Models\File::class, 'fileable');
     }
 }
