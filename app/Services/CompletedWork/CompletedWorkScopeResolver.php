@@ -7,6 +7,7 @@ namespace App\Services\CompletedWork;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
+use App\Enums\ProjectOrganizationRole;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
 use App\Models\Contract;
@@ -138,9 +139,22 @@ final class CompletedWorkScopeResolver
     public function responsibleOrganizationIds(Project $project, int $organizationId): array
     {
         $ownerOrganizationId = (int) $project->organization_id;
+        $executingRoles = [
+            ProjectOrganizationRole::GENERAL_CONTRACTOR->value,
+            ProjectOrganizationRole::CONTRACTOR->value,
+            ProjectOrganizationRole::SUBCONTRACTOR->value,
+        ];
         $participantIds = ProjectOrganization::query()
             ->where('project_id', $project->id)
-            ->where('is_active', true);
+            ->where('is_active', true)
+            ->where(function ($query) use ($executingRoles): void {
+                $query->whereIn('role_new', $executingRoles)
+                    ->orWhere(function ($fallback) use ($executingRoles): void {
+                        $fallback->where(function ($missingRole): void {
+                            $missingRole->whereNull('role_new')->orWhere('role_new', '');
+                        })->whereIn('role', $executingRoles);
+                    });
+            });
 
         if ($organizationId !== $ownerOrganizationId) {
             return $participantIds->where('organization_id', $organizationId)->exists()

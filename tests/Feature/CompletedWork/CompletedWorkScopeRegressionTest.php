@@ -271,6 +271,7 @@ final class CompletedWorkScopeRegressionTest extends TestCase
         $owner = AdminApiTestContext::create();
         $participant = AdminApiTestContext::create();
         $other = AdminApiTestContext::create();
+        $customer = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $owner->organization->id]);
         foreach ([$participant, $other] as $member) {
             $project->organizations()->attach($member->organization->id, [
@@ -283,6 +284,12 @@ final class CompletedWorkScopeRegressionTest extends TestCase
                 $member->user->id => ['role' => 'member', 'is_active' => true],
             ]);
         }
+        $project->organizations()->attach($customer->organization->id, [
+            'role' => ProjectOrganizationRole::CONTRACTOR->value,
+            'role_new' => ProjectOrganizationRole::CUSTOMER->value,
+            'is_active' => true,
+            'added_by_user_id' => $owner->user->id,
+        ]);
         Contractor::query()->create([
             'organization_id' => $owner->organization->id,
             'source_organization_id' => $participant->organization->id,
@@ -325,6 +332,11 @@ final class CompletedWorkScopeRegressionTest extends TestCase
             'user_id' => $other->user->id,
         ])->assertUnprocessable();
 
+        $this->withHeaders($owner->authHeaders())->postJson($url, [
+            ...$payload,
+            'user_id' => $customer->user->id,
+        ])->assertUnprocessable();
+
         $dto = CompletedWorkDTO::fromModel(CompletedWork::make([
             'organization_id' => $owner->organization->id,
             'project_id' => $project->id,
@@ -339,6 +351,24 @@ final class CompletedWorkScopeRegressionTest extends TestCase
         try {
             app(CompletedWorkService::class)->create($dto, $projectContext, $participant->user);
             self::fail('A contractor cannot assign a user from another project participant.');
+        } catch (BusinessLogicException $exception) {
+            self::assertSame(404, $exception->getCode());
+        }
+
+        $customerDto = CompletedWorkDTO::fromModel(CompletedWork::make([
+            'organization_id' => $owner->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $customer->user->id,
+            'quantity' => 1,
+            'completion_date' => '2026-09-24',
+            'status' => CompletedWork::STATUS_DRAFT,
+            'work_origin_type' => CompletedWork::ORIGIN_MANUAL,
+            'planning_status' => CompletedWork::PLANNING_REQUIRES_SCHEDULE,
+        ]));
+        $ownerContext = app(ProjectContextService::class)->getContext($project, $owner->organization);
+        try {
+            app(CompletedWorkService::class)->create($customerDto, $ownerContext, $owner->user);
+            self::fail('The project owner cannot assign a customer user to completed work.');
         } catch (BusinessLogicException $exception) {
             self::assertSame(404, $exception->getCode());
         }
