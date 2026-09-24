@@ -11,6 +11,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
+use App\Models\ContractOrganizationView;
 use App\Models\Contractor;
 use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
@@ -303,6 +304,45 @@ class ActReportsPreviewTest extends TestCase
             'quantity' => 2,
             'amount' => 2000,
         ]);
+    }
+
+    public function test_shared_contract_participant_can_create_act_but_foreign_organization_cannot(): void
+    {
+        [$owner, , $contract, $project] = $this->createContractFixture('WIZARD-SHARED');
+        $participant = Organization::factory()->create();
+        $participantUser = User::factory()->create(['current_organization_id' => $participant->id]);
+        $foreign = Organization::factory()->create();
+        $foreignUser = User::factory()->create(['current_organization_id' => $foreign->id]);
+        ContractOrganizationView::create(['contract_id' => $contract->id, 'organization_id' => $participant->id]);
+        $work = $this->createJournalWork($owner->id, $project->id, $contract->id, 20261, 1);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $payload = [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-SHARED',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [['completed_work_id' => $work->id, 'quantity' => 1]],
+        ];
+
+        $this->actingAs($foreignUser, 'api_admin')
+            ->postJson('/api/v1/admin/act-reports/create-from-wizard', $payload)
+            ->assertNotFound();
+        $this->actingAs($participantUser, 'api_admin')
+            ->postJson('/api/v1/admin/act-reports/create-from-wizard', $payload)
+            ->assertCreated()
+            ->assertJsonPath('data.contract_id', $contract->id);
+        $this->assertDatabaseCount('contract_performance_acts', 1);
+
+        $contract->forceFill(['status' => 'draft'])->saveQuietly();
+        $payload['act_document_number'] = 'KS-2-SHARED-DRAFT';
+        $this->actingAs($participantUser, 'api_admin')
+            ->postJson('/api/v1/admin/act-reports/create-from-wizard', $payload)
+            ->assertUnprocessable();
+        $this->assertDatabaseCount('contract_performance_acts', 1);
     }
 
     public function test_create_from_wizard_rejects_amount_above_fixed_contract_balance(): void

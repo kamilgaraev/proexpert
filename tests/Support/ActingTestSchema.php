@@ -71,6 +71,7 @@ trait ActingTestSchema
             'contract_project',
             'contract_organization_view_events',
             'contract_organization_views',
+            'contract_parties',
             'contracts',
             'contractors',
             'projects',
@@ -211,6 +212,13 @@ trait ActingTestSchema
             $table->boolean('is_multi_project')->default(false);
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('contract_parties', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('contract_id');
+            $table->string('side');
+            $table->timestamps();
         });
 
         Schema::create('contract_organization_views', function (Blueprint $table): void {
