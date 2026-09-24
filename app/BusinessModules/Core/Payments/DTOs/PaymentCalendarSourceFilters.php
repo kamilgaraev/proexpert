@@ -47,13 +47,13 @@ final readonly class PaymentCalendarSourceFilters
         $this->sourceType = $this->normalizeNullableString($sourceType);
     }
 
-    public function matches(PaymentCalendarItem $item): bool
+    public function matches(PaymentCalendarItem|UndatedPaymentCalendarItem $item): bool
     {
         if ($item->organizationId !== $this->organizationId) {
             return false;
         }
 
-        if (!$this->dateMatches($item)) {
+        if ($item instanceof PaymentCalendarItem && !$this->dateMatches($item)) {
             return false;
         }
 

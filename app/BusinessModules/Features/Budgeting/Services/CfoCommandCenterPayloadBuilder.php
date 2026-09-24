@@ -86,6 +86,8 @@ final class CfoCommandCenterPayloadBuilder
                 'first_gap_date' => $cashGap['first_gap_date'] ?? null,
                 'max_gap_amount' => $cashGap['max_gap_amount'] ?? 0.0,
                 'highest_risk_level' => $cashGap['highest_risk_level'] ?? 'low',
+                'complete' => $cashGap['complete'] ?? true,
+                'undated' => $cashGap['undated'] ?? ['items_count' => 0, 'totals_by_currency' => []],
             ],
             'payments' => [
                 'items_count' => (int) ($calendar['items_count'] ?? 0),
@@ -149,6 +151,18 @@ final class CfoCommandCenterPayloadBuilder
         $approvals = $aggregates['approvals']['summary'] ?? [];
         $oneCExchange = $aggregates['one_c_exchange']['summary'] ?? [];
         $projectPortfolio = $aggregates['project_portfolio']['summary'] ?? [];
+
+        if ((int) ($cashGap['undated']['items_count'] ?? 0) > 0) {
+            $flags[] = $this->flag(
+                'payment_due_date_missing',
+                'warning',
+                'payments.undated.label',
+                'cash_gap',
+                $cashGap['undated'],
+                'payments.undated.forecast_warning',
+                '/payments?tab=calendar',
+            );
+        }
 
         if (($cashGap['available'] ?? false) === false || ($cashGap['unavailable_currencies'] ?? []) !== []) {
             $flags[] = $this->flag(

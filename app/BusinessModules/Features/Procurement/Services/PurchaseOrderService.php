@@ -52,6 +52,7 @@ class PurchaseOrderService
         private readonly PurchaseReceiptDocumentService $receiptDocumentService,
         private readonly PurchaseReceiptReturnAuthorizer $returnAuthorizer,
         private readonly PurchaseReceiptReturnUnitOfWork $returnUnitOfWork,
+        private readonly PurchaseOrderPaymentScheduleService $paymentScheduleService,
     ) {}
 
     public function returnReceiptLine(
@@ -86,6 +87,8 @@ class PurchaseOrderService
                 $receiptLineId,
                 $normalizedQuantity,
             ): PurchaseOrder {
+                PurchaseOrder::query()->where('organization_id', $organizationId)
+                    ->lockForUpdate()->findOrFail($purchaseOrderId);
                 $existing = PurchaseReceiptReturn::query()
                     ->where('organization_id', $organizationId)
                     ->where('idempotency_key', $idempotencyKey)
@@ -148,6 +151,8 @@ class PurchaseOrderService
                     'payload_fingerprint' => $payloadFingerprint,
                 ]);
 
+                $this->paymentScheduleService->synchronize($line->purchaseReceipt->purchaseOrder);
+
                 return $this->freshReceivedPurchaseOrder($line->purchaseReceipt->purchaseOrder);
             },
         );
@@ -165,6 +170,8 @@ class PurchaseOrderService
             $organizationId,
             $idempotencyKey,
             function () use ($actor, $idempotencyKey, $organizationId, $purchaseOrderId, $reasonCode, $receiptLineId): PurchaseOrder {
+                PurchaseOrder::query()->where('organization_id', $organizationId)
+                    ->lockForUpdate()->findOrFail($purchaseOrderId);
                 $line = $this->returnAuthorizer->assertCanReturn(
                     $actor,
                     $organizationId,
@@ -196,6 +203,10 @@ class PurchaseOrderService
                     'reversal_idempotency_key' => $idempotencyKey,
                 ])->save();
                 $this->reportingLifecycle->receiptReversed($line->fresh(), $reasonCode, $occurredAt);
+
+                $order = $line->purchaseReceipt->purchaseOrder;
+                $order->update(['status' => $this->lifecycleService->resolveOrderReceiptStatus($order)]);
+                $this->paymentScheduleService->synchronize($order);
 
                 return $this->freshReceivedPurchaseOrder($line->purchaseReceipt->purchaseOrder);
             },
@@ -605,6 +616,7 @@ class PurchaseOrderService
         $warehouse = $ownerState['warehouse'];
         $orderItems = $ownerState['order_items'];
 
+        $this->paymentScheduleService->synchronize($order);
         $this->loadPurchaseReceiptMilestoneRelations($order, $receipt);
         $onReceived($order, $receipt, $userId, $receivedAt);
         $this->recordPurchaseReceiptAudit($order, $receipt, $warehouse, $items, $userId);
@@ -668,6 +680,7 @@ class PurchaseOrderService
         ]);
 
         $receivedItems = [];
+        $postedAt = $this->ownerWorkflowRuntime->occurredAt()->format(DATE_ATOM);
         foreach ($items as $item) {
             $quantity = (float) $item['quantity_received'];
             $price = (float) $item['price'];
@@ -677,7 +690,10 @@ class PurchaseOrderService
                 'quantity_received' => $quantity,
                 'price' => $price,
                 'total_amount' => round($quantity * $price, 2),
-                'metadata' => $item['metadata'] ?? null,
+                'metadata' => array_merge($item['metadata'] ?? [], [
+                    'reporting_source_version' => 1,
+                    'reporting_posted_at' => $postedAt,
+                ]),
             ]);
             $item['receipt_line_id'] = (int) $receiptLine->id;
             $receivedItems[] = $item;
@@ -699,6 +715,10 @@ class PurchaseOrderService
             $receivedItems,
             $userId,
         ));
+
+        foreach ($receipt->lines()->get() as $line) {
+            $this->reportingLifecycle->recordSupplyReceipt($line);
+        }
 
         return [
             'receipt' => $receipt,

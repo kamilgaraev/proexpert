@@ -367,6 +367,148 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         $this->assertSame(PaymentCalendarItem::BUCKET_RESERVED, $items[0]->bucket);
     }
 
+    public function test_managed_document_and_reservation_do_not_duplicate_installments_or_invent_due_date(): void
+    {
+        $document = $this->paymentDocument([
+            'schedule_source' => 'procurement',
+            'due_date' => null,
+            'scheduled_at' => null,
+        ]);
+        $reservation = $this->budgetLimitReservation();
+        $reservation->setRelation('paymentDocument', $document);
+
+        $this->assertNull($this->service->fromPaymentDocument($document, $this->date('2026-01-20')));
+        $this->assertNull($this->service->fromBudgetLimitReservation($reservation, $this->date('2026-01-20')));
+    }
+
+    public function test_managed_installment_uses_its_own_due_date_and_cannot_be_dragged_to_another_day(): void
+    {
+        $document = $this->paymentDocument([
+            'schedule_source' => 'procurement',
+        ]);
+        $schedule = $this->paymentSchedule([
+            'source_key' => 'procurement:receipt:27',
+            'due_date' => '2026-01-25',
+            'amount' => 600,
+            'paid_amount' => 100,
+        ]);
+        $schedule->setRelation('paymentDocument', $document);
+
+        $item = $this->service->fromPaymentSchedule($schedule, $this->date('2026-01-20'));
+
+        $this->assertInstanceOf(PaymentCalendarItem::class, $item);
+        $this->assertSame('2026-01-25', $item->date);
+        $this->assertSame('500.00', $item->remainingAmount);
+        $this->assertSame(PaymentCalendarItem::BUCKET_SCHEDULED, $item->bucket);
+        $this->assertFalse($item->editable);
+    }
+
+    public function test_cancelled_document_does_not_leave_payable_installments_in_calendar(): void
+    {
+        $schedule = $this->paymentSchedule(['source_key' => 'procurement:receipt:27']);
+        $schedule->setRelation('paymentDocument', $this->paymentDocument([
+            'status' => PaymentDocumentStatus::CANCELLED->value,
+            'schedule_source' => 'procurement',
+        ]));
+
+        $this->assertNull($this->service->fromPaymentSchedule($schedule, $this->date('2026-01-20')));
+    }
+
+    public function test_metadata_cannot_hide_an_ordinary_payment_document(): void
+    {
+        $document = $this->paymentDocument([
+            'metadata' => json_encode(['payment_schedule_source' => 'procurement']),
+        ]);
+
+        $this->assertInstanceOf(PaymentCalendarItem::class, $this->service->fromPaymentDocument($document));
+    }
+
+    public function test_undated_installment_keeps_unpaid_amount_without_inventing_a_calendar_day(): void
+    {
+        $schedule = $this->paymentSchedule([
+            'due_date' => null,
+            'source_key' => 'procurement:unreceived',
+            'amount' => '600.01',
+            'paid_amount' => '100.00',
+        ]);
+        $schedule->setRelation('paymentDocument', $this->paymentDocument(['schedule_source' => 'procurement']));
+
+        $item = $this->service->fromUndatedPaymentSchedule($schedule);
+
+        $this->assertNotNull($item);
+        $this->assertSame('500.01', $item->remainingAmount);
+        $this->assertNull($item->toArray()['date']);
+        $this->assertSame('undated', $item->bucket);
+        $this->assertFalse($item->toArray()['editable']);
+        $this->assertSame(118, $item->toArray()['drill_down']['payment_document_id']);
+        $this->assertNull($this->service->fromPaymentSchedule($schedule));
+
+        $base = ['organizationId' => 42, 'periodStart' => '2030-01-01', 'periodEnd' => '2030-01-31'];
+        $this->assertTrue((new PaymentCalendarSourceFilters(...$base))->matches($item));
+        foreach ([
+            ['organizationId' => 7], ['projectId' => 99], ['counterpartyId' => 99],
+            ['budgetArticleId' => 99], ['responsibilityCenterId' => 99], ['currency' => 'USD'],
+            ['direction' => 'inflow'], ['bucket' => 'overdue'], ['sourceType' => 'payment_transaction'],
+        ] as $filter) {
+            $this->assertFalse((new PaymentCalendarSourceFilters(...array_replace($base, $filter)))->matches($item));
+        }
+    }
+
+    public function test_new_installment_with_null_paid_amount_is_treated_as_unpaid(): void
+    {
+        $schedule = $this->paymentSchedule(['amount' => '2100.00', 'paid_amount' => null]);
+        $schedule->setRelation('paymentDocument', $this->paymentDocument());
+
+        $dated = $this->service->fromPaymentSchedule($schedule);
+        $this->assertNotNull($dated);
+        $this->assertSame('2100.00', $dated->remainingAmount);
+
+        $schedule->due_date = null;
+        $undated = $this->service->fromUndatedPaymentSchedule($schedule);
+        $this->assertNotNull($undated);
+        $this->assertSame('2100.00', $undated->remainingAmount);
+    }
+
+    public function test_undated_projection_excludes_dated_paid_cancelled_and_zero_installments(): void
+    {
+        foreach ([
+            ['due_date' => '2026-01-10'], ['status' => 'paid'],
+            ['amount' => 0], ['amount' => 100, 'paid_amount' => 100],
+        ] as $attributes) {
+            $schedule = $this->paymentSchedule(array_replace(['due_date' => null], $attributes));
+            $schedule->setRelation('paymentDocument', $this->paymentDocument(['schedule_source' => 'procurement']));
+            $this->assertNull($this->service->fromUndatedPaymentSchedule($schedule));
+        }
+        $schedule = $this->paymentSchedule(['due_date' => null]);
+        $schedule->setRelation('paymentDocument', $this->paymentDocument(['status' => PaymentDocumentStatus::CANCELLED->value]));
+        $this->assertNull($this->service->fromUndatedPaymentSchedule($schedule));
+    }
+
+    public function test_undated_summary_keeps_currencies_separate_and_deduplicates_rows(): void
+    {
+        $items = [];
+        foreach ([['RUB', 42], ['USD', 42], ['RUB', 7]] as $index => [$currency, $organizationId]) {
+            $schedule = $this->paymentSchedule([
+                'id' => 501 + $index, 'due_date' => null, 'amount' => '100.01', 'paid_amount' => '0.02',
+            ]);
+            $schedule->setRelation('paymentDocument', $this->paymentDocument([
+                'currency' => $currency, 'organization_id' => $organizationId,
+            ]));
+            $items[] = $this->service->fromUndatedPaymentSchedule($schedule);
+        }
+        $items[] = $items[0];
+        $summary = $this->service->summarizeUndated($items, new PaymentCalendarSourceFilters(
+            organizationId: 42, periodStart: '2030-01-01', periodEnd: '2030-01-31',
+        ));
+
+        $this->assertSame(2, $summary['items_count']);
+        $this->assertCount(2, $summary['items']);
+        $this->assertSame([
+            'RUB' => ['inflow' => '0.00', 'outflow' => '99.99'],
+            'USD' => ['inflow' => '0.00', 'outflow' => '99.99'],
+        ], $summary['totals_by_currency']);
+    }
+
     private function paymentDocument(array $attributes = []): PaymentDocument
     {
         $document = new PaymentDocument;

@@ -288,16 +288,7 @@ final readonly class ProcurementReportingLifecycleRecorder
             'purchaseReceipt.purchaseOrder.purchaseRequest.siteRequest',
             'purchaseOrderItem.receiptLines',
         ]);
-        $metadata = is_array($line->metadata) ? $line->metadata : [];
-        if (($metadata['reporting_source_version'] ?? null) !== 1) {
-            throw new DomainException(trans_message('procurement.purchase_orders.receipt_history_version_required'));
-        }
-        $postedAt = $metadata['reporting_posted_at'] ?? null;
-        if (! is_string($postedAt) || trim($postedAt) === '') {
-            throw new DomainException(trans_message('procurement.purchase_orders.receipt_posted_at_required'));
-        }
-        $occurredAt = CarbonImmutable::parse($postedAt);
-        $this->supplyEvents->receipt($line->fresh(), $occurredAt);
+        $occurredAt = $this->recordSupplyReceipt($line)->occurred_at;
 
         $item = $line->purchaseOrderItem;
         $order = $line->purchaseReceipt->purchaseOrder;
@@ -335,6 +326,20 @@ final readonly class ProcurementReportingLifecycleRecorder
                 projectId: $order->purchaseRequest?->siteRequest?->project_id,
             );
         }
+    }
+
+    public function recordSupplyReceipt(PurchaseReceiptLine $line): SupplyLifecycleEvent
+    {
+        $metadata = is_array($line->metadata) ? $line->metadata : [];
+        if (($metadata['reporting_source_version'] ?? null) !== 1) {
+            throw new DomainException(trans_message('procurement.purchase_orders.receipt_history_version_required'));
+        }
+        $postedAt = $metadata['reporting_posted_at'] ?? null;
+        if (! is_string($postedAt) || trim($postedAt) === '') {
+            throw new DomainException(trans_message('procurement.purchase_orders.receipt_posted_at_required'));
+        }
+
+        return $this->supplyEvents->receipt($line, CarbonImmutable::parse($postedAt));
     }
 
     public function receiptReversed(

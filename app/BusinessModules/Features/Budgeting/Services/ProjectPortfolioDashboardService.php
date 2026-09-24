@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
+use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
@@ -262,14 +263,26 @@ final class ProjectPortfolioDashboardService
     {
         try {
             $calendarItems = $this->calendarSourceService->collect($filters->calendarFilters(), CarbonImmutable::today());
+            $undatedItems = $this->calendarSourceService->collectUndated($filters->calendarFilters());
+            $undatedGroups = [];
+            foreach ($undatedItems as $item) {
+                if ($item->projectId !== null && isset($projects[$item->projectId])) {
+                    $undatedGroups[$item->projectId.'|'.mb_strtoupper($item->currency)][] = $item;
+                }
+            }
             $forecastItems = array_values(array_filter(array_map(
                 static fn (mixed $item): mixed => $item instanceof PaymentCalendarItem ? $item->toCashGapForecastItem() : null,
                 $calendarItems,
             )));
-            $groups = $this->cashGapGroups($calendarItems, $projects, $filters);
+            $groups = $this->cashGapGroups(array_merge($calendarItems, $undatedItems), $projects, $filters);
             $rows = [];
 
             foreach ($groups as $group) {
+                $undated = $this->calendarSourceService->summarizeUndated(
+                    $undatedGroups[$group['project_id'].'|'.$group['currency']] ?? [],
+                    $filters->calendarFilters(),
+                );
+                unset($undated['items']);
                 $forecast = $this->cashGapForecastService->forecast(
                     new CashGapForecastContext(
                         periodStart: $filters->periodStart,
@@ -289,6 +302,8 @@ final class ProjectPortfolioDashboardService
                 $rows[] = [
                     'project_id' => (int) $group['project_id'],
                     'currency' => (string) $group['currency'],
+                    'undated' => $undated,
+                    'complete' => $undated['items_count'] === 0,
                     'risk_level' => (string) ($forecast['risk_level'] ?? 'low'),
                     'has_gap' => (bool) ($cashGap['has_gap'] ?? false),
                     'first_gap_date' => is_string($cashGap['first_gap_date'] ?? null) ? $cashGap['first_gap_date'] : null,
@@ -299,7 +314,7 @@ final class ProjectPortfolioDashboardService
                     'outflows' => round((float) ($forecast['outflows'] ?? 0.0), 2),
                     'overdue_receivables' => round((float) ($forecast['overdue_inflows'] ?? 0.0), 2),
                     'overdue_payables' => round((float) ($forecast['overdue_outflows'] ?? 0.0), 2),
-                    'freshness_status' => 'actual',
+                    'freshness_status' => $undated['items_count'] === 0 ? 'actual' : 'partial',
                 ];
             }
 
@@ -326,7 +341,7 @@ final class ProjectPortfolioDashboardService
         $groups = [];
 
         foreach ($calendarItems as $item) {
-            if (!$item instanceof PaymentCalendarItem || $item->projectId === null || !isset($projects[$item->projectId])) {
+            if ((!$item instanceof PaymentCalendarItem && !$item instanceof UndatedPaymentCalendarItem) || $item->projectId === null || !isset($projects[$item->projectId])) {
                 continue;
             }
 

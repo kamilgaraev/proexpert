@@ -173,6 +173,9 @@ final class ProcurementChainResolver
             'purchase_order' => $purchaseOrder,
             'material_deliveries' => $materialDeliveries->values(),
             'payment_documents' => $paymentDocuments,
+            'required_advance_amount' => $purchaseOrder instanceof PurchaseOrder
+                ? $this->paymentGateService->requiredAdvanceAmount($purchaseOrder)
+                : null,
             'receipts' => $receipts->values(),
         ];
     }

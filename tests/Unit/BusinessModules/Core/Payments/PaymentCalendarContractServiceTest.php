@@ -7,6 +7,7 @@ namespace Tests\Unit\BusinessModules\Core\Payments;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarCashGapOptions;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
+use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarContractService;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastService;
@@ -59,6 +60,36 @@ final class PaymentCalendarContractServiceTest extends TestCase
         Facade::setFacadeApplication(null);
 
         parent::tearDown();
+    }
+
+    public function test_undated_balance_is_visible_separately_and_forecast_explains_its_exclusion(): void
+    {
+        $item = new UndatedPaymentCalendarItem(
+            organizationId: 42, direction: 'outflow', amount: '700.01', remainingAmount: '500.01',
+            currency: 'RUB', sourceId: 501, cashFlowKey: 'payment-document:118:payment-schedule:501',
+            projectId: 14, counterpartyId: 30, budgetArticleId: 77, responsibilityCenterId: 88,
+            drillDown: ['payment_document_id' => 118, 'label' => 'PAY-118'],
+        );
+        $contract = $this->service->fromItems([$item, $item], new PaymentCalendarSourceFilters(
+            organizationId: 42, periodStart: '2026-01-10', periodEnd: '2026-01-11',
+        ), new PaymentCalendarCashGapOptions(openingBalance: 1000));
+
+        $this->assertSame([], $contract['events']);
+        $this->assertSame([], $contract['items']);
+        $this->assertSame(0.0, $contract['summary']['outflow']);
+        $this->assertCount(1, $contract['undated']['items']);
+        $this->assertSame('500.01', $contract['undated']['totals_by_currency']['RUB']['outflow']);
+        $this->assertSame('0.00', $contract['undated']['totals_by_currency']['RUB']['inflow']);
+        $this->assertSame('Срок оплаты ещё не определён', $contract['undated']['items'][0]['bucket_label']);
+        $this->assertSame('/payments?tab=documents&document_id=118', $contract['undated']['items'][0]['document_href']);
+        $this->assertSame('1000.00', $contract['cash_gap']['forecast']['closing_balance']);
+        $this->assertNotEmpty($contract['cash_gap']['warnings']);
+
+        $foreign = $this->service->fromItems([$item], new PaymentCalendarSourceFilters(
+            organizationId: 7, periodStart: '2026-01-10', periodEnd: '2026-01-11',
+        ));
+        $this->assertSame([], $foreign['undated']['items']);
+        $this->assertSame([], $foreign['undated']['totals_by_currency']);
     }
 
     public function test_contract_contains_items_events_daily_aggregates_summary_and_cash_gap_state(): void

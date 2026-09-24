@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\Support\SupplierPaymentSchedule;
+
 use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptPaymentException;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\Models\Contract;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -24,7 +27,11 @@ final class PurchaseOrderPaymentGateService
         $paidAmount = $this->paidAmount($order);
         $receivedAmount = $this->receivedAmount($order);
         $availableAmount = max(round($paidAmount - $receivedAmount, 2), 0.0);
-        $canReceive = $availableAmount > 0.0001 || (float) $order->total_amount <= 0.0001;
+        $requiredAdvance = $this->requiredAdvanceAmount($order);
+        $receiptLimit = $requiredAdvance === null
+            ? $availableAmount
+            : ($paidAmount + 0.0001 >= $requiredAdvance ? null : 0.0);
+        $canReceive = $receiptLimit === null || $receiptLimit > 0.0001 || (float) $order->total_amount <= 0.0001;
         $blocker = null;
 
         if (! $canReceive && $order->status->canReceiveMaterials()) {
@@ -37,6 +44,8 @@ final class PurchaseOrderPaymentGateService
             'paid_amount' => round($paidAmount, 2),
             'received_amount' => round($receivedAmount, 2),
             'available_paid_amount' => $availableAmount,
+            'receipt_amount_limit' => $receiptLimit,
+            'required_advance_amount' => $requiredAdvance,
             'order_amount' => round((float) $order->total_amount, 2),
             'can_receive_materials' => $canReceive,
             'blocker' => $blocker,
@@ -64,7 +73,12 @@ final class PurchaseOrderPaymentGateService
         }
 
         $paidAmount = $this->paidAmount($order);
-        $requiredAmount = round($this->receivedAmount($order) + $incomingAmount, 2);
+        $requiredAdvance = $this->requiredAdvanceAmount($order);
+        $requiredAmount = $requiredAdvance ?? round($this->receivedAmount($order) + $incomingAmount, 2);
+
+        if ($paidAmount + 0.0001 >= $requiredAmount) {
+            return;
+        }
 
         if ($paidAmount <= 0.0001) {
             throw new PurchaseReceiptPaymentException(
@@ -77,6 +91,27 @@ final class PurchaseOrderPaymentGateService
                 trans_message('procurement.purchase_orders.payment_not_enough_for_receipt')
             );
         }
+    }
+
+    public function requiredAdvanceAmount(PurchaseOrder $order): ?float
+    {
+        if ($order->accepted_supplier_proposal_version_id === null || $order->accepted_supplier_proposal_id === null) {
+            return null;
+        }
+
+        $order->loadMissing('acceptedSupplierProposalVersion');
+        $version = $order->getRelation('acceptedSupplierProposalVersion');
+        if (! $version instanceof SupplierProposalVersion
+            || (int) $version->id !== (int) $order->accepted_supplier_proposal_version_id
+            || (int) $version->organization_id !== (int) $order->organization_id
+            || (int) $version->supplier_proposal_id !== (int) $order->accepted_supplier_proposal_id
+            || $version->integrity_status !== 'verified') {
+            return null;
+        }
+
+        $schedule = SupplierPaymentSchedule::normalize($version->commercial_snapshot['payment_schedule'] ?? null);
+
+        return $schedule === null ? null : round((float) $order->total_amount * $schedule['advance_percent'] / 100, 2);
     }
 
     private function paidAmount(PurchaseOrder $order): float
@@ -103,7 +138,9 @@ final class PurchaseOrderPaymentGateService
             ->join('purchase_receipts', 'purchase_receipts.id', '=', 'purchase_receipt_lines.purchase_receipt_id')
             ->where('purchase_receipts.organization_id', $order->organization_id)
             ->where('purchase_receipts.purchase_order_id', $order->id)
+            ->where('purchase_receipts.status', 'posted')
             ->whereNull('purchase_receipts.deleted_at')
+            ->whereNull('purchase_receipt_lines.reversed_at')
             ->sum('purchase_receipt_lines.total_amount');
     }
 

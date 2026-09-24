@@ -6,6 +6,7 @@ namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
+use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
@@ -40,6 +41,53 @@ final class PaymentCalendarSourceService
         );
 
         return $this->normalizeItems($items, $filters);
+    }
+
+    public function collectUndated(PaymentCalendarSourceFilters $filters): array
+    {
+        $schedules = PaymentSchedule::query()
+            ->with('paymentDocument')
+            ->where('status', 'pending')
+            ->whereNull('due_date')
+            ->where(function (Builder $query): void {
+                $query->whereNull('paid_amount')->orWhereColumn('amount', '>', 'paid_amount');
+            })
+            ->whereHas('paymentDocument', function (Builder $query) use ($filters): void {
+                $query->where('organization_id', $filters->organizationId)
+                    ->whereIn('status', $this->activeDocumentStatuses());
+            })
+            ->orderBy('id')
+            ->get();
+
+        $items = [];
+        foreach ($schedules as $schedule) {
+            $item = $this->fromUndatedPaymentSchedule($schedule);
+            if ($item !== null && $filters->matches($item)) {
+                $items[] = $item;
+            }
+        }
+
+        return $items;
+    }
+
+    public function summarizeUndated(array $items, PaymentCalendarSourceFilters $filters): array
+    {
+        $rows = [];
+        $totals = [];
+        foreach ($items as $item) {
+            if (! $item instanceof UndatedPaymentCalendarItem || ! $filters->matches($item)
+                || isset($rows[$item->cashFlowKey])) {
+                continue;
+            }
+            $rows[$item->cashFlowKey] = $item;
+            $totals[$item->currency] ??= ['inflow' => '0.00', 'outflow' => '0.00'];
+            $totals[$item->currency][$item->direction] = PortfolioDecimal::add(
+                $totals[$item->currency][$item->direction], $item->remainingAmount,
+            );
+        }
+        ksort($totals);
+
+        return ['items' => array_values($rows), 'items_count' => count($rows), 'totals_by_currency' => $totals];
     }
 
     public function normalizeItems(array $items, PaymentCalendarSourceFilters $filters): array
@@ -92,7 +140,7 @@ final class PaymentCalendarSourceService
     {
         $status = $this->documentStatusValue($document);
 
-        if (! in_array($status, $this->activeDocumentStatuses(), true)) {
+        if (! in_array($status, $this->activeDocumentStatuses(), true) || $document->schedule_source !== null) {
             return null;
         }
 
@@ -150,10 +198,11 @@ final class PaymentCalendarSourceService
         $document = $this->loadedPaymentDocument($schedule);
         $date = $this->dateString($schedule->due_date);
         $amount = $this->positive((string) $schedule->amount);
-        $remainingAmount = $this->positive(PortfolioDecimal::subtract($amount, (string) $schedule->paid_amount));
+        $remainingAmount = $this->positive(PortfolioDecimal::subtract($amount, (string) ($schedule->paid_amount ?? '0.00')));
 
         if (
             ! $document instanceof PaymentDocument
+            || ! in_array($this->documentStatusValue($document), $this->activeDocumentStatuses(), true)
             || $schedule->status !== 'pending'
             || $date === null
             || $this->notPositive($amount)
@@ -189,13 +238,57 @@ final class PaymentCalendarSourceService
             counterpartyId: $this->paymentDocumentCounterpartyId($document, $direction),
             budgetArticleId: $document->budget_article_id,
             responsibilityCenterId: $document->responsibility_center_id,
-            editable: true,
+            editable: $schedule->source_key === null && $document->schedule_source === null,
             drillDown: [
                 'type' => 'payment_schedule',
                 'id' => $sourceId,
                 'payment_document_id' => $this->modelId($document),
                 'installment_number' => $schedule->installment_number,
                 'label' => $document->document_number,
+            ],
+        );
+    }
+
+    public function fromUndatedPaymentSchedule(PaymentSchedule $schedule): ?UndatedPaymentCalendarItem
+    {
+        $document = $this->loadedPaymentDocument($schedule);
+        $amount = $this->positive((string) $schedule->amount);
+        $remainingAmount = $this->positive(PortfolioDecimal::subtract($amount, (string) ($schedule->paid_amount ?? '0.00')));
+
+        if (! $document instanceof PaymentDocument
+            || ! in_array($this->documentStatusValue($document), $this->activeDocumentStatuses(), true)
+            || $schedule->status !== 'pending'
+            || $schedule->due_date !== null
+            || $this->notPositive($amount)
+            || $this->notPositive($remainingAmount)) {
+            return null;
+        }
+
+        $direction = $this->paymentDocumentDirection($document);
+        if ($direction === null) {
+            return null;
+        }
+
+        return new UndatedPaymentCalendarItem(
+            organizationId: (int) $document->organization_id,
+            direction: $direction,
+            amount: $amount,
+            remainingAmount: $remainingAmount,
+            currency: $this->currency($document->currency),
+            sourceId: $this->modelId($schedule),
+            cashFlowKey: $this->paymentScheduleCashFlowKey($schedule),
+            projectId: $this->nullableInt($document->project_id),
+            counterpartyId: $this->paymentDocumentCounterpartyId($document, $direction),
+            budgetArticleId: $document->budget_article_id,
+            responsibilityCenterId: $document->responsibility_center_id,
+            drillDown: [
+                'type' => 'payment_schedule',
+                'id' => $this->modelId($schedule),
+                'payment_document_id' => $this->modelId($document),
+                'installment_number' => $schedule->installment_number,
+                'label' => $document->document_number,
+                'source_type' => $document->source_type,
+                'source_id' => $document->source_id,
             ],
         );
     }
@@ -258,6 +351,9 @@ final class PaymentCalendarSourceService
         }
 
         $document = $this->loadedPaymentDocument($reservation);
+        if ($document instanceof PaymentDocument && $document->schedule_source !== null) {
+            return null;
+        }
         $date = $document instanceof PaymentDocument
             ? $this->effectiveDocumentDate($document)
             : $this->dateString($reservation->period_month);

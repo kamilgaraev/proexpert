@@ -14,6 +14,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\ProcurementAwardOwnerEventWriter;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
+use App\BusinessModules\Features\Procurement\Support\SupplierPaymentSchedule;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -686,6 +687,7 @@ class SupplierProposalComparisonService
             'delivery_due_date' => $commercial['delivery_due_date'] ?? null,
             'lead_time_days' => $commercial['lead_time_days'] ?? null,
             'payment_terms' => $commercial['payment_terms'] ?? null,
+            'payment_schedule' => SupplierPaymentSchedule::normalize($commercial['payment_schedule'] ?? null),
             'delivery_terms' => $commercial['delivery_terms'] ?? null,
             'warranty_terms' => $commercial['warranty_terms'] ?? null,
             'is_expired' => $proposal->isExpired(),

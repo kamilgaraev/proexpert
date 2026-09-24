@@ -2,6 +2,8 @@
 
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
+use App\BusinessModules\Features\Procurement\Support\SupplierPaymentSchedule;
+
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use Illuminate\Http\Request;
@@ -42,6 +44,7 @@ class SupplierProposalResource extends JsonResource
             'delivery_due_date' => $this->delivery_due_date?->format('Y-m-d'),
             'lead_time_days' => $this->lead_time_days,
             'payment_terms' => $this->payment_terms,
+            'payment_schedule' => SupplierPaymentSchedule::normalize($this->metadata['payment_schedule'] ?? null),
             'delivery_terms' => $this->delivery_terms,
             'warranty_terms' => $this->warranty_terms,
             'items' => $this->items,

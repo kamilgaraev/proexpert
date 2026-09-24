@@ -10,7 +10,7 @@ final class ProcurementAwardVersionProjection
     {
         $lines = is_array($commercialSnapshot['lines'] ?? null) ? $commercialSnapshot['lines'] : [];
 
-        return [
+        $projection = [
             'subtotal_amount' => $commercialSnapshot['subtotal_amount'] ?? null,
             'delivery_amount' => $commercialSnapshot['delivery_amount'] ?? null,
             'vat_amount' => $commercialSnapshot['vat_amount'] ?? null,
@@ -28,6 +28,12 @@ final class ProcurementAwardVersionProjection
                 'unit' => $line['unit'] ?? null,
             ] : [], $lines)),
         ];
+
+        if (($commercialSnapshot['payment_schedule'] ?? null) !== null) {
+            $projection['payment_schedule'] = $commercialSnapshot['payment_schedule'];
+        }
+
+        return $projection;
     }
 
     public static function requestLines(array $lineSnapshot): array

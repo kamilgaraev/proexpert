@@ -18,6 +18,7 @@ class PaymentScheduleService
 {
     public function __construct(
         private readonly PaymentDocumentService $paymentDocumentService,
+        private readonly PaymentScheduleSynchronizationService $synchronization,
     ) {}
 
     /**
@@ -26,21 +27,22 @@ class PaymentScheduleService
      */
     public function replacePendingSchedule(PaymentDocument $document, array $installments, ?User $user = null): array
     {
-        $totalScheduleAmount = (float) collect($installments)->sum('amount');
-        if ((float) $document->amount !== $totalScheduleAmount) {
-            throw new \DomainException(trans_message('payments.schedule.sum_mismatch'));
-        }
-
-        $hasLockedInstallments = PaymentSchedule::query()
-            ->where('payment_document_id', $document->id)
-            ->where('status', '!=', 'pending')
-            ->exists();
-
-        if ($hasLockedInstallments) {
-            throw new \DomainException(trans_message('payments.schedule.update_locked'));
-        }
-
         return DB::transaction(function () use ($document, $installments, $user): array {
+            $document = $this->synchronization->lockForManualChange($document);
+            $totalScheduleAmount = (float) collect($installments)->sum('amount');
+            if ((float) $document->amount !== $totalScheduleAmount) {
+                throw new \DomainException(trans_message('payments.schedule.sum_mismatch'));
+            }
+
+            $hasLockedInstallments = PaymentSchedule::query()
+                ->where('payment_document_id', $document->id)
+                ->where('status', '!=', 'pending')
+                ->exists();
+
+            if ($hasLockedInstallments) {
+                throw new \DomainException(trans_message('payments.schedule.update_locked'));
+            }
+
             PaymentSchedule::query()
                 ->where('payment_document_id', $document->id)
                 ->where('status', 'pending')
@@ -73,6 +75,7 @@ class PaymentScheduleService
         $schedules = [];
         
         DB::transaction(function () use ($document, $installments, &$schedules) {
+            $document = $this->synchronization->lockForManualChange($document);
             foreach ($installments as $index => $installment) {
                 $schedule = PaymentSchedule::create([
                     'payment_document_id' => $document->id,
@@ -100,13 +103,20 @@ class PaymentScheduleService
      */
     public function updateSchedule(PaymentSchedule $schedule, array $data): PaymentSchedule
     {
-        if ($schedule->isPaid()) {
-            throw new \DomainException(trans_message('payments.validation.schedule_paid_edit_forbidden'));
-        }
+        return DB::transaction(function () use ($schedule, $data): PaymentSchedule {
+            $document = $this->synchronization->lockForManualChange($schedule->paymentDocument()->firstOrFail());
+            $schedule = PaymentSchedule::query()
+                ->where('payment_document_id', $document->id)
+                ->lockForUpdate()
+                ->findOrFail($schedule->id);
+            if ($schedule->isPaid()) {
+                throw new \DomainException(trans_message('payments.validation.schedule_paid_edit_forbidden'));
+            }
 
-        $schedule->update($data);
+            $schedule->update($data);
 
-        return $schedule->fresh();
+            return $schedule->fresh();
+        });
     }
 
     /**

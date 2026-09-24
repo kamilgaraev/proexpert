@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting\Reporting\Portfolio;
 
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
+use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
@@ -158,6 +159,15 @@ final readonly class BudgetingPortfolioProjectionService
         $id = (string) Str::ulid();
         $generatedAt = $query->asOf;
         $totals = $this->liquidityTotals($rows);
+        $totals['undated'] = [];
+        foreach ($qualityGaps as $gap) {
+            if (is_array($gap) && ($gap['code'] ?? null) === 'payment_due_date_missing') {
+                $totals['undated'][$gap['currency']] = [
+                    'inflow' => $gap['inflow'],
+                    'outflow' => $gap['outflow'],
+                ];
+            }
+        }
         $duplicateCount = array_sum(array_map(
             static fn (PortfolioLiquidityRow $row): int => $row->duplicateSourceCount,
             $rows,
@@ -412,23 +422,56 @@ final readonly class BudgetingPortfolioProjectionService
             $rows,
         ));
 
-        $empty = $rows === [];
+        return self::liquidityQualitySummary(count($rows), $duplicates, $qualityGaps);
+    }
 
-        $gapCount = count($qualityGaps);
+    private static function liquidityQualitySummary(
+        int $count,
+        int $duplicates,
+        array $gaps,
+        ?ReportQualityStatus $status = null,
+    ): ReportQuality
+    {
+        $warnings = [];
+        $unknown = [];
+        $excluded = [];
+        $reasons = [];
+        foreach ($gaps as $gap) {
+            $reason = is_array($gap) ? ($gap['code'] ?? '') : '';
+            [$code, $metric, $source] = match ($reason) {
+                'opening_balance_missing' => ['OPENING_BALANCE_MISSING', 'opening_balance', 'missing_opening_balance'],
+                'payment_due_date_missing' => ['PAYMENT_DUE_DATE_MISSING', 'payment_date', 'undated_payment'],
+                default => ['SOURCE_COVERAGE_PARTIAL', 'source_coverage', 'unverified_source'],
+            };
+            $reasons[$code] = ($reasons[$code] ?? 0) + 1;
+            $unknown[$metric] = true;
+            $excluded[$source] = true;
+        }
+        if ($count === 0) {
+            $warnings[] = new ReportWarning('SOURCE_EMPTY', ReportWarningSeverity::CRITICAL, null, 0);
+            $unknown['source_coverage'] = true;
+            $excluded['owner_snapshot'] = true;
+        }
+        ksort($reasons);
+        foreach ($reasons as $code => $affected) {
+            $warnings[] = new ReportWarning($code, ReportWarningSeverity::CRITICAL, null, $affected);
+        }
+        if ($duplicates > 0) {
+            $warnings[] = new ReportWarning('DUPLICATE_CASH_FLOW', ReportWarningSeverity::CRITICAL, null, $duplicates);
+            $unknown['cash_flow_key'] = true;
+            $excluded['duplicate_cash_flow'] = true;
+        }
+        $unmatched = $duplicates + count($gaps);
 
         return new ReportQuality(
-            ! $empty && $duplicates === 0 && $gapCount === 0 ? ReportQualityStatus::COMPLETE : ReportQualityStatus::PARTIAL,
-            new ReportCoverage((string) count($rows), (string) count($rows), count($rows) === 0 ? null : '1.00000000'),
-            $empty
-                ? [new ReportWarning('SOURCE_EMPTY', ReportWarningSeverity::CRITICAL, null, 0)]
-                : ($gapCount === 0 ? [] : [new ReportWarning('OPENING_BALANCE_MISSING', ReportWarningSeverity::CRITICAL, 'currency', $gapCount)]),
-            $duplicates + $gapCount,
-            $empty ? ReportReconciliationStatus::NOT_APPLICABLE : ($duplicates === 0 && $gapCount === 0 ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH),
-            $empty ? ['source_coverage'] : ($gapCount === 0 ? [] : ['opening_balance']),
-            $empty ? ['owner_snapshot'] : array_values(array_filter([
-                $duplicates === 0 ? null : 'duplicate_cash_flow',
-                $gapCount === 0 ? null : 'missing_opening_balance',
-            ])),
+            $status ?? ($count > 0 && $unmatched === 0 ? ReportQualityStatus::COMPLETE : ReportQualityStatus::PARTIAL),
+            new ReportCoverage((string) $count, (string) $count, $count === 0 ? null : '1.00000000'),
+            $warnings,
+            $unmatched,
+            $count === 0 ? ReportReconciliationStatus::NOT_APPLICABLE
+                : ($unmatched === 0 ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH),
+            array_keys($unknown),
+            array_keys($excluded),
         );
     }
 
@@ -441,28 +484,9 @@ final readonly class BudgetingPortfolioProjectionService
             $gaps = is_array($quality['gaps'] ?? null) ? $quality['gaps'] : [];
             $duplicates = (int) ($quality['duplicate_source_count'] ?? 0);
             $count = (int) $record->row_count;
-            $gapCount = count($gaps);
-            $empty = $count === 0;
 
-            return new ReportQuality(
-                ReportQualityStatus::from((string) $record->quality_status),
-                new ReportCoverage((string) $count, (string) $count, $empty ? null : '1.00000000'),
-                $empty
-                    ? [new ReportWarning('SOURCE_EMPTY', ReportWarningSeverity::CRITICAL, null, 0)]
-                    : array_values(array_filter([
-                        $gapCount === 0 ? null : new ReportWarning('OPENING_BALANCE_MISSING', ReportWarningSeverity::CRITICAL, 'currency', $gapCount),
-                        $duplicates === 0 ? null : new ReportWarning('DUPLICATE_CASH_FLOW', ReportWarningSeverity::CRITICAL, null, $duplicates),
-                    ])),
-                $gapCount + $duplicates,
-                $empty ? ReportReconciliationStatus::NOT_APPLICABLE : ($gapCount === 0 && $duplicates === 0 ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH),
-                $empty ? ['source_coverage'] : array_values(array_filter([
-                    $gapCount === 0 ? null : 'opening_balance',
-                    $duplicates === 0 ? null : 'cash_flow_key',
-                ])),
-                $empty ? ['owner_snapshot'] : array_values(array_filter([
-                    $gapCount === 0 ? null : 'missing_opening_balance',
-                    $duplicates === 0 ? null : 'duplicate_cash_flow',
-                ])),
+            return self::liquidityQualitySummary(
+                $count, $duplicates, $gaps, ReportQualityStatus::from((string) $record->quality_status),
             );
         }
 
@@ -641,7 +665,11 @@ final readonly class BudgetingPortfolioProjectionService
             $context,
             $query,
         );
-        $currencies = $this->currencies($query, $calendar);
+        $undated = $this->calendarSources->summarizeUndated(
+            $this->scopeCalendar($versionedSource['undated'] ?? [], $context, $query),
+            $filters->calendarFilters(),
+        );
+        $currencies = $this->currencies($query, [...$calendar, ...$undated['items']]);
         $balances = $versionedSource['balances'];
         if ($currencies === []) {
             $currencies = array_keys($balances);
@@ -665,7 +693,14 @@ final readonly class BudgetingPortfolioProjectionService
         $gaps = is_array($versionedSource['gaps'] ?? null)
             ? array_values($versionedSource['gaps'])
             : [];
+        foreach ($undated['totals_by_currency'] as $currency => $amounts) {
+            $gaps[] = ['code' => 'payment_due_date_missing', 'currency' => $currency, ...$amounts];
+        }
         $sourcePayload = [
+            'undated_payments' => array_map(
+                static fn (UndatedPaymentCalendarItem $item): array => $item->toArray(),
+                $undated['items'],
+            ),
             'payment_calendar' => array_map(
                 static fn (PaymentCalendarItem $item): array => $item->toArray(),
                 $calendar,
@@ -722,8 +757,14 @@ final readonly class BudgetingPortfolioProjectionService
                         $this->decimal($day->inflows),
                         $outflow,
                         0,
-                        'complete',
+                        isset($undated['totals_by_currency'][$currency]) ? 'partial' : 'complete',
                         $this->uniqueRefs($refs),
+                        isset($undated['totals_by_currency'][$currency]) ? ['payment_due_date_missing'] : [],
+                        isset($undated['totals_by_currency'][$currency]) ? [[
+                            'code' => 'PAYMENT_DUE_DATE_MISSING',
+                            'currency' => $currency,
+                            ...$undated['totals_by_currency'][$currency],
+                        ]] : [],
                     );
                 }
             }
@@ -841,6 +882,7 @@ final readonly class BudgetingPortfolioProjectionService
         $allowedResponsibilityCenters = array_fill_keys($responsibilityCenterIds, true);
         $allowedCounterparties = array_fill_keys($counterpartyIds, true);
         $allowedDocuments = array_fill_keys($documentIds, true);
+        $organizationId = $context->scope->organizationId;
 
         return array_values(array_filter(
             $calendar,
@@ -849,8 +891,10 @@ final readonly class BudgetingPortfolioProjectionService
                 $allowedResponsibilityCenters,
                 $allowedCounterparties,
                 $allowedDocuments,
+                $organizationId,
             ): bool {
-                if (! $item instanceof PaymentCalendarItem
+                if ((! $item instanceof PaymentCalendarItem && ! $item instanceof UndatedPaymentCalendarItem)
+                    || $item->organizationId !== $organizationId
                     || ($allowedProjects !== []
                         && ($item->projectId === null || ! isset($allowedProjects[$item->projectId])))
                     || ($allowedResponsibilityCenters !== []
@@ -1030,7 +1074,8 @@ final readonly class BudgetingPortfolioProjectionService
             }
         }
         foreach ($calendar as $item) {
-            if ($item instanceof PaymentCalendarItem && preg_match('/^[A-Z]{3}$/D', $item->currency) === 1) {
+            if (($item instanceof PaymentCalendarItem || $item instanceof UndatedPaymentCalendarItem)
+                && preg_match('/^[A-Z]{3}$/D', $item->currency) === 1) {
                 $currencies[mb_strtoupper($item->currency)] = true;
             }
         }

@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Payments\Services;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarCashGapOptions;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
+use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastFilters;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastService;
@@ -32,7 +33,10 @@ final class PaymentCalendarContractService
         ?PaymentCalendarCashGapOptions $cashGapOptions = null,
     ): array
     {
-        return $this->fromItems($this->sourceService->collect($filters), $filters, $cashGapOptions);
+        return $this->fromItems(array_merge(
+            $this->sourceService->collect($filters),
+            $this->sourceService->collectUndated($filters),
+        ), $filters, $cashGapOptions);
     }
 
     public function fromItems(
@@ -46,13 +50,36 @@ final class PaymentCalendarContractService
             static fn (mixed $item): bool => $item instanceof PaymentCalendarItem
         ));
 
+        $undated = $this->presentUndated($items, $filters);
+        $cashGap = $this->cashGap($calendarItems, $filters, $cashGapOptions);
+        $cashGap['warnings'] = $undated['items'] === []
+            ? []
+            : [trans_message('payments.undated.forecast_warning')];
+
         return [
             'items' => array_map(fn (PaymentCalendarItem $item): array => $this->presentItem($item), $calendarItems),
             'events' => array_map(fn (PaymentCalendarItem $item): array => $this->presentEvent($item), $calendarItems),
             'days' => $this->aggregateDays($calendarItems, $filters),
             'summary' => $this->aggregateSummary($calendarItems, $filters),
-            'cash_gap' => $this->cashGap($calendarItems, $filters, $cashGapOptions),
+            'cash_gap' => $cashGap,
+            'undated' => $undated,
         ];
+    }
+
+    private function presentUndated(array $items, PaymentCalendarSourceFilters $filters): array
+    {
+        $summary = $this->sourceService->summarizeUndated($items, $filters);
+        $summary['items'] = array_map(function (UndatedPaymentCalendarItem $item): array {
+            $documentId = $item->drillDown['payment_document_id'] ?? null;
+            return array_merge($item->toArray(), [
+                'bucket_label' => trans_message('payments.undated.label'),
+                'direction_label' => $this->directionLabel($item->direction),
+                'document_id' => $documentId,
+                'document_href' => $documentId === null ? null : '/payments?tab=documents&document_id='.$documentId,
+            ]);
+        }, $summary['items']);
+
+        return $summary;
     }
 
     private function cashGap(

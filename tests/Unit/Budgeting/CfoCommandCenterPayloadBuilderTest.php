@@ -101,6 +101,33 @@ final class CfoCommandCenterPayloadBuilderTest extends TestCase
         $this->assertSame(10, $payload['meta']['item_limits']['upcoming_payments']);
     }
 
+    public function test_undated_obligations_make_the_summary_incomplete_and_actionable(): void
+    {
+        $aggregates = $this->emptyAggregates();
+        $aggregates['cash_gap']['complete'] = false;
+        $aggregates['cash_gap']['undated'] = [
+            'items_count' => 1,
+            'totals_by_currency' => ['RUB' => ['inflow' => '0.00', 'outflow' => '2100.01']],
+        ];
+        $payload = $this->builder()->build(
+            filters: $this->filters(),
+            aggregates: $aggregates,
+            items: [],
+            sourceOfTruth: $this->sourceOfTruth(),
+            freshness: $this->freshness(),
+            generatedAt: '2026-09-06T03:00:00+03:00',
+            itemLimit: 10,
+        );
+
+        $this->assertFalse($payload['summary']['cash_gap']['complete']);
+        $this->assertSame('2100.01', $payload['summary']['cash_gap']['undated']['totals_by_currency']['RUB']['outflow']);
+        $flags = array_column($payload['problem_flags'], null, 'code');
+        $this->assertArrayHasKey('payment_due_date_missing', $flags);
+        $this->assertSame('/payments?tab=calendar', $flags['payment_due_date_missing']['route_hint']);
+        $this->assertStringNotContainsString('payments.undated.', $flags['payment_due_date_missing']['message']);
+        $this->assertNotSame('ok', $payload['summary']['health']);
+    }
+
     public function test_empty_state_keeps_stable_shape_without_actions_or_flags(): void
     {
         $payload = $this->builder()->build(
