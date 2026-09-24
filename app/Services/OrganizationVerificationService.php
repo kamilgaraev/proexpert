@@ -100,7 +100,7 @@ class OrganizationVerificationService
             ], 'warning');
         }
 
-        $verificationResults['overall_status'] = $this->determineOverallStatus($verificationResults['verification_score']);
+        $verificationResults['overall_status'] = $this->determineOverallStatus($verificationResults['verification_score'], true);
 
         $this->updateOrganizationVerificationStatus($organization, $verificationResults);
 
@@ -205,14 +205,14 @@ class OrganizationVerificationService
             'is_verified' => $isVerified,
             'verified_at' => $isVerified ? now() : null,
             'verification_status' => $verificationResults['overall_status'],
-            'verification_data' => json_encode([
+            'verification_data' => [
                 'score' => $verificationResults['verification_score'],
                 'inn_verification' => $verificationResults['inn_verification'],
                 'address_verification' => $verificationResults['address_verification'],
                 'errors' => $verificationResults['errors'],
                 'warnings' => $verificationResults['warnings'],
                 'verified_at' => now()->toISOString(),
-            ]),
+            ],
             'verification_notes' => $this->generateVerificationNotes($verificationResults),
         ]);
 
@@ -439,7 +439,11 @@ class OrganizationVerificationService
 
         // Анализируем данные верификации если они есть
         $verificationIssues = [];
-        if ($organization->verification_data && is_array($organization->verification_data)) {
+        $verificationData = $organization->verification_data;
+        $hasVerificationData = is_array($verificationData)
+            && (is_array($verificationData['inn_verification'] ?? null)
+                || is_array($verificationData['address_verification'] ?? null));
+        if ($hasVerificationData) {
             if (!empty($organization->verification_data['errors'])) {
                 foreach ($organization->verification_data['errors'] as $error) {
                     $verificationIssues[] = [
@@ -463,21 +467,22 @@ class OrganizationVerificationService
             // Если все основные поля заполнены, но верификация не проводилась
             $verificationIssues[] = [
                 'type' => 'info',
-                'message' => 'Запустите автоматическую верификацию для проверки данных через государственные реестры',
+                'message' => trans_message('organization_verification.required_message'),
                 'severity' => 'medium'
             ];
         }
 
         // Используем базовый рейтинг если верификация еще не проводилась
-        $currentScore = $organization->verification_score > 0 
-            ? $organization->verification_score 
+        $currentScore = $hasVerificationData
+            ? (($verificationData['inn_verification']['success'] ?? false) === true ? 70 : 0)
+                + (($verificationData['address_verification']['success'] ?? false) === true ? 30 : 0)
             : $this->calculateBasicScore($organization);
         
         // Проверяем наличие данных верификации
-        $hasVerificationData = !empty($organization->verification_data) && is_array($organization->verification_data);
+
             
         // Определяем статус на основе текущего рейтинга и наличия верификации
-        $currentStatus = $organization->verification_status ?: $this->determineOverallStatus($currentScore, $hasVerificationData);
+        $currentStatus = $this->determineOverallStatus($currentScore, $hasVerificationData);
         $statusText = $this->getVerificationStatusText($currentStatus);
 
         return [
@@ -490,7 +495,7 @@ class OrganizationVerificationService
             'verification_issues' => $verificationIssues,
             'can_auto_verify' => $organization->canBeVerified(),
             'potential_score_increase' => array_sum(array_column($missingFields, 'weight')) + array_sum(array_column($issues, 'weight')),
-            'needs_verification' => empty($organization->verification_data) && $organization->canBeVerified(),
+            'needs_verification' => !$hasVerificationData && $organization->canBeVerified(),
         ];
     }
 
@@ -515,11 +520,14 @@ class OrganizationVerificationService
         $issues = $recommendations['field_issues'];
         $needsVerification = $recommendations['needs_verification'];
 
-        if ($score === 100 && empty($issues) && !$needsVerification) {
+        if ($recommendations['status'] === 'verified'
+            && empty($issues)
+            && empty($recommendations['verification_issues'])
+            && !$needsVerification) {
             return [
                 'type' => 'success',
-                'title' => 'Организация полностью верифицирована',
-                'message' => 'Все данные заполнены корректно и проверены через государственные реестры.',
+                'title' => trans_message('organization_verification.completed_title'),
+                'message' => trans_message('organization_verification.completed_message'),
                 'action' => null
             ];
         }
@@ -528,7 +536,7 @@ class OrganizationVerificationService
             return [
                 'type' => 'warning',
                 'title' => 'Требуется верификация',
-                'message' => 'Все основные данные заполнены. Запустите автоматическую верификацию для проверки через государственные реестры.',
+                'message' => trans_message('organization_verification.required_message'),
                 'action' => 'verify'
             ];
         }
