@@ -14,6 +14,7 @@ use App\Models\Contractor;
 use App\Models\EstimateItem;
 use App\Models\Material;
 use App\Models\Project;
+use App\Models\ProjectOrganization;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Models\WorkType;
@@ -39,7 +40,7 @@ final class CompletedWorkScopeResolver
         $context ??= $this->contextFor($dto->project_id, $actor);
         $project = $this->assertProject($dto->project_id, $dto->organization_id, $actor, $context);
 
-        $this->assertReferences($dto, $project);
+        $this->assertReferences($dto, $project, $context);
         $this->assertManage($context, $actor, 'completed_works.create');
     }
 
@@ -64,7 +65,7 @@ final class CompletedWorkScopeResolver
         }
 
         $project = $this->assertProject($existingWork->project_id, $existingWork->organization_id, $actor, $context);
-        $this->assertReferences($dto, $project);
+        $this->assertReferences($dto, $project, $context);
         $this->assertManage($context, $actor, 'completed_works.edit');
     }
 
@@ -134,7 +135,26 @@ final class CompletedWorkScopeResolver
         return $project;
     }
 
-    private function assertReferences(CompletedWorkDTO $dto, Project $project): void
+    public function responsibleOrganizationIds(Project $project, int $organizationId): array
+    {
+        $ownerOrganizationId = (int) $project->organization_id;
+        $participantIds = ProjectOrganization::query()
+            ->where('project_id', $project->id)
+            ->where('is_active', true);
+
+        if ($organizationId !== $ownerOrganizationId) {
+            return $participantIds->where('organization_id', $organizationId)->exists()
+                ? [$ownerOrganizationId, $organizationId]
+                : [$ownerOrganizationId];
+        }
+
+        return array_values(array_unique([
+            $ownerOrganizationId,
+            ...$participantIds->pluck('organization_id')->map(static fn ($id): int => (int) $id)->all(),
+        ]));
+    }
+
+    private function assertReferences(CompletedWorkDTO $dto, Project $project, ProjectContext $context): void
     {
         $organizationId = (int) $project->organization_id;
 
@@ -167,7 +187,10 @@ final class CompletedWorkScopeResolver
         $this->assertOrganizationReference($dto->contractor_id, Contractor::class, $organizationId);
         $this->assertOrganizationReference($dto->work_type_id, WorkType::class, $organizationId);
 
-        if ($dto->user_id !== null && ! $this->activeOrganizationUserExists($dto->user_id, $organizationId)) {
+        if ($dto->user_id !== null && ! $this->activeOrganizationUserExists(
+            $dto->user_id,
+            $this->responsibleOrganizationIds($project, $context->organizationId),
+        )) {
             throw $this->notFound();
         }
 
@@ -184,10 +207,10 @@ final class CompletedWorkScopeResolver
         }
     }
 
-    private function activeOrganizationUserExists(int $userId, int $organizationId): bool
+    private function activeOrganizationUserExists(int $userId, array $organizationIds): bool
     {
-        return User::query()->whereKey($userId)->whereNull('deleted_at')->whereHas('organizations', function ($query) use ($organizationId): void {
-            $query->whereKey($organizationId)->where('organization_user.is_active', true);
+        return User::query()->whereKey($userId)->whereNull('deleted_at')->whereHas('organizations', function ($query) use ($organizationIds): void {
+            $query->whereIn('organizations.id', $organizationIds)->where('organization_user.is_active', true);
         })->exists();
     }
 

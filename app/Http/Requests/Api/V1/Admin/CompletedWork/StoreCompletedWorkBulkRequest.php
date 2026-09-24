@@ -9,6 +9,7 @@ use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use App\Http\Middleware\ProjectContextMiddleware;
 use App\Models\Project;
 use App\Models\CompletedWork;
+use App\Services\CompletedWork\CompletedWorkScopeResolver;
 use Carbon\Carbon;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
@@ -26,6 +27,10 @@ final class StoreCompletedWorkBulkRequest extends FormRequest
         $projectId = (int) $this->route('project');
         $organizationId = (int) (ProjectContextMiddleware::getProject($this)?->organization_id
             ?? Auth::user()?->current_organization_id);
+        $project = ProjectContextMiddleware::getProject($this) ?? Project::query()->find($projectId);
+        $responsibleOrganizationIds = $project
+            ? app(CompletedWorkScopeResolver::class)->responsibleOrganizationIds($project, (int) Auth::user()?->current_organization_id)
+            : [$organizationId];
 
         return [
             'works' => ['required', 'array', 'min:1'],
@@ -35,10 +40,10 @@ final class StoreCompletedWorkBulkRequest extends FormRequest
                 'integer',
                 Rule::exists('users', 'id')
                     ->whereNull('deleted_at')
-                    ->whereIn('id', function ($query) use ($organizationId) {
+                    ->whereIn('id', function ($query) use ($responsibleOrganizationIds) {
                         $query->select('user_id')
                             ->from('organization_user')
-                            ->where('organization_id', $organizationId)
+                            ->whereIn('organization_id', $responsibleOrganizationIds)
                             ->where('is_active', true);
                     }),
             ],

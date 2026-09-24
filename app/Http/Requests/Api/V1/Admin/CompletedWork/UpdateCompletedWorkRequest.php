@@ -6,9 +6,12 @@ namespace App\Http\Requests\Api\V1\Admin\CompletedWork;
 
 use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
+use App\Http\Middleware\ProjectContextMiddleware;
 use App\Models\CompletedWork;
 use App\Models\Contract;
+use App\Models\Project;
 use App\Rules\ProjectAccessibleRule;
+use App\Services\CompletedWork\CompletedWorkScopeResolver;
 use Carbon\Carbon;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
@@ -27,6 +30,10 @@ class UpdateCompletedWorkRequest extends FormRequest
         $completedWork = $this->route('completedWork') ?? $this->route('completed_work');
         $organizationId = $completedWork->organization_id;
         $projectId = (int) $this->input('project_id', $completedWork->project_id);
+        $project = ProjectContextMiddleware::getProject($this) ?? Project::query()->find($projectId);
+        $responsibleOrganizationIds = $project
+            ? app(CompletedWorkScopeResolver::class)->responsibleOrganizationIds($project, (int) Auth::user()?->current_organization_id)
+            : [(int) $organizationId];
 
         return [
             'project_id' => ['sometimes', 'required', 'integer', new ProjectAccessibleRule],
@@ -54,10 +61,10 @@ class UpdateCompletedWorkRequest extends FormRequest
                 'integer',
                 Rule::exists('users', 'id')
                     ->whereNull('deleted_at')
-                    ->whereIn('id', function ($query) use ($organizationId) {
+                    ->whereIn('id', function ($query) use ($responsibleOrganizationIds) {
                         $query->select('user_id')
                             ->from('organization_user')
-                            ->where('organization_id', $organizationId)
+                            ->whereIn('organization_id', $responsibleOrganizationIds)
                             ->where('is_active', true);
                     }),
             ],
