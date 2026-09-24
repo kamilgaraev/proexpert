@@ -198,7 +198,7 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
 
-            $url = $this->downloads->temporaryUrlForContract($context->version, $this->actor($request), $context->contract, $purpose);
+            $url = $this->downloads->temporaryUrlForContract($context->version, $this->actor($request), $context->contract, $purpose, $project);
 
             return AdminResponse::success([
                 'url' => $url,

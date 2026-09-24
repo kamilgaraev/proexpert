@@ -7,8 +7,8 @@ namespace Tests\Feature\LegalArchive;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
-use App\Models\Organization;
 use App\Models\Contract;
+use App\Models\Organization;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
@@ -246,20 +246,17 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
         ))->temporaryUrl($version, $actor, 'download');
     }
 
-    public function test_contract_file_url_uses_the_linked_document_acl(): void
+    public function test_contract_file_url_rejects_a_version_outside_the_linked_document(): void
     {
         [$version, $actor] = $this->versionAndActor(10, 10, 'ready');
         $contract = new Contract;
         $contract->forceFill([
             'id' => 12,
             'organization_id' => 10,
-            'legal_archive_document_id' => 5,
+            'legal_archive_document_id' => 6,
         ]);
         $authorization = $this->createMock(LegalDocumentAuthorizer::class);
-        $authorization->expects(self::once())
-            ->method('authorize')
-            ->with($actor, self::isInstanceOf(LegalArchiveDocument::class), 'view')
-            ->willThrowException(new AuthorizationException);
+        $authorization->expects(self::never())->method('authorize');
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::never())->method('temporaryUrl');
 
@@ -271,7 +268,7 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
             new LegalDocumentFilePolicy([]),
             new NullLogger,
             $this->createMock(LegalDocumentAudit::class),
-        ))->temporaryUrlForContract($version, $actor, $contract, 'preview');
+        ))->temporaryUrlForContract($version, $actor, $contract, 'preview', 99);
     }
 
     /** @return array{LegalArchiveDocumentVersion, User} */
