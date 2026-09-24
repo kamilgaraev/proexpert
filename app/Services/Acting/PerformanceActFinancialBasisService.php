@@ -37,6 +37,9 @@ final class PerformanceActFinancialBasisService
         $estimate = $item?->estimate;
         if ($item === null || $estimate === null) {
             $unitPrice = $this->money($this->legacyPrices->resolveCompletedWorkUnitPrice($work, $effectiveQuantity));
+            if (! BigDecimal::of($unitPrice)->isGreaterThan(0)) {
+                throw new BusinessLogicException(trans_message('act_reports.completed_work_price_required'), 422);
+            }
 
             return [
                 'estimate_version_id' => null,

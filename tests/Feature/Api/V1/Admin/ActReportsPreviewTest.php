@@ -56,6 +56,67 @@ class ActReportsPreviewTest extends TestCase
         $response->assertJsonPath('data.summary.current_approved_amount', 0);
     }
 
+    public function test_unpriced_confirmed_work_is_blocked_before_wizard_creates_an_act(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('UNPRICED-WORK');
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1401, 1);
+        $work->update(['price' => null, 'total_amount' => null]);
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/preview', [
+            'contract_id' => $contract->id,
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+        ])->assertOk()
+            ->assertJsonCount(0, 'data.available_works')
+            ->assertJsonPath('data.blocked_works.0.id', $work->id)
+            ->assertJsonPath('data.blocked_works.0.blockers.0.code', 'financial_basis_missing');
+
+        $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-UNPRICED',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [['completed_work_id' => $work->id, 'quantity' => 1]],
+        ])->assertUnprocessable();
+
+        $this->assertDatabaseCount('contract_performance_acts', 0);
+    }
+
+    public function test_confirmed_priced_work_can_be_acted_after_contract_completes(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('COMPLETED-CONTRACT');
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 1402, 1);
+        $contract->forceFill(['status' => 'completed'])->saveQuietly();
+
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'KS-2-COMPLETED-CONTRACT',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [['completed_work_id' => $work->id, 'quantity' => 1]],
+        ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.amount', 1000);
+        $actId = (int) $response->json('data.id');
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$actId}/submit")
+            ->assertOk()
+            ->assertJsonPath('data.status', ContractPerformanceAct::STATUS_PENDING_APPROVAL);
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$actId}/approve")
+            ->assertOk()
+            ->assertJsonPath('data.status', ContractPerformanceAct::STATUS_APPROVED);
+    }
+
     public function test_preview_exposes_fixed_contract_amount_and_available_balance(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('PREVIEW-LIMIT');
@@ -661,7 +722,7 @@ class ActReportsPreviewTest extends TestCase
         $response->assertJsonPath('data.lines.0.amount', 5715);
     }
 
-    public function test_approve_rejects_zero_amount_act_without_stored_financial_basis(): void
+    public function test_invalid_legacy_draft_can_be_viewed_but_not_submitted_or_approved(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVE-PRICE');
         $estimate = Estimate::create([
@@ -726,14 +787,16 @@ class ActReportsPreviewTest extends TestCase
         $this->withoutMiddleware();
         $this->allowPermissions();
 
+        $viewedAct = app(\App\Services\ActReport\ActReportWorkflowService::class)->show($act);
+        $this->assertSame(ContractPerformanceAct::STATUS_DRAFT, $viewedAct->status);
         $this->actingAs($user, 'api_admin')
             ->postJson("/api/v1/admin/act-reports/{$act->id}/submit")
-            ->assertOk();
+            ->assertUnprocessable();
         $response = $this->actingAs($user, 'api_admin')
             ->postJson("/api/v1/admin/act-reports/{$act->id}/approve");
 
         $response->assertStatus(422);
-        $this->assertSame(ContractPerformanceAct::STATUS_PENDING_APPROVAL, $act->fresh()->status);
+        $this->assertSame(ContractPerformanceAct::STATUS_DRAFT, $act->fresh()->status);
         $this->assertDatabaseHas('performance_act_lines', [
             'id' => 1,
             'unit_price' => 0,
