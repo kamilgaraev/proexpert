@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting\Reporting\Portfolio;
 
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
+use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
@@ -44,7 +45,8 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
         $item = $tombstone ? null : $this->calendarItem($source);
         if (! $tombstone
             && ! $source instanceof CashGapOpeningBalance
-            && ! $item instanceof PaymentCalendarItem) {
+            && ! $item instanceof PaymentCalendarItem
+            && ! $item instanceof UndatedPaymentCalendarItem) {
             $this->recordGap($organizationId, $sourceType, $sourceId, ['canonical_calendar_item']);
 
             return null;
@@ -118,21 +120,13 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
     private function isInactive(Model $source): bool
     {
         if ($source instanceof PaymentDocument) {
-            $status = $source->status instanceof PaymentDocumentStatus
-                ? $source->status->value
-                : (string) $source->status;
-
-            return ! in_array($status, [
-                PaymentDocumentStatus::SUBMITTED->value,
-                PaymentDocumentStatus::PENDING_APPROVAL->value,
-                PaymentDocumentStatus::APPROVED->value,
-                PaymentDocumentStatus::SCHEDULED->value,
-                PaymentDocumentStatus::PARTIALLY_PAID->value,
-            ], true) || (float) $source->remaining_amount <= 0;
+            return $source->schedule_source !== null || ! $this->hasActiveDocumentBalance($source);
         }
         if ($source instanceof PaymentSchedule) {
             return $source->status !== 'pending'
-                || (float) $source->paid_amount >= (float) $source->amount;
+                || (float) $source->paid_amount >= (float) $source->amount
+                || ($source->paymentDocument instanceof PaymentDocument
+                    && ! $this->hasActiveDocumentBalance($source->paymentDocument));
         }
         if ($source instanceof PaymentTransaction) {
             $status = $source->status instanceof PaymentTransactionStatus
@@ -142,7 +136,8 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
             return $status !== PaymentTransactionStatus::COMPLETED->value;
         }
         if ($source instanceof BudgetLimitReservation) {
-            return $source->status !== BudgetLimitReservation::STATUS_RESERVED;
+            return $source->status !== BudgetLimitReservation::STATUS_RESERVED
+                || $source->paymentDocument?->schedule_source !== null;
         }
         if ($source instanceof BudgetAmount) {
             return ! in_array($source->line?->version?->status, [
@@ -157,11 +152,27 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
         return false;
     }
 
-    private function calendarItem(Model $source): ?PaymentCalendarItem
+    private function hasActiveDocumentBalance(PaymentDocument $source): bool
+    {
+        $status = $source->status instanceof PaymentDocumentStatus
+            ? $source->status->value
+            : (string) $source->status;
+
+        return in_array($status, [
+            PaymentDocumentStatus::SUBMITTED->value,
+            PaymentDocumentStatus::PENDING_APPROVAL->value,
+            PaymentDocumentStatus::APPROVED->value,
+            PaymentDocumentStatus::SCHEDULED->value,
+            PaymentDocumentStatus::PARTIALLY_PAID->value,
+        ], true) && (float) $source->remaining_amount > 0;
+    }
+
+    private function calendarItem(Model $source): PaymentCalendarItem|UndatedPaymentCalendarItem|null
     {
         return match (true) {
             $source instanceof PaymentDocument => $this->calendar->fromPaymentDocument($source, $source->updated_at),
-            $source instanceof PaymentSchedule => $this->calendar->fromPaymentSchedule($source, $source->updated_at),
+            $source instanceof PaymentSchedule => $this->calendar->fromPaymentSchedule($source, $source->updated_at)
+                ?? $this->calendar->fromUndatedPaymentSchedule($source),
             $source instanceof PaymentTransaction => $this->calendar->fromPaymentTransaction($source),
             $source instanceof BudgetLimitReservation => $this->calendar->fromBudgetLimitReservation($source, $source->updated_at),
             $source instanceof BudgetAmount => $this->calendar->fromBudgetAmount($source),
@@ -169,7 +180,7 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
         };
     }
 
-    private function payload(Model $source, ?PaymentCalendarItem $item): ?array
+    private function payload(Model $source, PaymentCalendarItem|UndatedPaymentCalendarItem|null $item): ?array
     {
         if ($source instanceof CashGapOpeningBalance) {
             if ($source->status !== CashGapOpeningBalance::STATUS_APPROVED) {
@@ -203,9 +214,11 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
             default => null,
         };
         $sourceId = $source->getKey();
-        $organizationId = $source instanceof BudgetAmount
-            ? $source->line?->version?->organization_id
-            : $source->getAttribute('organization_id');
+        $organizationId = match (true) {
+            $source instanceof BudgetAmount => $source->line?->version?->organization_id,
+            $source instanceof PaymentSchedule => $source->paymentDocument?->organization_id,
+            default => $source->getAttribute('organization_id'),
+        };
         if ($type === null
             || (! is_int($sourceId) && ! is_string($sourceId))
             || ! is_numeric($organizationId)

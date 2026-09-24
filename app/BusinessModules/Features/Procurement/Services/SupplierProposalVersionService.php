@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\Support\SupplierPaymentSchedule;
+
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
@@ -87,6 +89,7 @@ class SupplierProposalVersionService
             'lead_time_days' => $proposal->lead_time_days,
             'delivery_terms' => $proposal->delivery_terms,
             'payment_terms' => $proposal->payment_terms,
+            'payment_schedule' => SupplierPaymentSchedule::normalize($proposal->metadata['payment_schedule'] ?? null),
             'warranty_terms' => $proposal->warranty_terms,
             'lines' => $lines,
         ];

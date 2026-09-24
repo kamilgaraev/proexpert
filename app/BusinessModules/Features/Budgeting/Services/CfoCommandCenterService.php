@@ -64,8 +64,13 @@ final class CfoCommandCenterService
         $skipDataMartMeta = ($input['_skip_data_mart_meta'] ?? false) === true;
         $today = CarbonImmutable::today();
         $calendarItems = $this->calendarSourceService->collect($filters->calendarFilters(), $today);
+        $undated = $this->calendarSourceService->summarizeUndated(
+            $this->calendarSourceService->collectUndated($filters->calendarFilters()),
+            $filters->calendarFilters(),
+        );
+        unset($undated['items']);
         $calendar = $this->calendarSection($filters, $calendarItems, $today);
-        $cashGap = $this->cashGapSection($filters, $calendarItems);
+        $cashGap = $this->cashGapSection($filters, $calendarItems, $undated);
         $limits = $this->limitsSection($filters);
         $planFact = $this->planFactSection($filters, $skipDataMartMeta);
         $approvals = $this->approvalsSection($filters);
@@ -351,9 +356,10 @@ final class CfoCommandCenterService
         ];
     }
 
-    private function cashGapSection(CfoCommandCenterFilters $filters, array $calendarItems): array
+    private function cashGapSection(CfoCommandCenterFilters $filters, array $calendarItems, array $undated): array
     {
         $currencies = $filters->currency !== null ? [$filters->currency] : $this->currencies($calendarItems);
+        $currencies = array_values(array_unique(array_merge($currencies, array_keys($undated['totals_by_currency']))));
         $balances = $this->openingBalanceService->latestApprovedByCurrency(
             $filters->organizationId,
             $filters->periodStart,
@@ -432,6 +438,8 @@ final class CfoCommandCenterService
             'highest_risk_level' => $highestRisk,
             'cash_position_by_currency' => $positions,
             'forecasts_by_currency' => $forecasts,
+            'undated' => $undated,
+            'complete' => $unavailableCurrencies === [] && $undated['items_count'] === 0,
         ];
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectPortfolioDashboardFilters;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
 
 use function trans_message;
 
@@ -214,6 +215,8 @@ final class ProjectPortfolioDashboardPayloadBuilder
 
             if ($component === 'cash_gap') {
                 $target['cash_gap'] = [
+                    'complete' => $row['complete'] ?? true,
+                    'undated' => $row['undated'] ?? ['items_count' => 0, 'totals_by_currency' => []],
                     'risk_level' => $this->riskLevel($row['risk_level'] ?? 'low'),
                     'has_gap' => (bool) ($row['has_gap'] ?? false),
                     'first_gap_date' => $row['first_gap_date'] ?? null,
@@ -227,6 +230,9 @@ final class ProjectPortfolioDashboardPayloadBuilder
                 $target['metrics']['overdue_receivables'] = $this->money($row['overdue_receivables'] ?? 0.0);
                 $target['metrics']['overdue_payables'] = $this->money($row['overdue_payables'] ?? 0.0);
                 $target['freshness']['cash_gap'] = $row['freshness_status'] ?? 'actual';
+                if (($row['complete'] ?? true) === false) {
+                    $this->rememberStrings($target['problem_flags'], ['cash_gap_dates_partial']);
+                }
             }
 
             if ($component === 'limit_risk') {
@@ -401,6 +407,8 @@ final class ProjectPortfolioDashboardPayloadBuilder
                 'eac' => 0.0,
                 'ctc' => 0.0,
                 'cash_gap' => 0.0,
+                'cash_gap_complete' => true,
+                'undated' => ['items_count' => 0, 'totals_by_currency' => []],
                 'overdue_receivables' => 0.0,
                 'overdue_payables' => 0.0,
                 'budget_plan' => 0.0,
@@ -435,6 +443,20 @@ final class ProjectPortfolioDashboardPayloadBuilder
             $totals[$currency]['budget_committed'] = $this->money((float) $totals[$currency]['budget_committed'] + (float) ($row['budget']['committed_amount'] ?? 0.0));
             $totals[$currency]['budget_variance'] = $this->money((float) $totals[$currency]['budget_variance'] + (float) ($row['budget']['variance_amount'] ?? 0.0));
             $totals[$currency]['projects_count']++;
+            $totals[$currency]['cash_gap_complete'] = $totals[$currency]['cash_gap_complete']
+                && ($row['cash_gap']['complete'] ?? false)
+                && ! in_array($row['freshness']['cash_gap'] ?? null, ['unavailable', 'stale'], true);
+            $undated = $row['cash_gap']['undated'] ?? [];
+            $totals[$currency]['undated']['items_count'] += (int) ($undated['items_count'] ?? 0);
+            if (isset($undated['totals_by_currency'][$currency])) {
+                $totals[$currency]['undated']['totals_by_currency'][$currency] ??= ['inflow' => '0.00', 'outflow' => '0.00'];
+                foreach (['inflow', 'outflow'] as $direction) {
+                    $totals[$currency]['undated']['totals_by_currency'][$currency][$direction] = PortfolioDecimal::add(
+                        $totals[$currency]['undated']['totals_by_currency'][$currency][$direction],
+                        $undated['totals_by_currency'][$currency][$direction],
+                    );
+                }
+            }
             $totals[$currency]['highest_risk_level'] = $this->highestRisk((string) $totals[$currency]['highest_risk_level'], (string) $row['risk_level']);
         }
 
@@ -751,6 +773,7 @@ final class ProjectPortfolioDashboardPayloadBuilder
             'wip_forecast_unavailable',
             'cash_gap_unavailable',
             'external_confirmation_attention',
+            'cash_gap_dates_partial',
             'approvals_pending',
             'overdue_receivables' => 'warning',
             default => 'info',
@@ -770,6 +793,7 @@ final class ProjectPortfolioDashboardPayloadBuilder
             'cash_gap_unavailable',
             'cash_gap_risk',
             'overdue_receivables',
+            'cash_gap_dates_partial',
             'overdue_payables' => 'cash_gap',
             'budget_limit_risk' => 'limits',
             'approvals_pending' => 'approvals',

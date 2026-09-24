@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Requests;
 
+use App\BusinessModules\Features\Procurement\Support\SupplierPaymentSchedule;
+
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalIntakeSourceEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalVatModeEnum;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -56,6 +58,11 @@ class StoreSupplierProposalRequest extends FormRequest
             'delivery_due_date' => 'sometimes|nullable|date',
             'lead_time_days' => 'sometimes|nullable|integer|min:0|max:3650',
             'payment_terms' => 'required|string|max:5000',
+            'payment_schedule' => ['sometimes', 'nullable', 'array', static function (string $attribute, mixed $value, \Closure $fail): void {
+                if (SupplierPaymentSchedule::normalize($value) === null) {
+                    $fail(trans_message('procurement.payment_schedule_invalid'));
+                }
+            }],
             'delivery_terms' => 'required|string|max:5000',
             'warranty_terms' => 'sometimes|nullable|string|max:5000',
             'items' => 'sometimes|array',

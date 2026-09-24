@@ -37,6 +37,90 @@ use Tests\Support\Reporting\ReportDefinitionBuilder;
 final class BudgetingPortfolioSourceTest extends TestCase
 {
     #[Test]
+    public function liquidity_quality_distinguishes_unknown_dates_from_missing_balances(): void
+    {
+        foreach ([
+            [[['code' => 'payment_due_date_missing', 'currency' => 'RUB']], ['PAYMENT_DUE_DATE_MISSING']],
+            [[['code' => 'opening_balance_missing', 'currency' => 'RUB']], ['OPENING_BALANCE_MISSING']],
+            [[['code' => 'canonical_calendar_item']], ['SOURCE_COVERAGE_PARTIAL']],
+            [[['code' => 'payment_due_date_missing'], ['code' => 'opening_balance_missing']],
+                ['OPENING_BALANCE_MISSING', 'PAYMENT_DUE_DATE_MISSING']],
+        ] as [$gaps, $expected]) {
+            $record = new \App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\BudgetingPortfolioSnapshot;
+            $record->forceFill([
+                'report_code' => BudgetingPortfolioProjectionService::LIQUIDITY_CODE,
+                'quality_status' => 'partial',
+                'row_count' => 2,
+                'totals' => ['quality' => ['gaps' => $gaps, 'duplicate_source_count' => 0]],
+            ]);
+            $quality = BudgetingPortfolioProjectionService::qualityFromRecord($record);
+            $codes = array_map(static fn ($warning): string => $warning->code, $quality->warnings);
+            sort($codes);
+            self::assertSame($expected, $codes);
+            self::assertSame('partial', $quality->status->value);
+
+            $reflection = new ReflectionClass(BudgetingPortfolioProjectionService::class);
+            $row = new PortfolioLiquidityRow('2026-09-05', 0, 'Portfolio', 'RUB', 'base', '100.00', '0.00', '0.00', 0, 'partial', []);
+            $fresh = $reflection->getMethod('liquidityQuality')->invoke(
+                $reflection->newInstanceWithoutConstructor(), [$row, $row], $gaps,
+            );
+            self::assertEquals($quality, $fresh);
+        }
+    }
+
+    #[Test]
+    public function undated_liquidity_sources_respect_all_report_scope_filters(): void
+    {
+        $timezone = new DateTimeZone('UTC');
+        $scope = new ReportScope(1, [1], [10], [], $timezone);
+        $context = new ReportExecutionContext(
+            new ReportActor(7, 'active', ['reports.view']),
+            $scope,
+            new ReportVisibility(true, false, false, false, false, false, false),
+            new AuthorizationDecisionContext('http', 1, [1], [10], [], $timezone, 'scope-test', null),
+        );
+        $query = new ReportQuery(
+            (new ReportDefinitionBuilder)->code(BudgetingPortfolioProjectionService::LIQUIDITY_CODE)->payload(),
+            $scope,
+            new ReportFilterSet([
+                'responsibility_center_ids' => [20],
+                'counterparty_ids' => [30],
+                'document_ids' => [40],
+            ]),
+            [],
+            new DateTimeImmutable('2026-09-05T00:00:00+00:00'),
+            'ru',
+        );
+        $items = [];
+        foreach ([[1, 10, 20, 30, 40], [2, 10, 20, 30, 40], [1, 11, 20, 30, 40],
+            [1, 10, 21, 30, 40], [1, 10, 20, 31, 40], [1, 10, 20, 30, 41]] as $index => $values) {
+            [$organization, $project, $center, $counterparty, $document] = $values;
+            $items[] = new \App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem(
+                organizationId: $organization,
+                direction: 'outflow',
+                amount: '2100.00',
+                remainingAmount: '2100.00',
+                currency: 'USD',
+                sourceId: (string) ($index + 1),
+                cashFlowKey: 'schedule:'.($index + 1),
+                projectId: $project,
+                counterpartyId: $counterparty,
+                budgetArticleId: null,
+                responsibilityCenterId: $center,
+                drillDown: ['payment_document_id' => $document],
+            );
+        }
+        $reflection = new ReflectionClass(BudgetingPortfolioProjectionService::class);
+        $materializer = $reflection->newInstanceWithoutConstructor();
+        $selected = $reflection->getMethod('scopeCalendar')->invoke($materializer, $items, $context, $query);
+
+        self::assertCount(1, $selected);
+        self::assertSame('1', $selected[0]->sourceId);
+        self::assertSame('2100.00', $selected[0]->remainingAmount);
+        self::assertSame(['USD'], $reflection->getMethod('currencies')->invoke($materializer, $query, $selected));
+    }
+
+    #[Test]
     public function portfolio_health_keeps_currency_totals_separate_and_uses_weighted_margin(): void
     {
         $result = ProjectPortfolioProjectionResult::fromRows([
@@ -253,7 +337,7 @@ final class BudgetingPortfolioSourceTest extends TestCase
     }
 
     #[Test]
-    public function production_materializer_rejects_project_filter_outside_authorized_scope(): void
+    public function liquidity_materializer_rejects_project_filter_outside_authorized_scope(): void
     {
         $timezone = new DateTimeZone('UTC');
         $scope = new ReportScope(1, [1], [10], [], $timezone);
@@ -264,7 +348,7 @@ final class BudgetingPortfolioSourceTest extends TestCase
             new AuthorizationDecisionContext('http', 1, [1], [10], [], $timezone, 'scope-test', null),
         );
         $query = new ReportQuery(
-            (new ReportDefinitionBuilder)->code(BudgetingPortfolioProjectionService::HEALTH_CODE)->payload(),
+            (new ReportDefinitionBuilder)->code(BudgetingPortfolioProjectionService::LIQUIDITY_CODE)->payload(),
             $scope,
             new ReportFilterSet(['project_ids' => [11]]),
             [],
@@ -279,7 +363,7 @@ final class BudgetingPortfolioSourceTest extends TestCase
                 $context,
                 $query,
                 new ReportProgress(0),
-                BudgetingPortfolioProjectionService::HEALTH_CODE,
+                BudgetingPortfolioProjectionService::LIQUIDITY_CODE,
             );
             self::fail('Project filter outside authorized scope must be rejected before source access.');
         } catch (ReportContractException $exception) {

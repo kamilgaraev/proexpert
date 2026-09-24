@@ -51,7 +51,7 @@ class PurchaseOrder extends Model
         'delivery_date' => 'date',
         'sent_at' => 'date',
         'sent_at_exact' => 'immutable_datetime',
-        'confirmed_at' => 'date',
+        'confirmed_at' => 'immutable_datetime',
         'total_amount' => 'decimal:2',
         'supplier_snapshot' => 'array',
         'metadata' => 'array',

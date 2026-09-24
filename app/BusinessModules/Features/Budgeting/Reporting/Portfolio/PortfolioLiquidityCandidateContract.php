@@ -23,7 +23,7 @@ final readonly class PortfolioLiquidityCandidateContract
 
     public const FORMULA_HASH = 'c74d47950d55c2d8c2f701c05a1c6847b81597375de275c673135c812cbcc09b';
 
-    public const SOURCE_HASH = '00e74e98ee36aebf51211ac2d6e9058fcb95bfb3c8c117b4d3dfc28fbc122666';
+    public const SOURCE_HASH = 'e854ff75da08f21acbb6285d1058398e9a86de00660ec4795a8d11d61e56c0bf';
 
     public function filters(): array
     {

@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Reporting\Portfolio;
 
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
+use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapOpeningBalanceSnapshot;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquiditySourceGap;
@@ -73,6 +74,7 @@ final readonly class PortfolioLiquidityAsOfSource
             ])
             ->all();
         $calendarItems = [];
+        $undatedItems = [];
         $balances = [];
         foreach ($versions as $version) {
             $payload = $version->payload;
@@ -94,11 +96,17 @@ final readonly class PortfolioLiquidityAsOfSource
                 && ! in_array($payload['status'] ?? null, ['approved', 'active'], true)) {
                 continue;
             }
-            $calendarItems[] = $this->calendarItem($payload);
+            if (($payload['bucket'] ?? null) === 'undated'
+                && array_key_exists('date', $payload) && $payload['date'] === null) {
+                $undatedItems[] = $this->undatedItem($payload);
+            } else {
+                $calendarItems[] = $this->calendarItem($payload);
+            }
         }
 
         return [
             'calendar' => $this->calendar->normalizeItems($calendarItems, $filters),
+            'undated' => $this->calendar->summarizeUndated($undatedItems, $filters)['items'],
             'balances' => $balances,
             'versions' => $versions->map(static fn (PortfolioLiquiditySourceVersion $version): array => [
                 'id' => (int) $version->getKey(),
@@ -115,6 +123,27 @@ final readonly class PortfolioLiquidityAsOfSource
             'gaps' => $gaps,
             'ingestion_watermark' => $ingestedThrough->format(DateTimeInterface::ATOM),
         ];
+    }
+
+    private function undatedItem(array $payload): UndatedPaymentCalendarItem
+    {
+        return new UndatedPaymentCalendarItem(
+            organizationId: (int) ($payload['organization_id'] ?? 0),
+            direction: (string) ($payload['direction'] ?? ''),
+            amount: (string) ($payload['amount'] ?? '0'),
+            remainingAmount: (string) ($payload['remaining_amount'] ?? '0'),
+            currency: (string) ($payload['currency'] ?? ''),
+            sourceId: is_int($payload['source_id'] ?? null) || is_string($payload['source_id'] ?? null)
+                ? $payload['source_id'] : null,
+            cashFlowKey: (string) ($payload['cash_flow_key'] ?? ''),
+            projectId: isset($payload['project_id']) ? (int) $payload['project_id'] : null,
+            counterpartyId: isset($payload['counterparty_id']) ? (int) $payload['counterparty_id'] : null,
+            budgetArticleId: is_int($payload['budget_article_id'] ?? null) || is_string($payload['budget_article_id'] ?? null)
+                ? $payload['budget_article_id'] : null,
+            responsibilityCenterId: is_int($payload['responsibility_center_id'] ?? null) || is_string($payload['responsibility_center_id'] ?? null)
+                ? $payload['responsibility_center_id'] : null,
+            drillDown: is_array($payload['drill_down'] ?? null) ? $payload['drill_down'] : [],
+        );
     }
 
     private function calendarItem(array $payload): PaymentCalendarItem

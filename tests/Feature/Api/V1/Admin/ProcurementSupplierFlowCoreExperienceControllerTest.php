@@ -241,14 +241,153 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             ->count());
     }
 
+    public function test_receipt_and_reversal_automatically_synchronize_supplier_payment_schedule(): void
+    {
+        $this->enableImmutableAuditWriter();
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $warehouse = $this->createWarehouse($context->organization->id);
+        $supplier = $this->createSupplier($context->organization->id, 'Поставщик графика', 'schedule@example.test');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $siteRequest = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Материалы с отсрочкой оплаты',
+            'status' => SiteRequestStatusEnum::APPROVED,
+            'request_type' => 'material_request',
+            'priority' => 'medium',
+            'material_id' => $material->id,
+            'material_name' => $material->name,
+            'material_quantity' => 5,
+            'material_unit' => 'pcs',
+        ]);
+        $request = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $request->update(['site_request_id' => $siteRequest->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/supplier-requests/bulk', [
+                'purchase_request_id' => $request->id,
+                'send_immediately' => true,
+                'suppliers' => [['supplier_id' => $supplier->id]],
+            ])->assertCreated();
+        $supplierRequest = SupplierRequest::query()->where('purchase_request_id', $request->id)->firstOrFail();
+        $payload = $this->proposalPayload($supplierRequest, 500);
+        $payload['payment_schedule'] = ['mode' => 'postpayment', 'advance_percent' => 0, 'deferment_days' => 15];
+        $proposalResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/proposals', $payload);
+        $proposalResponse->assertCreated();
+        $proposalId = $proposalResponse->json('data.id');
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-requests/{$request->id}/proposal-decision", [
+                'supplier_proposal_id' => $proposalId,
+            ])->assertOk();
+        $order = PurchaseOrder::query()->where('accepted_supplier_proposal_id', $proposalId)->firstOrFail();
+        $payment = app(\App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentDocumentService::class)
+            ->createOrOpen($order)['document'];
+        $schedules = fn () => \App\BusinessModules\Core\Payments\Models\PaymentSchedule::query()
+            ->where('payment_document_id', $payment->id)->get()->keyBy('source_key');
+        $this->assertSame('500.00', $schedules()['procurement:unreceived']->amount);
+        $this->assertNull($schedules()['procurement:unreceived']->due_date);
+        $item = $order->items()->firstOrFail();
+        $receiptPayload = [
+            'warehouse_id' => $warehouse->id,
+            'idempotency_key' => 'ba0ff264-2052-46c9-9eda-5091b8d9d901',
+            'receipt_date' => now()->toDateString(),
+            'items' => [['item_id' => $item->id, 'quantity_received' => 2, 'price' => 100]],
+        ];
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$order->id}/receive-materials", $receiptPayload)
+            ->assertOk();
+        $receipt = $order->receipts()->firstOrFail();
+        $line = $receipt->lines()->firstOrFail();
+        $receiptKey = 'procurement:receipt:'.$receipt->id;
+        $this->assertSame('200.00', $schedules()[$receiptKey]->amount);
+        $this->assertSame($receipt->receipt_date->copy()->addDays(15)->format('Y-m-d'), $schedules()[$receiptKey]->due_date->format('Y-m-d'));
+        $this->assertSame('300.00', $schedules()['procurement:unreceived']->amount);
+        $balance = WarehouseBalance::query()->where('warehouse_id', $warehouse->id)->where('material_id', $material->id)->firstOrFail();
+        $this->assertSame('2.000', (string) $balance->available_quantity);
+        $scheduleIds = $schedules()->modelKeys();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$order->id}/receive-materials", $receiptPayload)
+            ->assertOk();
+        $this->assertSame($scheduleIds, $schedules()->modelKeys());
+        $this->assertSame(1, $order->receipts()->count());
+        $reversePayload = ['reason_code' => 'incorrect_receipt', 'idempotency_key' => 'schedule-reversal-0001'];
+        $reverseUrl = "/api/v1/admin/procurement/purchase-orders/{$order->id}/receipt-lines/{$line->id}/reverse";
+        $this->withHeaders($context->authHeaders())->postJson($reverseUrl, $reversePayload)->assertOk();
+        $this->assertNotNull($line->fresh()->reversed_at);
+        $this->assertSame('0.000', (string) $balance->fresh()->available_quantity);
+        $this->assertSame('0.00', $schedules()[$receiptKey]->amount);
+        $this->assertNull($schedules()[$receiptKey]->due_date);
+        $this->assertSame('500.00', $schedules()['procurement:unreceived']->amount);
+        $this->withHeaders($context->authHeaders())->postJson($reverseUrl, $reversePayload)->assertOk();
+        $this->assertSame($scheduleIds, $schedules()->modelKeys());
+        $this->assertSame('0.00', $payment->fresh()->paid_amount);
+        $receiptPayload['idempotency_key'] = '67280197-0186-4af6-8e6b-72339929cb37';
+        $receiptPayload['items'][0]['quantity_received'] = 3;
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$order->id}/receive-materials", $receiptPayload)
+            ->assertOk();
+        $replacementReceipt = $order->receipts()->latest('id')->firstOrFail();
+        $replacementLine = $replacementReceipt->lines()->firstOrFail();
+        $replacementKey = 'procurement:receipt:'.$replacementReceipt->id;
+        $replacementBalance = WarehouseBalance::query()->where('warehouse_id', $warehouse->id)
+            ->where('material_id', $material->id)
+            ->where('batch_number', 'purchase-receipt-line:'.$replacementLine->id)->firstOrFail();
+        $this->assertSame('0.000', (string) $balance->fresh()->available_quantity);
+        $this->assertSame('3.000', (string) $replacementBalance->available_quantity);
+        $this->assertSame('300.00', $schedules()[$replacementKey]->amount);
+        $returnUrl = "/api/v1/admin/procurement/purchase-orders/{$order->id}/receipt-lines/{$replacementLine->id}/return";
+        $returnPayload = ['quantity' => 1, 'reason_code' => 'damaged_material', 'idempotency_key' => 'schedule-return-0001'];
+        $this->withHeaders($context->authHeaders())->postJson($returnUrl, $returnPayload)->assertOk();
+        $this->assertSame('2.000', (string) $replacementBalance->fresh()->available_quantity);
+        $this->assertSame('200.00', $schedules()[$replacementKey]->amount);
+        $this->assertSame('300.00', $schedules()['procurement:unreceived']->amount);
+        $replacementScheduleIds = $schedules()->modelKeys();
+        $this->withHeaders($context->authHeaders())->postJson($returnUrl, $returnPayload)->assertOk();
+        $this->assertSame('2.000', (string) $replacementBalance->fresh()->available_quantity);
+        $this->assertSame($replacementScheduleIds, $schedules()->modelKeys());
+        $this->withHeaders($context->authHeaders())->postJson($returnUrl, [
+            ...$returnPayload, 'quantity' => 2,
+        ])->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())->postJson($returnUrl, [
+            ...$returnPayload, 'quantity' => 3, 'idempotency_key' => 'schedule-return-excess-0001',
+        ])->assertUnprocessable();
+        $this->assertSame('2.000', (string) $replacementBalance->fresh()->available_quantity);
+        $this->assertSame('200.00', $schedules()[$replacementKey]->amount);
+        $this->assertSame('300.00', $schedules()['procurement:unreceived']->amount);
+        $this->assertSame($replacementScheduleIds, $schedules()->modelKeys());
+        $this->assertSame(1, \App\BusinessModules\Features\Procurement\Models\PurchaseReceiptReturn::query()
+            ->where('purchase_receipt_line_id', $replacementLine->id)->count());
+    }
+
     public function test_purchase_order_receipt_number_is_unique_across_organizations(): void
     {
+        $this->enableImmutableAuditWriter();
         $context = AdminApiTestContext::create();
         $foreignContext = AdminApiTestContext::create();
         $unit = $this->createUnit($context->organization->id);
         $material = $this->createMaterial($context->organization->id, $unit->id);
         $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
         $supplier = $this->createSupplier($context->organization->id, 'Receipt Supplier', 'receipt@example.test');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $siteRequest = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Материалы ручного заказа',
+            'status' => SiteRequestStatusEnum::APPROVED,
+            'request_type' => 'material_request',
+            'priority' => 'medium',
+            'material_id' => $material->id,
+            'material_name' => $material->name,
+            'material_quantity' => 5,
+            'material_unit' => 'pcs',
+        ]);
+        $purchaseRequest->update(['site_request_id' => $siteRequest->id]);
         $warehouse = $this->createWarehouse($context->organization->id);
         $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id);
         $foreignOrder = $this->createForeignPurchaseOrder($foreignContext);
@@ -305,6 +444,71 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'organization_id' => $context->organization->id,
             'purchase_order_id' => $purchaseOrder->id,
         ]);
+        $this->assertDatabaseMissing('purchase_order_promise_versions', [
+            'purchase_order_id' => $purchaseOrder->id,
+        ]);
+        $this->assertDatabaseHas('supply_lifecycle_events', [
+            'organization_id' => $context->organization->id,
+            'purchase_order_id' => $purchaseOrder->id,
+            'purchase_order_item_id' => $item->id,
+            'promise_version_id' => null,
+            'event_type' => 'received',
+            'signed_quantity' => 5,
+        ]);
+        $this->assertDatabaseHas('warehouse_balances', [
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'available_quantity' => 5,
+        ]);
+        $event = (array) \Illuminate\Support\Facades\DB::table('supply_lifecycle_events')
+            ->where('purchase_order_item_id', $item->id)->first();
+        unset($event['id']);
+        foreach ([
+            ['organization_id' => $foreignContext->organization->id],
+            ['purchase_order_id' => $foreignOrder->id],
+            ['signed_quantity' => 6],
+            ['unit_code' => 'invalid-unit'],
+        ] as $index => $mutation) {
+            try {
+                \Illuminate\Support\Facades\DB::transaction(static function () use ($event, $mutation, $index): void {
+                    \Illuminate\Support\Facades\DB::table('supply_lifecycle_events')->insert([
+                        ...$event, ...$mutation, 'idempotency_key' => 'invalid-receipt-'.$index,
+                    ]);
+                });
+                $this->fail('Invalid receipt evidence was accepted.');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                $this->assertSame('23514', $exception->errorInfo[0]);
+            }
+        }
+        $line = $purchaseOrder->receipts()->firstOrFail()->lines()->firstOrFail();
+        $reverseUrl = "/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-lines/{$line->id}/reverse";
+        $reversePayload = ['reason_code' => 'incorrect_receipt', 'idempotency_key' => 'manual-receipt-reversal-0001'];
+        $reverseResponse = $this->withHeaders($context->authHeaders())->postJson($reverseUrl, $reversePayload);
+        $this->assertSame(200, $reverseResponse->status(), $reverseResponse->getContent());
+        $this->withHeaders($context->authHeaders())->postJson($reverseUrl, $reversePayload)->assertOk();
+        $this->assertDatabaseHas('supply_lifecycle_events', [
+            'source_id' => $line->id, 'event_type' => 'receipt_reversed',
+            'promise_version_id' => null, 'signed_quantity' => -5,
+        ]);
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
+                'warehouse_id' => $warehouse->id,
+                'idempotency_key' => '352c39f8-c5d6-473b-a9d6-02ff8e606535',
+                'items' => [['item_id' => $item->id, 'quantity_received' => 5, 'price' => 100]],
+            ])->assertOk();
+        $replacementLine = $purchaseOrder->receipts()->latest('id')->firstOrFail()->lines()->firstOrFail();
+        $returnUrl = "/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-lines/{$replacementLine->id}/return";
+        $returnPayload = ['quantity' => 2, 'reason_code' => 'damaged_material', 'idempotency_key' => 'manual-receipt-return-0001'];
+        $this->withHeaders($context->authHeaders())->postJson($returnUrl, $returnPayload)->assertOk();
+        $this->withHeaders($context->authHeaders())->postJson($returnUrl, $returnPayload)->assertOk();
+        $this->assertDatabaseHas('supply_lifecycle_events', [
+            'purchase_order_item_id' => $item->id, 'event_type' => 'returned',
+            'promise_version_id' => null, 'signed_quantity' => -2,
+        ]);
+        $this->assertSame(3.0, (float) WarehouseBalance::query()
+            ->where('warehouse_id', $warehouse->id)->where('material_id', $material->id)->sum('available_quantity'));
+        $this->assertDatabaseMissing('purchase_order_promise_versions', ['purchase_order_id' => $purchaseOrder->id]);
     }
 
     public function test_purchase_order_receipt_document_pdf_can_be_downloaded_after_payment_before_posting(): void
@@ -430,6 +634,167 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $this->assertSame(0, PurchaseReceipt::query()
             ->where('purchase_order_id', $purchaseOrder->id)
             ->count());
+    }
+
+    public function test_payment_schedule_is_part_of_proposal_version_hash(): void
+    {
+        $snapshot = ['total_amount' => '500', 'currency' => 'RUB', 'lines' => []];
+        $hash = \App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardVersionProjection::proposalHash($snapshot);
+        $snapshot['payment_schedule'] = null;
+        $this->assertSame($hash, \App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardVersionProjection::proposalHash($snapshot));
+        $snapshot['payment_schedule'] = ['mode' => 'prepayment', 'advance_percent' => 100, 'deferment_days' => 0];
+        $prepaymentHash = \App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardVersionProjection::proposalHash($snapshot);
+        $snapshot['payment_schedule'] = ['mode' => 'postpayment', 'advance_percent' => 0, 'deferment_days' => 10];
+
+        $this->assertNotSame($prepaymentHash, \App\BusinessModules\Features\Procurement\Reporting\Award\Support\ProcurementAwardVersionProjection::proposalHash($snapshot));
+    }
+
+    public function test_supplier_proposal_preserves_validated_payment_schedule_in_version(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $request = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $supplier = $this->createSupplier($context->organization->id, 'Поставщик с постоплатой', 'terms@example.test');
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/procurement/supplier-requests/bulk', [
+            'purchase_request_id' => $request->id,
+            'send_immediately' => true,
+            'suppliers' => [['supplier_id' => $supplier->id]],
+        ])->assertCreated();
+        $supplierRequest = SupplierRequest::query()->where('purchase_request_id', $request->id)->firstOrFail();
+        $payload = $this->proposalPayload($supplierRequest, 500.0);
+        $payload['payment_schedule'] = ['mode' => 'postpayment', 'advance_percent' => 0, 'deferment_days' => 10];
+        $payload['metadata'] = ['payment_schedule' => ['mode' => 'invalid']];
+
+        foreach ([
+            ['mode' => 'postpayment', 'advance_percent' => 30, 'deferment_days' => 10],
+            ['mode' => 'mixed', 'advance_percent' => 0, 'deferment_days' => 10],
+            ['mode' => 'prepayment', 'advance_percent' => 100, 'deferment_days' => 10],
+            ['mode' => 'postpayment', 'advance_percent' => 0, 'deferment_days' => -1],
+            ['mode' => 'postpayment', 'advance_percent' => false, 'deferment_days' => 10],
+        ] as $invalidSchedule) {
+            $invalidPayload = array_replace($payload, ['payment_schedule' => $invalidSchedule]);
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/procurement/proposals', $invalidPayload)
+                ->assertStatus(422);
+        }
+        $this->assertSame(0, SupplierProposal::query()->where('supplier_request_id', $supplierRequest->id)->count());
+
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/procurement/proposals', $payload);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.payment_schedule.mode', 'postpayment');
+        $proposal = SupplierProposal::query()->findOrFail($response->json('data.id'));
+        $version = $proposal->versions()->firstOrFail();
+        $this->assertEquals($payload['payment_schedule'], $version->commercial_snapshot['payment_schedule']);
+        $this->assertEquals($payload['payment_schedule'], $proposal->metadata['payment_schedule']);
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-requests/{$request->id}/proposal-comparison")
+            ->assertOk()
+            ->assertJsonPath('data.rows.0.payment_schedule.mode', 'postpayment');
+    }
+
+    public function test_purchase_order_receipt_allows_postpayment_from_accepted_version_without_payment(): void
+    {
+        [, $order] = $this->createOrderForPaymentSchedule([
+            'mode' => 'postpayment',
+            'advance_percent' => 0,
+            'deferment_days' => 10,
+        ]);
+        $gate = app(\App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService::class);
+        $summary = $gate->summary($order);
+
+        $this->assertSame(0.0, $summary['paid_amount']);
+        $this->assertTrue($summary['can_receive_materials']);
+        $this->assertNull($summary['blocker']);
+        $this->assertNull($summary['receipt_amount_limit']);
+        $gate->assertCanReceive($order, [['quantity_received' => 5, 'price' => 100]]);
+        $this->assertSame(0, $gate->linkedDocuments($order)->count());
+    }
+
+    public function test_purchase_order_receipt_requires_agreed_advance_not_full_payment(): void
+    {
+        [$context, $order] = $this->createOrderForPaymentSchedule([
+            'mode' => 'mixed',
+            'advance_percent' => 30,
+            'deferment_days' => 10,
+        ]);
+        $gate = app(\App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService::class);
+        $this->assertFalse($gate->summary($order)['can_receive_materials']);
+        $this->createPaidProcurementPaymentDocument($context, $order, 150);
+
+        $summary = $gate->summary($order);
+
+        $this->assertSame(150.0, $summary['paid_amount']);
+        $this->assertSame(150.0, $summary['required_advance_amount']);
+        $this->assertNull($summary['receipt_amount_limit']);
+        $this->assertTrue($summary['can_receive_materials']);
+        $gate->assertCanReceive($order, [['quantity_received' => 5, 'price' => 100]]);
+    }
+
+    public function test_purchase_order_receipt_rejects_partial_payment_when_full_advance_agreed(): void
+    {
+        [$context, $order] = $this->createOrderForPaymentSchedule([
+            'mode' => 'prepayment',
+            'advance_percent' => 100,
+            'deferment_days' => 0,
+        ]);
+        $this->createPaidProcurementPaymentDocument($context, $order, 100);
+        $gate = app(\App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService::class);
+        $this->assertFalse($gate->summary($order)['can_receive_materials']);
+        $this->expectException(\App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptPaymentException::class);
+
+        $gate->assertCanReceive($order, [['quantity_received' => 1, 'price' => 100]]);
+    }
+
+    public function test_purchase_order_receipt_does_not_infer_postpayment_from_text_or_order_metadata(): void
+    {
+        [, $order] = $this->createOrderForPaymentSchedule([]);
+        $order->update(['metadata' => ['commercial_snapshot' => ['payment_schedule' => [
+            'mode' => 'postpayment',
+            'advance_percent' => 0,
+            'deferment_days' => 10,
+        ]]]]);
+        $gate = app(\App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService::class);
+        $this->assertFalse($gate->summary($order)['can_receive_materials']);
+        $this->expectException(\App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptPaymentException::class);
+
+        $gate->assertCanReceive($order, [['quantity_received' => 5, 'price' => 100]]);
+    }
+
+    private function createOrderForPaymentSchedule(array $schedule): array
+    {
+        $context = AdminApiTestContext::create();
+        $proposal = SupplierProposal::query()->create([
+            'organization_id' => $context->organization->id,
+            'proposal_number' => 'POSTPAY-'.uniqid(),
+            'proposal_date' => now()->toDateString(),
+            'total_amount' => 500,
+            'currency' => 'RUB',
+            'payment_terms' => 'Оплата через 10 дней после приёмки',
+        ]);
+        $version = $proposal->versions()->create([
+            'organization_id' => $context->organization->id,
+            'version_number' => 1,
+            'commercial_snapshot' => [
+                'payment_schedule' => $schedule,
+            ],
+            'content_hash' => hash('sha256', 'postpayment-test'),
+            'integrity_status' => 'verified',
+        ]);
+        $order = PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'accepted_supplier_proposal_id' => $proposal->id,
+            'accepted_supplier_proposal_version_id' => $version->id,
+            'order_number' => 'POSTPAY-ORDER-'.uniqid(),
+            'order_date' => now()->toDateString(),
+            'status' => PurchaseOrderStatusEnum::IN_DELIVERY,
+            'total_amount' => 500,
+            'currency' => 'RUB',
+        ]);
+        return [$context, $order];
     }
 
     public function test_purchase_order_receipt_requires_paid_payment_document(): void

@@ -17,6 +17,10 @@ use function trans_message;
  */
 class PaymentScheduleGenerator
 {
+    public function __construct(
+        private readonly PaymentScheduleSynchronizationService $synchronization,
+    ) {}
+
     /**
      * Создать график платежей для документа
      */
@@ -25,6 +29,7 @@ class PaymentScheduleGenerator
         DB::beginTransaction();
 
         try {
+            $document = $this->synchronization->lockForManualChange($document);
             $schedules = collect();
 
             // Определяем тип графика
@@ -303,6 +308,7 @@ class PaymentScheduleGenerator
         DB::beginTransaction();
 
         try {
+            $document = $this->synchronization->lockForManualChange($document);
             // Удаляем старый график (только pending платежи)
             PaymentSchedule::where('payment_document_id', $document->id)
                 ->where('status', 'pending')
@@ -506,4 +512,3 @@ class PaymentScheduleGenerator
         ];
     }
 }
-

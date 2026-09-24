@@ -322,6 +322,7 @@ return [
             'approvals_unavailable' => 'Данные по согласованиям платежей временно недоступны.',
             'one_c_exchange_unavailable' => 'Данные сверки с 1С временно недоступны.',
             'wip_forecast_responsibility_center_partial' => 'Прогноз завершения показан частично из-за фильтра по ЦФО.',
+            'cash_gap_dates_partial' => 'Есть обязательства без срока оплаты. Прогноз по дням неполный.',
             'external_confirmation_attention' => 'Есть вопросы по внешнему подтверждению данных.',
             'missing_project' => 'В части источников не заполнен проект.',
             'missing_contract' => 'В части источников не заполнен договор.',

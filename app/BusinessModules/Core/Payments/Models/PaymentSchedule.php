@@ -13,6 +13,7 @@ class PaymentSchedule extends Model
 
     protected $fillable = [
         'payment_document_id',
+        'source_key',
         'installment_number',
         'due_date',
         'amount',
@@ -92,15 +93,18 @@ class PaymentSchedule extends Model
      */
     public function isOverdue(): bool
     {
-        return $this->status === 'pending' && $this->due_date < Carbon::now();
+        return $this->status === 'pending'
+            && $this->due_date !== null
+            && $this->due_date < Carbon::now();
     }
 
     /**
      * Количество дней до срока оплаты (или просрочки)
      */
-    public function getDaysUntilDue(): int
+    public function getDaysUntilDue(): ?int
     {
-        return Carbon::now()->diffInDays($this->due_date, false);
+        return $this->due_date === null
+            ? null
+            : (int) Carbon::now()->diffInDays($this->due_date, false);
     }
 }
-

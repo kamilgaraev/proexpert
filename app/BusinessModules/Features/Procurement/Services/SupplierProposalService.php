@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\Support\SupplierPaymentSchedule;
+
 use App\BusinessModules\Features\Procurement\Enums\ProcurementApprovalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
@@ -42,6 +44,7 @@ class SupplierProposalService
         private readonly ProcurementAwardTimeResolver $awardTimeResolver,
         private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
         private readonly ProcurementAwardOwnerEventWriter $awardOwnerRecorder,
+        private readonly \App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder $supplyLifecycleRecorder,
     ) {}
 
     public function createFromSupplierRequest(
@@ -150,6 +153,8 @@ class SupplierProposalService
     ): array {
         $supplierRequestVersion = $this->requestVersionService->resolveForProposal($supplierRequest, $actorId);
         $amounts = $this->commercialAmounts($data);
+        $metadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
+        $metadata['payment_schedule'] = SupplierPaymentSchedule::validated($data['payment_schedule'] ?? null);
 
         $stage = 'create_proposal';
         $proposal = SupplierProposal::query()->create([
@@ -178,7 +183,7 @@ class SupplierProposalService
             'warranty_terms' => $data['warranty_terms'] ?? null,
             'items' => $data['items'] ?? null,
             'notes' => $data['notes'] ?? null,
-            'metadata' => $data['metadata'] ?? null,
+            'metadata' => $metadata,
         ]);
 
         foreach ($data['items'] ?? [] as $item) {
@@ -511,6 +516,8 @@ class SupplierProposalService
             ]);
         }
 
+        $this->supplyLifecycleRecorder->prepareOrderPromises($order);
+        $this->supplyLifecycleRecorder->orderConfirmed($order);
         $proposal->update(['purchase_order_id' => $order->id]);
 
         return $order;

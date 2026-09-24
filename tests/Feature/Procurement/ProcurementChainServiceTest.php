@@ -193,6 +193,166 @@ final class ProcurementChainServiceTest extends TestCase
         $this->assertTrue($summary->compact()->isBlocked);
     }
 
+    public function test_postpayment_offers_receipt_without_claiming_payment_is_complete(): void
+    {
+        $organization = Organization::factory()->create();
+        $request = $this->createPurchaseRequest($organization);
+        $supplierRequest = $this->createSupplierRequest($request, SupplierRequestStatusEnum::SENT);
+        $proposal = $this->createSupplierProposal($supplierRequest);
+        $version = \App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion::query()->create([
+            'organization_id' => $organization->id,
+            'supplier_proposal_id' => $proposal->id,
+            'version_number' => 1,
+            'commercial_snapshot' => ['payment_schedule' => [
+                'mode' => 'postpayment', 'advance_percent' => 0, 'deferment_days' => 10,
+            ]],
+            'content_hash' => hash('sha256', 'chain-postpayment'),
+            'integrity_status' => 'verified',
+        ]);
+        $order = $this->createPurchaseOrder($request, PurchaseOrderStatusEnum::CONFIRMED);
+        $order->update([
+            'accepted_supplier_proposal_id' => $proposal->id,
+            'accepted_supplier_proposal_version_id' => $version->id,
+        ]);
+
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+
+        $this->assertSame('receive_materials', $summary->nextAction?->key);
+        $this->assertTrue($summary->nextAction?->isEnabled);
+        $this->assertNotSame('done', $summary->stages->firstWhere('key', 'payment_registered')?->status);
+        $this->assertNotSame('completed', $summary->currentStage->key);
+
+        $this->createReceipt($order, 2);
+        $order->update(['status' => PurchaseOrderStatusEnum::PARTIALLY_DELIVERED]);
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+        $this->assertSame('receive_materials', $summary->nextAction?->key);
+        $this->assertSame('pending', $summary->stages->firstWhere('key', 'payment_registered')?->status);
+        $this->assertSame('done', $summary->stages->firstWhere('key', 'warehouse_posted')?->status);
+
+        $this->createReceipt($order, 3);
+        $order->update(['status' => PurchaseOrderStatusEnum::DELIVERED]);
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+        $this->assertSame('create_or_open_payment_document', $summary->nextAction?->key);
+        $this->assertSame('done', $summary->stages->firstWhere('key', 'warehouse_posted')?->status);
+        $this->assertSame('pending', $summary->stages->firstWhere('key', 'payment_registered')?->status);
+
+        $this->createPaymentDocument($order, PaymentDocumentStatus::PAID, 500);
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+        $this->assertSame('completed', $summary->currentStage->key);
+        $this->assertSame('done', $summary->stages->firstWhere('key', 'payment_registered')?->status);
+        $this->assertNull($summary->nextAction);
+    }
+
+    public function test_mixed_payment_requires_advance_and_preserves_balance_after_receipt(): void
+    {
+        $organization = Organization::factory()->create();
+        $request = $this->createPurchaseRequest($organization);
+        $supplierRequest = $this->createSupplierRequest($request, SupplierRequestStatusEnum::SENT);
+        $proposal = $this->createSupplierProposal($supplierRequest);
+        $version = \App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion::query()->create([
+            'organization_id' => $organization->id,
+            'supplier_proposal_id' => $proposal->id,
+            'version_number' => 1,
+            'commercial_snapshot' => ['payment_schedule' => [
+                'mode' => 'mixed', 'advance_percent' => 30, 'deferment_days' => 15,
+            ]],
+            'content_hash' => hash('sha256', 'chain-mixed-payment'),
+            'integrity_status' => 'verified',
+        ]);
+        $order = $this->createPurchaseOrder($request, PurchaseOrderStatusEnum::CONFIRMED);
+        $order->update([
+            'accepted_supplier_proposal_id' => $proposal->id,
+            'accepted_supplier_proposal_version_id' => $version->id,
+        ]);
+        $payment = $this->createPaymentDocument($order, PaymentDocumentStatus::APPROVED, 149.99);
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+        $this->assertSame('register_payment', $summary->nextAction?->key);
+
+        $payment->update(['paid_amount' => 150, 'remaining_amount' => 350]);
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+        $this->assertSame('receive_materials', $summary->nextAction?->key);
+        $this->assertSame('pending', $summary->stages->firstWhere('key', 'payment_registered')?->status);
+
+        $this->createReceipt($order, 2);
+        $order->update(['status' => PurchaseOrderStatusEnum::PARTIALLY_DELIVERED]);
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+        $this->assertSame('receive_materials', $summary->nextAction?->key);
+        $this->assertSame('pending', $summary->stages->firstWhere('key', 'payment_registered')?->status);
+
+        $this->createReceipt($order, 3);
+        $order->update(['status' => PurchaseOrderStatusEnum::DELIVERED]);
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+        $this->assertSame('register_payment', $summary->nextAction?->key);
+        $this->assertSame('done', $summary->stages->firstWhere('key', 'warehouse_posted')?->status);
+        $this->assertNotSame('completed', $summary->currentStage->key);
+
+        $payment->update(['status' => PaymentDocumentStatus::PAID, 'paid_amount' => 500, 'remaining_amount' => 0]);
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($order->fresh());
+        $this->assertSame('completed', $summary->currentStage->key);
+        $this->assertSame('done', $summary->stages->firstWhere('key', 'payment_registered')?->status);
+    }
+
+    public function test_payment_document_creation_synchronizes_accepted_terms_and_reuses_schedule(): void
+    {
+        $organization = Organization::factory()->create();
+        $request = $this->createPurchaseRequest($organization);
+        $proposal = $this->createSupplierProposal($this->createSupplierRequest($request, SupplierRequestStatusEnum::SENT));
+        $version = \App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion::query()->create([
+            'organization_id' => $organization->id,
+            'supplier_proposal_id' => $proposal->id,
+            'version_number' => 1,
+            'commercial_snapshot' => [
+                'total_amount' => '500.00', 'subtotal_amount' => '500.00', 'currency' => 'RUB',
+                'payment_schedule' => ['mode' => 'mixed', 'advance_percent' => 30, 'deferment_days' => 15],
+            ],
+            'content_hash' => hash('sha256', 'chain-schedule-create'),
+            'integrity_status' => 'verified',
+        ]);
+        $order = $this->createPurchaseOrder($request, PurchaseOrderStatusEnum::CONFIRMED);
+        $order->update([
+            'accepted_supplier_proposal_id' => $proposal->id,
+            'accepted_supplier_proposal_version_id' => $version->id,
+            'supplier_snapshot' => ['name' => 'Поставщик графика'],
+        ]);
+        $service = app(\App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentDocumentService::class);
+        $first = $service->createOrOpen($order);
+        $this->assertTrue($first['created']);
+        $this->assertNull($first['document']->due_date);
+        $this->assertSame('procurement', $first['document']->schedule_source);
+        $schedules = \App\BusinessModules\Core\Payments\Models\PaymentSchedule::query()
+            ->where('payment_document_id', $first['document']->id)->get()->keyBy('source_key');
+        $this->assertCount(2, $schedules);
+        $this->assertSame('150.00', $schedules['procurement:advance']->amount);
+        $this->assertSame($order->order_date->format('Y-m-d'), $schedules['procurement:advance']->due_date->format('Y-m-d'));
+        $this->assertSame('350.00', $schedules['procurement:unreceived']->amount);
+        $this->assertNull($schedules['procurement:unreceived']->due_date);
+        $second = $service->createOrOpen($order);
+        $this->assertFalse($second['created']);
+        $this->assertSame($first['document']->id, $second['document']->id);
+        $this->assertSame($schedules->modelKeys(), \App\BusinessModules\Core\Payments\Models\PaymentSchedule::query()
+            ->where('payment_document_id', $first['document']->id)->get()->keyBy('source_key')->modelKeys());
+        $receipt = $this->createReceipt($order, 2);
+        $synchronization = app(\App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentScheduleService::class);
+        \Illuminate\Support\Facades\DB::transaction(fn () => $synchronization->synchronize($order));
+        $afterReceipt = \App\BusinessModules\Core\Payments\Models\PaymentSchedule::query()
+            ->where('payment_document_id', $first['document']->id)->get()->keyBy('source_key');
+        $receiptKey = 'procurement:receipt:'.$receipt->id;
+        $this->assertSame('140.00', $afterReceipt[$receiptKey]->amount);
+        $this->assertSame($receipt->receipt_date->addDays(15)->format('Y-m-d'), $afterReceipt[$receiptKey]->due_date->format('Y-m-d'));
+        $this->assertSame('210.00', $afterReceipt['procurement:unreceived']->amount);
+        $this->assertSame('150.00', $afterReceipt['procurement:advance']->fresh()->amount);
+        $order->update(['total_amount' => '501.00']);
+        try {
+            $service->createOrOpen($order);
+            $this->fail('Inconsistent accepted terms must not update the payment schedule.');
+        } catch (\DomainException $exception) {
+            $this->assertSame(trans_message('procurement.settlement_inconsistent'), $exception->getMessage());
+            $this->assertStringNotContainsString('Settlement', $exception->getMessage());
+        }
+        $this->assertSame('500.00', $first['document']->fresh()->amount);
+        $this->assertSame('150.00', $schedules['procurement:advance']->fresh()->amount);
+    }
+
     public function test_purchase_delivery_does_not_claim_warehouse_fulfillment(): void
     {
         $organization = Organization::factory()->create();
@@ -512,12 +672,12 @@ final class ProcurementChainServiceTest extends TestCase
         ]);
     }
 
-    private function createReceipt(PurchaseOrder $purchaseOrder): PurchaseReceipt
+    private function createReceipt(PurchaseOrder $purchaseOrder, int $quantity = 5): PurchaseReceipt
     {
         $warehouse = OrganizationWarehouse::query()->create([
             'organization_id' => $purchaseOrder->organization_id,
             'name' => 'Основной склад',
-            'code' => 'WH-CHAIN-'.$purchaseOrder->id,
+            'code' => 'WH-CHAIN-'.$purchaseOrder->id.'-'.uniqid(),
             'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
             'is_main' => true,
             'is_active' => true,
@@ -527,16 +687,16 @@ final class ProcurementChainServiceTest extends TestCase
             'organization_id' => $purchaseOrder->organization_id,
             'purchase_order_id' => $purchaseOrder->id,
             'warehouse_id' => $warehouse->id,
-            'receipt_number' => 'REC-CHAIN-'.$purchaseOrder->id,
+            'receipt_number' => 'REC-CHAIN-'.$purchaseOrder->id.'-'.uniqid(),
             'receipt_date' => now()->toDateString(),
             'status' => 'posted',
         ]);
 
         $receipt->lines()->create([
             'purchase_order_item_id' => $purchaseOrder->items()->firstOrFail()->id,
-            'quantity_received' => 5,
+            'quantity_received' => $quantity,
             'price' => 100,
-            'total_amount' => 500,
+            'total_amount' => $quantity * 100,
         ]);
 
         return $receipt;

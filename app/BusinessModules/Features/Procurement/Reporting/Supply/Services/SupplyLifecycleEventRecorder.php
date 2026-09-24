@@ -84,9 +84,6 @@ final readonly class SupplyLifecycleEventRecorder
             ->where('purchase_order_item_id', $line->purchaseOrderItem->getKey())
             ->where('promise_version', 1)
             ->first();
-        if (! $promise instanceof PurchaseOrderPromiseVersion) {
-            throw new DomainException('Original purchase order promise is required before return.');
-        }
 
         return $this->record(
             $promise,
@@ -102,11 +99,12 @@ final readonly class SupplyLifecycleEventRecorder
                 'purchase_receipt_id' => (int) $line->purchase_receipt_id,
                 'purchase_receipt_line_id' => (int) $line->id,
             ],
+            receiptLine: $line,
         );
     }
 
     public function record(
-        PurchaseOrderPromiseVersion $promise,
+        ?PurchaseOrderPromiseVersion $promise,
         string $eventType,
         string $sourceType,
         int $sourceId,
@@ -117,6 +115,7 @@ final readonly class SupplyLifecycleEventRecorder
         ?string $reasonCode = null,
         ?int $reversedEventId = null,
         array $evidence = [],
+        ?PurchaseReceiptLine $receiptLine = null,
     ): SupplyLifecycleEvent {
         if (! in_array($eventType, SupplyLifecycleEvent::EVENT_TYPES, true)) {
             throw new DomainException('Unsupported supply lifecycle event type.');
@@ -134,19 +133,48 @@ final readonly class SupplyLifecycleEventRecorder
             throw new DomainException('Supply receipt reversal identity is invalid.');
         }
 
-        $attributes = [
-            'organization_id' => (int) $promise->organization_id,
-            'purchase_order_id' => (int) $promise->purchase_order_id,
-            'purchase_order_item_id' => (int) $promise->purchase_order_item_id,
-            'promise_version_id' => (int) $promise->id,
+        if ($promise === null) {
+            if ($receiptLine === null || ! in_array($eventType, ['received', 'receipt_reversed', 'returned'], true)) {
+                throw new DomainException('Supply lifecycle requires an original promise or a receipt source.');
+            }
+            $receiptLine->loadMissing(['purchaseReceipt', 'purchaseOrderItem', 'inventoryLot']);
+            $receipt = $receiptLine->purchaseReceipt;
+            $item = $receiptLine->purchaseOrderItem;
+            $lot = $receiptLine->inventoryLot;
+            $organizationId = $this->organizationId($receiptLine);
+            if ($lot === null || $item === null
+                || (int) $item->purchase_order_id !== (int) $receipt->purchase_order_id
+                || (int) $lot->organization_id !== $organizationId
+                || (int) $lot->purchase_receipt_line_id !== (int) $receiptLine->getKey()) {
+                throw new DomainException('Supply lifecycle receipt ownership is invalid.');
+            }
+            $basis = [
+                'organization_id' => $organizationId,
+                'purchase_order_id' => (int) $receipt->purchase_order_id,
+                'purchase_order_item_id' => (int) $item->getKey(),
+                'promise_version_id' => null,
+                'unit_dimension' => $lot->unit_dimension,
+                'unit_code' => $lot->unit_code,
+                'conversion_version' => $lot->conversion_version,
+            ];
+        } else {
+            $basis = [
+                'organization_id' => (int) $promise->organization_id,
+                'purchase_order_id' => (int) $promise->purchase_order_id,
+                'purchase_order_item_id' => (int) $promise->purchase_order_item_id,
+                'promise_version_id' => (int) $promise->id,
+                'unit_dimension' => $promise->unit_dimension,
+                'unit_code' => $promise->unit_code,
+                'conversion_version' => $promise->conversion_version,
+            ];
+        }
+
+        $attributes = $basis + [
             'event_type' => $eventType,
             'source_type' => $sourceType,
             'source_id' => $sourceId,
             'source_version' => $sourceVersion,
             'signed_quantity' => $signedQuantity,
-            'unit_dimension' => $promise->unit_dimension,
-            'unit_code' => $promise->unit_code,
-            'conversion_version' => $promise->conversion_version,
             'occurred_at' => $occurredAt,
             'reversed_event_id' => $reversedEventId,
             'reason_code' => $reasonCode,
@@ -163,11 +191,10 @@ final readonly class SupplyLifecycleEventRecorder
             $eventType,
             $idempotencyKey,
             $occurredAt,
-            $promise,
             $reversedEventId,
         ): SupplyLifecycleEvent {
             $existing = SupplyLifecycleEvent::query()
-                ->where('organization_id', $promise->organization_id)
+                ->where('organization_id', $attributes['organization_id'])
                 ->where('idempotency_key', $idempotencyKey)
                 ->lockForUpdate()
                 ->first();
@@ -179,8 +206,8 @@ final readonly class SupplyLifecycleEventRecorder
                 return $existing;
             }
             $latest = SupplyLifecycleEvent::query()
-                ->where('organization_id', $promise->organization_id)
-                ->where('purchase_order_item_id', $promise->purchase_order_item_id)
+                ->where('organization_id', $attributes['organization_id'])
+                ->where('purchase_order_item_id', $attributes['purchase_order_item_id'])
                 ->orderByDesc('occurred_at')
                 ->orderByDesc('id')
                 ->lockForUpdate()
@@ -192,8 +219,8 @@ final readonly class SupplyLifecycleEventRecorder
             if ($eventType === 'receipt_reversed') {
                 $receipt = SupplyLifecycleEvent::query()
                     ->whereKey($reversedEventId)
-                    ->where('organization_id', $promise->organization_id)
-                    ->where('purchase_order_item_id', $promise->purchase_order_item_id)
+                    ->where('organization_id', $attributes['organization_id'])
+                    ->where('purchase_order_item_id', $attributes['purchase_order_item_id'])
                     ->where('event_type', 'received')
                     ->lockForUpdate()
                     ->first();
@@ -222,9 +249,6 @@ final readonly class SupplyLifecycleEventRecorder
             ->where('purchase_order_item_id', $item->getKey())
             ->where('promise_version', 1)
             ->first();
-        if (! $promise instanceof PurchaseOrderPromiseVersion) {
-            throw new DomainException('Original purchase order promise is required before receipt.');
-        }
         $metadata = is_array($line->metadata) ? $line->metadata : [];
         $sourceVersion ??= $metadata['reporting_source_version'] ?? null;
         if (! is_int($sourceVersion) || $sourceVersion < 1) {
@@ -243,6 +267,7 @@ final readonly class SupplyLifecycleEventRecorder
             $reasonCode,
             $reversedEventId,
             evidence: ['purchase_receipt_id' => (int) $line->purchase_receipt_id],
+            receiptLine: $line,
         );
     }
 

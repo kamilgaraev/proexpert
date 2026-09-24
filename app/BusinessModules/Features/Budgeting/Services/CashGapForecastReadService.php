@@ -40,7 +40,11 @@ final class CashGapForecastReadService
             currency: $currency,
         );
         $calendarItems = $this->sourceService->collect($filters);
-        $currencies = $currency !== null ? [$currency] : $this->currencies($calendarItems);
+        $undated = $this->sourceService->summarizeUndated($this->sourceService->collectUndated($filters), $filters);
+        unset($undated['items']);
+        $currencies = $currency !== null ? [$currency] : array_values(array_unique(array_merge(
+            $this->currencies($calendarItems), array_keys($undated['totals_by_currency']),
+        )));
         $balances = $this->openingBalanceService->latestApprovedByCurrency(
             (int) $request['organization_id'],
             (string) $request['period_start'],
@@ -59,6 +63,8 @@ final class CashGapForecastReadService
 
             if (!$openingBalance instanceof CashGapOpeningBalanceSnapshot) {
                 $unavailable[$forecastCurrency] = $this->unavailableCurrency($forecastCurrency);
+                $unavailable[$forecastCurrency]['undated'] = $undated['totals_by_currency'][$forecastCurrency]
+                    ?? ['inflow' => '0.00', 'outflow' => '0.00'];
                 continue;
             }
 
@@ -68,6 +74,11 @@ final class CashGapForecastReadService
                 openingBalance: $openingBalance,
                 calendarItems: $calendarItems,
             );
+            $forecast['undated'] = $undated['totals_by_currency'][$forecastCurrency]
+                ?? ['inflow' => '0.00', 'outflow' => '0.00'];
+            $forecast['warnings'] = isset($undated['totals_by_currency'][$forecastCurrency])
+                ? [trans_message('payments.undated.forecast_warning')]
+                : [];
             $forecasts[$forecastCurrency] = $forecast;
         }
 
@@ -89,6 +100,7 @@ final class CashGapForecastReadService
                 'currency' => $currency,
             ],
             'forecasts' => $forecasts,
+            'undated' => $undated,
             'unavailable_currencies' => $unavailable,
             'message' => $forecasts === []
                 ? trans_message('budgeting.cash_gap.opening_balance_missing')

@@ -321,6 +321,19 @@ final class ProcurementChainService
         $requiredAmount = round((float) $purchaseOrder->total_amount, 2);
         $paymentDocument = $paymentDocuments->first();
 
+        $requiredAdvance = $graph['required_advance_amount'] ?? null;
+        if ($requiredAdvance !== null
+            && $paidAmount + 0.0001 >= $requiredAdvance
+            && $purchaseOrder->status->canReceiveMaterials()) {
+            return [
+                $purchaseOrder->status === PurchaseOrderStatusEnum::PARTIALLY_DELIVERED
+                    ? 'partially_delivered'
+                    : 'purchase_order_created',
+                $this->action('receive_materials', "/procurement/purchase-orders/{$purchaseOrder->id}?receive_materials=1", $actor, $organizationId),
+                collect(),
+            ];
+        }
+
         if ($paymentDocuments->isEmpty()) {
             return [
                 'payment_document_missing',
@@ -827,6 +840,7 @@ final class ProcurementChainService
                 }
 
                 $status = $this->warehouseStageStatus($stageKey, $warehouseDeliveries) ?? $status;
+                $status = $this->settlementStageStatus($stageKey, $currentKey, $graph) ?? $status;
 
                 return $this->stage(
                     $stageKey,
@@ -836,6 +850,56 @@ final class ProcurementChainService
                 );
             })
             ->values();
+    }
+
+    private function settlementStageStatus(string $stage, string $currentKey, array $graph): ?string
+    {
+        $order = $graph['purchase_order'] ?? null;
+        if (! $order instanceof PurchaseOrder || ($graph['required_advance_amount'] ?? null) === null
+            || $order->status === PurchaseOrderStatusEnum::CANCELLED) {
+            return null;
+        }
+
+        $documents = $graph['payment_documents'];
+        $document = $documents->first();
+        $paid = $this->paidAmount($documents);
+        $fullyPaid = $paid + 0.0001 >= round((float) $order->total_amount, 2);
+        $financialStages = [
+            'payment_document_missing', 'payment_document_draft', 'payment_approval_required',
+            'payment_approved', 'payment_partially_registered', 'payment_registered',
+        ];
+        $index = array_search($stage, $financialStages, true);
+        if ($index !== false) {
+            $financialIndex = match (true) {
+                $fullyPaid => 5,
+                $documents->isEmpty() => 0,
+                $document->status === PaymentDocumentStatus::DRAFT => 1,
+                in_array($document->status, [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL], true) => 2,
+                $paid <= 0.0001 => 3,
+                default => 4,
+            };
+
+            if ($index < $financialIndex || ($index === 5 && $fullyPaid)) {
+                return 'done';
+            }
+
+            return $stage === $currentKey ? null : 'pending';
+        }
+
+        $receipts = $graph['receipts'];
+        if ($stage === 'receipt_created' && $receipts->isNotEmpty()) {
+            return 'done';
+        }
+        if ($stage === 'warehouse_posted' && $receipts->contains(
+            static fn (PurchaseReceipt $receipt): bool => $receipt->status->value === 'posted'
+        )) {
+            return 'done';
+        }
+        if ($stage === 'partially_delivered' && $order->status === PurchaseOrderStatusEnum::DELIVERED) {
+            return 'done';
+        }
+
+        return null;
     }
 
     private function warehouseStageStatus(string $stage, Collection $deliveries): ?string

@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Core\Payments\Services\PaymentScheduleSynchronizationService;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\Enums\ContractorType;
 use App\Models\Contract;
@@ -22,7 +23,9 @@ final class PurchaseOrderPaymentDocumentService
 {
     public function __construct(
         private readonly PaymentDocumentService $paymentDocumentService,
-        private readonly PurchaseOrderPaymentGateService $paymentGateService
+        private readonly PurchaseOrderPaymentGateService $paymentGateService,
+        private readonly PurchaseOrderSettlementService $settlementService,
+        private readonly PaymentScheduleSynchronizationService $scheduleSynchronization,
     ) {
     }
 
@@ -32,50 +35,59 @@ final class PurchaseOrderPaymentDocumentService
      */
     public function createOrOpen(PurchaseOrder $order, ?int $createdByUserId = null, array $paymentDocumentInput = []): array
     {
-        $order->loadMissing([
-            'contract',
-            'purchaseRequest.siteRequest',
-            'supplier',
-            'externalSupplierContact',
-            'supplierParty',
-        ]);
-
-        $existingDocument = $this->paymentGateService->linkedDocuments($order)->first();
-
-        if ($existingDocument instanceof PaymentDocument) {
-            $result = [
-                'document' => $existingDocument,
-                'created' => false,
-                'submitted' => false,
-            ];
-
-            return $this->submitAfterCreateIfRequested($order, $result, $createdByUserId, $paymentDocumentInput);
-        }
-
         $result = DB::transaction(function () use ($order, $createdByUserId, $paymentDocumentInput): array {
+            $order = PurchaseOrder::query()
+                ->where('organization_id', $order->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($order->id);
+            $order->load(['contract', 'purchaseRequest.siteRequest', 'supplier', 'externalSupplierContact', 'supplierParty']);
+            try {
+                $parts = $this->settlementService->plan($order);
+            } catch (\InvalidArgumentException $exception) {
+                throw new \DomainException(trans_message('procurement.settlement_inconsistent'), 0, $exception);
+            }
             $existingDocument = $this->paymentGateService->linkedDocuments($order)->first();
 
             if ($existingDocument instanceof PaymentDocument) {
+                $this->synchronizeSchedule($order, $existingDocument, $parts);
                 return [
-                    'document' => $existingDocument,
+                    'document' => $existingDocument->fresh(),
                     'created' => false,
                     'submitted' => false,
                 ];
             }
 
             $contractor = $this->resolvePayeeContractor($order);
+            $payload = $this->paymentDocumentPayload($order, $contractor, $createdByUserId, $paymentDocumentInput);
+            if ($parts !== null) {
+                $payload['due_date'] = null;
+            }
             $document = $this->paymentDocumentService->createPaymentOrder(
-                $this->paymentDocumentPayload($order, $contractor, $createdByUserId, $paymentDocumentInput)
+                $payload
             );
+            $this->synchronizeSchedule($order, $document, $parts);
 
             return [
-                'document' => $document,
+                'document' => $document->fresh(),
                 'created' => true,
                 'submitted' => false,
             ];
         });
 
         return $this->submitAfterCreateIfRequested($order, $result, $createdByUserId, $paymentDocumentInput);
+    }
+
+    private function synchronizeSchedule(PurchaseOrder $order, PaymentDocument $document, ?array $parts): void
+    {
+        if ($parts === null) {
+            return;
+        }
+        if ((int) ($document->metadata['purchase_order_id'] ?? 0) !== (int) $order->id
+            || (int) $document->organization_id !== (int) $order->organization_id
+            || $document->currency !== $order->currency) {
+            throw new \DomainException(trans_message('payments.schedule.source_conflict'));
+        }
+        $this->scheduleSynchronization->synchronize($document->id, $order->organization_id, 'procurement', $parts);
     }
 
     /**
@@ -189,7 +201,7 @@ final class PurchaseOrderPaymentDocumentService
             'payer_organization_id' => $order->organization_id,
             'payee_contractor_id' => $contractor->id,
             'contractor_id' => $contractor->id,
-            'amount' => round((float) $order->total_amount, 2),
+            'amount' => (string) $order->total_amount,
             'currency' => $order->currency ?: ($contract?->currency ?: config('payments.defaults.currency', 'RUB')),
             'due_date' => $order->delivery_date?->toDateString() ?? now()->addDays(7)->toDateString(),
             'description' => trans_message('procurement.chain.payment_document.description_prefix').' '.$order->order_number,
