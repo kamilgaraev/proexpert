@@ -12,10 +12,16 @@ use App\Models\ReportFile;
 use App\Models\User;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
+use App\Enums\Billing\PackageAccessSource;
+use App\Enums\Billing\PackageSubscriptionStatus;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
+use App\Models\Module;
+use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -29,6 +35,7 @@ class AdvanceAccountReportWorkflowTest extends TestCase
         Carbon::setTestNow('2026-05-13 12:00:00');
 
         $context = AdminApiTestContext::create();
+        $this->activateAdvanceAccountingFor($context->organization->id);
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('putPrivate')
             ->once()
@@ -109,6 +116,7 @@ class AdvanceAccountReportWorkflowTest extends TestCase
     public function test_user_and_project_reports_do_not_expose_foreign_entities(): void
     {
         $context = AdminApiTestContext::create();
+        $this->activateAdvanceAccountingFor($context->organization->id);
         $foreignOrganization = Organization::factory()->verified()->create();
         $foreignUser = $this->createOrganizationUser($foreignOrganization);
         $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
@@ -131,6 +139,7 @@ class AdvanceAccountReportWorkflowTest extends TestCase
         Carbon::setTestNow('2026-05-13 12:00:00');
 
         $context = AdminApiTestContext::create();
+        $this->activateAdvanceAccountingFor($context->organization->id);
         $user = $this->createOrganizationUser($context->organization, [
             'current_balance' => 1100,
             'has_overdue_balance' => true,
@@ -177,6 +186,7 @@ class AdvanceAccountReportWorkflowTest extends TestCase
     public function test_export_route_streams_report_and_rejects_unknown_format_with_admin_response(): void
     {
         $context = AdminApiTestContext::create();
+        $this->activateAdvanceAccountingFor($context->organization->id);
         $user = $this->createOrganizationUser($context->organization);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->createTransaction($context->organization->id, $user->id, $project->id, [
@@ -236,5 +246,54 @@ class AdvanceAccountReportWorkflowTest extends TestCase
         }
 
         return $transaction;
+    }
+
+    private function activateAdvanceAccountingFor(int $organizationId): void
+    {
+        $moduleDefinition = json_decode(
+            (string) file_get_contents(config_path('ModuleList/addons/advance-accounting.json')),
+            true,
+            flags: JSON_THROW_ON_ERROR,
+        );
+
+        Module::query()->firstOrCreate(
+            ['slug' => 'advance-accounting'],
+            [
+                'name' => $moduleDefinition['name'],
+                'version' => $moduleDefinition['version'],
+                'type' => $moduleDefinition['type'],
+                'billing_model' => $moduleDefinition['billing_model'],
+                'category' => $moduleDefinition['category'],
+                'permissions' => $moduleDefinition['permissions'],
+                'is_active' => true,
+                'is_system_module' => false,
+                'can_deactivate' => true,
+            ],
+        );
+
+        $account = OrganizationCommercialAccount::query()->create([
+            'organization_id' => $organizationId,
+            'status' => 'active',
+            'offer_type' => 'packages',
+            'quote_version' => 1,
+            'billing_anchor_at' => now(),
+            'current_period_start_at' => now(),
+            'current_period_end_at' => now()->addDays(30),
+            'auto_renew_enabled' => false,
+        ]);
+
+        OrganizationPackageSubscription::query()->create([
+            'organization_id' => $organizationId,
+            'commercial_account_id' => $account->id,
+            'package_slug' => 'finance-contracts',
+            'status' => PackageSubscriptionStatus::Active,
+            'access_source' => PackageAccessSource::PaidPackage,
+            'price_paid' => 1000,
+            'current_period_start_at' => now(),
+            'current_period_end_at' => now()->addDays(30),
+        ]);
+
+        Cache::driver('array')->flush();
+        Cache::flush();
     }
 }

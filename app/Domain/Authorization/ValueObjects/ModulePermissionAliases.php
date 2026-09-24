@@ -7,6 +7,7 @@ namespace App\Domain\Authorization\ValueObjects;
 final class ModulePermissionAliases
 {
     private const CANONICAL_BY_ALIAS = [
+        'advance_transactions' => 'advance-accounting',
         'projects' => 'project-management',
         'schedule' => 'schedule-management',
         'schedule_management' => 'schedule-management',
@@ -47,6 +48,7 @@ final class ModulePermissionAliases
     ];
 
     private const PREFERRED_ALIAS_BY_CANONICAL = [
+        'advance-accounting' => 'advance_transactions',
         'project-management' => 'projects',
         'budget-estimates' => 'estimates',
         'schedule-management' => 'schedule',
