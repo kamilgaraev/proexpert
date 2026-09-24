@@ -11,6 +11,7 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
 use App\Models\WorkType;
 use App\Services\CompletedWork\CompletedWorkFormOptionsService;
 use App\Services\Project\ProjectContextService;
@@ -28,10 +29,18 @@ final class CompletedWorkFormOptionsTest extends TestCase
         $owner = AdminApiTestContext::create();
         $participant = AdminApiTestContext::create();
         $other = Organization::factory()->verified()->create();
+        $otherUser = User::factory()->create(['current_organization_id' => $other->id]);
+        $other->users()->attach($otherUser->id, ['is_active' => true]);
         $project = Project::factory()->create(['organization_id' => $owner->organization->id]);
         $otherProject = Project::factory()->create(['organization_id' => $owner->organization->id]);
 
         $project->organizations()->attach($participant->organization->id, [
+            'role' => ProjectOrganizationRole::CONTRACTOR->value,
+            'role_new' => ProjectOrganizationRole::CONTRACTOR->value,
+            'is_active' => true,
+            'added_by_user_id' => $owner->user->id,
+        ]);
+        $project->organizations()->attach($other->id, [
             'role' => ProjectOrganizationRole::CONTRACTOR->value,
             'role_new' => ProjectOrganizationRole::CONTRACTOR->value,
             'is_active' => true,
@@ -77,7 +86,12 @@ final class CompletedWorkFormOptionsTest extends TestCase
         self::assertSame([$ownContractor->id], array_column($options['contractors'], 'id'));
         self::assertSame([$contract->id], array_column($options['contracts'], 'id'));
         self::assertContains($owner->user->id, array_column($options['users'], 'id'));
-        self::assertNotContains($participant->user->id, array_column($options['users'], 'id'));
+        self::assertContains($participant->user->id, array_column($options['users'], 'id'));
+        self::assertNotContains($otherUser->id, array_column($options['users'], 'id'));
+
+        $ownerContext = app(ProjectContextService::class)->getContext($project, $owner->organization);
+        $ownerOptions = app(CompletedWorkFormOptionsService::class)->forProject($project, $owner->user, $ownerContext);
+        self::assertContains($participant->user->id, array_column($ownerOptions['users'], 'id'));
 
         try {
             app(CompletedWorkFormOptionsService::class)->forProject($otherProject, $participant->user, $context);

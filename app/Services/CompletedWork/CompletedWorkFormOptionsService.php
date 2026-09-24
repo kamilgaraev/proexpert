@@ -23,6 +23,7 @@ final class CompletedWorkFormOptionsService
         $ownerOrganizationId = (int) $project->organization_id;
         $participantOrganizationId = (int) $context->organizationId;
         $isOwner = $ownerOrganizationId === $participantOrganizationId;
+        $responsibleOrganizationIds = $this->scopeResolver->responsibleOrganizationIds($project, $participantOrganizationId);
 
         $workTypes = WorkType::query()
             ->where('organization_id', $ownerOrganizationId)
@@ -40,8 +41,8 @@ final class CompletedWorkFormOptionsService
             ->all();
 
         $users = User::query()
-            ->whereHas('organizations', static function (Builder $query) use ($ownerOrganizationId): void {
-                $query->whereKey($ownerOrganizationId)->where('organization_user.is_active', true);
+            ->whereHas('organizations', static function (Builder $query) use ($responsibleOrganizationIds): void {
+                $query->whereIn('organizations.id', $responsibleOrganizationIds)->where('organization_user.is_active', true);
             })
             ->orderBy('name')
             ->get(['id', 'name'])
