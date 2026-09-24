@@ -93,6 +93,38 @@ final class LaravelCurrentReportAbacEvaluatorBehaviorTest extends TestCase
         });
     }
 
+    #[DataProvider('customReportPermissionShapes')]
+    public function test_custom_role_grants_report_permission_in_module_permission_shape(array $modulePermissions): void
+    {
+        [$actor, $organization] = $this->authorizationFixture($modulePermissions);
+        $facts = new CurrentReportAuthorizationFacts(
+            'queue',
+            (int) $actor->id,
+            (int) $organization->id,
+            null,
+            null,
+            new DateTimeImmutable('2026-07-29T12:00:00Z'),
+        );
+        $evaluator = new LaravelCurrentReportAbacEvaluator;
+
+        self::assertTrue(
+            $evaluator->evaluate((int) $actor->id, 'reports.project_readiness.view', $facts)->granted,
+        );
+        self::assertFalse(
+            $evaluator->evaluate((int) $actor->id, 'reports.project_control.view', $facts)->granted,
+        );
+    }
+
+    public static function customReportPermissionShapes(): iterable
+    {
+        yield 'fully qualified permission as returned by the reporting registry' => [
+            ['reports' => ['reports.project_readiness.view']],
+        ];
+        yield 'module relative permission' => [
+            ['reports' => ['project_readiness.view']],
+        ];
+    }
+
     public static function authorizationCases(): iterable
     {
         yield 'current organization role' => ['organization_role', true];
@@ -113,7 +145,7 @@ final class LaravelCurrentReportAbacEvaluatorBehaviorTest extends TestCase
         yield 'one bad assignment does not mask a valid assignment' => ['one_of_two_assignments_grants', true];
     }
 
-    private function authorizationFixture(): array
+    private function authorizationFixture(array $modulePermissions = []): array
     {
         $organization = Organization::factory()->create();
         $actor = User::factory()->create(['is_active' => true]);
@@ -122,7 +154,7 @@ final class LaravelCurrentReportAbacEvaluatorBehaviorTest extends TestCase
             'name' => 'Report reader',
             'slug' => 'matrix_report_reader',
             'system_permissions' => ['reports.view'],
-            'module_permissions' => [],
+            'module_permissions' => $modulePermissions,
             'interface_access' => ['lk'],
             'conditions' => null,
             'is_active' => true,
