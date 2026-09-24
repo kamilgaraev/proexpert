@@ -3,6 +3,7 @@
 namespace App\Domain\Authorization\Models;
 
 use App\Domain\Authorization\Services\RolePermissionNormalizer;
+use App\Domain\Authorization\ValueObjects\ModulePermissionAliases;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -171,7 +172,17 @@ class OrganizationCustomRole extends Model
 
         foreach ($this->module_permissions ?? [] as $module => $modulePerms) {
             foreach ($modulePerms as $perm) {
-                $permissions[] = $module.'.'.$perm;
+                $qualifiedForModule = false;
+                foreach (ModulePermissionAliases::variants((string) $module) as $moduleVariant) {
+                    if (str_starts_with((string) $perm, $moduleVariant.'.')) {
+                        $permissions[] = (string) $perm;
+                        $qualifiedForModule = true;
+                        break;
+                    }
+                }
+                if (! $qualifiedForModule) {
+                    $permissions[] = $module.'.'.$perm;
+                }
             }
         }
 
