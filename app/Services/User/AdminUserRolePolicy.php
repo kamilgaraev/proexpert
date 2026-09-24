@@ -91,6 +91,10 @@ final class AdminUserRolePolicy
             'organization_id' => $organizationId,
         ]);
 
+        if ($this->authorizationService->can($actor, 'users.roles', ['organization_id' => $organizationId])) {
+            $roleSlugs[] = 'organization_admin';
+        }
+
         if ($actor->isSystemAdmin()) {
             $roleSlugs[] = 'super_admin';
         }

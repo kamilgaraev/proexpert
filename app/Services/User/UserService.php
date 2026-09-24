@@ -62,7 +62,7 @@ class UserService
 
     public function getUsersForCurrentOrg(Request $request, int $perPage = 15): LengthAwarePaginator
     {
-        $this->ensureUserIsAdmin($request);
+        $this->ensureUserHasAdminUserPermission($request, 'admin.users.view');
 
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
@@ -205,6 +205,22 @@ class UserService
         if (!($canManage || $isSystemAdmin || $isOrgOwner || $isOrgAdmin || $isWebAdmin)) {
             throw new BusinessLogicException('Действие доступно только администратору организации или веб-администратору.', 403);
         }
+    }
+
+    protected function ensureUserHasAdminUserPermission(Request $request, string $permission): void
+    {
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?: $user?->current_organization_id;
+
+        if ($user instanceof User && $organizationId && $this->authorizationService->can(
+            $user,
+            $permission,
+            ['organization_id' => (int) $organizationId]
+        )) {
+            return;
+        }
+
+        $this->ensureUserIsAdmin($request);
     }
 
     private function defaultProjectAccessModeForRole(string $roleSlug): string
@@ -541,7 +557,7 @@ class UserService
 
     public function findOrganizationUserById(int $userId, Request $request): ?User
     {
-        $this->ensureUserIsAdmin($request);
+        $this->ensureUserHasAdminUserPermission($request, 'admin.users.view');
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
             throw new BusinessLogicException('Контекст организации не определен.', 500);
@@ -571,6 +587,7 @@ class UserService
 
     public function updateOrganizationUser(int $userId, array $data, Request $request): User
     {
+        $this->ensureUserHasAdminUserPermission($request, 'admin.users.edit');
         $organizationUser = $this->findOrganizationUserById($userId, $request);
 
         if (!$organizationUser) {
@@ -631,6 +648,7 @@ class UserService
 
     public function blockOrganizationUser(int $userId, Request $request): bool
     {
+        $this->ensureUserHasAdminUserPermission($request, 'admin.users.block');
         $organizationUser = $this->findOrganizationUserById($userId, $request);
 
         if (!$organizationUser) {
@@ -646,6 +664,7 @@ class UserService
 
     public function unblockOrganizationUser(int $userId, Request $request): bool
     {
+        $this->ensureUserHasAdminUserPermission($request, 'admin.users.block');
         $organizationUser = $this->findOrganizationUserById($userId, $request);
 
         if (!$organizationUser) {
@@ -920,6 +939,7 @@ class UserService
      */
     public function createForeman(array $data, Request $request, string $roleSlug = 'foreman'): User
     {
+        $this->ensureUserHasAdminUserPermission($request, 'admin.users.create');
         // Получаем ID организации из атрибутов запроса
         $organizationId = $request->attributes->get('current_organization_id');
         

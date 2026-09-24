@@ -5,11 +5,17 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\AuthSessionStatus;
+use App\Models\Module;
 use App\Models\Organization;
 use App\Models\User;
+use App\Models\UserAuthSession;
+use App\Services\Auth\WebAuthTokenService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -31,7 +37,111 @@ class UserManagementControllerTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('success', true);
-        $response->assertJsonPath('data.0.id', $ownForeman->id);
+        $response->assertJsonPath('data.data.0.id', $ownForeman->id);
+    }
+
+    public function test_custom_user_manager_can_view_create_and_edit_only_users_in_its_organization(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $foreignOrganization = Organization::factory()->verified()->create();
+        Module::query()->firstOrCreate(['slug' => 'users'], [
+            'name' => 'Users',
+            'version' => '1.0.0',
+            'type' => 'core',
+            'billing_model' => 'free',
+            'category' => 'core',
+            'permissions' => ['users.roles'],
+            'is_active' => true,
+            'is_system_module' => true,
+            'can_deactivate' => false,
+            'display_order' => 1,
+        ]);
+        $actor = $this->createOrganizationUser($organization, 'viewer');
+        $ownUser = $this->createOrganizationUser($organization, 'foreman');
+        $foreignUser = $this->createOrganizationUser($foreignOrganization, 'foreman');
+
+        UserRoleAssignment::query()
+            ->where('user_id', $actor->id)
+            ->where('role_slug', 'viewer')
+            ->update(['is_active' => false]);
+
+        $role = OrganizationCustomRole::createRole(
+            organizationId: $organization->id,
+            name: 'Team user manager',
+            systemPermissions: ['admin.users.view', 'admin.users.create', 'admin.users.edit'],
+            modulePermissions: ['users' => ['users.view', 'users.create', 'users.edit', 'users.roles']],
+            interfaceAccess: ['admin'],
+            createdBy: $actor
+        );
+        UserRoleAssignment::assignRole(
+            user: $actor,
+            roleSlug: $role->slug,
+            context: AuthorizationContext::getOrganizationContext($organization->id),
+            roleType: UserRoleAssignment::TYPE_CUSTOM
+        );
+
+        $sessionUuid = (string) Str::uuid();
+        UserAuthSession::query()->create([
+            'user_id' => $actor->id,
+            'organization_id' => $organization->id,
+            'session_uuid' => $sessionUuid,
+            'device_fingerprint' => hash('sha256', $sessionUuid),
+            'device_name' => 'User management test',
+            'ip_address' => '127.0.0.1',
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+        $token = app(WebAuthTokenService::class)->issue($actor, 'admin', $sessionUuid, (int) $organization->id, false)->accessToken;
+        $headers = [
+            'Authorization' => 'Bearer '.$token,
+            'Accept' => 'application/json',
+            'Origin' => 'https://admin.1мост.рф',
+        ];
+
+        $list = $this->withHeaders($headers)
+            ->getJson('/api/v1/admin/users?include_all_types=1&per_page=10');
+        $list->assertOk()->assertJsonPath('success', true);
+        $ids = collect($list->json('data.data'))->pluck('id')->all();
+        $this->assertContains($ownUser->id, $ids);
+        $this->assertNotContains($foreignUser->id, $ids);
+
+        $this->withHeaders($headers)
+            ->getJson("/api/v1/admin/users/{$ownUser->id}")
+            ->assertOk();
+        $this->withHeaders($headers)
+            ->getJson("/api/v1/admin/users/{$foreignUser->id}")
+            ->assertNotFound();
+
+        $roleOptions = $this->withHeaders($headers)
+            ->getJson('/api/v1/admin/users/role-options');
+        $roleOptions->assertOk();
+        $roleSlugs = collect($roleOptions->json('data.roles'))->pluck('slug')->all();
+        $this->assertContains('foreman', $roleSlugs);
+        $this->assertNotContains('organization_admin', $roleSlugs);
+
+        $this->withHeaders($headers)
+            ->putJson("/api/v1/admin/users/{$ownUser->id}", ['name' => 'Updated Foreman'])
+            ->assertOk();
+        $this->assertDatabaseHas('users', ['id' => $ownUser->id, 'name' => 'Updated Foreman']);
+
+        $this->withHeaders($headers)
+            ->postJson('/api/v1/admin/users', [
+                'name' => 'Created Foreman',
+                'email' => 'created-foreman@example.test',
+                'password' => 'SecurePassword123!',
+                'password_confirmation' => 'SecurePassword123!',
+                'role_slug' => 'foreman',
+            ])
+            ->assertCreated();
+        $this->assertDatabaseHas('users', ['email' => 'created-foreman@example.test']);
+
+        $this->withHeaders($headers)
+            ->postJson("/api/v1/admin/users/{$ownUser->id}/block")
+            ->assertForbidden();
+        $this->assertTrue((bool) $ownUser->fresh()->is_active);
     }
 
     public function test_index_returns_only_current_organization_foremen_by_default(): void
@@ -56,11 +166,11 @@ class UserManagementControllerTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('success', true);
-        $response->assertJsonCount(1, 'data');
-        $response->assertJsonPath('data.0.id', $ownForeman->id);
-        $response->assertJsonPath('data.0.primary_role', 'foreman');
+        $response->assertJsonCount(1, 'data.data');
+        $response->assertJsonPath('data.data.0.id', $ownForeman->id);
+        $response->assertJsonPath('data.data.0.primary_role', 'foreman');
 
-        $names = collect($response->json('data'))->pluck('name')->all();
+        $names = collect($response->json('data.data'))->pluck('name')->all();
 
         $this->assertNotContains('Own Accountant', $names);
         $this->assertNotContains('Foreign Foreman', $names);
@@ -89,11 +199,11 @@ class UserManagementControllerTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('success', true);
 
-        $ids = collect($response->json('data'))->pluck('id')->all();
+        $ids = collect($response->json('data.data'))->pluck('id')->all();
 
         $this->assertContains($ownForeman->id, $ids);
         $this->assertContains($ownAccountant->id, $ids);
-        $this->assertNotContains('Foreign Foreman', collect($response->json('data'))->pluck('name')->all());
+        $this->assertNotContains('Foreign Foreman', collect($response->json('data.data'))->pluck('name')->all());
     }
 
     public function test_options_returns_current_organization_users_without_user_management_permission(): void
