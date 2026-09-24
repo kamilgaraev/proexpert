@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Schedule;
 
 use App\Models\CompletedWork;
+use App\Models\Project;
 use App\Models\ScheduleTask;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -29,9 +30,14 @@ class ScheduleTaskCompletedWorkService
 
     public function getTasksForSelection(int $projectId, ?int $scheduleId = null, ?string $search = null): Collection
     {
+        $ownerOrganizationId = Project::query()->whereKey($projectId)->value('organization_id');
+        if ($ownerOrganizationId === null) {
+            return collect();
+        }
+
         $query = ScheduleTask::query()
-            ->where('organization_id', auth()->user()?->current_organization_id)
-            ->whereHas('schedule', fn ($q) => $q->where('project_id', $projectId))
+            ->where('organization_id', $ownerOrganizationId)
+            ->whereHas('schedule', fn ($q) => $q->where('project_id', $projectId)->where('organization_id', $ownerOrganizationId))
             ->where('task_type', '!=', 'summary')
             ->where('task_type', '!=', 'container')
             ->with(['schedule:id,name', 'measurementUnit:id,short_name'])

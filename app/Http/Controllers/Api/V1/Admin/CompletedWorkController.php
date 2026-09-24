@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ProjectOrganizationRole;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
@@ -316,6 +317,26 @@ class CompletedWorkController extends Controller
     {
         try {
             $projectId = (int) $request->route('project');
+            $context = ProjectContextMiddleware::getProjectContext($request);
+            $actor = $request->user();
+            if (! $context || ! $actor) {
+                return AdminResponse::error(trans_message('completed_work.forbidden'), Response::HTTP_FORBIDDEN);
+            }
+
+            $authorization = app(AuthorizationService::class);
+            $canManageWorks = $context->roleConfig->canManageWorks
+                && $authorization->can($actor, 'completed_works.create', [
+                    'project_id' => $projectId,
+                    'organization_id' => $context->organizationId,
+                    'strict_project_scope' => true,
+                ]);
+            $canManageDefects = $authorization->can($actor, 'quality-control.defects.create', [
+                'organization_id' => $context->organizationId,
+            ]);
+            if (! $canManageWorks && ! $canManageDefects) {
+                return AdminResponse::error(trans_message('completed_work.forbidden'), Response::HTTP_FORBIDDEN);
+            }
+
             $scheduleId = $request->query('schedule_id');
             $search = $request->query('search');
 
