@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Monitoring;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\Exceptions\BusinessLogicException;
 use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\Support\LivewirePayloadExceptionClassifier;
@@ -36,6 +38,10 @@ class GlitchTipReportPolicy
         }
 
         if ($this->isRecoverableRagOrganizationEstimateMaxAttempts($exception)) {
+            return false;
+        }
+
+        if ($this->isExpectedReportContractFailure($exception)) {
             return false;
         }
 
@@ -159,6 +165,27 @@ class GlitchTipReportPolicy
         return str_contains($command, 's:9:"projectId";N;')
             && str_contains($command, 's:10:"sourceType";s:8:"estimate";')
             && str_contains($command, 's:5:"runId";i:');
+    }
+
+    private function isExpectedReportContractFailure(Throwable $exception): bool
+    {
+        return $exception instanceof ReportContractException
+            && in_array($exception->errorCode, [
+                ReportErrorCode::REPORT_NOT_FOUND,
+                ReportErrorCode::REPORT_SCOPE_FORBIDDEN,
+                ReportErrorCode::REPORT_REQUEST_INVALID,
+                ReportErrorCode::REPORT_FILTER_UNSUPPORTED,
+                ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND,
+                ReportErrorCode::REPORT_FILTER_RANGE_INVALID,
+                ReportErrorCode::REPORT_SORT_UNSUPPORTED,
+                ReportErrorCode::REPORT_CURSOR_INVALID,
+                ReportErrorCode::REPORT_IDEMPOTENCY_KEY_INVALID,
+                ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT,
+                ReportErrorCode::REPORT_SNAPSHOT_EXPIRED,
+                ReportErrorCode::REPORT_EXPORT_EXPIRED,
+                ReportErrorCode::REPORT_EXPORT_LIMIT_EXCEEDED,
+                ReportErrorCode::REPORT_RATE_LIMITED,
+            ], true);
     }
 
     private function queueJobPayload(MaxAttemptsExceededException $exception): array
