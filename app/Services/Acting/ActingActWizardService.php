@@ -11,6 +11,7 @@ use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\PerformanceActLine;
+use App\Services\Contract\ContractAccessService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionQuantity;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -30,6 +31,7 @@ class ActingActWizardService
         private readonly PerformanceActFinancialTotalsService $financialTotals,
         private readonly FixedContractActAmountGuard $contractAmountGuard,
         private readonly \App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceActQuantityGuard $financeQuantityGuard,
+        private readonly ContractAccessService $contractAccessService,
     ) {}
 
     public function createFromWizard(
@@ -38,10 +40,7 @@ class ActingActWizardService
         ?int $userId,
         bool $canManageManualLines
     ): ContractPerformanceAct {
-        $contract = Contract::query()
-            ->where('id', $data['contract_id'])
-            ->where('organization_id', $organizationId)
-            ->first();
+        $contract = $this->contractAccessService->findAccessible((int) $data['contract_id'], $organizationId);
 
         if (! $contract) {
             throw new BusinessLogicException(trans_message('act_reports.contract_not_found'), 404);
