@@ -15,6 +15,7 @@ use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
 use App\Models\User;
+use App\Services\LegalArchive\Access\ContractLegalDocumentViewAccess;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentTimelineService;
 use App\Services\LegalArchive\ContractLegalDocumentAccessResolver;
@@ -47,6 +48,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
         private readonly AuthorizationService $authorization,
         private readonly LegalDocumentObligationExecutionService $obligationExecution,
         private readonly ContractLegalDocumentAccessResolver $contractDocuments,
+        private readonly ContractLegalDocumentViewAccess $contractDocumentView,
     ) {}
 
     public function index(LegalArchiveDocumentIndexRequest $request): JsonResponse
@@ -237,7 +239,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             }
             $actor = $this->actor($request);
             $found = $context->document;
-            $this->access->authorize($actor, $found, 'view');
+            $this->contractDocumentView->authorize($actor, $context, $project);
             $this->registry->attachResolvedProfiles(collect([$found]));
             $summary = $this->actions->forMany($actor, collect([$found]))[(int) $found->id];
             $found->setAttribute(

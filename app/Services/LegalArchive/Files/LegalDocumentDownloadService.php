@@ -9,8 +9,10 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion
 use App\Models\Contract;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\LegalArchive\Access\ContractLegalDocumentViewAccess;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\ContractLegalDocumentContext;
 use App\Services\Storage\FileService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
@@ -27,6 +29,7 @@ final class LegalDocumentDownloadService
         private readonly LegalDocumentFilePolicy $policy,
         private readonly LoggerInterface $logger,
         private readonly LegalDocumentAudit $audit,
+        private readonly ?ContractLegalDocumentViewAccess $contractAccess = null,
     ) {}
 
     public function temporaryUrl(LegalArchiveDocumentVersion $version, User $actor, string $purpose, ?int $ttlMinutes = null): string
@@ -36,19 +39,20 @@ final class LegalDocumentDownloadService
         });
     }
 
-    public function temporaryUrlForContract(LegalArchiveDocumentVersion $version, User $actor, Contract $contract, string $purpose, ?int $ttlMinutes = null): string
+    public function temporaryUrlForContract(LegalArchiveDocumentVersion $version, User $actor, Contract $contract, string $purpose, int $projectId, ?int $ttlMinutes = null): string
     {
         if ((int) $version->organization_id !== (int) $contract->organization_id
             || (int) $version->document_id !== (int) $contract->legal_archive_document_id) {
             throw new AuthorizationException($this->message('file_access_denied'));
         }
 
-        return $this->issueTemporaryUrl($version, $actor, $purpose, $ttlMinutes, function (LegalArchiveDocument $document) use ($contract, $actor, $purpose): void {
+        return $this->issueTemporaryUrl($version, $actor, $purpose, $ttlMinutes, function (LegalArchiveDocument $document) use ($contract, $actor, $purpose, $projectId): void {
             if ((int) $document->id !== (int) $contract->legal_archive_document_id) {
                 throw new AuthorizationException('legal_contract_document_mismatch');
             }
 
-            $this->access->authorize($actor, $document, $purpose === 'download' ? 'download' : 'view');
+            ($this->contractAccess ?? Container::getInstance()->make(ContractLegalDocumentViewAccess::class))
+                ->authorize($actor, new ContractLegalDocumentContext($contract, $document), $projectId, $purpose === 'download' ? 'download' : 'view');
         });
     }
 
