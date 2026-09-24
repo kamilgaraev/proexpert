@@ -25,7 +25,7 @@ final class PerformanceActFinancialTotalsService
         foreach ($act->lines as $line) {
             $unitPrice = $this->storedUnitPrice($line);
             if ($unitPrice->isLessThanOrEqualTo(0)) {
-                throw new BusinessLogicException(trans_message('act_reports.financial_basis_required'), 422);
+                throw new MissingPerformanceActFinancialBasisException(trans_message('act_reports.financial_basis_required'), 422);
             }
 
             $amount = BigDecimal::of((string) $line->quantity)

@@ -45,7 +45,7 @@ class ActingActWizardService
         if (! $contract) {
             throw new BusinessLogicException(trans_message('act_reports.contract_not_found'), 404);
         }
-        if ($contract->status !== ContractStatusEnum::ACTIVE) {
+        if (! in_array($contract->status, [ContractStatusEnum::ACTIVE, ContractStatusEnum::COMPLETED], true)) {
             throw new BusinessLogicException(trans_message('act_reports.contract_not_active'), 422);
         }
 

@@ -21,6 +21,7 @@ use App\Services\Acting\ActingPolicyResolver;
 use App\Services\Acting\ContractPeriodCertificateService;
 use App\Services\Acting\FixedContractActAmountGuard;
 use App\Services\Acting\KS3SummaryService;
+use App\Services\Acting\MissingPerformanceActFinancialBasisException;
 use App\Services\Acting\PerformanceActConditionGuard;
 use App\Services\Acting\PerformanceActFinancialTotalsService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
@@ -191,7 +192,13 @@ class ActReportWorkflowService
 
     public function show(ContractPerformanceAct $act): ContractPerformanceAct
     {
-        $act = $this->recalculatePricedLines($act);
+        try {
+            $act = $this->recalculatePricedLines($act);
+        } catch (MissingPerformanceActFinancialBasisException $exception) {
+            if ($act->status !== ContractPerformanceAct::STATUS_DRAFT) {
+                throw $exception;
+            }
+        }
 
         $act->load([
             'contract.project',
@@ -288,6 +295,7 @@ class ActReportWorkflowService
                 );
             }
             $this->assertMutable($lockedAct);
+            $lockedAct = $this->financialTotals->recalculateFromStoredBasis($lockedAct);
             $this->financeQuantityGuard->assertFits($lockedAct, $lockedContract);
             app(\App\BusinessModules\Features\HandoverAcceptance\Services\TechnicalAcceptanceQuantityService::class)
                 ->assertActFits($lockedAct, $this->actingPolicyResolver->resolveForContract($lockedContract));

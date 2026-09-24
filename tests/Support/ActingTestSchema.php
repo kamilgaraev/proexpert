@@ -46,6 +46,7 @@ trait ActingTestSchema
             'contract_project_allocations',
             'acting_policies',
             'performance_act_completed_works',
+            'contract_period_certificates',
             'contract_performance_acts',
             'contract_state_events',
             'completed_works',
@@ -689,6 +690,15 @@ trait ActingTestSchema
             $table->foreignId('locked_by_user_id')->nullable();
             $table->timestamp('locked_at')->nullable();
             $table->timestamps();
+        });
+
+        Schema::create('contract_period_certificates', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('contract_id');
+            $table->date('period_start');
+            $table->date('period_end');
+            $table->string('status', 32)->default('draft');
+            $table->unsignedInteger('version_number')->default(1);
         });
 
         Schema::create('files', function (Blueprint $table): void {
