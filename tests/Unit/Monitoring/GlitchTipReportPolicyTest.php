@@ -164,16 +164,28 @@ class GlitchTipReportPolicyTest extends TestCase
         self::assertTrue($policy->shouldCapture($exception));
     }
 
-    public function test_skips_expected_report_contract_failures_but_captures_internal_ones(): void
+    public function test_skips_expected_report_requests_but_captures_source_and_integrity_failures(): void
     {
         $policy = new GlitchTipReportPolicy($this->config());
 
-        self::assertFalse($policy->shouldCapture(
-            ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE),
-        ));
-        self::assertTrue($policy->shouldCapture(
-            ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR),
-        ));
+        foreach ([
+            ReportErrorCode::REPORT_REQUEST_INVALID,
+            ReportErrorCode::REPORT_FILTER_RANGE_INVALID,
+            ReportErrorCode::REPORT_NOT_FOUND,
+            ReportErrorCode::REPORT_RATE_LIMITED,
+        ] as $code) {
+            self::assertFalse($policy->shouldCapture(ReportContractException::fromCode($code)));
+        }
+
+        foreach ([
+            ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
+            ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED,
+            ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+            ReportErrorCode::REPORT_INTERNAL_ERROR,
+            ReportErrorCode::REPORT_SNAPSHOT_NOT_READY,
+        ] as $code) {
+            self::assertTrue($policy->shouldCapture(ReportContractException::fromCode($code)));
+        }
     }
 
     public static function reportableExceptions(): array

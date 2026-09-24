@@ -170,9 +170,21 @@ class GlitchTipReportPolicy
     private function isExpectedReportContractFailure(Throwable $exception): bool
     {
         return $exception instanceof ReportContractException
-            && ! in_array($exception->errorCode, [
-                ReportErrorCode::REPORT_DEPENDENCY_FAILED,
-                ReportErrorCode::REPORT_INTERNAL_ERROR,
+            && in_array($exception->errorCode, [
+                ReportErrorCode::REPORT_NOT_FOUND,
+                ReportErrorCode::REPORT_SCOPE_FORBIDDEN,
+                ReportErrorCode::REPORT_REQUEST_INVALID,
+                ReportErrorCode::REPORT_FILTER_UNSUPPORTED,
+                ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND,
+                ReportErrorCode::REPORT_FILTER_RANGE_INVALID,
+                ReportErrorCode::REPORT_SORT_UNSUPPORTED,
+                ReportErrorCode::REPORT_CURSOR_INVALID,
+                ReportErrorCode::REPORT_IDEMPOTENCY_KEY_INVALID,
+                ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT,
+                ReportErrorCode::REPORT_SNAPSHOT_EXPIRED,
+                ReportErrorCode::REPORT_EXPORT_EXPIRED,
+                ReportErrorCode::REPORT_EXPORT_LIMIT_EXCEEDED,
+                ReportErrorCode::REPORT_RATE_LIMITED,
             ], true);
     }
 
