@@ -143,6 +143,8 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
     // === COMPLETED WORKS ===
     Route::prefix('works')->group(function () {
         Route::get('/', [CompletedWorkController::class, 'index']);
+        Route::get('/form-options', [CompletedWorkController::class, 'formOptions'])
+            ->middleware('authorize:completed_works.create,project,project');
         Route::post('/', [CompletedWorkController::class, 'store']);
         Route::post('/bulk', [CompletedWorkController::class, 'bulkCreate']);
         Route::get('/export/excel', [CompletedWorkController::class, 'exportExcel']);

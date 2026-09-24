@@ -21,6 +21,7 @@ use App\Models\Contractor;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Services\CompletedWork\CompletedWorkFactService;
+use App\Services\CompletedWork\CompletedWorkFormOptionsService;
 use App\Services\CompletedWork\CompletedWorkService;
 use App\Services\CompletedWork\CompletedWorkWorkflowService;
 use App\Services\Schedule\ScheduleTaskCompletedWorkService;
@@ -46,7 +47,21 @@ class CompletedWorkController extends Controller
         protected ScheduleTaskCompletedWorkService $scheduleTaskService,
         protected CompletedWorkFactService $completedWorkFactService,
         protected CompletedWorkWorkflowService $completedWorkWorkflowService,
+        protected CompletedWorkFormOptionsService $completedWorkFormOptionsService,
     ) {}
+
+    public function formOptions(Request $request): JsonResponse
+    {
+        $project = ProjectContextMiddleware::getProject($request);
+        $context = ProjectContextMiddleware::getProjectContext($request);
+        $actor = $request->user();
+
+        if (! $project || ! $context || ! $actor) {
+            return AdminResponse::error(trans_message('completed_work.forbidden'), Response::HTTP_FORBIDDEN);
+        }
+
+        return AdminResponse::success($this->completedWorkFormOptionsService->forProject($project, $actor, $context));
+    }
 
     public function index(Request $request): JsonResponse
     {

@@ -43,6 +43,12 @@ final class CompletedWorkScopeResolver
         $this->assertManage($context, $actor, 'completed_works.create');
     }
 
+    public function assertFormOptions(Project $project, User $actor, ProjectContext $context): void
+    {
+        $this->assertProject((int) $project->id, (int) $project->organization_id, $actor, $context);
+        $this->assertManage($context, $actor, 'completed_works.create');
+    }
+
     public function assertUpdate(
         CompletedWork $existingWork,
         CompletedWorkDTO $dto,
