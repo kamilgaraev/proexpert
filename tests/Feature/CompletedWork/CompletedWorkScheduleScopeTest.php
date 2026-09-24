@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\CompletedWork;
 
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\ProjectOrganizationRole;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
 use App\Models\Organization;
@@ -124,6 +125,57 @@ final class CompletedWorkScheduleScopeTest extends TestCase
 
         self::assertSame($schedule->id, $task->schedule_id);
         $this->assertDatabaseHas('completed_works', ['id' => $work->id, 'schedule_task_id' => $task->id, 'project_id' => $project->id]);
+    }
+
+    public function test_contractor_sees_owner_schedule_tasks_only_in_its_project(): void
+    {
+        $owner = AdminApiTestContext::create();
+        $contractor = AdminApiTestContext::create();
+        $quality = AdminApiTestContext::create();
+        $customer = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $owner->organization->id]);
+        foreach ([
+            [$contractor, ProjectOrganizationRole::CONTRACTOR],
+            [$quality, ProjectOrganizationRole::SUBCONTRACTOR],
+            [$customer, ProjectOrganizationRole::CUSTOMER],
+        ] as [$participant, $role]) {
+            $project->organizations()->attach($participant->organization->id, [
+                'role' => ProjectOrganizationRole::CONTRACTOR->value,
+                'role_new' => $role->value,
+                'is_active' => true,
+                'added_by_user_id' => $owner->user->id,
+            ]);
+            $project->users()->syncWithoutDetaching([
+                $participant->user->id => ['role' => 'member', 'is_active' => true],
+            ]);
+        }
+        $task = $this->task($this->schedule($project, $owner->user->id), $owner->user->id, 0);
+        $otherProject = Project::factory()->create(['organization_id' => $owner->organization->id]);
+        $this->task($this->schedule($otherProject, $owner->user->id), $owner->user->id, 0);
+
+        $authorization = $this->mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnUsing(static function ($actor, $permission) use ($contractor, $quality): bool {
+            return match ($permission) {
+                'completed_works.create' => $actor->id === $contractor->user->id,
+                'quality-control.defects.create' => $actor->id === $quality->user->id,
+                default => true,
+            };
+        });
+        $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
+
+        $url = "/api/v1/admin/projects/{$project->id}/schedule-tasks";
+        $contractorResponse = $this->withHeaders($contractor->authHeaders())->getJson($url);
+        self::assertSame(200, $contractorResponse->status(), $contractorResponse->getContent());
+        $contractorResponse
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $task->id);
+        $this->withHeaders($quality->authHeaders())->getJson($url)
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $task->id);
+        $this->withHeaders($customer->authHeaders())->getJson($url)->assertForbidden();
+        $this->withHeaders($contractor->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$otherProject->id}/schedule-tasks")
+            ->assertForbidden();
     }
 
     public function test_attached_manual_fact_can_be_confirmed_without_rewriting_its_origin(): void
