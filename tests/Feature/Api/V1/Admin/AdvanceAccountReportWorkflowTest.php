@@ -140,6 +140,16 @@ class AdvanceAccountReportWorkflowTest extends TestCase
 
         $context = AdminApiTestContext::create();
         $this->activateAdvanceAccountingFor($context->organization->id);
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('putPrivate')
+            ->once()
+            ->andReturnUsing(static function (string $key, mixed $contents, string $mime, string $sha256): CurrentStoredFile {
+                $body = is_resource($contents) ? (string) stream_get_contents($contents) : (string) $contents;
+                Storage::disk('s3')->put($key, $body);
+
+                return new CurrentStoredFile($key, 'etag', strlen($body), $sha256, $mime);
+            });
+        $this->app->instance(FileService::class, $files);
         $user = $this->createOrganizationUser($context->organization, [
             'current_balance' => 1100,
             'has_overdue_balance' => true,
