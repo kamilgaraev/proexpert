@@ -5,12 +5,19 @@ declare(strict_types=1);
 namespace Tests\Feature\Project;
 
 use App\Enums\ProjectOrganizationRole;
+use App\Enums\AuthSessionStatus;
 use App\Exceptions\BusinessLogicException;
 use App\Mail\ProjectParticipantInvitationMail;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectParticipantInvitation;
 use App\Models\User;
+use App\Models\UserAuthSession;
+use App\Repositories\UserRepository;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Services\Auth\WebAuthTokenService;
+use Illuminate\Support\Str;
 use App\Services\Project\ProjectParticipantInvitationService;
 use App\Services\Project\ProjectParticipantService;
 use Illuminate\Support\Facades\Mail;
@@ -297,7 +304,7 @@ class ProjectParticipantLifecycleTest extends TestCase
     public function test_create_and_resend_send_invitation_email(): void
     {
         Mail::fake();
-        config()->set('app.customer_frontend_url', 'https://customer.test');
+        config()->set('app.frontend_url', 'https://lk.test');
 
         $invitation = $this->invitationService->create(
             $this->project,
@@ -319,7 +326,7 @@ class ProjectParticipantLifecycleTest extends TestCase
             $mail->assertSeeInHtml('Ждём вас на объекте.');
 
             return $mail->hasTo('guest@example.com')
-                && $mail->acceptUrl === 'https://customer.test/invitations/'.urlencode($originalToken);
+                && $mail->acceptUrl === 'https://lk.test/project-invitations/'.urlencode($originalToken);
         });
 
         $this->invitationService->resend($this->project, $invitation, $this->ownerUser);
@@ -331,8 +338,130 @@ class ProjectParticipantLifecycleTest extends TestCase
         Mail::assertSent(ProjectParticipantInvitationMail::class, function (ProjectParticipantInvitationMail $mail) use ($resent): bool {
             return $mail->hasTo('guest@example.com')
                 && $resent !== null
-                && $mail->acceptUrl === 'https://customer.test/invitations/'.urlencode((string) $resent->token);
+                && $mail->acceptUrl === 'https://lk.test/project-invitations/'.urlencode((string) $resent->token);
         });
+    }
+
+    public function test_existing_organization_owner_can_accept_even_when_contact_email_differs(): void
+    {
+        $organization = Organization::factory()->create(['email' => 'contact@example.com']);
+        $owner = $this->createOrganizationUser($organization, 'owner@example.com');
+        $invitation = $this->invitationService->create($this->project, $this->ownerOrganization->id, $this->ownerUser, [
+            'organization_id' => $organization->id,
+            'email' => 'contact@example.com',
+            'role' => ProjectOrganizationRole::CUSTOMER->value,
+        ]);
+
+        $accepted = $this->invitationService->acceptByTokenAsOrganizationOwner($invitation->token, $owner, $organization);
+
+        $this->assertSame(ProjectParticipantInvitation::STATUS_ACCEPTED, $accepted->status);
+        $this->assertDatabaseHas('project_organization', [
+            'project_id' => $this->project->id,
+            'organization_id' => $organization->id,
+            'role_new' => ProjectOrganizationRole::CUSTOMER->value,
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_new_organization_invitation_requires_matching_inn_when_provided(): void
+    {
+        $owner = $this->createOrganizationUser(Organization::factory()->create(['tax_number' => null]), 'match@example.com');
+        $organization = $owner->currentOrganization;
+        $invitation = $this->invitationService->create($this->project, $this->ownerOrganization->id, $this->ownerUser, [
+            'organization_name' => 'Новая организация',
+            'email' => 'match@example.com',
+            'inn' => '7701234567',
+            'role' => ProjectOrganizationRole::CUSTOMER->value,
+        ]);
+
+        try {
+            $this->invitationService->acceptByToken($invitation->token, $owner, $organization);
+            $this->fail('Приглашение с указанным ИНН нельзя принять без ИНН организации.');
+        } catch (BusinessLogicException $exception) {
+            $this->assertSame(422, $exception->getCode());
+        }
+
+        $organization->update(['tax_number' => '7707654321']);
+        try {
+            $this->invitationService->acceptByToken($invitation->token, $owner, $organization);
+            $this->fail('Приглашение нельзя принять с другим ИНН.');
+        } catch (BusinessLogicException $exception) {
+            $this->assertSame(422, $exception->getCode());
+        }
+    }
+
+    public function test_landing_accept_requires_active_owner_and_rejects_foreign_organization(): void
+    {
+        $organization = Organization::factory()->create(['email' => 'contact@example.com']);
+        $owner = $this->createOrganizationUser($organization, 'owner@example.com');
+        $nonOwner = User::factory()->create([
+            'email' => 'member@example.com',
+            'current_organization_id' => $organization->id,
+        ]);
+        $organization->users()->attach($nonOwner->id, ['is_owner' => false, 'is_active' => true]);
+        $invitation = $this->invitationService->create($this->project, $this->ownerOrganization->id, $this->ownerUser, [
+            'organization_id' => $organization->id,
+            'email' => 'contact@example.com',
+            'role' => ProjectOrganizationRole::CUSTOMER->value,
+        ]);
+
+        $this->withHeaders($this->landingHeaders($nonOwner, $organization))
+            ->postJson('/api/v1/landing/project-participant-invitations/'.$invitation->token.'/accept')
+            ->assertForbidden();
+
+        $this->withHeaders($this->landingHeaders($this->ownerUser, $this->ownerOrganization))
+            ->postJson('/api/v1/landing/project-participant-invitations/'.$invitation->token.'/accept')
+            ->assertForbidden();
+
+        $this->withHeaders($this->landingHeaders($owner, $organization))
+            ->postJson('/api/v1/landing/project-participant-invitations/'.$invitation->token.'/accept')
+            ->assertOk()
+            ->assertJsonPath('data.organization.id', $organization->id)
+            ->assertJsonPath('data.invitation.status', ProjectParticipantInvitation::STATUS_ACCEPTED);
+    }
+
+    public function test_expired_owner_role_assignment_cannot_accept_invitation(): void
+    {
+        $organization = Organization::factory()->create();
+        $owner = $this->createOrganizationUser($organization);
+        $context = AuthorizationContext::getOrganizationContext($organization->id);
+        UserRoleAssignment::query()
+            ->where('user_id', $owner->id)
+            ->where('context_id', $context->id)
+            ->where('role_slug', 'organization_owner')
+            ->update(['expires_at' => now()->subMinute()]);
+        $invitation = $this->invitationService->create($this->project, $this->ownerOrganization->id, $this->ownerUser, [
+            'organization_id' => $organization->id,
+            'role' => ProjectOrganizationRole::CUSTOMER->value,
+        ]);
+
+        try {
+            $this->invitationService->acceptByTokenAsOrganizationOwner($invitation->token, $owner, $organization);
+            $this->fail('Просроченная роль владельца не должна принимать приглашение.');
+        } catch (BusinessLogicException $exception) {
+            $this->assertSame(403, $exception->getCode());
+        }
+    }
+
+    public function test_project_invitation_preview_does_not_expose_recipient_email_or_inn(): void
+    {
+        $invitation = $this->invitationService->create($this->project, $this->ownerOrganization->id, $this->ownerUser, [
+            'organization_name' => 'Новая организация',
+            'email' => 'private@example.com',
+            'inn' => '7701234567',
+            'role' => ProjectOrganizationRole::CUSTOMER->value,
+        ]);
+
+        $response = $this->getJson('/api/v1/landing/project-participant-invitations/'.$invitation->token);
+
+        $response->assertOk()
+            ->assertJsonPath('data.status', ProjectParticipantInvitation::STATUS_PENDING)
+            ->assertJsonPath('data.can_accept', true)
+            ->assertJsonPath('data.next_action', 'register')
+            ->assertJsonMissingPath('data.email')
+            ->assertJsonMissingPath('data.inn');
+        $this->assertStringNotContainsString('private@example.com', $response->getContent());
+        $this->assertStringNotContainsString('7701234567', $response->getContent());
     }
 
     private function createOrganizationUser(Organization $organization, ?string $email = null): User
@@ -340,13 +469,41 @@ class ProjectParticipantLifecycleTest extends TestCase
         $user = User::factory()->create([
             'email' => $email ?? fake()->unique()->safeEmail(),
             'current_organization_id' => $organization->id,
+            'is_active' => true,
         ]);
 
         $organization->users()->attach($user->id, [
             'is_owner' => true,
             'is_active' => true,
         ]);
+        app(UserRepository::class)->assignRoleToUser($user->id, 'organization_owner', $organization->id);
 
         return $user;
+    }
+
+    /** @return array<string, string> */
+    private function landingHeaders(User $user, Organization $organization): array
+    {
+        $sessionUuid = (string) Str::uuid();
+        UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $organization->id,
+            'session_uuid' => $sessionUuid,
+            'device_fingerprint' => hash('sha256', $sessionUuid),
+            'device_name' => 'Project invite test',
+            'ip_address' => '127.0.0.1',
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+        $tokens = app(WebAuthTokenService::class)->issue($user, 'lk', $sessionUuid, $organization->id, false);
+
+        return [
+            'Authorization' => 'Bearer '.$tokens->accessToken,
+            'Origin' => (string) config('web_auth.origins.lk.0'),
+            'X-CSRF-Token' => $tokens->csrfToken,
+        ];
     }
 }
