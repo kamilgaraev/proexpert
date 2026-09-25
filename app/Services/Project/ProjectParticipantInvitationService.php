@@ -235,6 +235,16 @@ class ProjectParticipantInvitationService
 
     public function acceptByToken(string $token, User $user, Organization $organization): ProjectParticipantInvitation
     {
+        return $this->acceptByTokenUsingIdentityPolicy($token, $user, $organization, false);
+    }
+
+    private function acceptByTokenUsingIdentityPolicy(
+        string $token,
+        User $user,
+        Organization $organization,
+        bool $allowExistingOrganizationEmailMismatch,
+    ): ProjectParticipantInvitation
+    {
         $invitation = ProjectParticipantInvitation::query()
             ->with([
                 'invitedOrganization:id,name,tax_number,email,phone',
@@ -275,19 +285,56 @@ class ProjectParticipantInvitationService
             throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_organization'), 403);
         }
 
-        if ($invitation->email !== null && strcasecmp($invitation->email, $user->email) !== 0) {
+        if ((! $allowExistingOrganizationEmailMismatch || $invitation->invited_organization_id === null)
+            && $invitation->email !== null
+            && strcasecmp($invitation->email, $user->email) !== 0) {
             throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_email'), 403);
         }
 
-        if (
-            $invitation->inn !== null
-            && $organization->tax_number !== null
-            && $invitation->inn !== $organization->tax_number
-        ) {
+        if ($invitation->inn !== null
+            && ($invitation->invited_organization_id === null || $organization->tax_number !== null)
+            && $invitation->inn !== $organization->tax_number) {
             throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_inn'), 422);
         }
 
-        return $this->acceptInvitation($invitation, $organization, $user);
+        return $this->acceptInvitation($invitation, $organization, $user, $allowExistingOrganizationEmailMismatch);
+    }
+
+    public function previewByToken(string $token): ProjectParticipantInvitation
+    {
+        return ProjectParticipantInvitation::query()
+            ->with(['project:id,name', 'invitedOrganization:id,name'])
+            ->where('token', $token)
+            ->firstOrFail();
+    }
+
+    public function acceptByTokenAsOrganizationOwner(
+        string $token,
+        User $user,
+        Organization $organization
+    ): ProjectParticipantInvitation {
+        $membership = $organization->users()
+            ->whereKey($user->id)
+            ->wherePivot('is_active', true)
+            ->wherePivot('is_owner', true)
+            ->exists();
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organization->id);
+        $hasOwnerRole = \App\Domain\Authorization\Models\UserRoleAssignment::query()
+            ->where('user_id', $user->id)
+            ->where('context_id', $context->id)
+            ->where('role_slug', 'organization_owner')
+            ->where('role_type', 'system')
+            ->where('is_active', true)
+            ->where(function ($query): void {
+                $query->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->exists();
+
+        if (! $membership || ! $user->is_active || ! $hasOwnerRole) {
+            throw new BusinessLogicException(trans_message('project_invitations.errors.owner_required'), 403);
+        }
+
+        return $this->acceptByTokenUsingIdentityPolicy($token, $user, $organization, true);
     }
 
     public function declineByToken(string $token): ProjectParticipantInvitation
@@ -344,11 +391,17 @@ class ProjectParticipantInvitationService
         $invitations = ProjectParticipantInvitation::query()
             ->where('status', ProjectParticipantInvitation::STATUS_PENDING)
             ->where(function ($query) use ($user, $organization): void {
-                $query->where('email', $user->email);
+                $query->where('invited_organization_id', $organization->id)
+                    ->orWhere(function ($newOrganization) use ($user, $organization): void {
+                        $newOrganization->whereNull('invited_organization_id')
+                            ->where(function ($identity) use ($user, $organization): void {
+                                $identity->where('email', $user->email);
 
-                if ($organization->tax_number !== null) {
-                    $query->orWhere('inn', $organization->tax_number);
-                }
+                                if ($organization->tax_number !== null) {
+                                    $identity->orWhere('inn', $organization->tax_number);
+                                }
+                            });
+                    });
             })
             ->get();
 
@@ -387,9 +440,10 @@ class ProjectParticipantInvitationService
     private function acceptInvitation(
         ProjectParticipantInvitation $invitation,
         Organization $organization,
-        User $user
+        User $user,
+        bool $allowExistingOrganizationEmailMismatch = false,
     ): ProjectParticipantInvitation {
-        return DB::transaction(function () use ($invitation, $organization, $user): ProjectParticipantInvitation {
+        return DB::transaction(function () use ($invitation, $organization, $user, $allowExistingOrganizationEmailMismatch): ProjectParticipantInvitation {
             $invitation = ProjectParticipantInvitation::query()
                 ->whereKey($invitation->id)
                 ->lockForUpdate()
@@ -428,15 +482,15 @@ class ProjectParticipantInvitationService
                 throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_organization'), 403);
             }
 
-            if ($invitation->email !== null && strcasecmp($invitation->email, $user->email) !== 0) {
+            if ((! $allowExistingOrganizationEmailMismatch || $invitation->invited_organization_id === null)
+                && $invitation->email !== null
+                && strcasecmp($invitation->email, $user->email) !== 0) {
                 throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_email'), 403);
             }
 
-            if (
-                $invitation->inn !== null
-                && $organization->tax_number !== null
-                && $invitation->inn !== $organization->tax_number
-            ) {
+            if ($invitation->inn !== null
+                && ($invitation->invited_organization_id === null || $organization->tax_number !== null)
+                && $invitation->inn !== $organization->tax_number) {
                 throw new BusinessLogicException(trans_message('customer.auth.invitation_wrong_inn'), 422);
             }
 
@@ -531,6 +585,7 @@ class ProjectParticipantInvitationService
     private function freshInvitation(ProjectParticipantInvitation $invitation): ProjectParticipantInvitation
     {
         return $invitation->fresh([
+            'project:id,name',
             'invitedOrganization:id,name,tax_number,email,phone',
             'acceptedBy:id,name',
             'invitedBy:id,name',
@@ -558,8 +613,8 @@ class ProjectParticipantInvitationService
             return;
         }
 
-        $acceptUrl = rtrim((string) config('app.customer_frontend_url', config('app.url')), '/')
-            .'/invitations/'
+        $acceptUrl = rtrim((string) config('app.frontend_url', config('app.url')), '/')
+            .'/project-invitations/'
             .urlencode((string) $invitation->token);
 
         Mail::to($email)->send(new ProjectParticipantInvitationMail($invitation, $acceptUrl));

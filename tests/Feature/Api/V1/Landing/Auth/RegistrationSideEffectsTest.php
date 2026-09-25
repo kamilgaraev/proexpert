@@ -5,13 +5,19 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Landing\Auth;
 
 use App\Jobs\Auth\CompleteRegistrationSideEffects;
+use App\Enums\ProjectOrganizationRole;
 use App\Models\AuthRegistrationAttempt;
 use App\Models\Organization;
+use App\Models\Project;
+use App\Models\ProjectParticipantInvitation;
 use App\Models\User;
 use App\Notifications\EmailVerificationNotification;
+use App\Repositories\UserRepository;
+use App\Services\Project\ProjectParticipantInvitationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 final class RegistrationSideEffectsTest extends TestCase
@@ -98,6 +104,80 @@ final class RegistrationSideEffectsTest extends TestCase
         app()->call([new CompleteRegistrationSideEffects($user->id, $organization->id), 'handle']);
 
         Notification::assertNothingSent();
+    }
+
+    public function test_common_registration_creates_owner_and_auto_accepts_project_invitation(): void
+    {
+        Queue::fake();
+        Mail::fake();
+        $projectOrganization = Organization::factory()->create();
+        $projectOwner = User::factory()->create(['current_organization_id' => $projectOrganization->id]);
+        $projectOrganization->users()->attach($projectOwner->id, ['is_owner' => true, 'is_active' => true]);
+        app(UserRepository::class)->assignRoleToUser($projectOwner->id, 'organization_owner', $projectOrganization->id);
+        $project = Project::factory()->create(['organization_id' => $projectOrganization->id]);
+        $recipientEmail = 'project-customer-registration@example.test';
+        $invitation = app(ProjectParticipantInvitationService::class)->create(
+            $project,
+            $projectOrganization->id,
+            $projectOwner,
+            [
+                'role' => ProjectOrganizationRole::CUSTOMER->value,
+                'organization_name' => 'Независимая организация заказчика',
+                'email' => $recipientEmail,
+            ],
+        );
+
+        $this->withHeaders([
+            'Origin' => (string) config('web_auth.origins.lk.0'),
+            'Idempotency-Key' => 'project-invite-owner-registration',
+        ])->postJson('/api/v1/landing/auth/register', [
+            ...$this->payload(),
+            'email' => $recipientEmail,
+            'organization_name' => 'Независимая организация заказчика',
+        ])->assertCreated();
+
+        $user = User::query()->where('email', $recipientEmail)->firstOrFail();
+        $organization = $user->currentOrganization()->firstOrFail();
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organization->id);
+        self::assertDatabaseHas('user_role_assignments', [
+            'user_id' => $user->id,
+            'role_slug' => 'organization_owner',
+            'context_id' => $context->id,
+            'is_active' => true,
+        ]);
+        self::assertDatabaseMissing('user_role_assignments', [
+            'user_id' => $user->id,
+            'role_slug' => 'customer_owner',
+            'context_id' => $context->id,
+        ]);
+
+        app()->call([new CompleteRegistrationSideEffects($user->id, $organization->id), 'handle']);
+
+        self::assertDatabaseHas('project_participant_invitations', [
+            'id' => $invitation->id,
+            'status' => ProjectParticipantInvitation::STATUS_ACCEPTED,
+            'accepted_organization_id_snapshot' => $organization->id,
+        ]);
+        self::assertDatabaseHas('project_organization', [
+            'project_id' => $project->id,
+            'organization_id' => $organization->id,
+            'role_new' => ProjectOrganizationRole::CUSTOMER->value,
+            'is_active' => true,
+        ]);
+
+        $user->forceFill(['email_verified_at' => now()])->save();
+        $this->withHeaders(['Origin' => (string) config('web_auth.origins.lk.0')])
+            ->postJson('/api/v1/landing/auth/login', [
+                'email' => $recipientEmail,
+                'password' => 'Password1',
+            ])
+            ->assertOk();
+        $this->withHeaders(['Origin' => (string) config('web_auth.origins.admin.0')])
+            ->postJson('/api/v1/admin/auth/login', [
+                'email' => $recipientEmail,
+                'password' => 'Password1',
+            ])
+            ->assertOk();
     }
 
     /** @return array<string, bool|string> */

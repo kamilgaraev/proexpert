@@ -46,6 +46,8 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
 
         require __DIR__.'/api/v1/landing/organization.php';
 
+        require __DIR__.'/api/v1/landing/project_participant_invitations.php';
+
         Route::prefix('user-management')
             ->name('userManagement.')
             ->group(function () {

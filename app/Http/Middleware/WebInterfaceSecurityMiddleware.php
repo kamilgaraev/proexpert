@@ -146,6 +146,7 @@ final class WebInterfaceSecurityMiddleware
             || $request->is('api/v1/landing/email/verify/*')
             || $request->is('api/v1/landing/holding/public/*')
             || $request->is('api/v1/landing/user-management/invitation/*')
+            || ($request->isMethod('GET') && $request->is('api/v1/landing/project-participant-invitations/*'))
             || $request->is('api/v1/landing/dadata/*')
             || $request->is('api/v1/landing/landingAdminAuth/*');
     }
