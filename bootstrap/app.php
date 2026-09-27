@@ -84,6 +84,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(\App\Http\Middleware\CorsMiddleware::class);
 
         $middleware->prepend(\App\Http\Middleware\TraceHttpRequest::class);
+        $middleware->prepend(\App\Http\Middleware\RecordApiResponseTime::class);
 
         // 3. Prometheus - метрики в конце цепочки для корректного измерения времени
         $middleware->append(\App\Http\Middleware\PrometheusMiddleware::class);
